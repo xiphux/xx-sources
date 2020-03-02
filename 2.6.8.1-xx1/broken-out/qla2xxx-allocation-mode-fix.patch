@@ -1,0 +1,25 @@
+
+
+It's doing GFP_KERNEL on the IO submission path, with spinlocks held.
+
+Probably this means that the mempool is now redundant.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/scsi/qla2xxx/qla_os.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN drivers/scsi/qla2xxx/qla_os.c~qla2xxx-allocation-mode-fix drivers/scsi/qla2xxx/qla_os.c
+--- 25/drivers/scsi/qla2xxx/qla_os.c~qla2xxx-allocation-mode-fix	Mon Aug  9 15:37:56 2004
++++ 25-akpm/drivers/scsi/qla2xxx/qla_os.c	Mon Aug  9 15:38:12 2004
+@@ -3590,7 +3590,7 @@ qla2x00_get_new_sp(scsi_qla_host_t *ha)
+ {
+ 	srb_t *sp;
+ 
+-	sp = mempool_alloc(ha->srb_mempool, GFP_KERNEL);
++	sp = mempool_alloc(ha->srb_mempool, GFP_ATOMIC);
+ 	if (sp)
+ 		atomic_set(&sp->ref_count, 1);
+ 	return (sp);
+_

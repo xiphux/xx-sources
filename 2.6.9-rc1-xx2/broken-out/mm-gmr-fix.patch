@@ -1,0 +1,63 @@
+
+
+
+---
+
+ linux-2.6-npiggin/mm/filemap.c |   29 ++++++++++++++++++-----------
+ 1 files changed, 18 insertions(+), 11 deletions(-)
+
+diff -puN mm/filemap.c~mm-gmr-fix mm/filemap.c
+--- linux-2.6/mm/filemap.c~mm-gmr-fix	2004-08-28 14:14:02.000000000 +1000
++++ linux-2.6-npiggin/mm/filemap.c	2004-08-28 14:32:59.000000000 +1000
+@@ -724,6 +724,15 @@ void do_generic_mapping_read(struct addr
+ 		struct page *page;
+ 		unsigned long nr, ret;
+ 
++		/* nr is the maximum number of bytes to copy from this page */
++		nr = PAGE_CACHE_SIZE;
++		if (index == end_index) {
++			nr = isize & ~PAGE_CACHE_MASK;
++			if (nr <= offset)
++				goto out;
++		}
++		nr = nr - offset;
++
+ 		cond_resched();
+ 		page_cache_readahead(mapping, &ra, filp, index);
+ 
+@@ -736,17 +745,6 @@ find_page:
+ 		if (!PageUptodate(page))
+ 			goto page_not_up_to_date;
+ page_ok:
+-		/* nr is the maximum number of bytes to copy from this page */
+-		nr = PAGE_CACHE_SIZE;
+-		if (index == end_index) {
+-			nr = isize & ~PAGE_CACHE_MASK;
+-			if (nr <= offset) {
+-				page_cache_release(page);
+-				goto out;
+-			}
+-		}
+-		nr = nr - offset;
+-
+ 		/* If users can be writing to this page using arbitrary
+ 		 * virtual addresses, take care about potential aliasing
+ 		 * before reading the page on the kernel side.
+@@ -826,6 +824,15 @@ readpage:
+ 			page_cache_release(page);
+ 			goto out;
+ 		}
++		nr = PAGE_CACHE_SIZE;
++		if (index == end_index) {
++			nr = isize & ~PAGE_CACHE_MASK;
++			if (nr <= offset) {
++				page_cache_release(page);
++				goto out;
++			}
++		}
++		nr = nr - offset;
+ 		goto page_ok;
+ 
+ readpage_error:
+
+_

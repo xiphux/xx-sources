@@ -1,0 +1,44 @@
+
+From: Zwane Mwaikambo <zwane@fsmlabs.com>
+
+This was broken when the mwait stuff went in since it executes after the
+initial idle_setup() has already selected an idle routine and overrides it
+with default_idle.
+
+Signed-off-by: Zwane Mwaikambo <zwane@fsmlabs.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/process.c   |    3 ---
+ 25-akpm/arch/x86_64/kernel/process.c |    3 ---
+ 2 files changed, 6 deletions(-)
+
+diff -puN arch/i386/kernel/process.c~fix-i386-x86_64-idle-routine-selection arch/i386/kernel/process.c
+--- 25/arch/i386/kernel/process.c~fix-i386-x86_64-idle-routine-selection	2004-08-08 13:53:24.195105296 -0700
++++ 25-akpm/arch/i386/kernel/process.c	2004-08-08 13:53:24.199104688 -0700
+@@ -226,10 +226,7 @@ void __init select_idle_routine(const st
+ 			printk("using mwait in idle threads.\n");
+ 			pm_idle = mwait_idle;
+ 		}
+-		return;
+ 	}
+-	pm_idle = default_idle;
+-	return;
+ }
+ 
+ static int __init idle_setup (char *str)
+diff -puN arch/x86_64/kernel/process.c~fix-i386-x86_64-idle-routine-selection arch/x86_64/kernel/process.c
+--- 25/arch/x86_64/kernel/process.c~fix-i386-x86_64-idle-routine-selection	2004-08-08 13:53:24.196105144 -0700
++++ 25-akpm/arch/x86_64/kernel/process.c	2004-08-08 13:53:24.208103320 -0700
+@@ -180,10 +180,7 @@ void __init select_idle_routine(const st
+ 			}
+ 			pm_idle = mwait_idle;
+ 		}
+-		return;
+ 	}
+-	pm_idle = default_idle;
+-	return;
+ }
+ 
+ static int __init idle_setup (char *str)
+_

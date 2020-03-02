@@ -1,0 +1,45 @@
+Add an entry in /proc/scheduler which reads out the running cpu scheduler's
+name.
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+
+Index: linux-2.6.10-rc1-mm4/fs/proc/proc_misc.c
+===================================================================
+--- linux-2.6.10-rc1-mm4.orig/fs/proc/proc_misc.c	2004-11-10 09:17:06.296251264 +1100
++++ linux-2.6.10-rc1-mm4/fs/proc/proc_misc.c	2004-11-10 09:25:28.388587707 +1100
+@@ -45,6 +45,7 @@
+ #include <linux/sysrq.h>
+ #include <linux/vmalloc.h>
+ #include <linux/crash_dump.h>
++#include <linux/sched.h>
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
+ #include <asm/io.h>
+@@ -226,6 +227,18 @@ static int version_read_proc(char *page,
+ 	return proc_calc_metrics(page, start, off, count, eof, len);
+ }
+ 
++static int scheduler_read_proc(char *page, char **start, off_t off,
++				 int count, int *eof, void *data)
++{
++	char *sched_name = scheduler->cpusched_name;
++	int len;
++
++	strcpy(page, sched_name);
++	strcat(page, "\n");
++	len = strlen(page);
++	return proc_calc_metrics(page, start, off, count, eof, len);
++}
++
+ extern struct seq_operations cpuinfo_op;
+ static int cpuinfo_open(struct inode *inode, struct file *file)
+ {
+@@ -569,6 +582,7 @@ void __init proc_misc_init(void)
+ 		{"cmdline",	cmdline_read_proc},
+ 		{"locks",	locks_read_proc},
+ 		{"execdomains",	execdomains_read_proc},
++		{"scheduler",	scheduler_read_proc},
+ 		{NULL,}
+ 	};
+ 	for (p = simple_ones; p->name; p++)

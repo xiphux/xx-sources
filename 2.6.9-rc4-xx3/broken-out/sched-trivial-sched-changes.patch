@@ -1,0 +1,91 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+The following patches properly intergrate sched domains and cpu hotplug (using
+Nathan's code), by having sched-domains *always* only represent online CPUs,
+and having hotplug notifier to keep them up to date.
+
+Then tackle Jesse's domain setup problem: the disjoint top-level domains were
+completely broken.  The group-list builder thingy simply can't handle distinct
+sets of groups containing the same CPUs.  The code is ugly and specific enough
+that I'm re-introducing the arch overridable domains.
+
+I doubt we'll get a proliferation of implementations, because the current
+generic code can do the job for everyone but SGI.  I'd rather take a look at
+it again down the track if we need to rather than try to shoehorn this into
+the generic code.
+
+Nathan and I have tested the hotplug work. He's happy with it.
+
+I've tested the disjoint domain stuff (copied it to i386 for the test), and it
+does the right thing on the NUMAQ.  I've asked Jesse to test it as well, but
+it should be fine - maybe just help me out and run a test compile on ia64 ;)
+
+This really gets sched domains into much better shape.  Without further ado,
+the patches.
+
+
+
+This patch:
+
+Make a definition static and slightly sanitize ifdefs.
+
+Signed-off-by: Nick Piggin <nickpiggin@yahoo.com.au>
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/sched.c |   16 ++++++++--------
+ 1 files changed, 8 insertions(+), 8 deletions(-)
+
+diff -puN kernel/sched.c~sched-trivial-sched-changes kernel/sched.c
+--- 25/kernel/sched.c~sched-trivial-sched-changes	2004-10-05 02:09:47.040679064 -0700
++++ 25-akpm/kernel/sched.c	2004-10-05 02:09:47.046678152 -0700
+@@ -311,9 +311,7 @@ struct sched_group {
+ 
+ 	/*
+ 	 * CPU power of this group, SCHED_LOAD_SCALE being max power for a
+-	 * single CPU. This should be read only (except for setup). Although
+-	 * it will need to be written to at cpu hot(un)plug time, perhaps the
+-	 * cpucontrol semaphore will provide enough exclusion?
++	 * single CPU. This is read only (except for setup, hotplug CPU).
+ 	 */
+ 	unsigned long cpu_power;
+ };
+@@ -4258,7 +4256,8 @@ static void cpu_attach_domain(struct sch
+  * in arch code. That defines the number of nearby nodes in a node's top
+  * level scheduling domain.
+  */
+-#if defined(CONFIG_NUMA) && defined(SD_NODES_PER_DOMAIN)
++#ifdef CONFIG_NUMA
++#ifdef SD_NODES_PER_DOMAIN
+ /**
+  * find_next_best_node - find the next node to include in a sched_domain
+  * @node: node whose sched_domain we're building
+@@ -4305,7 +4304,7 @@ static int __init find_next_best_node(in
+  * should be one that prevents unnecessary balancing, but also spreads tasks
+  * out optimally.
+  */
+-cpumask_t __init sched_domain_node_span(int node)
++static cpumask_t __init sched_domain_node_span(int node)
+ {
+ 	int i;
+ 	cpumask_t span;
+@@ -4324,12 +4323,13 @@ cpumask_t __init sched_domain_node_span(
+ 
+ 	return span;
+ }
+-#else /* CONFIG_NUMA && SD_NODES_PER_DOMAIN */
+-cpumask_t __init sched_domain_node_span(int node)
++#else /* SD_NODES_PER_DOMAIN */
++static cpumask_t __init sched_domain_node_span(int node)
+ {
+ 	return cpu_possible_map;
+ }
+-#endif /* CONFIG_NUMA && SD_NODES_PER_DOMAIN */
++#endif /* SD_NODES_PER_DOMAIN */
++#endif /* CONFIG_NUMA */
+ 
+ #ifdef CONFIG_SCHED_SMT
+ static DEFINE_PER_CPU(struct sched_domain, cpu_domains);
+_

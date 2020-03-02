@@ -1,0 +1,77 @@
+Index: linux-2.6.11-rc1-ck/arch/i386/mm/init.c
+===================================================================
+--- linux-2.6.11-rc1-ck.orig/arch/i386/mm/init.c	2005-01-14 23:48:35.615418992 +1100
++++ linux-2.6.11-rc1-ck/arch/i386/mm/init.c	2005-01-15 00:51:23.023685880 +1100
+@@ -41,6 +41,7 @@
+ #include <asm/sections.h>
+ 
+ unsigned int __VMALLOC_RESERVE = 128 << 20;
++EXPORT_SYMBOL(__VMALLOC_RESERVE);
+ 
+ DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
+ unsigned long highstart_pfn, highend_pfn;
+Index: linux-2.6.11-rc1-ck/drivers/pci/search.c
+===================================================================
+--- linux-2.6.11-rc1-ck.orig/drivers/pci/search.c	2004-12-25 10:14:49.000000000 +1100
++++ linux-2.6.11-rc1-ck/drivers/pci/search.c	2005-01-15 00:51:23.024685728 +1100
+@@ -346,6 +346,19 @@
+ }
+ 
+ /**
++ * pci_find_class - begin or continue searching for a PCI device by class
++ * @class: search for a PCI device with this class designation
++ * @from: Previous PCI device found in search, or %NULL for new search.
++ *
++ * Deprecated - please use pci_get_class. This is provided only for
++ * compatibility with nVidia GPU kernel driver.
++ */
++struct pci_dev *pci_find_class(unsigned int class, struct pci_dev *from)
++{
++	return pci_get_class(class, from);
++}
++
++/**
+  * pci_dev_present - Returns 1 if device matching the device list is present, 0 if not.
+  * @ids: A pointer to a null terminated list of struct pci_device_id structures
+  * that describe the type of PCI device the caller is trying to find.
+@@ -386,3 +399,4 @@
+ EXPORT_SYMBOL(pci_get_subsys);
+ EXPORT_SYMBOL(pci_get_slot);
+ EXPORT_SYMBOL(pci_get_class);
++EXPORT_SYMBOL(pci_find_class);
+Index: linux-2.6.11-rc1-ck/include/linux/pci.h
+===================================================================
+--- linux-2.6.11-rc1-ck.orig/include/linux/pci.h	2005-01-14 23:48:38.560971200 +1100
++++ linux-2.6.11-rc1-ck/include/linux/pci.h	2005-01-15 00:51:23.025685576 +1100
+@@ -767,6 +767,7 @@
+ 				struct pci_dev *from);
+ struct pci_dev *pci_get_slot (struct pci_bus *bus, unsigned int devfn);
+ struct pci_dev *pci_get_class (unsigned int class, struct pci_dev *from);
++struct pci_dev *pci_find_class (unsigned int class, struct pci_dev *from);
+ int pci_dev_present(const struct pci_device_id *ids);
+ 
+ int pci_bus_read_config_byte (struct pci_bus *bus, unsigned int devfn, int where, u8 *val);
+@@ -933,6 +934,9 @@
+ static inline struct pci_dev *pci_get_class(unsigned int class, struct pci_dev *from)
+ { return NULL; }
+ 
++static inline struct pci_dev *pci_find_class(unsigned int class, struct pci_dev *from)
++{ return NULL; }
++
+ #define pci_dev_present(ids)	(0)
+ #define pci_dev_put(dev)	do { } while (0)
+ 
+Index: linux-2.6.11-rc1-ck/mm/mmap.c
+===================================================================
+--- linux-2.6.11-rc1-ck.orig/mm/mmap.c	2005-01-14 23:48:38.671954328 +1100
++++ linux-2.6.11-rc1-ck/mm/mmap.c	2005-01-15 00:51:23.026685424 +1100
+@@ -1113,7 +1113,8 @@
+ 	__vm_stat_account(mm, vm_flags, file, len >> PAGE_SHIFT);
+ 	if (vm_flags & VM_LOCKED) {
+ 		mm->locked_vm += len >> PAGE_SHIFT;
+-		make_pages_present(addr, addr + len);
++		if (!(vm_flags & VM_IO))
++			make_pages_present(addr, addr + len);
+ 	}
+ 	if (flags & MAP_POPULATE) {
+ 		up_write(&mm->mmap_sem);

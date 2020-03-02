@@ -1,0 +1,52 @@
+
+
+With gcc-3.4.1:
+
+arch/i386/kernel/smp.c: In function `flush_tlb_others':
+arch/i386/kernel/smp.c:161: sorry, unimplemented: inlining failed in call 
+to 'send_IPI_mask_bitmask': function not considered for inlining
+arch/i386/kernel/smp.c:9: sorry, unimplemented: called from here
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/smp.c                   |    4 ++--
+ 25-akpm/include/asm-i386/mach-default/mach_ipi.h |    4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN arch/i386/kernel/smp.c~send_IPI_mask_bitmask-build-fix arch/i386/kernel/smp.c
+--- 25/arch/i386/kernel/smp.c~send_IPI_mask_bitmask-build-fix	2004-07-13 22:55:24.882490448 -0700
++++ 25-akpm/arch/i386/kernel/smp.c	2004-07-13 23:15:01.432627640 -0700
+@@ -122,7 +122,7 @@ static inline int __prepare_ICR2 (unsign
+ 	return SET_APIC_DEST_FIELD(mask);
+ }
+ 
+-inline void __send_IPI_shortcut(unsigned int shortcut, int vector)
++void __send_IPI_shortcut(unsigned int shortcut, int vector)
+ {
+ 	/*
+ 	 * Subtle. In the case of the 'never do double writes' workaround
+@@ -157,7 +157,7 @@ void fastcall send_IPI_self(int vector)
+ /*
+  * This is only used on smaller machines.
+  */
+-inline void send_IPI_mask_bitmask(cpumask_t cpumask, int vector)
++void send_IPI_mask_bitmask(cpumask_t cpumask, int vector)
+ {
+ 	unsigned long mask = cpus_addr(cpumask)[0];
+ 	unsigned long cfg;
+diff -puN include/asm-i386/mach-default/mach_ipi.h~send_IPI_mask_bitmask-build-fix include/asm-i386/mach-default/mach_ipi.h
+--- 25/include/asm-i386/mach-default/mach_ipi.h~send_IPI_mask_bitmask-build-fix	2004-07-13 23:14:46.487899584 -0700
++++ 25-akpm/include/asm-i386/mach-default/mach_ipi.h	2004-07-13 23:15:04.856107192 -0700
+@@ -1,8 +1,8 @@
+ #ifndef __ASM_MACH_IPI_H
+ #define __ASM_MACH_IPI_H
+ 
+-inline void send_IPI_mask_bitmask(cpumask_t mask, int vector);
+-inline void __send_IPI_shortcut(unsigned int shortcut, int vector);
++void send_IPI_mask_bitmask(cpumask_t mask, int vector);
++void __send_IPI_shortcut(unsigned int shortcut, int vector);
+ 
+ static inline void send_IPI_mask(cpumask_t mask, int vector)
+ {
+_

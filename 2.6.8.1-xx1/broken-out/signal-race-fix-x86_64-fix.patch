@@ -1,0 +1,31 @@
+
+From: Mikael Pettersson <mikpe@csd.uu.se>
+
+The signal-race-fixes patch in 2.6.8-rc2-mm1 appears to have broken
+x86-64's ia32 emulation.
+
+When forcing a SIGSEGV the old code updated "*ka", where ka was a pointer
+to current's k_sigaction for SIGSEGV.  Now "ka_copy" points to a copy of
+that structure, so assigning "*ka_copy" doesn't do what we want.  Instead
+do the assignment via current->...  just like the normal signal delivery
+code does.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/x86_64/ia32/ia32_signal.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN arch/x86_64/ia32/ia32_signal.c~signal-race-fix-x86_64-fix arch/x86_64/ia32/ia32_signal.c
+--- 25/arch/x86_64/ia32/ia32_signal.c~signal-race-fix-x86_64-fix	Wed Jul 28 15:48:23 2004
++++ 25-akpm/arch/x86_64/ia32/ia32_signal.c	Wed Jul 28 15:48:23 2004
+@@ -495,7 +495,7 @@ void ia32_setup_frame(int sig, struct k_
+ 
+ give_sigsegv:
+ 	if (sig == SIGSEGV)
+-		ka_copy->sa.sa_handler = SIG_DFL;
++		current->sighand->action[SIGSEGV-1].sa.sa_handler = SIG_DFL;
+ 	signal_fault(regs,frame,"32bit signal deliver");
+ }
+ 
+_

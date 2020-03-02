@@ -1,0 +1,312 @@
+
+From: Manfred Spraul <manfred@colorfullife.com>
+
+The lifetime of the ipc objects (sem array, msg queue, shm mapping) is
+controlled by kern_ipc_perms->lock - a spinlock.  There is no simple way to
+reacquire this spinlock after it was dropped to
+schedule()/kmalloc/copy_{to,from}_user/whatever.
+
+The attached patch adds a reference count as a preparation to get rid of
+sem_revalidate().
+
+Signed-Off-By: Manfred Spraul <manfred@colorfullife.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/ipc/msg.c  |    6 +--
+ 25-akpm/ipc/sem.c  |    6 +--
+ 25-akpm/ipc/shm.c  |    6 +--
+ 25-akpm/ipc/util.c |   94 +++++++++++++++++++++++++++++++++++++----------------
+ 25-akpm/ipc/util.h |   12 +++++-
+ 5 files changed, 85 insertions(+), 39 deletions(-)
+
+diff -puN ipc/msg.c~ipc-1-3-add-refcount-to-ipc_rcu_alloc ipc/msg.c
+--- 25/ipc/msg.c~ipc-1-3-add-refcount-to-ipc_rcu_alloc	2004-07-03 17:12:12.718940032 -0700
++++ 25-akpm/ipc/msg.c	2004-07-03 17:12:12.730938208 -0700
+@@ -100,14 +100,14 @@ static int newque (key_t key, int msgflg
+ 	msq->q_perm.security = NULL;
+ 	retval = security_msg_queue_alloc(msq);
+ 	if (retval) {
+-		ipc_rcu_free(msq, sizeof(*msq));
++		ipc_rcu_putref(msq);
+ 		return retval;
+ 	}
+ 
+ 	id = ipc_addid(&msg_ids, &msq->q_perm, msg_ctlmni);
+ 	if(id == -1) {
+ 		security_msg_queue_free(msq);
+-		ipc_rcu_free(msq, sizeof(*msq));
++		ipc_rcu_putref(msq);
+ 		return -ENOSPC;
+ 	}
+ 
+@@ -193,7 +193,7 @@ static void freeque (struct msg_queue *m
+ 	}
+ 	atomic_sub(msq->q_cbytes, &msg_bytes);
+ 	security_msg_queue_free(msq);
+-	ipc_rcu_free(msq, sizeof(struct msg_queue));
++	ipc_rcu_putref(msq);
+ }
+ 
+ asmlinkage long sys_msgget (key_t key, int msgflg)
+diff -puN ipc/sem.c~ipc-1-3-add-refcount-to-ipc_rcu_alloc ipc/sem.c
+--- 25/ipc/sem.c~ipc-1-3-add-refcount-to-ipc_rcu_alloc	2004-07-03 17:12:12.720939728 -0700
++++ 25-akpm/ipc/sem.c	2004-07-03 17:12:12.731938056 -0700
+@@ -179,14 +179,14 @@ static int newary (key_t key, int nsems,
+ 	sma->sem_perm.security = NULL;
+ 	retval = security_sem_alloc(sma);
+ 	if (retval) {
+-		ipc_rcu_free(sma, size);
++		ipc_rcu_putref(sma);
+ 		return retval;
+ 	}
+ 
+ 	id = ipc_addid(&sem_ids, &sma->sem_perm, sc_semmni);
+ 	if(id == -1) {
+ 		security_sem_free(sma);
+-		ipc_rcu_free(sma, size);
++		ipc_rcu_putref(sma);
+ 		return -ENOSPC;
+ 	}
+ 	used_sems += nsems;
+@@ -473,7 +473,7 @@ static void freeary (struct sem_array *s
+ 	used_sems -= sma->sem_nsems;
+ 	size = sizeof (*sma) + sma->sem_nsems * sizeof (struct sem);
+ 	security_sem_free(sma);
+-	ipc_rcu_free(sma, size);
++	ipc_rcu_putref(sma);
+ }
+ 
+ static unsigned long copy_semid_to_user(void __user *buf, struct semid64_ds *in, int version)
+diff -puN ipc/shm.c~ipc-1-3-add-refcount-to-ipc_rcu_alloc ipc/shm.c
+--- 25/ipc/shm.c~ipc-1-3-add-refcount-to-ipc_rcu_alloc	2004-07-03 17:12:12.722939424 -0700
++++ 25-akpm/ipc/shm.c	2004-07-03 17:12:12.733937752 -0700
+@@ -117,7 +117,7 @@ static void shm_destroy (struct shmid_ke
+ 		shmem_lock(shp->shm_file, 0);
+ 	fput (shp->shm_file);
+ 	security_shm_free(shp);
+-	ipc_rcu_free(shp, sizeof(struct shmid_kernel));
++	ipc_rcu_putref(shp);
+ }
+ 
+ /*
+@@ -194,7 +194,7 @@ static int newseg (key_t key, int shmflg
+ 	shp->shm_perm.security = NULL;
+ 	error = security_shm_alloc(shp);
+ 	if (error) {
+-		ipc_rcu_free(shp, sizeof(*shp));
++		ipc_rcu_putref(shp);
+ 		return error;
+ 	}
+ 
+@@ -234,7 +234,7 @@ no_id:
+ 	fput(file);
+ no_file:
+ 	security_shm_free(shp);
+-	ipc_rcu_free(shp, sizeof(*shp));
++	ipc_rcu_putref(shp);
+ 	return error;
+ }
+ 
+diff -puN ipc/util.c~ipc-1-3-add-refcount-to-ipc_rcu_alloc ipc/util.c
+--- 25/ipc/util.c~ipc-1-3-add-refcount-to-ipc_rcu_alloc	2004-07-03 17:12:12.724939120 -0700
++++ 25-akpm/ipc/util.c	2004-07-03 17:12:12.734937600 -0700
+@@ -135,7 +135,6 @@ static int grow_ary(struct ipc_ids* ids,
+ 		new[i].p = NULL;
+ 	}
+ 	old = ids->entries;
+-	i = ids->size;
+ 
+ 	/*
+ 	 * before setting the ids->entries to the new array, there must be a
+@@ -147,7 +146,7 @@ static int grow_ary(struct ipc_ids* ids,
+ 	smp_wmb();	/* prevent indexing into old array based on new size. */
+ 	ids->size = newsize;
+ 
+-	ipc_rcu_free(old, sizeof(struct ipc_id)*i);
++	ipc_rcu_putref(old);
+ 	return ids->size;
+ }
+ 
+@@ -277,25 +276,47 @@ void ipc_free(void* ptr, int size)
+ 		kfree(ptr);
+ }
+ 
+-struct ipc_rcu_kmalloc
++/*
++ * rcu allocations:
++ * There are three headers that are prepended to the actual allocation:
++ * - during use: ipc_rcu_hdr.
++ * - during the rcu grace period: ipc_rcu_grace.
++ * - [only if vmalloc]: ipc_rcu_sched.
++ * Their lifetime doesn't overlap, thus the headers share the same memory.
++ * Unlike a normal union, they are right-aligned, thus some container_of
++ * forward/backward casting is necessary:
++ */
++struct ipc_rcu_hdr
++{
++	int refcount;
++	int is_vmalloc;
++	void *data[0];
++};
++
++
++struct ipc_rcu_grace
+ {
+ 	struct rcu_head rcu;
+ 	/* "void *" makes sure alignment of following data is sane. */
+ 	void *data[0];
+ };
+ 
+-struct ipc_rcu_vmalloc
++struct ipc_rcu_sched
+ {
+-	struct rcu_head rcu;
+ 	struct work_struct work;
+ 	/* "void *" makes sure alignment of following data is sane. */
+ 	void *data[0];
+ };
+ 
++#define HDRLEN_KMALLOC		(sizeof(struct ipc_rcu_grace) > sizeof(struct ipc_rcu_hdr) ? \
++					sizeof(struct ipc_rcu_grace) : sizeof(struct ipc_rcu_hdr))
++#define HDRLEN_VMALLOC		(sizeof(struct ipc_rcu_sched) > HDRLEN_KMALLOC ? \
++					sizeof(struct ipc_rcu_sched) : HDRLEN_KMALLOC)
++
+ static inline int rcu_use_vmalloc(int size)
+ {
+ 	/* Too big for a single page? */
+-	if (sizeof(struct ipc_rcu_kmalloc) + size > PAGE_SIZE)
++	if (HDRLEN_KMALLOC + size > PAGE_SIZE)
+ 		return 1;
+ 	return 0;
+ }
+@@ -317,16 +338,29 @@ void* ipc_rcu_alloc(int size)
+ 	 * workqueue if necessary (for vmalloc). 
+ 	 */
+ 	if (rcu_use_vmalloc(size)) {
+-		out = vmalloc(sizeof(struct ipc_rcu_vmalloc) + size);
+-		if (out) out += sizeof(struct ipc_rcu_vmalloc);
++		out = vmalloc(HDRLEN_VMALLOC + size);
++		if (out) {
++			out += HDRLEN_VMALLOC;
++			container_of(out, struct ipc_rcu_hdr, data)->is_vmalloc = 1;
++			container_of(out, struct ipc_rcu_hdr, data)->refcount = 1;
++		}
+ 	} else {
+-		out = kmalloc(sizeof(struct ipc_rcu_kmalloc)+size, GFP_KERNEL);
+-		if (out) out += sizeof(struct ipc_rcu_kmalloc);
++		out = kmalloc(HDRLEN_KMALLOC + size, GFP_KERNEL);
++		if (out) {
++			out += HDRLEN_KMALLOC;
++			container_of(out, struct ipc_rcu_hdr, data)->is_vmalloc = 0;
++			container_of(out, struct ipc_rcu_hdr, data)->refcount = 1;
++		}
+ 	}
+ 
+ 	return out;
+ }
+ 
++void ipc_rcu_getref(void *ptr)
++{
++	container_of(ptr, struct ipc_rcu_hdr, data)->refcount++;
++}
++
+ /**
+  *	ipc_schedule_free	- free ipc + rcu space
+  * 
+@@ -335,11 +369,13 @@ void* ipc_rcu_alloc(int size)
+  */
+ static void ipc_schedule_free(struct rcu_head *head)
+ {
+-	struct ipc_rcu_vmalloc *free =
+-		container_of(head, struct ipc_rcu_vmalloc, rcu);
++	struct ipc_rcu_grace *grace =
++		container_of(head, struct ipc_rcu_grace, rcu);
++	struct ipc_rcu_sched *sched =
++			container_of(&(grace->data[0]), struct ipc_rcu_sched, data[0]);
+ 
+-	INIT_WORK(&free->work, vfree, free);
+-	schedule_work(&free->work);
++	INIT_WORK(&sched->work, vfree, sched);
++	schedule_work(&sched->work);
+ }
+ 
+ /**
+@@ -350,25 +386,23 @@ static void ipc_schedule_free(struct rcu
+  */
+ static void ipc_immediate_free(struct rcu_head *head)
+ {
+-	struct ipc_rcu_kmalloc *free =
+-		container_of(head, struct ipc_rcu_kmalloc, rcu);
++	struct ipc_rcu_grace *free =
++		container_of(head, struct ipc_rcu_grace, rcu);
+ 	kfree(free);
+ }
+ 
+-
+-
+-void ipc_rcu_free(void* ptr, int size)
++void ipc_rcu_putref(void *ptr)
+ {
+-	if (rcu_use_vmalloc(size)) {
+-		struct ipc_rcu_vmalloc *free;
+-		free = ptr - sizeof(*free);
+-		call_rcu(&free->rcu, ipc_schedule_free);
++	if (--container_of(ptr, struct ipc_rcu_hdr, data)->refcount > 0)
++		return;
++
++	if (container_of(ptr, struct ipc_rcu_hdr, data)->is_vmalloc) {
++		call_rcu(&container_of(ptr, struct ipc_rcu_grace, data)->rcu,
++				ipc_schedule_free);
+ 	} else {
+-		struct ipc_rcu_kmalloc *free;
+-		free = ptr - sizeof(*free);
+-		call_rcu(&free->rcu, ipc_immediate_free);
++		call_rcu(&container_of(ptr, struct ipc_rcu_grace, data)->rcu,
++				ipc_immediate_free);
+ 	}
+-
+ }
+ 
+ /**
+@@ -506,6 +540,12 @@ struct kern_ipc_perm* ipc_lock(struct ip
+ 	return out;
+ }
+ 
++void ipc_lock_by_ptr(struct kern_ipc_perm *perm)
++{
++	rcu_read_lock();
++	spin_lock(&perm->lock);
++}
++
+ void ipc_unlock(struct kern_ipc_perm* perm)
+ {
+ 	spin_unlock(&perm->lock);
+diff -puN ipc/util.h~ipc-1-3-add-refcount-to-ipc_rcu_alloc ipc/util.h
+--- 25/ipc/util.h~ipc-1-3-add-refcount-to-ipc_rcu_alloc	2004-07-03 17:12:12.725938968 -0700
++++ 25-akpm/ipc/util.h	2004-07-03 17:12:12.734937600 -0700
+@@ -45,14 +45,20 @@ int ipcperms (struct kern_ipc_perm *ipcp
+  */
+ void* ipc_alloc(int size);
+ void ipc_free(void* ptr, int size);
+-/* for allocation that need to be freed by RCU
+- * both function can sleep
++
++/*
++ * For allocation that need to be freed by RCU.
++ * Objects are reference counted, they start with reference count 1.
++ * getref increases the refcount, the putref call that reduces the recount
++ * to 0 schedules the rcu destruction. Caller must guarantee locking.
+  */
+ void* ipc_rcu_alloc(int size);
+-void ipc_rcu_free(void* arg, int size);
++void ipc_rcu_getref(void *ptr);
++void ipc_rcu_putref(void *ptr);
+ 
+ struct kern_ipc_perm* ipc_get(struct ipc_ids* ids, int id);
+ struct kern_ipc_perm* ipc_lock(struct ipc_ids* ids, int id);
++void ipc_lock_by_ptr(struct kern_ipc_perm *ipcp);
+ void ipc_unlock(struct kern_ipc_perm* perm);
+ int ipc_buildid(struct ipc_ids* ids, int id, int seq);
+ int ipc_checkid(struct ipc_ids* ids, struct kern_ipc_perm* ipcp, int uid);
+_

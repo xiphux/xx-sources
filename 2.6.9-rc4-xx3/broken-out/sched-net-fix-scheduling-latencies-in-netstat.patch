@@ -1,0 +1,52 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+The attached patch fixes long scheduling latencies caused by access to the
+/proc/net/tcp file.  The seqfile functions keep softirqs disabled for a
+very long time (i've seen reports of 20+ msecs, if there are enough sockets
+in the system).  With the attached patch it's below 100 usecs.
+
+The cond_resched_softirq() relies on the implicit knowledge that this code
+executes in process context and runs with softirqs disabled.
+
+Potentially enabling softirqs means that the socket list might change
+between buckets - but this is not an issue since seqfiles have a 4K
+iteration granularity anyway and /proc/net/tcp is often (much) larger than
+that.
+
+This patch has been in the -VP patchset for weeks.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/net/ipv4/tcp_ipv4.c |    9 ++++++++-
+ 1 files changed, 8 insertions(+), 1 deletion(-)
+
+diff -puN net/ipv4/tcp_ipv4.c~sched-net-fix-scheduling-latencies-in-netstat net/ipv4/tcp_ipv4.c
+--- 25/net/ipv4/tcp_ipv4.c~sched-net-fix-scheduling-latencies-in-netstat	Tue Sep 14 17:39:47 2004
++++ 25-akpm/net/ipv4/tcp_ipv4.c	Tue Sep 14 17:39:47 2004
+@@ -2223,7 +2223,10 @@ static void *established_get_first(struc
+ 		struct sock *sk;
+ 		struct hlist_node *node;
+ 		struct tcp_tw_bucket *tw;
+-	       
++
++		/* We can reschedule _before_ having picked the target: */
++		cond_resched_softirq();
++
+ 		read_lock(&tcp_ehash[st->bucket].lock);
+ 		sk_for_each(sk, node, &tcp_ehash[st->bucket].chain) {
+ 			if (sk->sk_family != st->family) {
+@@ -2270,6 +2273,10 @@ get_tw:
+ 		}
+ 		read_unlock(&tcp_ehash[st->bucket].lock);
+ 		st->state = TCP_SEQ_STATE_ESTABLISHED;
++
++		/* We can reschedule between buckets: */
++		cond_resched_softirq();
++
+ 		if (++st->bucket < tcp_ehash_size) {
+ 			read_lock(&tcp_ehash[st->bucket].lock);
+ 			sk = sk_head(&tcp_ehash[st->bucket].chain);
+_

@@ -1,0 +1,68 @@
+
+From: Nicolas Boichat <nicolas@boichat.ch>
+
+The I2C busses opened by rivafb were deleted immediately after reading the
+EDID, but they should be kept open, so user-space applications can use them.
+
+They are now deleted when the driver is unloaded.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ /dev/null                          |    0 
+ 25-akpm/drivers/video/riva/fbdev.c |   13 +++++++++++--
+ 2 files changed, 11 insertions(+), 2 deletions(-)
+
+diff -puN drivers/video/riva/fbdev.c~rivafb-i2c-fixes drivers/video/riva/fbdev.c
+--- 25/drivers/video/riva/fbdev.c~rivafb-i2c-fixes	2004-07-30 12:34:25.576225656 -0700
++++ 25-akpm/drivers/video/riva/fbdev.c	2004-07-30 12:34:56.446532656 -0700
+@@ -1876,7 +1876,6 @@ static void riva_get_EDID(struct fb_info
+ #ifdef CONFIG_FB_RIVA_I2C
+ 
+ 	par = (struct riva_par *) info->par;
+-	riva_create_i2c_busses(par);
+ 	for (i = par->bus; i >= 1; i--) {
+ 		riva_probe_i2c_connector(par, i, &par->EDID);
+ 		if (par->EDID) {
+@@ -1884,7 +1883,6 @@ static void riva_get_EDID(struct fb_info
+ 			break;
+ 		}
+ 	}
+-	riva_delete_i2c_busses(par);
+ #endif
+ #endif
+ 	NVTRACE_LEAVE();
+@@ -2038,6 +2036,10 @@ static int __devinit rivafb_probe(struct
+ 	}
+ #endif /* CONFIG_MTRR */
+ 
++#ifdef CONFIG_FB_RIVA_I2C
++	riva_create_i2c_busses((struct riva_par *) info->par);
++#endif
++
+ 	info->fbops = &riva_fb_ops;
+ 	info->fix = rivafb_fix;
+ 	riva_get_EDID(info, pd);
+@@ -2072,6 +2074,9 @@ static int __devinit rivafb_probe(struct
+ 	return 0;
+ 
+ err_out_iounmap_fb:
++#ifdef CONFIG_FB_RIVA_I2C
++	riva_delete_i2c_busses((struct riva_par *) info->par);
++#endif
+ 	iounmap(info->screen_base);
+ err_out_free_base1:
+ 	if (default_par->riva.Architecture == NV_ARCH_03) 
+@@ -2101,6 +2106,10 @@ static void __exit rivafb_remove(struct 
+ 	if (!info)
+ 		return;
+ 
++#ifdef CONFIG_FB_RIVA_I2C
++	riva_delete_i2c_busses(par);
++#endif
++
+ 	unregister_framebuffer(info);
+ #ifdef CONFIG_MTRR
+ 	if (par->mtrr.vram_valid)
+diff -L drivers/video/riva/fbdev.c.old -puN /dev/null /dev/null
+_

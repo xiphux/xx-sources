@@ -1,0 +1,96 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+nfsd4_process_open2 has become a bit long and contorted.  The following
+patches break nfsd4_process_open2 into smaller functions and add comments to
+describe logic flow, in preparation for delegation state.
+
+We begin by pulling out the code that searches for conflicting open owners
+into a separate function.
+
+Signed-off-by: Andy Adamson <andros@citi.umich.edu>
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/nfsd/nfs4state.c |   49 +++++++++++++++++++++++++++++---------------
+ 1 files changed, 33 insertions(+), 16 deletions(-)
+
+diff -puN fs/nfsd/nfs4state.c~nfsd4-move-open-owner-checks-from-nfsd4_process_open2-into-new-function fs/nfsd/nfs4state.c
+--- 25/fs/nfsd/nfs4state.c~nfsd4-move-open-owner-checks-from-nfsd4_process_open2-into-new-function	2004-09-23 22:13:22.080882112 -0700
++++ 25-akpm/fs/nfsd/nfs4state.c	2004-09-23 22:13:22.086881200 -0700
+@@ -1250,6 +1250,31 @@ out:
+ 		status = nfserr_reclaim_bad;
+ 	return status;
+ }
++
++static int
++nfs4_check_open(struct nfs4_file *fp, struct nfs4_stateowner *sop, struct nfsd4_open *open, struct nfs4_stateid **stpp)
++{
++	struct nfs4_stateid *local;
++	int status = nfserr_share_denied;
++
++	list_for_each_entry(local, &fp->fi_perfile, st_perfile) {
++		/* have we seen this open owner */
++		if (local->st_stateowner == sop) {
++			*stpp = local;
++			continue;
++		}
++		/* ignore lock owners */
++		if (local->st_stateowner->so_is_open_owner == 0)
++			continue;
++		/* check for conflicting share reservations */
++		if (!test_share(local, open))
++			goto out;
++	}
++	status = 0;
++out:
++	return status;
++}
++
+ /*
+  * called with nfs4_lock_state() held.
+  */
+@@ -1261,7 +1286,7 @@ nfsd4_process_open2(struct svc_rqst *rqs
+ 	struct nfs4_file *fp = NULL;
+ 	struct inode *ino;
+ 	unsigned int fi_hashval;
+-	struct nfs4_stateid *stq, *stp = NULL;
++	struct nfs4_stateid *stp = NULL;
+ 	int status;
+ 
+ 	status = nfserr_resource;
+@@ -1273,24 +1298,16 @@ nfsd4_process_open2(struct svc_rqst *rqs
+ 	status = nfserr_inval;
+ 	if (!TEST_ACCESS(open->op_share_access) || !TEST_DENY(open->op_share_deny))
+ 		goto out;
+-
++	/*
++	 * Lookup file; if found, lookup stateid and check open request;
++	 * not found, create
++	 */
+ 	fi_hashval = file_hashval(ino);
+ 	if (find_file(fi_hashval, ino, &fp)) {
+-		/* Search for conflicting share reservations */
+-		status = nfserr_share_denied;
+-		list_for_each_entry(stq, &fp->fi_perfile, st_perfile) {
+-			if (stq->st_stateowner == sop) {
+-				stp = stq;
+-				continue;
+-			}
+-			/* ignore lock owners */
+-			if (stq->st_stateowner->so_is_open_owner == 0)
+-				continue;
+-			if (!test_share(stq,open))	
+-				goto out;
+-		}
++		status = nfs4_check_open(fp, sop, open, &stp);
++		if (status)
++			goto out;
+ 	} else {
+-	/* No nfs4_file found; allocate and init a new one */
+ 		status = nfserr_resource;
+ 		if ((fp = alloc_init_file(fi_hashval, ino)) == NULL)
+ 			goto out;
+_

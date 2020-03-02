@@ -1,0 +1,54 @@
+
+From: Bjorn Helgaas <bjorn.helgaas@hp.com>
+
+Add pci_enable_device()/pci_disable_device().  In the past, drivers often
+worked without this, but it is now required in order to route PCI
+interrupts correctly.
+
+Signed-off-by: Bjorn Helgaas <bjorn.helgaas@hp.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/misc/ibmasm/module.c |   12 +++++++++++-
+ 1 files changed, 11 insertions(+), 1 deletion(-)
+
+diff -puN drivers/misc/ibmasm/module.c~ibmasm-add-missing-pci_enable_device drivers/misc/ibmasm/module.c
+--- 25/drivers/misc/ibmasm/module.c~ibmasm-add-missing-pci_enable_device	Wed Aug  4 16:33:42 2004
++++ 25-akpm/drivers/misc/ibmasm/module.c	Wed Aug  4 16:33:42 2004
+@@ -62,10 +62,17 @@ static int __init ibmasm_init_one(struct
+ 	int result = -ENOMEM;
+ 	struct service_processor *sp;
+ 
++	if (pci_enable_device(pdev)) {
++		printk(KERN_ERR "%s: can't enable PCI device at %s\n",
++			DRIVER_NAME, pci_name(pdev));
++		return -ENODEV;
++	}
++
+ 	sp = kmalloc(sizeof(struct service_processor), GFP_KERNEL);
+ 	if (sp == NULL) {
+ 		dev_err(&pdev->dev, "Failed to allocate memory\n");
+-		return result;
++		result = -ENOMEM;
++		goto error_kmalloc;
+ 	}
+ 	memset(sp, 0, sizeof(struct service_processor));
+ 
+@@ -148,6 +155,8 @@ error_heartbeat:
+ 	ibmasm_event_buffer_exit(sp);
+ error_eventbuffer:
+ 	kfree(sp);
++error_kmalloc:
++	pci_disable_device(pdev);
+ 
+ 	return result;
+ }
+@@ -166,6 +175,7 @@ static void __exit ibmasm_remove_one(str
+ 	iounmap(sp->base_address);
+ 	ibmasm_event_buffer_exit(sp);
+ 	kfree(sp);
++	pci_disable_device(pdev);
+ }
+ 
+ static struct pci_device_id ibmasm_pci_table[] =
+_

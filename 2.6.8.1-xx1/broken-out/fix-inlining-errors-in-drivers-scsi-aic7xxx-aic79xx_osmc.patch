@@ -1,0 +1,84 @@
+
+From: Jesper Juhl <juhl-lkml@dif.dk>
+
+This patch fixes the following build error (in 2.6.8-rc2-mm1) when using 
+gcc 3.4.0
+
+drivers/scsi/aic7xxx/aic79xx_osm.c: In function `ahd_linux_dv_transition':
+drivers/scsi/aic7xxx/aic79xx_osm.c:522: sorry, unimplemented: inlining failed in call to 'ahd_linux_dv_fallback': function body not available
+drivers/scsi/aic7xxx/aic79xx_osm.c:3070: sorry, unimplemented: called from here
+drivers/scsi/aic7xxx/aic79xx_osm.c:522: sorry, unimplemented: inlining failed in call to 'ahd_linux_dv_fallback': function body not available
+drivers/scsi/aic7xxx/aic79xx_osm.c:3093: sorry, unimplemented: called from here
+drivers/scsi/aic7xxx/aic79xx_osm.c:522: sorry, unimplemented: inlining failed in call to 'ahd_linux_dv_fallback': function body not available
+drivers/scsi/aic7xxx/aic79xx_osm.c:3144: sorry, unimplemented: called from here
+drivers/scsi/aic7xxx/aic79xx_osm.c:522: sorry, unimplemented: inlining failed in call to 'ahd_linux_dv_fallback': function body not available
+drivers/scsi/aic7xxx/aic79xx_osm.c:3257: sorry, unimplemented: called from here
+drivers/scsi/aic7xxx/aic79xx_osm.c:522: sorry, unimplemented: inlining failed in call to 'ahd_linux_dv_fallback': function body not available
+drivers/scsi/aic7xxx/aic79xx_osm.c:3288: sorry, unimplemented: called from here
+drivers/scsi/aic7xxx/aic79xx_osm.c:522: sorry, unimplemented: inlining failed in call to 'ahd_linux_dv_fallback': function body not available
+drivers/scsi/aic7xxx/aic79xx_osm.c:3317: sorry, unimplemented: called from here
+
+It first removes a duplicate forward declaration of ahd_linux_dv_fallback 
+and then moves the function before its first use so inlining can succeed.
+
+Signed-off-by: Jesper Juhl <juhl-lkml@dif.dk>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/scsi/aic7xxx/aic79xx_osm.c |   29 +++++++++++++----------------
+ 1 files changed, 13 insertions(+), 16 deletions(-)
+
+diff -puN drivers/scsi/aic7xxx/aic79xx_osm.c~fix-inlining-errors-in-drivers-scsi-aic7xxx-aic79xx_osmc drivers/scsi/aic7xxx/aic79xx_osm.c
+--- 25/drivers/scsi/aic7xxx/aic79xx_osm.c~fix-inlining-errors-in-drivers-scsi-aic7xxx-aic79xx_osmc	2004-08-01 17:44:03.180407560 -0700
++++ 25-akpm/drivers/scsi/aic7xxx/aic79xx_osm.c	2004-08-01 17:44:03.188406344 -0700
+@@ -510,9 +510,6 @@ static void ahd_linux_dv_su(struct ahd_s
+ 			    struct scsi_cmnd *cmd,
+ 			    struct ahd_devinfo *devinfo,
+ 			    struct ahd_linux_target *targ);
+-static __inline int
+-	   ahd_linux_dv_fallback(struct ahd_softc *ahd,
+-				 struct ahd_devinfo *devinfo);
+ static int ahd_linux_fallback(struct ahd_softc *ahd,
+ 			      struct ahd_devinfo *devinfo);
+ static __inline int ahd_linux_dv_fallback(struct ahd_softc *ahd,
+@@ -2912,6 +2909,19 @@ out:
+ 	ahd_unlock(ahd, &s);
+ }
+ 
++static __inline int
++ahd_linux_dv_fallback(struct ahd_softc *ahd, struct ahd_devinfo *devinfo)
++{
++	u_long s;
++	int retval;
++
++	ahd_lock(ahd, &s);
++	retval = ahd_linux_fallback(ahd, devinfo);
++	ahd_unlock(ahd, &s);
++
++	return (retval);
++}
++
+ static void
+ ahd_linux_dv_transition(struct ahd_softc *ahd, struct scsi_cmnd *cmd,
+ 			struct ahd_devinfo *devinfo,
+@@ -3548,19 +3558,6 @@ ahd_linux_dv_su(struct ahd_softc *ahd, s
+ 	cmd->cmnd[4] = le | SSS_START;
+ }
+ 
+-static __inline int
+-ahd_linux_dv_fallback(struct ahd_softc *ahd, struct ahd_devinfo *devinfo)
+-{
+-	u_long s;
+-	int retval;
+-
+-	ahd_lock(ahd, &s);
+-	retval = ahd_linux_fallback(ahd, devinfo);
+-	ahd_unlock(ahd, &s);
+-
+-	return (retval);
+-}
+-
+ static int
+ ahd_linux_fallback(struct ahd_softc *ahd, struct ahd_devinfo *devinfo)
+ {
+_

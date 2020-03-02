@@ -1,0 +1,59 @@
+---
+
+ include/linux/sched.h                             |    0 
+ linux-2.6.7-rc3-xx4-xiphux/crypto/api.c           |    3 ++-
+ linux-2.6.7-rc3-xx4-xiphux/crypto/internal.h      |    2 +-
+ linux-2.6.7-rc3-xx4-xiphux/include/linux/crypto.h |    6 +++++-
+ 4 files changed, 8 insertions(+), 3 deletions(-)
+
+diff -puN crypto/api.c~06-crypto-sleep crypto/api.c
+--- linux-2.6.7-rc3-xx4/crypto/api.c~06-crypto-sleep	2004-06-14 07:27:23.174379120 -0400
++++ linux-2.6.7-rc3-xx4-xiphux/crypto/api.c	2004-06-14 07:27:23.186377296 -0400
+@@ -56,7 +56,8 @@ struct crypto_alg *crypto_alg_lookup(con
+ 
+ static int crypto_init_flags(struct crypto_tfm *tfm, u32 flags)
+ {
+-	tfm->crt_flags = 0;
++	tfm->crt_flags = flags & CRYPTO_TFM_API_MASK;
++	flags &= ~CRYPTO_TFM_API_MASK;
+ 	
+ 	switch (crypto_tfm_alg_type(tfm)) {
+ 	case CRYPTO_ALG_TYPE_CIPHER:
+diff -puN crypto/internal.h~06-crypto-sleep crypto/internal.h
+--- linux-2.6.7-rc3-xx4/crypto/internal.h~06-crypto-sleep	2004-06-14 07:27:23.176378816 -0400
++++ linux-2.6.7-rc3-xx4-xiphux/crypto/internal.h	2004-06-14 07:27:23.187377144 -0400
+@@ -39,7 +39,7 @@ static inline void crypto_kunmap(void *v
+ 
+ static inline void crypto_yield(struct crypto_tfm *tfm)
+ {
+-	if (!in_softirq())
++	if (tfm->crt_flags & CRYPTO_TFM_API_YIELD)
+ 		cond_resched();
+ }
+ 
+diff -puN include/linux/crypto.h~06-crypto-sleep include/linux/crypto.h
+--- linux-2.6.7-rc3-xx4/include/linux/crypto.h~06-crypto-sleep	2004-06-14 07:27:23.179378360 -0400
++++ linux-2.6.7-rc3-xx4-xiphux/include/linux/crypto.h	2004-06-14 07:27:23.190376688 -0400
+@@ -36,7 +36,8 @@
+  */
+ #define CRYPTO_TFM_MODE_MASK		0x000000ff
+ #define CRYPTO_TFM_REQ_MASK		0x000fff00
+-#define CRYPTO_TFM_RES_MASK		0xfff00000
++#define CRYPTO_TFM_RES_MASK		0x7ff00000
++#define CRYPTO_TFM_API_MASK		0x80000000
+ 
+ #define CRYPTO_TFM_MODE_ECB		0x00000001
+ #define CRYPTO_TFM_MODE_CBC		0x00000002
+@@ -50,6 +51,9 @@
+ #define CRYPTO_TFM_RES_BAD_BLOCK_LEN 	0x00800000
+ #define CRYPTO_TFM_RES_BAD_FLAGS 	0x01000000
+ 
++/* Allow for rescheduling after processing each sg element */
++#define CRYPTO_TFM_API_YIELD		0x80000000
++
+ /*
+  * Miscellaneous stuff.
+  */
+diff -puN include/linux/sched.h~06-crypto-sleep include/linux/sched.h
+
+_

@@ -1,0 +1,37 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+Add lock_need_resched() which is to check for the necessity of lock-break
+in a critical section.  Used by later latency-break patches.
+
+tested on x86, should work on all architectures.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/sched.h |   11 +++++++++++
+ 1 files changed, 11 insertions(+)
+
+diff -puN include/linux/sched.h~add-lock_need_resched include/linux/sched.h
+--- 25/include/linux/sched.h~add-lock_need_resched	2004-10-05 01:47:18.826638752 -0700
++++ 25-akpm/include/linux/sched.h	2004-10-05 01:47:18.830638144 -0700
+@@ -1062,6 +1062,17 @@ extern int cond_resched_lock(spinlock_t 
+ # define need_lockbreak(lock) 0
+ #endif
+ 
++/*
++ * Does a critical section need to be broken due to another
++ * task waiting or preemption being signalled:
++ */
++static inline int lock_need_resched(spinlock_t *lock)
++{
++	if (need_lockbreak(lock) || need_resched())
++		return 1;
++	return 0;
++}
++
+ /* Reevaluate whether the task has signals pending delivery.
+    This is required every time the blocked sigset_t changes.
+    callers must hold sighand->siglock.  */
+_

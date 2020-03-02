@@ -1,0 +1,290 @@
+To create the architecture for private per-cpu-scheduler functions we create
+kernel/scheduler.c which is to contain functions common to all schedulers.
+
+We add include/linux/scheduler.h as a common point to enter all per scheduler
+information. In that we create the global sched_drv struct which will contain
+the pointers to each private scheduler equivalent of the common functions.
+
+The current kernel/sched.c will be the unique file for "ingosched" or the
+default scheduler.
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+Index: xx-sources/include/linux/sched.h
+===================================================================
+--- xx-sources.orig/include/linux/sched.h	2005-01-14 23:08:58.000000000 +0000
++++ xx-sources/include/linux/sched.h	2005-01-14 23:49:17.753106720 +0000
+@@ -479,12 +479,12 @@
+ #endif
+ };
+ 
++extern void cpu_attach_domain(struct sched_domain *sd, int cpu);
+ #ifdef ARCH_HAS_SCHED_DOMAIN
+ /* Useful helpers that arch setup code may use. Defined in kernel/sched.c */
+ extern cpumask_t cpu_isolated_map;
+ extern void init_sched_build_groups(struct sched_group groups[],
+ 	                        cpumask_t span, int (*group_fn)(int cpu));
+-extern void cpu_attach_domain(struct sched_domain *sd, int cpu);
+ #endif /* ARCH_HAS_SCHED_DOMAIN */
+ #endif /* CONFIG_SMP */
+ 
+@@ -529,6 +529,8 @@
+ struct audit_context;		/* See audit.c */
+ struct mempolicy;
+ 
++#include <linux/scheduler.h>
++
+ struct task_struct {
+ 	volatile long state;	/* -1 unrunnable, 0 runnable, >0 stopped */
+ 	struct thread_info *thread_info;
+Index: xx-sources/include/linux/scheduler.h
+===================================================================
+--- xx-sources.orig/include/linux/scheduler.h	2005-01-14 01:38:42.771666504 +0000
++++ xx-sources/include/linux/scheduler.h	2005-01-14 23:49:17.753106720 +0000
+@@ -0,0 +1,40 @@
++#ifndef _LINUX_SCHEDULER_H
++#define _LINUX_SCHEDULER_H
++
++struct sched_drv
++{
++	void (*sched_idle_next)(void);
++	void (*set_oom_timeslice)(task_t *);
++	unsigned long (*nr_running)(void);
++	unsigned long (*nr_uninterruptible)(void);
++	unsigned long long (*nr_context_switches)(void);
++	unsigned long (*nr_iowait)(void);
++	int (*idle_cpu)(int);
++	void (*init_idle)(task_t *, int);
++	void (*exit)(task_t *);
++	void (*fork)(task_t *);
++	void (*init)(void);
++	void (*init_smp)(void);
++	void (*schedule)(void);
++	void (*tick)(void);
++	void (*tail)(task_t *);
++	int (*do_sched_setscheduler)(pid_t, int, struct sched_param __user *);
++	int (*sched_setscheduler)(struct task_struct *, int, struct sched_param *);
++	void (*set_user_nice)(task_t *, long);
++	long (*rr_get_interval)(pid_t, struct timespec __user *);
++	long (*yield)(void);
++	int (*task_curr)(const task_t *);
++	int (*task_nice)(const task_t *);
++	int (*task_prio)(const task_t *);
++	int (*try_to_wake_up)(task_t *, unsigned, int);
++	void (*wake_up_new_task)(task_t *, unsigned long);
++#ifdef CONFIG_SMP
++	int (*migration_init)(void);
++	void (*exec)(void);
++	int (*set_cpus_allowed)(task_t *, cpumask_t);
++	void (*wait_task_inactive)(task_t *);
++	void (*cpu_attach_domain)(struct sched_domain *, int);
++#endif
++};
++
++#endif
+Index: xx-sources/kernel/scheduler.c
+===================================================================
+--- xx-sources.orig/kernel/scheduler.c	2005-01-14 01:38:42.771666504 +0000
++++ xx-sources/kernel/scheduler.c	2005-01-14 23:49:32.400879920 +0000
+@@ -0,0 +1,201 @@
++/*
++ *  kernel/scheduler.c
++ *
++ *  Kernel scheduler and related syscalls
++ *
++ *  Copyright (C) 1991-2002  Linus Torvalds
++ *
++ *  Modular cpu scheduler infrastructure by Con Kolivas based on
++ *  work by William Lee Irwin III.
++ */
++#include <linux/mm.h>
++#include <linux/module.h>
++#include <linux/nmi.h>
++#include <linux/init.h>
++#include <asm/uaccess.h>
++#include <linux/highmem.h>
++#include <linux/smp_lock.h>
++#include <asm/mmu_context.h>
++#include <linux/interrupt.h>
++#include <linux/completion.h>
++#include <linux/kernel_stat.h>
++#include <linux/security.h>
++#include <linux/notifier.h>
++#include <linux/profile.h>
++#include <linux/suspend.h>
++#include <linux/blkdev.h>
++#include <linux/delay.h>
++#include <linux/smp.h>
++#include <linux/timer.h>
++#include <linux/rcupdate.h>
++#include <linux/cpu.h>
++#include <linux/cpuset.h>
++#include <linux/percpu.h>
++#include <linux/kthread.h>
++#include <linux/seq_file.h>
++#include <linux/syscalls.h>
++#include <linux/times.h>
++#include <asm/tlb.h>
++
++#include <asm/unistd.h>
++
++extern struct sched_drv ingo_sched_drv;
++static const struct sched_drv *scheduler = &ingo_sched_drv;
++
++void sched_idle_next(void)
++{
++	scheduler->sched_idle_next();
++}
++
++unsigned long nr_running(void)
++{
++	return scheduler->nr_running();
++}
++
++unsigned long nr_uninterruptible(void)
++{
++	return scheduler->nr_uninterruptible();
++}
++
++unsigned long long nr_context_switches(void)
++{
++	return scheduler->nr_context_switches();
++}
++
++unsigned long nr_iowait(void)
++{
++	return scheduler->nr_iowait();
++}
++
++int idle_cpu(int cpu)
++{
++	return scheduler->idle_cpu(cpu);
++}
++EXPORT_SYMBOL_GPL(idle_cpu);
++
++void __devinit init_idle(task_t *task, int cpu)
++{
++	scheduler->init_idle(task, cpu);
++}
++
++void __init sched_init(void)
++{
++	scheduler->init();
++}
++
++void __init sched_init_smp(void)
++{
++	scheduler->init_smp();
++}
++
++asmlinkage void schedule(void)
++{
++	scheduler->schedule();
++}
++EXPORT_SYMBOL(schedule);
++
++void scheduler_tick(void)
++{
++	scheduler->tick();
++}
++
++#ifdef CONFIG_SMP
++int migration_init(void)
++{
++	return scheduler->migration_init();
++}
++
++int set_cpus_allowed(task_t *task, cpumask_t cpus)
++{
++	return scheduler->set_cpus_allowed(task, cpus);
++}
++EXPORT_SYMBOL_GPL(set_cpus_allowed);
++
++void wait_task_inactive(task_t * task)
++{
++	scheduler->wait_task_inactive(task);
++}
++
++void sched_exec(void)
++{
++	scheduler->exec();
++}
++
++void __devinit cpu_attach_domain(struct sched_domain *sd, int cpu)
++{
++	scheduler->cpu_attach_domain(sd, cpu);
++}
++#endif
++
++void set_user_nice(task_t *task, long nice)
++{
++	scheduler->set_user_nice(task, nice);
++}
++EXPORT_SYMBOL(set_user_nice);
++
++void set_oom_timeslice(task_t *p)
++{
++	scheduler->set_oom_timeslice(p);
++}
++
++asmlinkage
++long sys_sched_rr_get_interval(pid_t pid, struct timespec __user *interval)
++{
++	return scheduler->rr_get_interval(pid, interval);
++}
++
++asmlinkage long sys_sched_yield(void)
++{
++	return scheduler->yield();
++}
++
++int do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
++{
++	return scheduler->do_sched_setscheduler(pid, policy, param);
++}
++
++int sched_setscheduler(struct task_struct *p, int policy, struct sched_param *param)
++{
++	return scheduler->sched_setscheduler(p, policy, param);
++}
++EXPORT_SYMBOL_GPL(sched_setscheduler);
++
++int task_curr(const task_t *task)
++{
++	return scheduler->task_curr(task);
++}
++
++int task_nice(const task_t *task)
++{
++	return scheduler->task_nice(task);
++}
++
++int task_prio(const task_t *task)
++{
++	return scheduler->task_prio(task);
++}
++
++int try_to_wake_up(task_t *task, unsigned state, int sync)
++{
++	return scheduler->try_to_wake_up(task, state, sync);
++}
++
++void fastcall wake_up_new_task(task_t *task, unsigned long flags)
++{
++	scheduler->wake_up_new_task(task, flags);
++}
++
++void fastcall sched_fork(task_t *task)
++{
++	scheduler->fork(task);
++}
++
++void fastcall sched_exit(task_t *task)
++{
++	scheduler->exit(task);
++}
++
++asmlinkage void schedule_tail(task_t *task)
++{
++	scheduler->tail(task);
++}

@@ -1,0 +1,61 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+The rampant variable renaming made my eyes bleed, so I omitted that from
+here.  Anyhow, the test app works after I apply this, so I must have done
+something right.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/alpha/kernel/signal.c |   13 ++++++-------
+ 1 files changed, 6 insertions(+), 7 deletions(-)
+
+diff -puN arch/alpha/kernel/signal.c~signal-race-fix-alpha arch/alpha/kernel/signal.c
+--- 25/arch/alpha/kernel/signal.c~signal-race-fix-alpha	2004-08-06 00:53:57.707285080 -0700
++++ 25-akpm/arch/alpha/kernel/signal.c	2004-08-06 00:53:57.714284016 -0700
+@@ -470,7 +470,7 @@ setup_frame(int sig, struct k_sigaction 
+ 
+ give_sigsegv:
+ 	if (sig == SIGSEGV)
+-		ka->sa.sa_handler = SIG_DFL;
++		current->sighand->action[sig-1].sa.sa_handler = SIG_DFL;
+ 	force_sig(SIGSEGV, current);
+ }
+ 
+@@ -534,7 +534,7 @@ setup_rt_frame(int sig, struct k_sigacti
+ 
+ give_sigsegv:
+ 	if (sig == SIGSEGV)
+-		ka->sa.sa_handler = SIG_DFL;
++		current->sighand->action[sig-1].sa.sa_handler = SIG_DFL;
+ 	force_sig(SIGSEGV, current);
+ }
+ 
+@@ -608,21 +608,20 @@ do_signal(sigset_t *oldset, struct pt_re
+ 	siginfo_t info;
+ 	int signr;
+ 	unsigned long single_stepping = ptrace_cancel_bpt(current);
++	struct k_sigaction ka;
+ 
+ 	if (!oldset)
+ 		oldset = &current->blocked;
+ 
+ 	/* This lets the debugger run, ... */
+-	signr = get_signal_to_deliver(&info, regs, NULL);
++	signr = get_signal_to_deliver(&info, &ka, regs, NULL);
+ 	/* ... so re-check the single stepping. */
+ 	single_stepping |= ptrace_cancel_bpt(current);
+ 
+ 	if (signr > 0) {
+ 		/* Whee!  Actually deliver the signal.  */
+-		struct k_sigaction *ka = &current->sighand->action[signr-1];
+-
+-		if (r0) syscall_restart(r0, r19, regs, ka);
+-		handle_signal(signr, ka, &info, oldset, regs, sw);
++		if (r0) syscall_restart(r0, r19, regs, &ka);
++		handle_signal(signr, &ka, &info, oldset, regs, sw);
+ 		if (single_stepping) 
+ 			ptrace_set_bpt(current); /* re-set bpt */
+ 		return 1;
+_

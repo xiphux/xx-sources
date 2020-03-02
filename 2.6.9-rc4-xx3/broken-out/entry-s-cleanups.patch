@@ -1,0 +1,96 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+Remove the unused lcall7/lcall27 code.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/entry.S |   34 ----------------------------------
+ 25-akpm/arch/i386/kernel/traps.c |   14 --------------
+ 2 files changed, 48 deletions(-)
+
+diff -puN arch/i386/kernel/entry.S~entry-s-cleanups arch/i386/kernel/entry.S
+--- 25/arch/i386/kernel/entry.S~entry-s-cleanups	2004-09-26 17:12:01.344182424 -0700
++++ 25-akpm/arch/i386/kernel/entry.S	2004-09-26 17:12:01.350181512 -0700
+@@ -140,40 +140,6 @@ VM_MASK		= 0x00020000
+ .previous
+ 
+ 
+-
+-ENTRY(lcall7)
+-	pushfl			# We get a different stack layout with call
+-				# gates, which has to be cleaned up later..
+-	pushl %eax
+-	SAVE_ALL
+-	movl %esp, %ebp
+-	pushl %ebp
+-	pushl $0x7
+-do_lcall:
+-	movl EIP(%ebp), %eax	# due to call gates, this is eflags, not eip..
+-	movl CS(%ebp), %edx	# this is eip..
+-	movl EFLAGS(%ebp), %ecx	# and this is cs..
+-	movl %eax,EFLAGS(%ebp)	#
+-	movl %edx,EIP(%ebp)	# Now we move them to their "normal" places
+-	movl %ecx,CS(%ebp)	#
+-	GET_THREAD_INFO_WITH_ESP(%ebp)	# GET_THREAD_INFO
+-	movl TI_exec_domain(%ebp), %edx	# Get the execution domain
+-	call *EXEC_DOMAIN_handler(%edx)	# Call the handler for the domain
+-	addl $4, %esp
+-	popl %eax
+-	jmp resume_userspace
+-
+-ENTRY(lcall27)
+-	pushfl			# We get a different stack layout with call
+-				# gates, which has to be cleaned up later..
+-	pushl %eax
+-	SAVE_ALL
+-	movl %esp, %ebp
+-	pushl %ebp
+-	pushl $0x27
+-	jmp do_lcall
+-
+-
+ ENTRY(ret_from_fork)
+ 	pushl %eax
+ 	call schedule_tail
+diff -puN arch/i386/kernel/traps.c~entry-s-cleanups arch/i386/kernel/traps.c
+--- 25/arch/i386/kernel/traps.c~entry-s-cleanups	2004-09-26 17:12:01.346182120 -0700
++++ 25-akpm/arch/i386/kernel/traps.c	2004-09-26 17:12:01.351181360 -0700
+@@ -57,8 +57,6 @@
+ #include "mach_traps.h"
+ 
+ asmlinkage int system_call(void);
+-asmlinkage void lcall7(void);
+-asmlinkage void lcall27(void);
+ 
+ struct desc_struct default_ldt[] = { { 0, 0 }, { 0, 0 }, { 0, 0 },
+ 		{ 0, 0 }, { 0, 0 } };
+@@ -1015,11 +1013,6 @@ static void __init set_system_gate(unsig
+ 	_set_gate(idt_table+n,15,3,addr,__KERNEL_CS);
+ }
+ 
+-static void __init set_call_gate(void *a, void *addr)
+-{
+-	_set_gate(a,12,3,addr,__KERNEL_CS);
+-}
+-
+ static void __init set_task_gate(unsigned int n, unsigned int gdt_entry)
+ {
+ 	_set_gate(idt_table+n,5,0,0,(gdt_entry<<3));
+@@ -1064,13 +1057,6 @@ void __init trap_init(void)
+ 	set_system_gate(SYSCALL_VECTOR,&system_call);
+ 
+ 	/*
+-	 * default LDT is a single-entry callgate to lcall7 for iBCS
+-	 * and a callgate to lcall27 for Solaris/x86 binaries
+-	 */
+-	set_call_gate(&default_ldt[0],lcall7);
+-	set_call_gate(&default_ldt[4],lcall27);
+-
+-	/*
+ 	 * Should be a barrier for any external CPU state.
+ 	 */
+ 	cpu_init();
+_

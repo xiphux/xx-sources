@@ -1,0 +1,38 @@
+
+From: David Howells <dhowells@redhat.com>
+
+gcc-2.95 doesn't handle switch (long long) very well - it emits calls to the
+non-existent __cmpdi2().
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/cachefs/rootdir.c |    7 ++++---
+ 1 files changed, 4 insertions(+), 3 deletions(-)
+
+diff -puN fs/cachefs/rootdir.c~cachefs-linkage-fix-2 fs/cachefs/rootdir.c
+--- 25/fs/cachefs/rootdir.c~cachefs-linkage-fix-2	2004-09-07 02:51:09.745552248 -0700
++++ 25-akpm/fs/cachefs/rootdir.c	2004-09-07 02:51:09.749551640 -0700
+@@ -277,8 +277,9 @@ static int cachefs_root_readdir(struct f
+ 	memcpy(rec.keys, metadata->index.keys, sizeof(rec.keys));
+ 	cachefs_metadata_postread(inode, metadata);
+ 
+-	/* do the usual . and .. */
+-	switch (file->f_pos) {
++	/* do the usual . and .. (allowing for gcc-2.96 not supporting switch
++	 * on long long well) */
++	switch (file->f_pos < INT_MAX ? (int) file->f_pos : INT_MAX) {
+ 	case 0:
+ 		ret = filldir(cookie, ".", 1, file->f_pos,
+ 			      inode->vfs_inode.i_ino, DT_DIR);
+@@ -298,7 +299,7 @@ static int cachefs_root_readdir(struct f
+ 	/* deal with root directory only entries */
+ 	if (inode->vfs_inode.i_ino == CACHEFS_INO_ROOTDIR) {
+ 		rec.dpos_off = 4;
+-		switch (file->f_pos) {
++		switch (file->f_pos < INT_MAX ? (int) file->f_pos : INT_MAX) {
+ 		case 2:
+ 			ret = filldir(cookie, "metadata_catalogue", 18,
+ 				      file->f_pos, CACHEFS_INO_METADATA,
+_

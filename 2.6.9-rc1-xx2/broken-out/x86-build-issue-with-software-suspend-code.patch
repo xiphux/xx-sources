@@ -1,0 +1,45 @@
+
+From: "Jan Beulich" <JBeulich@novell.com>
+
+A piece of code most like "copy-and-paste"d from x86_64 to i386 caused the
+section named .data.nosave in arch/i386/power/swsusp.S to become named
+.data.nosave.1 in arch/i386/power/built-in.o (due to an attribute collision
+with an identically named section from arch/i386/power/cpu.c), which
+finally ends up in no-where land (because it doesn't have even the alloc
+bit set, and the linker script doesn't know about such a section either),
+resulting in the two variables being accessed at (absolute) addresses 0 and
+8 (which shouldn't normally be accessible at all, but perhaps are mapped
+for whatever reason at the point execution gets there, since otherwise
+problems with this code path should have been observed much earlier).
+
+The below patch changes the attributes of the section to match those of
+other instances of the section, so the renaming doesn't happen anymore.  It
+also adds alignment, decreases the fields from 8 to 4 bytes and applies
+these additional changes also to the appearant original x86_64 code.
+
+I'm slightly worried by the fact that ld lets both the attribute collision
+and the relocation from and alloc section targeting targeting a non-alloc
+one completely uncommented; I didn't check its code yet, so I don't know
+whether perhaps some diagnostics could simply be turned on for both of
+these.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/x86_64/kernel/suspend_asm.S |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletion(-)
+
+diff -puN arch/x86_64/kernel/suspend_asm.S~x86-build-issue-with-software-suspend-code arch/x86_64/kernel/suspend_asm.S
+--- 25/arch/x86_64/kernel/suspend_asm.S~x86-build-issue-with-software-suspend-code	2004-08-26 19:11:55.527862360 -0700
++++ 25-akpm/arch/x86_64/kernel/suspend_asm.S	2004-08-26 19:11:55.530861904 -0700
+@@ -112,7 +112,8 @@ ENTRY(swsusp_arch_resume)
+ 	call	swsusp_restore
+ 	ret
+ 
+-	.section .data.nosave
++	.section .data.nosave, "aw"
++	.align 8
+ loop:
+ 	.quad 0
+ loop2:	
+_

@@ -1,0 +1,68 @@
+
+From: Peter Osterlund <petero2@telia.com>
+
+I realized that bio_init() is already exported, so there is no need to
+duplicate the functionality in pkt_bio_init().  This patch removes the
+useless function and changes the callers to use bio_init().
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/pktcdvd.c |   22 +++-------------------
+ 1 files changed, 3 insertions(+), 19 deletions(-)
+
+diff -puN drivers/block/pktcdvd.c~packet-bio-init drivers/block/pktcdvd.c
+--- 25/drivers/block/pktcdvd.c~packet-bio-init	2004-09-26 17:03:47.028329856 -0700
++++ 25-akpm/drivers/block/pktcdvd.c	2004-09-26 17:03:47.033329096 -0700
+@@ -115,22 +115,6 @@ static int pkt_lowlevel_merge_requests_f
+ 	return pd->cdrw.merge_requests_fn(q, rq, next);
+ }
+ 
+-static void pkt_bio_init(struct bio *bio)
+-{
+-	bio->bi_next = NULL;
+-	bio->bi_flags = 1 << BIO_UPTODATE;
+-	bio->bi_rw = 0;
+-	bio->bi_vcnt = 0;
+-	bio->bi_idx = 0;
+-	bio->bi_phys_segments = 0;
+-	bio->bi_hw_segments = 0;
+-	bio->bi_size = 0;
+-	bio->bi_max_vecs = 0;
+-	bio->bi_end_io = NULL;
+-	atomic_set(&bio->bi_cnt, 1);
+-	bio->bi_private = NULL;
+-}
+-
+ static void pkt_bio_destructor(struct bio *bio)
+ {
+ 	kfree(bio->bi_io_vec);
+@@ -145,7 +129,7 @@ static struct bio *pkt_bio_alloc(int nr_
+ 	bio = kmalloc(sizeof(struct bio), GFP_KERNEL);
+ 	if (!bio)
+ 		goto no_bio;
+-	pkt_bio_init(bio);
++	bio_init(bio);
+ 
+ 	bvl = kmalloc(nr_iovecs * sizeof(struct bio_vec), GFP_KERNEL);
+ 	if (!bvl)
+@@ -726,7 +710,7 @@ static void pkt_gather_data(struct pktcd
+ 		if (written[f])
+ 			continue;
+ 		bio = pkt->r_bios[f];
+-		pkt_bio_init(bio);
++		bio_init(bio);
+ 		bio->bi_max_vecs = 1;
+ 		bio->bi_sector = pkt->sector + f * (CD_FRAMESIZE >> 9);
+ 		bio->bi_bdev = pd->bdev;
+@@ -1014,7 +998,7 @@ static void pkt_start_write(struct pktcd
+ 	}
+ 
+ 	/* Start the write request */
+-	pkt_bio_init(pkt->w_bio);
++	bio_init(pkt->w_bio);
+ 	pkt->w_bio->bi_max_vecs = PACKET_MAX_SIZE;
+ 	pkt->w_bio->bi_sector = pkt->sector;
+ 	pkt->w_bio->bi_bdev = pd->bdev;
+_

@@ -1,0 +1,58 @@
+
+From: Jan Kara <jack@suse.cz>
+
+Remove unnecessary division and modulo from ext3 code in often used paths. 
+Without the patch an oprofile of dbench load shows ext3_get_group_desc()
+uses 0.84% and ext3_group_sparse() 1.51%, with the patch the numbers are
+0.33% and 0.27% respectively.
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+Signed-off-by: Andreas Dilger <adilger@clusterfs.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/ext3/balloc.c |   20 +++++++++-----------
+ 1 files changed, 9 insertions(+), 11 deletions(-)
+
+diff -puN fs/ext3/balloc.c~minor-ext3-speedup fs/ext3/balloc.c
+--- 25/fs/ext3/balloc.c~minor-ext3-speedup	Thu Jan 13 15:42:06 2005
++++ 25-akpm/fs/ext3/balloc.c	Thu Jan 13 15:42:06 2005
+@@ -56,8 +56,8 @@ struct ext3_group_desc * ext3_get_group_
+ 	}
+ 	smp_rmb();
+ 
+-	group_desc = block_group / EXT3_DESC_PER_BLOCK(sb);
+-	desc = block_group % EXT3_DESC_PER_BLOCK(sb);
++	group_desc = block_group >> EXT3_DESC_PER_BLOCK_BITS(sb);
++	desc = block_group & (EXT3_DESC_PER_BLOCK(sb) - 1);
+ 	if (!EXT3_SB(sb)->s_group_desc[group_desc]) {
+ 		ext3_error (sb, "ext3_get_group_desc",
+ 			    "Group descriptor not loaded - "
+@@ -1440,19 +1440,17 @@ static inline int block_in_use(unsigned 
+ 
+ static inline int test_root(int a, int b)
+ {
+-	if (a == 0)
+-		return 1;
+-	while (1) {
+-		if (a == 1)
+-			return 1;
+-		if (a % b)
+-			return 0;
+-		a = a / b;
+-	}
++	int num = b;
++
++	while (a > num)
++		num *= b;
++	return num == a;
+ }
+ 
+ static int ext3_group_sparse(int group)
+ {
++	if (group <= 1)
++		return 1;
+ 	return (test_root(group, 3) || test_root(group, 5) ||
+ 		test_root(group, 7));
+ }
+_

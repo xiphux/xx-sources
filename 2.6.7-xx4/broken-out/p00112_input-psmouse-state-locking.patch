@@ -1,0 +1,94 @@
+
+From: Dmitry Torokhov <dtor_core@ameritech.net>
+
+  Input: when changing psmouse state (activated, ignore) do it while
+         holding serio lock so it will not fight with the interrupt
+         handler.
+  
+Signed-off-by: Dmitry Torokhov <dtor@mail.ru>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/input/mouse/psmouse-base.c |   32 +++++++++++++++++++----------
+ 1 files changed, 22 insertions(+), 10 deletions(-)
+
+diff -puN drivers/input/mouse/psmouse-base.c~input-psmouse-state-locking drivers/input/mouse/psmouse-base.c
+--- 25/drivers/input/mouse/psmouse-base.c~input-psmouse-state-locking	2004-06-27 22:50:42.070920696 -0700
++++ 25-akpm/drivers/input/mouse/psmouse-base.c	2004-06-27 22:50:42.082918872 -0700
+@@ -624,6 +624,23 @@ static void psmouse_initialize(struct ps
+ }
+ 
+ /*
++ * psmouse_set_state() sets new psmouse state and resets all flags and
++ * counters while holding serio lock so fighting with interrupt handler
++ * is not a concern.
++ */
++
++static void psmouse_set_state(struct psmouse *psmouse, unsigned char new_state)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&psmouse->serio->lock, flags);
++	psmouse->state = new_state;
++	psmouse->pktcnt = psmouse->cmdcnt = psmouse->out_of_sync = 0;
++	psmouse->flags = 0;
++	spin_unlock_irqrestore(&psmouse->serio->lock, flags);
++}
++
++/*
+  * psmouse_activate() enables the mouse so that we get motion reports from it.
+  */
+ 
+@@ -632,7 +649,7 @@ static void psmouse_activate(struct psmo
+ 	if (psmouse_command(psmouse, NULL, PSMOUSE_CMD_ENABLE))
+ 		printk(KERN_WARNING "psmouse.c: Failed to enable mouse on %s\n", psmouse->serio->phys);
+ 
+-	psmouse->state = PSMOUSE_ACTIVATED;
++	psmouse_set_state(psmouse, PSMOUSE_ACTIVATED);
+ }
+ 
+ /*
+@@ -654,7 +671,7 @@ static void psmouse_disconnect(struct se
+ {
+ 	struct psmouse *psmouse = serio->private;
+ 
+-	psmouse->state = PSMOUSE_CMD_MODE;
++	psmouse_set_state(psmouse, PSMOUSE_CMD_MODE);
+ 
+ 	if (psmouse->ptport) {
+ 		if (psmouse->ptport->deactivate)
+@@ -667,7 +684,7 @@ static void psmouse_disconnect(struct se
+ 	if (psmouse->disconnect)
+ 		psmouse->disconnect(psmouse);
+ 
+-	psmouse->state = PSMOUSE_IGNORE;
++	psmouse_set_state(psmouse, PSMOUSE_IGNORE);
+ 
+ 	input_unregister_device(&psmouse->dev);
+ 	serio_close(serio);
+@@ -695,9 +712,9 @@ static void psmouse_connect(struct serio
+ 	psmouse->dev.evbit[0] = BIT(EV_KEY) | BIT(EV_REL);
+ 	psmouse->dev.keybit[LONG(BTN_MOUSE)] = BIT(BTN_LEFT) | BIT(BTN_MIDDLE) | BIT(BTN_RIGHT);
+ 	psmouse->dev.relbit[0] = BIT(REL_X) | BIT(REL_Y);
+-	psmouse->state = PSMOUSE_CMD_MODE;
+ 	psmouse->serio = serio;
+ 	psmouse->dev.private = psmouse;
++	psmouse_set_state(psmouse, PSMOUSE_CMD_MODE);
+ 
+ 	serio->private = psmouse;
+ 	if (serio_open(serio, dev)) {
+@@ -760,12 +777,7 @@ static int psmouse_reconnect(struct seri
+ 		return -1;
+ 	}
+ 
+-	psmouse->state = PSMOUSE_CMD_MODE;
+-
+-	clear_bit(PSMOUSE_FLAG_ACK, &psmouse->flags);
+-	clear_bit(PSMOUSE_FLAG_CMD,  &psmouse->flags);
+-
+-	psmouse->pktcnt = psmouse->out_of_sync = 0;
++	psmouse_set_state(psmouse, PSMOUSE_CMD_MODE);
+ 
+ 	if (psmouse->reconnect) {
+ 	       if (psmouse->reconnect(psmouse))
+_

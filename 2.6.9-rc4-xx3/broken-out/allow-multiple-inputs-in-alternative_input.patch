@@ -1,0 +1,58 @@
+
+From: Zwane Mwaikambo <zwane@linuxpower.ca>
+
+I had to use the following patch to allow multiple arguments to be passed
+down to the asm stub for alternative_input whilst writing alternatives for
+mwait code, it seems like a simple enough fix.
+
+Signed-off-by: Zwane Mwaikambo <zwane@linuxpower.ca>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/asm-i386/system.h   |    4 ++--
+ 25-akpm/include/asm-x86_64/system.h |    4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN include/asm-i386/system.h~allow-multiple-inputs-in-alternative_input include/asm-i386/system.h
+--- 25/include/asm-i386/system.h~allow-multiple-inputs-in-alternative_input	Tue Sep 14 16:00:14 2004
++++ 25-akpm/include/asm-i386/system.h	Tue Sep 14 16:00:14 2004
+@@ -321,7 +321,7 @@ struct alt_instr { 
+  * If you use variable sized constraints like "m" or "g" in the 
+  * replacement maake sure to pad to the worst case length.
+  */
+-#define alternative_input(oldinstr, newinstr, feature, input)			\
++#define alternative_input(oldinstr, newinstr, feature, input...)		\
+ 	asm volatile ("661:\n\t" oldinstr "\n662:\n"				\
+ 		      ".section .altinstructions,\"a\"\n"			\
+ 		      "  .align 4\n"						\
+@@ -333,7 +333,7 @@ struct alt_instr { 
+ 		      ".previous\n"						\
+ 		      ".section .altinstr_replacement,\"ax\"\n"			\
+ 		      "663:\n\t" newinstr "\n664:\n"   /* replacement */ 	\
+-		      ".previous" :: "i" (feature), input)  
++		      ".previous" :: "i" (feature), ##input)
+ 
+ /*
+  * Force strict CPU ordering.
+diff -puN include/asm-x86_64/system.h~allow-multiple-inputs-in-alternative_input include/asm-x86_64/system.h
+--- 25/include/asm-x86_64/system.h~allow-multiple-inputs-in-alternative_input	Tue Sep 14 16:00:14 2004
++++ 25-akpm/include/asm-x86_64/system.h	Tue Sep 14 16:00:14 2004
+@@ -123,7 +123,7 @@ struct alt_instr { 
+  * If you use variable sized constraints like "m" or "g" in the 
+  * replacement maake sure to pad to the worst case length.
+  */
+-#define alternative_input(oldinstr, newinstr, feature, input)		\
++#define alternative_input(oldinstr, newinstr, feature, input...)	\
+ 	asm volatile ("661:\n\t" oldinstr "\n662:\n"			\
+ 		      ".section .altinstructions,\"a\"\n"		\
+ 		      "  .align 8\n"					\
+@@ -135,7 +135,7 @@ struct alt_instr { 
+ 		      ".previous\n"					\
+ 		      ".section .altinstr_replacement,\"ax\"\n"		\
+ 		      "663:\n\t" newinstr "\n664:\n"   /* replacement */ \
+-		      ".previous" :: "i" (feature), input)
++		      ".previous" :: "i" (feature), ##input)
+ 
+ /*
+  * Clear and set 'TS' bit respectively
+_

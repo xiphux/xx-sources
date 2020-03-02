@@ -1,0 +1,143 @@
+---
+
+ linux-2.6.7-xx4-xiphux/include/linux/swap.h   |    1 
+ linux-2.6.7-xx4-xiphux/include/linux/sysctl.h |    1 
+ linux-2.6.7-xx4-xiphux/kernel/sysctl.c        |    8 +++
+ linux-2.6.7-xx4-xiphux/mm/vmscan.c            |   61 ++++++++++++++++++++++++++
+ 4 files changed, 71 insertions(+)
+
+diff -puN include/linux/swap.h~ck-vm-autoregulate include/linux/swap.h
+--- linux-2.6.7-xx4/include/linux/swap.h~ck-vm-autoregulate	2004-06-29 02:17:59.109101208 -0400
++++ linux-2.6.7-xx4-xiphux/include/linux/swap.h	2004-06-29 02:19:00.650745456 -0400
+@@ -178,6 +178,7 @@ do {					\
+ extern int try_to_free_pages(struct zone **, unsigned int, unsigned int);
+ extern int shrink_all_memory(int);
+ extern int vm_mapped_page_cost;
++extern int vm_autoregulate;
+ 
+ #ifdef CONFIG_MMU
+ /* linux/mm/shmem.c */
+diff -puN include/linux/sysctl.h~ck-vm-autoregulate include/linux/sysctl.h
+--- linux-2.6.7-xx4/include/linux/sysctl.h~ck-vm-autoregulate	2004-06-29 02:18:02.885527104 -0400
++++ linux-2.6.7-xx4-xiphux/include/linux/sysctl.h	2004-06-29 02:19:20.367748016 -0400
+@@ -172,6 +172,7 @@ enum
+ 	VM_BLOCK_DUMP=24,	/* block dump mode */
+ 	VM_HUGETLB_GROUP=25,	/* permitted hugetlb group */
+ 	VM_VFS_CACHE_PRESSURE=26, /* dcache/icache reclaim pressure */
++	VM_AUTOREGULATE=27,     /* swappiness and inactivation autoregulated */
+ };
+ 
+ 
+diff -puN kernel/sysctl.c~ck-vm-autoregulate kernel/sysctl.c
+--- linux-2.6.7-xx4/kernel/sysctl.c~ck-vm-autoregulate	2004-06-29 02:18:12.003141016 -0400
++++ linux-2.6.7-xx4-xiphux/kernel/sysctl.c	2004-06-29 02:19:55.811359768 -0400
+@@ -744,6 +744,14 @@ static ctl_table vm_table[] = {
+ 		.extra1		= &one,
+ 		.extra2		= &one_hundred,
+ 	},
++	{
++		.ctl_name	= VM_AUTOREGULATE,
++		.procname	= "autoregulate",
++		.data		= &vm_autoregulate,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
+ #ifdef CONFIG_HUGETLB_PAGE
+ 	 {
+ 		.ctl_name	= VM_HUGETLB_PAGES,
+diff -puN mm/vmscan.c~ck-vm-autoregulate mm/vmscan.c
+--- linux-2.6.7-xx4/mm/vmscan.c~ck-vm-autoregulate	2004-06-29 02:18:14.845708880 -0400
++++ linux-2.6.7-xx4-xiphux/mm/vmscan.c	2004-06-29 02:52:56.218292152 -0400
+@@ -125,6 +125,8 @@ struct shrinker {
+  * From 1 .. 100.  Higher means less swappy.
+  */
+ int vm_mapped_page_cost = 32;
++int vm_autoregulate = 1;
++static int app_percent = 1;
+ 
+ static LIST_HEAD(shrinker_list);
+ static DECLARE_MUTEX(shrinker_sem);
+@@ -658,7 +660,9 @@ shrink_active_list(struct zone *zone, st
+ 	LIST_HEAD(l_active);	/* Pages to go onto the active_list */
+ 	struct page *page;
+ 	struct pagevec pvec;
++	struct sysinfo i;
+ 
++	si_meminfo(&i);
+ 	lru_add_drain();
+ 	pgmoved = 0;
+ 
+@@ -689,6 +693,59 @@ shrink_active_list(struct zone *zone, st
+ 	zone->pages_scanned += pgmoved;
+ 	local_unlock_irq(&zone->lru_lock);
+ 
++	/*
++	 * app_percent is the percentage of physical ram used
++	 * by application pages.
++	 */
++	si_meminfo(&i);
++	app_percent = 100 - ((i.freeram + get_page_cache_size() -
++		swapper_space.nrpages) / (i.totalram / 100));
++
++#ifdef CONFIG_SWAP
++	if (vm_autoregulate) {
++		si_swapinfo(&i);
++
++		if (likely(i.totalswap >= 100)) {
++			int swap_centile, cost;
++
++			/*
++			 * swap_centile is the percentage of the last (sizeof physical
++			 * ram) of swap free.
++			 */
++			swap_centile = i.freeswap /
++				(min(i.totalswap, i.totalram) / 100);
++			/*
++			 * Autoregulate vm_swappiness to be equal to the lowest of
++			 * app_percent and swap_centile.  Bias it downwards -ck
++			 */
++			cost = min(app_percent, swap_centile);
++			cost = cost * cost / 100;
++
++			/*
++			 * Originally, higher meant more swappy, but Nick changed it
++			 * so higher means less swappy.  So we need to invert this
++			 * value.
++			 *
++			 * It is important to invert this value AFTER
++			 * it is biased downwards - if we invert it too early, it
++			 * will throw off the value when it is biased. -xx
++			 */
++			cost = 100 - cost;
++
++			/*
++			 * The scale originally ran from 0-100, but Nick changed
++			 * it to 1-100.  So we need a check to prevent a zero
++			 * causing major breakage. -xx
++			 */
++			if (cost < 1)
++				vm_mapped_page_cost = 1;
++			else
++				vm_mapped_page_cost = cost;
++		} else
++			vm_mapped_page_cost = 100;
++	}
++#endif
++
+ 	while (!list_empty(&l_hold)) {
+ 		int referenced, dirty;
+ 
+@@ -806,6 +863,10 @@ shrink_zone(struct zone *zone, struct sc
+ 	nr_active = zone->nr_active_mapped + zone->nr_active_unmapped;
+ 	scan_inactive = (nr_active + zone->nr_inactive) >> sc->priority;
+ 
++	if (vm_autoregulate)
++		nr_active = nr_active / (101 - (app_percent * app_percent /
++					100)) * 100;
++
+ 	if (nr_active >= (zone->nr_inactive*2 + 1)) {
+ 		/*
+ 		 * Add one to `nr_to_scan' just to make sure that the kernel
+
+_

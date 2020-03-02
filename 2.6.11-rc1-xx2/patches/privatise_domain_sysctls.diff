@@ -1,0 +1,84 @@
+Privatise the domain sysctl functions as they refer to runqueue structures
+which may differ between schedulers.
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+
+Index: linux-2.6.10-rc2-mm1/include/linux/scheduler.h
+===================================================================
+--- linux-2.6.10-rc2-mm1.orig/include/linux/scheduler.h	2004-11-17 23:22:59.415747082 +1100
++++ linux-2.6.10-rc2-mm1/include/linux/scheduler.h	2004-11-17 23:23:00.083644548 +1100
+@@ -13,6 +13,8 @@
+  */
+ struct sched_drv
+ {
++	void (*init_sched_domain_sysctl)(void);
++	void (*destroy_sched_domain_sysctl)(void);
+ 	char cpusched_name[SCHED_NAME_MAX];
+ 	int (*rt_task)(const task_t *);
+ 	void (*wait_for_completion)(struct completion *);
+Index: linux-2.6.10-rc2-mm1/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc2-mm1.orig/kernel/sched.c	2004-11-17 23:22:59.417746775 +1100
++++ linux-2.6.10-rc2-mm1/kernel/sched.c	2004-11-17 23:23:00.085644241 +1100
+@@ -3714,7 +3714,7 @@ static ctl_table *sd_alloc_ctl_cpu_table
+ }
+ 
+ static struct ctl_table_header *sd_sysctl_header;
+-void init_sched_domain_sysctl()
++void ingo_init_sched_domain_sysctl(void)
+ {
+ 	int i, cpu_num = num_online_cpus();
+ 	char buf[32];
+@@ -3732,7 +3732,7 @@ void init_sched_domain_sysctl()
+ 	sd_sysctl_header = register_sysctl_table(sd_ctl_root, 0);
+ }
+ 
+-void destroy_sched_domain_sysctl()
++static void ingo_destroy_sched_domain_sysctl(void)
+ {
+ 	int cpu, cpu_num = num_online_cpus();
+ 	struct sched_domain *sd;
+@@ -3754,10 +3754,10 @@ void destroy_sched_domain_sysctl()
+ 	kfree(root);
+ }
+ #else
+-void init_sched_domain_sysctl()
++static void ingo_init_sched_domain_sysctl(void)
+ {
+ }
+-void destroy_sched_domain_sysctl()
++static void ingo_destroy_sched_domain_sysctl(void)
+ {
+ }
+ #endif
+@@ -3799,6 +3799,8 @@ void normalize_rt_tasks(void)
+ #endif /* CONFIG_MAGIC_SYSRQ */
+ 
+ struct sched_drv ingo_sched_drv = {
++	.init_sched_domain_sysctl = ingo_init_sched_domain_sysctl,
++	.destroy_sched_domain_sysctl = ingo_destroy_sched_domain_sysctl,
+ 	.cpusched_name		= "ingosched",
+ 	.rt_task		= ingo_rt_task,
+ 	.wait_for_completion	= ingo_wait_for_completion,
+Index: linux-2.6.10-rc2-mm1/kernel/scheduler.c
+===================================================================
+--- linux-2.6.10-rc2-mm1.orig/kernel/scheduler.c	2004-11-17 23:22:59.418746621 +1100
++++ linux-2.6.10-rc2-mm1/kernel/scheduler.c	2004-11-17 23:23:00.086644087 +1100
+@@ -1287,6 +1287,16 @@ static int __init scheduler_setup(char *
+ 
+ __setup ("cpusched=", scheduler_setup);
+ 
++void init_sched_domain_sysctl(void)
++{
++	scheduler->init_sched_domain_sysctl();
++}
++
++void destroy_sched_domain_sysctl(void)
++{
++	scheduler->destroy_sched_domain_sysctl();
++}
++
+ void fastcall __sched wait_for_completion(struct completion *x)
+ {
+ 	scheduler->wait_for_completion(x);

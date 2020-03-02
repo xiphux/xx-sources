@@ -1,0 +1,575 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+This is a derivative of Rick's schedstats patch which includes as little bit
+more SMP and sched-domains centric stuff.
+
+It drops some features from Rick's codebase.  I'd like to reconcile them in
+future, but I'd like to get this into -mm now so it can help with tracking
+down performance problems.
+
+kernel/sched.o size doesn't increase at all here when SCHEDSTATS is off (SMP
+.config).
+
+A userspace reporting application is at
+
+	http://www.zip.com.au/~akpm/linux/patches/stuff/stats7.c
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/Kconfig     |   13 +++
+ 25-akpm/arch/ia64/Kconfig     |   13 +++
+ 25-akpm/arch/ppc/Kconfig      |   13 +++
+ 25-akpm/arch/ppc64/Kconfig    |   13 +++
+ 25-akpm/arch/x86_64/Kconfig   |   13 +++
+ 25-akpm/fs/proc/proc_misc.c   |    7 +
+ 25-akpm/include/linux/sched.h |   38 ++++++++
+ 25-akpm/kernel/sched.c        |  178 ++++++++++++++++++++++++++++++++++++++++--
+ 8 files changed, 281 insertions(+), 7 deletions(-)
+
+diff -puN arch/i386/Kconfig~schedstats arch/i386/Kconfig
+--- 25/arch/i386/Kconfig~schedstats	2004-06-19 16:26:05.849963352 -0700
++++ 25-akpm/arch/i386/Kconfig	2004-06-19 16:26:05.864961072 -0700
+@@ -1482,6 +1482,19 @@ config 4KSTACKS
+ 	  on the VM subsystem for higher order allocations. This option
+ 	  will also use IRQ stacks to compensate for the reduced stackspace.
+ 
++config SCHEDSTATS
++	bool "Collect scheduler statistics"
++	depends on PROC_FS
++	default n
++	help
++	  If you say Y here, additional code will be inserted into the
++	  scheduler and related routines to collect statistics about
++	  scheduler behavior and provide them in /proc/schedstat.  These
++	  stats may be useful for both tuning and debugging the scheduler
++	  If you aren't debugging the scheduler or trying to tune a specific
++	  application, you can say N to avoid the very slight overhead
++	  this adds.
++
+ config X86_FIND_SMP_CONFIG
+ 	bool
+ 	depends on X86_LOCAL_APIC || X86_VOYAGER
+diff -puN arch/ia64/Kconfig~schedstats arch/ia64/Kconfig
+--- 25/arch/ia64/Kconfig~schedstats	2004-06-19 16:26:05.850963200 -0700
++++ 25-akpm/arch/ia64/Kconfig	2004-06-19 16:26:05.864961072 -0700
+@@ -609,6 +609,19 @@ config MAGIC_SYSRQ
+ 	  keys are documented in <file:Documentation/sysrq.txt>. Don't say Y
+ 	  unless you really know what this hack does.
+ 
++config SCHEDSTATS
++	bool "Collect scheduler statistics"
++	depends on PROC_FS
++	default n
++	help
++	  If you say Y here, additional code will be inserted into the
++	  scheduler and related routines to collect statistics about
++	  scheduler behavior and provide them in /proc/schedstat.  These
++	  stats may be useful for both tuning and debugging the scheduler
++	  If you aren't debugging the scheduler or trying to tune a specific
++	  application, you can say N to avoid the very slight overhead
++	  this adds.
++
+ config DEBUG_SLAB
+ 	bool "Debug memory allocations"
+ 	depends on DEBUG_KERNEL
+diff -puN arch/ppc64/Kconfig~schedstats arch/ppc64/Kconfig
+--- 25/arch/ppc64/Kconfig~schedstats	2004-06-19 16:26:05.852962896 -0700
++++ 25-akpm/arch/ppc64/Kconfig	2004-06-19 16:26:05.865960920 -0700
+@@ -426,6 +426,19 @@ config IRQSTACKS
+ 	  
+ endmenu
+ 
++config SCHEDSTATS
++	bool "Collect scheduler statistics"
++	depends on PROC_FS
++	default n
++	help
++	  If you say Y here, additional code will be inserted into the
++	  scheduler and related routines to collect statistics about
++	  scheduler behavior and provide them in /proc/schedstat.  These
++	  stats may be useful for both tuning and debugging the scheduler
++	  If you aren't debugging the scheduler or trying to tune a specific
++	  application, you can say N to avoid the very slight overhead
++	  this adds.
++
+ config SPINLINE
+ 	bool "Inline spinlock code at each call site"
+ 	depends on SMP && !PPC_SPLPAR && !PPC_ISERIES
+diff -puN arch/ppc/Kconfig~schedstats arch/ppc/Kconfig
+--- 25/arch/ppc/Kconfig~schedstats	2004-06-19 16:26:05.854962592 -0700
++++ 25-akpm/arch/ppc/Kconfig	2004-06-19 16:26:05.866960768 -0700
+@@ -1289,6 +1289,19 @@ config DEBUG_INFO
+ 	  debug the kernel.
+ 	  If you don't debug the kernel, you can say N.
+ 
++config SCHEDSTATS
++	bool "Collect scheduler statistics"
++	depends on PROC_FS
++	default n
++	help
++	  If you say Y here, additional code will be inserted into the
++	  scheduler and related routines to collect statistics about
++	  scheduler behavior and provide them in /proc/schedstat.  These
++	  stats may be useful for both tuning and debugging the scheduler
++	  If you aren't debugging the scheduler or trying to tune a specific
++	  application, you can say N to avoid the very slight overhead
++	  this adds.
++
+ config BOOTX_TEXT
+ 	bool "Support for early boot text console (BootX or OpenFirmware only)"
+ 	depends PPC_OF
+diff -puN arch/x86_64/Kconfig~schedstats arch/x86_64/Kconfig
+--- 25/arch/x86_64/Kconfig~schedstats	2004-06-19 16:26:05.855962440 -0700
++++ 25-akpm/arch/x86_64/Kconfig	2004-06-19 16:26:05.867960616 -0700
+@@ -462,6 +462,19 @@ config DEBUG_INFO
+ 	  Say Y here only if you plan to use gdb to debug the kernel.
+ 	  Please note that this option requires new binutils.
+ 	  If you don't debug the kernel, you can say N.
++
++config SCHEDSTATS
++	bool "Collect scheduler statistics"
++	depends on PROC_FS
++	default n
++	help
++	  If you say Y here, additional code will be inserted into the
++	  scheduler and related routines to collect statistics about
++	  scheduler behavior and provide them in /proc/schedstat.  These
++	  stats may be useful for both tuning and debugging the scheduler
++	  If you aren't debugging the scheduler or trying to tune a specific
++	  application, you can say N to avoid the very slight overhead
++	  this adds.
+ 	  
+ config FRAME_POINTER
+        bool "Compile the kernel with frame pointers"
+diff -puN fs/proc/proc_misc.c~schedstats fs/proc/proc_misc.c
+--- 25/fs/proc/proc_misc.c~schedstats	2004-06-19 16:26:05.856962288 -0700
++++ 25-akpm/fs/proc/proc_misc.c	2004-06-19 16:26:05.867960616 -0700
+@@ -285,6 +285,10 @@ static struct file_operations proc_vmsta
+ 	.release	= seq_release,
+ };
+ 
++#ifdef CONFIG_SCHEDSTATS
++extern struct file_operations proc_schedstat_operations;
++#endif
++
+ #ifdef CONFIG_PROC_HARDWARE
+ static int hardware_read_proc(char *page, char **start, off_t off,
+ 				 int count, int *eof, void *data)
+@@ -697,6 +701,9 @@ void __init proc_misc_init(void)
+ #ifdef CONFIG_MODULES
+ 	create_seq_entry("modules", 0, &proc_modules_operations);
+ #endif
++#ifdef CONFIG_SCHEDSTATS
++	create_seq_entry("schedstat", 0, &proc_schedstat_operations);
++#endif
+ #ifdef CONFIG_PROC_KCORE
+ 	proc_root_kcore = create_proc_entry("kcore", S_IRUSR, NULL);
+ 	if (proc_root_kcore) {
+diff -puN include/linux/sched.h~schedstats include/linux/sched.h
+--- 25/include/linux/sched.h~schedstats	2004-06-19 16:26:05.858961984 -0700
++++ 25-akpm/include/linux/sched.h	2004-06-19 16:26:05.869960312 -0700
+@@ -96,6 +96,14 @@ extern unsigned long nr_running(void);
+ extern unsigned long nr_uninterruptible(void);
+ extern unsigned long nr_iowait(void);
+ 
++#ifdef CONFIG_SCHEDSTATS
++#define schedstat_inc(s, field)		((s)->field++)
++#define schedstat_add(s, field, amt)	((s)->field += amt)
++#else
++#define schedstat_inc(s, field)		do { } while (0)
++#define schedstat_add(d, field, amt)	do { } while (0)
++#endif
++
+ #include <linux/time.h>
+ #include <linux/param.h>
+ #include <linux/resource.h>
+@@ -348,7 +356,6 @@ struct k_itimer {
+ 	struct sigqueue *sigq;		/* signal queue entry. */
+ };
+ 
+-
+ struct io_context;			/* See blkdev.h */
+ void exit_io_context(void);
+ 
+@@ -599,6 +606,35 @@ struct sched_domain {
+ 	unsigned long last_balance;	/* init to jiffies. units in jiffies */
+ 	unsigned int balance_interval;	/* initialise to 1. units in ms. */
+ 	unsigned int nr_balance_failed; /* initialise to 0 */
++
++#ifdef CONFIG_SCHEDSTATS
++	unsigned long lb_cnt[3];
++	unsigned long lb_balanced[3];
++	unsigned long lb_failed[3];
++	unsigned long lb_pulled[3];
++	unsigned long lb_hot_pulled[3];
++	unsigned long lb_imbalance[3];
++
++	/* Active load balancing */
++	unsigned long alb_cnt;
++	unsigned long alb_failed;
++	unsigned long alb_pushed;
++
++	/* Wakeups */
++	unsigned long sched_wake_remote;
++
++	/* Passive load balancing */
++	unsigned long plb_pulled;
++
++	/* Affine wakeups */
++	unsigned long afw_pulled;
++
++	/* SD_BALANCE_EXEC balances */
++	unsigned long sbe_pushed;
++
++	/* SD_BALANCE_CLONE balances */
++	unsigned long sbc_pushed;
++#endif
+ };
+ 
+ /* Common values for SMT siblings */
+diff -puN kernel/sched.c~schedstats kernel/sched.c
+--- 25/kernel/sched.c~schedstats	2004-06-19 16:26:05.859961832 -0700
++++ 25-akpm/kernel/sched.c	2004-06-19 16:26:05.873959704 -0700
+@@ -40,6 +40,8 @@
+ #include <linux/cpu.h>
+ #include <linux/percpu.h>
+ #include <linux/kthread.h>
++#include <linux/seq_file.h>
++#include <linux/times.h>
+ 
+ #include <asm/unistd.h>
+ 
+@@ -217,6 +219,7 @@ struct runqueue {
+ 	unsigned long expired_timestamp, nr_uninterruptible;
+ 	unsigned long long timestamp_last_tick;
+ 	task_t *curr, *idle;
++
+ 	struct mm_struct *prev_mm;
+ 	prio_array_t *active, *expired, arrays[2];
+ 	int best_expired_prio;
+@@ -232,6 +235,22 @@ struct runqueue {
+ 	task_t *migration_thread;
+ 	struct list_head migration_queue;
+ #endif
++#ifdef CONFIG_SCHEDSTATS
++	/* sys_sched_yield stats */
++	unsigned long yld_exp_empty;
++	unsigned long yld_act_empty;
++	unsigned long yld_both_empty;
++	unsigned long yld_cnt;
++
++	/* schedule stats */
++	unsigned long sched_cnt;
++	unsigned long sched_switch;
++	unsigned long sched_idle;
++
++	/* wake stats */
++	unsigned long sched_wake;
++	unsigned long sched_wake_local;
++#endif
+ };
+ 
+ static DEFINE_PER_CPU(struct runqueue, runqueues);
+@@ -278,6 +297,91 @@ static inline void task_rq_unlock(runque
+ 	spin_unlock_irqrestore(&rq->lock, *flags);
+ }
+ 
++
++#ifdef CONFIG_SCHEDSTATS
++
++/*
++ * bump this up when changing the output format or the meaning of an existing
++ * format, so that tools can adapt (or abort)
++ */
++#define SCHEDSTAT_VERSION	7
++
++static int show_schedstat(struct seq_file *seq, void *v)
++{
++	int i;
++
++	seq_printf(seq, "version %d\n", SCHEDSTAT_VERSION);
++	seq_printf(seq, "timestamp %lu\n", jiffies);
++	for_each_cpu(i) {
++		/* Include offline CPUs */
++		runqueue_t *rq = cpu_rq(i);
++#ifdef CONFIG_SMP
++		struct sched_domain *sd;
++		int j = 0;
++#endif
++
++		seq_printf(seq,
++		    "cpu%d %lu %lu %lu %lu %lu %lu %lu %lu %lu",
++		    i,
++		    rq->yld_both_empty, rq->yld_act_empty,
++		    rq->yld_exp_empty, rq->yld_cnt,
++		    rq->sched_switch, rq->sched_cnt,
++		    rq->sched_idle, rq->sched_wake, rq->sched_wake_local);
++#ifdef CONFIG_SMP
++		for_each_domain(i, sd) {
++			char str[NR_CPUS];
++			int k;
++			cpumask_scnprintf(str, NR_CPUS, sd->span);
++			seq_printf(seq, " domain%d %s", j++, str);
++
++			for (k = 0; k < 3; k++) {
++				seq_printf(seq, " %lu %lu %lu %lu %lu %lu",
++				    sd->lb_cnt[k], sd->lb_balanced[k],
++				    sd->lb_failed[k], sd->lb_pulled[k],
++				    sd->lb_hot_pulled[k], sd->lb_imbalance[k]);
++			}
++
++			seq_printf(seq, " %lu %lu %lu %lu %lu %lu %lu %lu",
++			    sd->alb_cnt, sd->alb_failed,
++			    sd->alb_pushed, sd->sched_wake_remote,
++			    sd->plb_pulled, sd->afw_pulled,
++			    sd->sbe_pushed, sd->sbc_pushed);
++		}
++#endif
++
++		seq_printf(seq, "\n");
++	}
++
++	return 0;
++}
++
++static int schedstat_open(struct inode *inode, struct file *file)
++{
++	unsigned size = 4096 * (1 + num_online_cpus() / 32);
++	char *buf = kmalloc(size, GFP_KERNEL);
++	struct seq_file *m;
++	int res;
++
++	if (!buf)
++		return -ENOMEM;
++	res = single_open(file, show_schedstat, NULL);
++	if (!res) {
++		m = file->private_data;
++		m->buf = buf;
++		m->size = size;
++	} else
++		kfree(buf);
++	return res;
++}
++
++struct file_operations proc_schedstat_operations = {
++	.open    = schedstat_open,
++	.read    = seq_read,
++	.llseek  = seq_lseek,
++	.release = single_release,
++};
++#endif
++
+ /*
+  * rq_lock - lock a given runqueue and disable interrupts.
+  */
+@@ -750,7 +854,24 @@ static int try_to_wake_up(task_t * p, un
+ 	cpu = task_cpu(p);
+ 	this_cpu = smp_processor_id();
+ 
++	schedstat_inc(rq, sched_wake);
++#ifndef CONFIG_SMP
++	schedstat_inc(rq, sched_wake_local);
++#endif
++
+ #ifdef CONFIG_SMP
++#ifdef CONFIG_SCHEDSTATS
++	if (cpu == this_cpu)
++		schedstat_inc(rq, sched_wake_local);
++	else {
++		for_each_domain(this_cpu, sd)
++			if (cpu_isset(cpu, sd->span))
++				break;
++		if (sd)
++			schedstat_inc(sd, sched_wake_remote);
++	}
++#endif
++
+ 	if (unlikely(task_running(rq, p)))
+ 		goto out_activate;
+ 
+@@ -791,12 +912,22 @@ static int try_to_wake_up(task_t * p, un
+ 				!task_hot(p, rq->timestamp_last_tick, sd))
+ 			|| ((sd->flags & SD_WAKE_BALANCE) &&
+ 				imbalance*this_load <= 100*load) ) {
++
+ 			/*
+ 			 * Now sd has SD_WAKE_AFFINE and p is cache cold in sd
+ 			 * or sd has SD_WAKE_BALANCE and there is an imbalance
+ 			 */
+-			if (cpu_isset(cpu, sd->span))
++			if (cpu_isset(cpu, sd->span)) {
++#ifdef CONFIG_SCHEDSTATS
++				if ((sd->flags & SD_WAKE_AFFINE) &&
++					!task_hot(p, rq->timestamp_last_tick, sd))
++					schedstat_inc(sd, afw_pulled);
++				else if ((sd->flags & SD_WAKE_BALANCE) &&
++					imbalance*this_load <= 100*load)
++					schedstat_inc(sd, plb_pulled);
++#endif
+ 				goto out_set_cpu;
++			}
+ 		}
+ 	}
+ 
+@@ -1280,6 +1411,7 @@ lock_again:
+ 			rq->nr_running++;
+ 		}
+ 	} else {
++		schedstat_inc(sd, sbc_pushed);
+ 		/* Not the local CPU - must adjust timestamp */
+ 		p->timestamp = (p->timestamp - this_rq->timestamp_last_tick)
+ 					+ rq->timestamp_last_tick;
+@@ -1348,6 +1480,7 @@ void sched_balance_exec(void)
+ 	if (sd) {
+ 		new_cpu = find_idlest_cpu(current, this_cpu, sd);
+ 		if (new_cpu != this_cpu) {
++  			schedstat_inc(sd, sbe_pushed);
+ 			put_cpu();
+ 			sched_migrate_task(current, new_cpu);
+ 			return;
+@@ -1420,6 +1553,13 @@ int can_migrate_task(task_t *p, runqueue
+ 			return 0;
+ 	}
+ 
++#ifdef CONFIG_SCHEDSTATS
++	if (!task_hot(p, rq->timestamp_last_tick, sd))
++		schedstat_inc(sd, lb_pulled[idle]);
++	else
++		schedstat_inc(sd, lb_hot_pulled[idle]);
++#endif
++
+ 	return 1;
+ }
+ 
+@@ -1680,14 +1820,20 @@ static int load_balance(int this_cpu, ru
+ 	int nr_moved;
+ 
+ 	spin_lock(&this_rq->lock);
++	schedstat_inc(sd, lb_cnt[idle]);
+ 
+ 	group = find_busiest_group(sd, this_cpu, &imbalance, idle);
+-	if (!group)
++	if (!group) {
++		schedstat_inc(sd, lb_balanced[idle]);
+ 		goto out_balanced;
++	}
+ 
+ 	busiest = find_busiest_queue(group);
+-	if (!busiest)
++	if (!busiest) {
++		schedstat_inc(sd, lb_balanced[idle]);
+ 		goto out_balanced;
++	}
++
+ 	/*
+ 	 * This should be "impossible", but since load
+ 	 * balancing is inherently racy and statistical,
+@@ -1697,6 +1843,7 @@ static int load_balance(int this_cpu, ru
+ 		WARN_ON(1);
+ 		goto out_balanced;
+ 	}
++	schedstat_add(sd, lb_imbalance[idle], imbalance);
+ 
+ 	nr_moved = 0;
+ 	if (busiest->nr_running > 1) {
+@@ -1714,6 +1861,7 @@ static int load_balance(int this_cpu, ru
+ 	spin_unlock(&this_rq->lock);
+ 
+ 	if (!nr_moved) {
++		schedstat_inc(sd, lb_failed[idle]);
+ 		sd->nr_balance_failed++;
+ 
+ 		if (unlikely(sd->nr_balance_failed > sd->cache_nice_tries+2)) {
+@@ -1768,13 +1916,20 @@ static int load_balance_newidle(int this
+ 	unsigned long imbalance;
+ 	int nr_moved = 0;
+ 
++ 	schedstat_inc(sd, lb_cnt[NEWLY_IDLE]);
+ 	group = find_busiest_group(sd, this_cpu, &imbalance, NEWLY_IDLE);
+-	if (!group)
++	if (!group) {
++		schedstat_inc(sd, lb_balanced[NEWLY_IDLE]);
+ 		goto out;
++	}
+ 
+ 	busiest = find_busiest_queue(group);
+-	if (!busiest || busiest == this_rq)
++	if (!busiest || busiest == this_rq) {
++		schedstat_inc(sd, lb_balanced[NEWLY_IDLE]);
+ 		goto out;
++	}
++
++	schedstat_add(sd, lb_imbalance[NEWLY_IDLE], imbalance);
+ 
+ 	/* Attempt to move tasks */
+ 	double_lock_balance(this_rq, busiest);
+@@ -1819,6 +1974,7 @@ static void active_load_balance(runqueue
+ 	struct sched_domain *sd;
+ 	struct sched_group *group, *busy_group;
+ 	int i;
++	int moved = 0;
+ 
+ 	if (busiest->nr_running <= 1)
+ 		return;
+@@ -1830,6 +1986,7 @@ static void active_load_balance(runqueue
+ 		WARN_ON(1);
+ 		return;
+ 	}
++	schedstat_inc(sd, alb_cnt);
+ 
+  	group = sd->groups;
+ 	while (!cpu_isset(busiest_cpu, group->cpumask))
+@@ -1866,11 +2023,16 @@ static void active_load_balance(runqueue
+ 		if (unlikely(busiest == rq))
+ 			goto next_group;
+ 		double_lock_balance(busiest, rq);
+-		move_tasks(rq, push_cpu, busiest, 1, sd, IDLE);
++		moved += move_tasks(rq, push_cpu, busiest, 1, sd, IDLE);
+ 		spin_unlock(&rq->lock);
+ next_group:
+ 		group = group->next;
+ 	} while (group != sd->groups);
++
++	if (moved)
++		schedstat_add(sd, alb_pushed, moved);
++	else
++		schedstat_inc(sd, alb_failed);
+ }
+ 
+ /*
+@@ -2210,6 +2372,7 @@ need_resched:
+ 	rq = this_rq();
+ 
+ 	release_kernel_lock(prev);
++ 	schedstat_inc(rq, sched_cnt);
+ 	now = sched_clock();
+ 	if (likely(now - prev->timestamp < NS_MAX_SLEEP_AVG))
+ 		run_time = now - prev->timestamp;
+@@ -2247,6 +2410,7 @@ need_resched:
+ 			next = rq->idle;
+ 			rq->expired_timestamp = 0;
+ 			wake_sleeping_dependent(cpu, rq);
++ 			schedstat_inc(rq, sched_idle);
+ 			goto switch_tasks;
+ 		}
+ 	}
+@@ -2256,6 +2420,7 @@ need_resched:
+ 		/*
+ 		 * Switch the active and expired arrays.
+ 		 */
++		schedstat_inc(rq, sched_switch);
+ 		rq->active = rq->expired;
+ 		rq->expired = array;
+ 		array = rq->active;
+@@ -3000,6 +3165,7 @@ asmlinkage long sys_sched_yield(void)
+ 	prio_array_t *array = current->array;
+ 	prio_array_t *target = rq->expired;
+ 
++	schedstat_inc(rq, yld_cnt);
+ 	/*
+ 	 * We implement yielding by moving the task into the expired
+ 	 * queue.
+_

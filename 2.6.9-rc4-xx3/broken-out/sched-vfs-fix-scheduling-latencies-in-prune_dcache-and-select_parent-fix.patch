@@ -1,0 +1,70 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+This one came back.  It is the VFS: Busy inodes after unmount. 
+Self-destruct in 5 seconds.  Have a nice day...  thing.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/dcache.c |   26 +++++++++++++++++---------
+ 1 files changed, 17 insertions(+), 9 deletions(-)
+
+diff -puN fs/dcache.c~sched-vfs-fix-scheduling-latencies-in-prune_dcache-and-select_parent-fix fs/dcache.c
+--- 25/fs/dcache.c~sched-vfs-fix-scheduling-latencies-in-prune_dcache-and-select_parent-fix	2004-09-30 22:36:07.336756248 -0700
++++ 25-akpm/fs/dcache.c	2004-09-30 22:36:07.341755488 -0700
+@@ -156,7 +156,7 @@ repeat:
+ 		spin_unlock(&dcache_lock);
+ 		return;
+ 	}
+-			
++
+ 	/*
+ 	 * AV: ->d_delete() is _NOT_ allowed to block now.
+ 	 */
+@@ -546,6 +546,13 @@ positive:
+  * list for prune_dcache(). We descend to the next level
+  * whenever the d_subdirs list is non-empty and continue
+  * searching.
++ *
++ * It returns zero iff there are no unused children,
++ * otherwise  it returns the number of children moved to
++ * the end of the unused list. This may not be the total
++ * number of unused children, because select_parent can
++ * drop the lock and return early due to latency
++ * constraints.
+  */
+ static int select_parent(struct dentry * parent)
+ {
+@@ -562,14 +569,6 @@ resume:
+ 		struct dentry *dentry = list_entry(tmp, struct dentry, d_child);
+ 		next = tmp->next;
+ 
+-		/*
+-		 * select_parent() is a performance optimization, it is
+-		 * not necessary to complete it. Abort if a reschedule is
+-		 * pending:
+-		 */
+-		if (need_resched())
+-			goto out;
+-
+ 		if (!list_empty(&dentry->d_lru)) {
+ 			dentry_stat.nr_unused--;
+ 			list_del_init(&dentry->d_lru);
+@@ -583,6 +582,15 @@ resume:
+ 			dentry_stat.nr_unused++;
+ 			found++;
+ 		}
++
++		/*
++		 * We can return to the caller if we have found some (this
++		 * ensures forward progress). We'll be coming back to find
++		 * the rest.
++		 */
++		if (found && need_resched())
++			goto out;
++
+ 		/*
+ 		 * Descend a level if the d_subdirs list is non-empty.
+ 		 */
+_

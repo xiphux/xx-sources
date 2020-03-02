@@ -1,0 +1,44 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+This patch fixes scheduling latencies in vgacon_do_font_op().  The code is
+protected by vga_lock already so it's safe to drop (and re-acquire) the
+BKL.
+
+Has been tested in the -VP patchset.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/video/console/vgacon.c |    3 +++
+ 1 files changed, 3 insertions(+)
+
+diff -puN drivers/video/console/vgacon.c~sched-fix-scheduling-latencies-in-vgaconc drivers/video/console/vgacon.c
+--- 25/drivers/video/console/vgacon.c~sched-fix-scheduling-latencies-in-vgaconc	Tue Sep 14 17:42:13 2004
++++ 25-akpm/drivers/video/console/vgacon.c	Tue Sep 14 17:42:13 2004
+@@ -49,6 +49,7 @@
+ #include <linux/spinlock.h>
+ #include <linux/ioport.h>
+ #include <linux/init.h>
++#include <linux/smp_lock.h>
+ #include <video/vga.h>
+ #include <asm/io.h>
+ 
+@@ -763,6 +764,7 @@ static int vgacon_do_font_op(struct vgas
+ 		charmap += 4 * cmapsz;
+ #endif
+ 
++	unlock_kernel();
+ 	spin_lock_irq(&vga_lock);
+ 	/* First, the Sequencer */
+ 	vga_wseq(state->vgabase, VGA_SEQ_RESET, 0x1);
+@@ -848,6 +850,7 @@ static int vgacon_do_font_op(struct vgas
+ 		vga_wattr(state->vgabase, VGA_AR_ENABLE_DISPLAY, 0);	
+ 	}
+ 	spin_unlock_irq(&vga_lock);
++	lock_kernel();
+ 	return 0;
+ }
+ 
+_

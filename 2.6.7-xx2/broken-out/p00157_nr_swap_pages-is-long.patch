@@ -1,0 +1,84 @@
+
+From: Anton Blanchard <anton@samba.org>
+
+../include/linux/swap.h:extern int nr_swap_pages;       /* XXX: shouldn't this be ulong? --hch */
+
+Sounds like it should be too me.  Some of the code checks for nr_swap_pages
+< 0 so I made it a long instead.  I had to fix up the ppc64 show_mem() (Im
+guessing there will be other trivial changes required in other 64bit archs,
+I can find and fix those if you want).
+
+I also noticed that the ppc64 show_mem() used ints to store page counts. 
+We can overflow that, so make them unsigned long.
+
+Signed-off-by: Anton Blanchard <anton@samba.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc64/mm/init.c |   14 +++++++-------
+ 25-akpm/include/linux/swap.h |    2 +-
+ 25-akpm/mm/page_alloc.c      |    2 +-
+ 3 files changed, 9 insertions(+), 9 deletions(-)
+
+diff -puN arch/ppc64/mm/init.c~nr_swap_pages-is-long arch/ppc64/mm/init.c
+--- 25/arch/ppc64/mm/init.c~nr_swap_pages-is-long	Mon Jun 21 16:10:59 2004
++++ 25-akpm/arch/ppc64/mm/init.c	Mon Jun 21 16:10:59 2004
+@@ -89,15 +89,15 @@ unsigned long	top_of_ram;
+ 
+ void show_mem(void)
+ {
+-	int total = 0, reserved = 0;
+-	int shared = 0, cached = 0;
++	unsigned long total = 0, reserved = 0;
++	unsigned long shared = 0, cached = 0;
+ 	struct page *page;
+ 	pg_data_t *pgdat;
+ 	unsigned long i;
+ 
+ 	printk("Mem-info:\n");
+ 	show_free_areas();
+-	printk("Free swap:       %6dkB\n",nr_swap_pages<<(PAGE_SHIFT-10));
++	printk("Free swap:       %6ldkB\n", nr_swap_pages<<(PAGE_SHIFT-10));
+ 	for_each_pgdat(pgdat) {
+ 		for (i = 0; i < pgdat->node_spanned_pages; i++) {
+ 			page = pgdat->node_mem_map + i;
+@@ -110,10 +110,10 @@ void show_mem(void)
+ 				shared += page_count(page) - 1;
+ 		}
+ 	}
+-	printk("%d pages of RAM\n",total);
+-	printk("%d reserved pages\n",reserved);
+-	printk("%d pages shared\n",shared);
+-	printk("%d pages swap cached\n",cached);
++	printk("%ld pages of RAM\n", total);
++	printk("%ld reserved pages\n", reserved);
++	printk("%ld pages shared\n", shared);
++	printk("%ld pages swap cached\n", cached);
+ }
+ 
+ #ifdef CONFIG_PPC_ISERIES
+diff -puN include/linux/swap.h~nr_swap_pages-is-long include/linux/swap.h
+--- 25/include/linux/swap.h~nr_swap_pages-is-long	Mon Jun 21 16:10:59 2004
++++ 25-akpm/include/linux/swap.h	Mon Jun 21 16:10:59 2004
+@@ -156,7 +156,7 @@ extern void swapin_readahead(swp_entry_t
+ /* linux/mm/page_alloc.c */
+ extern unsigned long totalram_pages;
+ extern unsigned long totalhigh_pages;
+-extern int nr_swap_pages;	/* XXX: shouldn't this be ulong? --hch */
++extern long nr_swap_pages;
+ extern unsigned int nr_free_pages(void);
+ extern unsigned int nr_free_pages_pgdat(pg_data_t *pgdat);
+ extern unsigned int nr_free_buffer_pages(void);
+diff -puN mm/page_alloc.c~nr_swap_pages-is-long mm/page_alloc.c
+--- 25/mm/page_alloc.c~nr_swap_pages-is-long	Mon Jun 21 16:10:59 2004
++++ 25-akpm/mm/page_alloc.c	Mon Jun 21 16:10:59 2004
+@@ -38,7 +38,7 @@ DECLARE_BITMAP(node_online_map, MAX_NUMN
+ struct pglist_data *pgdat_list;
+ unsigned long totalram_pages;
+ unsigned long totalhigh_pages;
+-int nr_swap_pages;
++long nr_swap_pages;
+ int numnodes = 1;
+ int sysctl_lower_zone_protection = 0;
+ 
+_

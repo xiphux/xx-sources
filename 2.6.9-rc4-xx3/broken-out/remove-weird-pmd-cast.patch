@@ -1,0 +1,34 @@
+
+From: Dave Hansen <haveblue@us.ibm.com>
+
+I don't know what this is trying to do.  It might be some kind of artifact
+from when get_pgd_slow() was removed.  
+
+The expanded expression with __pa() ends up looking something like this:
+
+	(unsigned long)(u64)(u32)pmd-PAGE_OFFSET
+
+and that is just nutty because pmd is a pointer now, anyway.
+
+Attached patch removes the casts.  
+
+Signed-off-by: Dave Hansen <haveblue@us.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/mm/pgtable.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN arch/i386/mm/pgtable.c~remove-weird-pmd-cast arch/i386/mm/pgtable.c
+--- 25/arch/i386/mm/pgtable.c~remove-weird-pmd-cast	Thu Oct  7 14:08:41 2004
++++ 25-akpm/arch/i386/mm/pgtable.c	Thu Oct  7 14:08:41 2004
+@@ -235,7 +235,7 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
+ 		pmd_t *pmd = kmem_cache_alloc(pmd_cache, GFP_KERNEL);
+ 		if (!pmd)
+ 			goto out_oom;
+-		set_pgd(&pgd[i], __pgd(1 + __pa((u64)((u32)pmd))));
++		set_pgd(&pgd[i], __pgd(1 + __pa(pmd)));
+ 	}
+ 	return pgd;
+ 
+_

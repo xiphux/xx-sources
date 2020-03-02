@@ -1,0 +1,32 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+Fix up create_proc_profile() to actually return values, and also s/unsigned
+int/atomic_t/ in one last place with a casting to atomic_t hangover.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/profile.c |    7 ++++---
+ 1 files changed, 4 insertions(+), 3 deletions(-)
+
+diff -puN kernel/profile.c~prof-fix-create_proc_profile kernel/profile.c
+--- 25/kernel/profile.c~prof-fix-create_proc_profile	Fri Aug  6 15:09:24 2004
++++ 25-akpm/kernel/profile.c	Fri Aug  6 15:09:24 2004
+@@ -297,11 +297,12 @@ static int __init create_proc_profile(vo
+ 	struct proc_dir_entry *entry;
+ 
+ 	if (!prof_on)
+-		return;
++		return 0;
+ 	if (!(entry = create_proc_entry("profile", S_IWUSR | S_IRUGO, NULL)))
+-		return;
++		return 0;
+ 	entry->proc_fops = &proc_profile_operations;
+-	entry->size = (1+prof_len) * sizeof(unsigned int);
++	entry->size = (1+prof_len) * sizeof(atomic_t);
++	return 0;
+ }
+ module_init(create_proc_profile);
+ #endif /* CONFIG_PROC_FS */
+_

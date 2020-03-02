@@ -1,0 +1,24 @@
+
+From: Pavel Machek <pavel@ucw.cz>
+
+Overwrite __init section so calls to __init functions from normal code
+are caught, reliably.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/mm/init.c |    1 +
+ 1 files changed, 1 insertion(+)
+
+diff -puN arch/i386/mm/init.c~__init-poisoning-for-i386 arch/i386/mm/init.c
+--- 25/arch/i386/mm/init.c~__init-poisoning-for-i386	Wed Oct  6 17:09:02 2004
++++ 25-akpm/arch/i386/mm/init.c	Wed Oct  6 17:09:23 2004
+@@ -723,6 +723,7 @@ void free_initmem(void)
+ 	for (; addr < (unsigned long)(&__init_end); addr += PAGE_SIZE) {
+ 		ClearPageReserved(virt_to_page(addr));
+ 		set_page_count(virt_to_page(addr), 1);
++		memset((void *)(addr & ~(PAGE_SIZE-1)), 0xcc, PAGE_SIZE);
+ 		free_page(addr);
+ 		totalram_pages++;
+ 	}
+_

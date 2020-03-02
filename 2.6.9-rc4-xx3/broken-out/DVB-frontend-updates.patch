@@ -1,0 +1,395 @@
+
+From: Michael Hunold <hunold@linuxtv.org>
+
+- [DVB] all: replace dvb_unregister_frontend_new() with
+  dvb_unregister_frontend()
+
+- [DVB] sp887x: fix firmware download, patch by Jose Alberto Reguero
+
+- [DVB] tda1004x: add firmware loading via firmware_class()
+
+- [DVB] dvb_frontend: without hierachical coding, code_rate_LP is
+  irrelevant, so we tolerate the otherwise invalid FEC_NONE setting
+
+- [DVB] ves1x93: fixed dropouts on older DVB cards, fix tuning issues
+  (Andreas Share / Gregoire Favre), 
+
+Signed-off-by: Michael Hunold <hunold@linuxtv.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/media/dvb/dvb-core/dvb_frontend.c       |    9 +
+ 25-akpm/drivers/media/dvb/dvb-core/dvb_frontend.h       |    4 
+ 25-akpm/drivers/media/dvb/dvb-core/dvb_ksyms.c          |    2 
+ 25-akpm/drivers/media/dvb/frontends/alps_tdmb7.c        |    2 
+ 25-akpm/drivers/media/dvb/frontends/at76c651.c          |    2 
+ 25-akpm/drivers/media/dvb/frontends/cx24110.c           |    2 
+ 25-akpm/drivers/media/dvb/frontends/dvb_dummy_fe.c      |    2 
+ 25-akpm/drivers/media/dvb/frontends/grundig_29504-401.c |    2 
+ 25-akpm/drivers/media/dvb/frontends/grundig_29504-491.c |    2 
+ 25-akpm/drivers/media/dvb/frontends/mt312.c             |    2 
+ 25-akpm/drivers/media/dvb/frontends/mt352.c             |    2 
+ 25-akpm/drivers/media/dvb/frontends/nxt6000.c           |    2 
+ 25-akpm/drivers/media/dvb/frontends/stv0299.c           |    2 
+ 25-akpm/drivers/media/dvb/frontends/ves1820.c           |    2 
+ 25-akpm/drivers/media/dvb/frontends/ves1x93.c           |   78 ++++++++--------
+ 25-akpm/drivers/media/dvb/ttusb-dec/ttusb_dec.c         |    2 
+ 16 files changed, 65 insertions(+), 52 deletions(-)
+
+diff -puN drivers/media/dvb/dvb-core/dvb_frontend.c~DVB-frontend-updates drivers/media/dvb/dvb-core/dvb_frontend.c
+--- 25/drivers/media/dvb/dvb-core/dvb_frontend.c~DVB-frontend-updates	2004-09-20 11:22:39.979573144 -0700
++++ 25-akpm/drivers/media/dvb/dvb-core/dvb_frontend.c	2004-09-20 11:22:40.013567976 -0700
+@@ -762,6 +762,13 @@ static int dvb_frontend_ioctl (struct in
+ 			fe->parameters.inversion = INVERSION_AUTO;
+ 			fetunesettings.parameters.inversion = INVERSION_AUTO;
+ 		}
++		if (fe->info->type == FE_OFDM) {
++			/* without hierachical coding code_rate_LP is irrelevant,
++			 * so we tolerate the otherwise invalid FEC_NONE setting */
++			if (fe->parameters.u.ofdm.hierarchy_information == HIERARCHY_NONE &&
++			    fe->parameters.u.ofdm.code_rate_LP == FEC_NONE)
++				fe->parameters.u.ofdm.code_rate_LP = FEC_AUTO;
++		}
+ 
+ 		/* get frontend-specific tuning settings */
+ 		if (dvb_frontend_internal_ioctl(&fe->frontend, FE_GET_TUNE_SETTINGS,
+@@ -1180,7 +1187,7 @@ dvb_register_frontend (int (*ioctl) (str
+ 	return 0;
+ }
+ 
+-int dvb_unregister_frontend_new (int (*ioctl) (struct dvb_frontend *frontend,
++int dvb_unregister_frontend (int (*ioctl) (struct dvb_frontend *frontend,
+ 					   unsigned int cmd, void *arg),
+ 			     struct dvb_adapter *dvb_adapter)
+ {
+diff -puN drivers/media/dvb/dvb-core/dvb_frontend.h~DVB-frontend-updates drivers/media/dvb/dvb-core/dvb_frontend.h
+--- 25/drivers/media/dvb/dvb-core/dvb_frontend.h~DVB-frontend-updates	2004-09-20 11:22:39.980572992 -0700
++++ 25-akpm/drivers/media/dvb/dvb-core/dvb_frontend.h	2004-09-20 11:22:40.014567824 -0700
+@@ -42,6 +42,8 @@
+ #define I2C_DRIVERID_DVBFE_ALPS_TDMB7	I2C_DRIVERID_EXP2
+ #define I2C_DRIVERID_DVBFE_AT76C651	I2C_DRIVERID_EXP2
+ #define I2C_DRIVERID_DVBFE_CX24110	I2C_DRIVERID_EXP2
++#define I2C_DRIVERID_DVBFE_CX22702	I2C_DRIVERID_EXP2
++#define I2C_DRIVERID_DVBFE_DIB3000MB	I2C_DRIVERID_EXP2
+ #define I2C_DRIVERID_DVBFE_DST		I2C_DRIVERID_EXP2
+ #define I2C_DRIVERID_DVBFE_DUMMY	I2C_DRIVERID_EXP2
+ #define I2C_DRIVERID_DVBFE_L64781	I2C_DRIVERID_EXP2
+@@ -102,7 +104,7 @@ dvb_register_frontend (int (*ioctl) (str
+ 		       struct module *module);
+ 
+ extern int
+-dvb_unregister_frontend_new (int (*ioctl) (struct dvb_frontend *frontend,
++dvb_unregister_frontend (int (*ioctl) (struct dvb_frontend *frontend,
+ 				       unsigned int cmd, void *arg),
+ 			 struct dvb_adapter *dvb_adapter);
+ 
+diff -puN drivers/media/dvb/dvb-core/dvb_ksyms.c~DVB-frontend-updates drivers/media/dvb/dvb-core/dvb_ksyms.c
+--- 25/drivers/media/dvb/dvb-core/dvb_ksyms.c~DVB-frontend-updates	2004-09-20 11:22:39.981572840 -0700
++++ 25-akpm/drivers/media/dvb/dvb-core/dvb_ksyms.c	2004-09-20 11:22:40.004569344 -0700
+@@ -24,7 +24,7 @@ EXPORT_SYMBOL(dvbdmx_connect_frontend);
+ EXPORT_SYMBOL(dvbdmx_disconnect_frontend);
+ 
+ EXPORT_SYMBOL(dvb_register_frontend);
+-EXPORT_SYMBOL(dvb_unregister_frontend_new);
++EXPORT_SYMBOL(dvb_unregister_frontend);
+ EXPORT_SYMBOL(dvb_add_frontend_ioctls);
+ EXPORT_SYMBOL(dvb_remove_frontend_ioctls);
+ EXPORT_SYMBOL(dvb_add_frontend_notifier);
+diff -puN drivers/media/dvb/frontends/alps_tdmb7.c~DVB-frontend-updates drivers/media/dvb/frontends/alps_tdmb7.c
+--- 25/drivers/media/dvb/frontends/alps_tdmb7.c~DVB-frontend-updates	2004-09-20 11:22:39.983572536 -0700
++++ 25-akpm/drivers/media/dvb/frontends/alps_tdmb7.c	2004-09-20 11:22:40.005569192 -0700
+@@ -470,7 +470,7 @@ static int detach_client (struct i2c_cli
+ 
+ 	dprintk ("%s\n", __FUNCTION__);
+ 
+-	dvb_unregister_frontend_new (tdmb7_ioctl, state->dvb);
++	dvb_unregister_frontend (tdmb7_ioctl, state->dvb);
+ 	i2c_detach_client(client);
+ 	BUG_ON(state->dvb);
+ 	kfree(client);
+diff -puN drivers/media/dvb/frontends/at76c651.c~DVB-frontend-updates drivers/media/dvb/frontends/at76c651.c
+--- 25/drivers/media/dvb/frontends/at76c651.c~DVB-frontend-updates	2004-09-20 11:22:39.985572232 -0700
++++ 25-akpm/drivers/media/dvb/frontends/at76c651.c	2004-09-20 11:22:40.005569192 -0700
+@@ -514,7 +514,7 @@ static int detach_client(struct i2c_clie
+ {
+ 	struct at76c651_state *state = i2c_get_clientdata(client);
+ 
+-	dvb_unregister_frontend_new(at76c651_ioctl, state->dvb);
++	dvb_unregister_frontend(at76c651_ioctl, state->dvb);
+ 	i2c_detach_client(client);
+ 	BUG_ON(state->dvb);
+ 	kfree(client);
+diff -puN drivers/media/dvb/frontends/cx24110.c~DVB-frontend-updates drivers/media/dvb/frontends/cx24110.c
+--- 25/drivers/media/dvb/frontends/cx24110.c~DVB-frontend-updates	2004-09-20 11:22:39.987571928 -0700
++++ 25-akpm/drivers/media/dvb/frontends/cx24110.c	2004-09-20 11:22:40.006569040 -0700
+@@ -708,7 +708,7 @@ static int detach_client (struct i2c_cli
+ {
+ 	struct cx24110_state *state = i2c_get_clientdata(client);
+ 
+-	dvb_unregister_frontend_new(cx24110_ioctl, state->dvb);
++	dvb_unregister_frontend(cx24110_ioctl, state->dvb);
+ 	i2c_detach_client(client);
+ 	BUG_ON(state->dvb);
+ 	kfree(client);
+diff -puN drivers/media/dvb/frontends/dvb_dummy_fe.c~DVB-frontend-updates drivers/media/dvb/frontends/dvb_dummy_fe.c
+--- 25/drivers/media/dvb/frontends/dvb_dummy_fe.c~DVB-frontend-updates	2004-09-20 11:22:39.988571776 -0700
++++ 25-akpm/drivers/media/dvb/frontends/dvb_dummy_fe.c	2004-09-20 11:22:40.007568888 -0700
+@@ -207,7 +207,7 @@ static int dvbdummyfe_detach_client(stru
+ {
+ 	struct dvb_adapter *dvb = i2c_get_clientdata(client);
+ 
+-	dvb_unregister_frontend_new(dvbdummyfe_ioctl, dvb);
++	dvb_unregister_frontend(dvbdummyfe_ioctl, dvb);
+ 	i2c_detach_client(client);
+ 	kfree(client);
+ 	return 0;
+diff -puN drivers/media/dvb/frontends/grundig_29504-401.c~DVB-frontend-updates drivers/media/dvb/frontends/grundig_29504-401.c
+--- 25/drivers/media/dvb/frontends/grundig_29504-401.c~DVB-frontend-updates	2004-09-20 11:22:39.989571624 -0700
++++ 25-akpm/drivers/media/dvb/frontends/grundig_29504-401.c	2004-09-20 11:22:40.007568888 -0700
+@@ -684,7 +684,7 @@ static int l64781_detach_client(struct i
+ {
+ 	struct l64781_state *state = i2c_get_clientdata(client);
+ 
+-	dvb_unregister_frontend_new(l64781_ioctl, state->dvb);
++	dvb_unregister_frontend(l64781_ioctl, state->dvb);
+ 	i2c_detach_client(client);
+ 	BUG_ON(state->dvb);
+ 	kfree(client);
+diff -puN drivers/media/dvb/frontends/grundig_29504-491.c~DVB-frontend-updates drivers/media/dvb/frontends/grundig_29504-491.c
+--- 25/drivers/media/dvb/frontends/grundig_29504-491.c~DVB-frontend-updates	2004-09-20 11:22:39.991571320 -0700
++++ 25-akpm/drivers/media/dvb/frontends/grundig_29504-491.c	2004-09-20 11:22:40.008568736 -0700
+@@ -492,7 +492,7 @@ static int tda8083_detach_client(struct 
+ {
+ 	struct tda8083_state *state = i2c_get_clientdata(client);
+ 
+-	dvb_unregister_frontend_new (tda8083_ioctl, state->dvb);
++	dvb_unregister_frontend (tda8083_ioctl, state->dvb);
+ 	i2c_detach_client(client);
+ 	BUG_ON(state->dvb);
+ 	kfree(client);
+diff -puN drivers/media/dvb/frontends/mt312.c~DVB-frontend-updates drivers/media/dvb/frontends/mt312.c
+--- 25/drivers/media/dvb/frontends/mt312.c~DVB-frontend-updates	2004-09-20 11:22:39.992571168 -0700
++++ 25-akpm/drivers/media/dvb/frontends/mt312.c	2004-09-20 11:22:40.009568584 -0700
+@@ -845,7 +845,7 @@ static int mt312_detach_client(struct i2
+ 
+ 	dprintk ("%s\n", __FUNCTION__);
+ 
+-	dvb_unregister_frontend_new (mt312_ioctl, state->dvb);
++	dvb_unregister_frontend (mt312_ioctl, state->dvb);
+ 	i2c_detach_client(client);
+ 	BUG_ON(state->dvb);
+ 	kfree(client);
+diff -puN drivers/media/dvb/frontends/mt352.c~DVB-frontend-updates drivers/media/dvb/frontends/mt352.c
+--- 25/drivers/media/dvb/frontends/mt352.c~DVB-frontend-updates	2004-09-20 11:22:39.993571016 -0700
++++ 25-akpm/drivers/media/dvb/frontends/mt352.c	2004-09-20 11:22:40.010568432 -0700
+@@ -840,7 +840,7 @@ static int mt352_detach_client(struct i2
+ {
+ 	struct mt352_state *state = i2c_get_clientdata(client);
+ 
+-	dvb_unregister_frontend_new (mt352_ioctl, state->dvb);
++	dvb_unregister_frontend (mt352_ioctl, state->dvb);
+ 	i2c_detach_client(client);
+ 	BUG_ON(state->dvb);
+ 	kfree(client);
+diff -puN drivers/media/dvb/frontends/nxt6000.c~DVB-frontend-updates drivers/media/dvb/frontends/nxt6000.c
+--- 25/drivers/media/dvb/frontends/nxt6000.c~DVB-frontend-updates	2004-09-20 11:22:39.995570712 -0700
++++ 25-akpm/drivers/media/dvb/frontends/nxt6000.c	2004-09-20 11:22:40.011568280 -0700
+@@ -872,7 +872,7 @@ out:
+ static int detach_client(struct i2c_client *client)
+ {
+ 	struct nxt6000_config *state = (struct nxt6000_config *) i2c_get_clientdata(client);
+-	dvb_unregister_frontend_new(nxt6000_ioctl, state->dvb);
++	dvb_unregister_frontend(nxt6000_ioctl, state->dvb);
+ 	i2c_detach_client(client);
+ 	BUG_ON(state->dvb);
+ 	kfree(client);
+diff -puN drivers/media/dvb/frontends/stv0299.c~DVB-frontend-updates drivers/media/dvb/frontends/stv0299.c
+--- 25/drivers/media/dvb/frontends/stv0299.c~DVB-frontend-updates	2004-09-20 11:22:39.996570560 -0700
++++ 25-akpm/drivers/media/dvb/frontends/stv0299.c	2004-09-20 11:22:40.012568128 -0700
+@@ -1414,7 +1414,7 @@ static int detach_client(struct i2c_clie
+ {
+ 	struct stv0299_state *state = (struct stv0299_state*)i2c_get_clientdata(client);
+ 
+-	dvb_unregister_frontend_new (uni0299_ioctl, state->dvb);
++	dvb_unregister_frontend (uni0299_ioctl, state->dvb);
+ 	i2c_detach_client(client);
+ 	kfree(client);
+ 	kfree(state);
+diff -puN drivers/media/dvb/frontends/ves1820.c~DVB-frontend-updates drivers/media/dvb/frontends/ves1820.c
+--- 25/drivers/media/dvb/frontends/ves1820.c~DVB-frontend-updates	2004-09-20 11:22:39.998570256 -0700
++++ 25-akpm/drivers/media/dvb/frontends/ves1820.c	2004-09-20 11:22:40.015567672 -0700
+@@ -578,7 +578,7 @@ static int attach_adapter(struct i2c_ada
+ static int detach_client(struct i2c_client *client)
+ {
+ 	struct ves1820_state *state = (struct ves1820_state *) i2c_get_clientdata(client);
+-	dvb_unregister_frontend_new(ves1820_ioctl, state->dvb);
++	dvb_unregister_frontend(ves1820_ioctl, state->dvb);
+ 	device_remove_file(&client->dev, &dev_attr_client_name);
+ 	i2c_detach_client(client);
+ 	BUG_ON(state->dvb);
+diff -puN drivers/media/dvb/frontends/ves1x93.c~DVB-frontend-updates drivers/media/dvb/frontends/ves1x93.c
+--- 25/drivers/media/dvb/frontends/ves1x93.c~DVB-frontend-updates	2004-09-20 11:22:39.999570104 -0700
++++ 25-akpm/drivers/media/dvb/frontends/ves1x93.c	2004-09-20 11:22:40.017567368 -0700
+@@ -28,6 +28,7 @@
+ #include <linux/init.h>
+ #include <linux/string.h>
+ #include <linux/slab.h>
++#include <linux/delay.h>
+ 
+ #include "dvb_frontend.h"
+ 
+@@ -48,7 +49,7 @@ static struct dvb_frontend_info ves1x93_
+ 	.type			= FE_QPSK,
+ 	.frequency_min		= 950000,
+ 	.frequency_max		= 2150000,
+-	.frequency_stepsize	= 250,           /* kHz for QPSK frontends */
++	.frequency_stepsize	= 125,		 /* kHz for QPSK frontends */
+ 	.frequency_tolerance	= 29500,
+ 	.symbol_rate_min	= 1000000,
+ 	.symbol_rate_max	= 45000000,
+@@ -170,10 +171,26 @@ static int tuner_write (struct i2c_adapt
+  *   set up the downconverter frequency divisor for a
+  *   reference clock comparision frequency of 125 kHz.
+  */
+-static int sp5659_set_tv_freq (struct i2c_adapter *i2c, u32 freq, u8 pwr)
++static int sp5659_set_tv_freq (struct i2c_adapter *i2c, u32 freq)
+ {
++	u8 pwr = 0;
++   	u8 buf[4];
+         u32 div = (freq + 479500) / 125;
+-	u8 buf [4] = { (div >> 8) & 0x7f, div & 0xff, 0x95, (pwr << 5) | 0x30 };
++
++	if (freq > 2000000) pwr = 3;
++	else if (freq > 1800000) pwr = 2;
++	else if (freq > 1600000) pwr = 1;
++	else if (freq > 1200000) pwr = 0;
++	else if (freq >= 1100000) pwr = 1;
++	else pwr = 2;
++
++   	buf[0] = (div >> 8) & 0x7f;
++   	buf[1] = div & 0xff;
++   	buf[2] = ((div & 0x18000) >> 10) | 0x95;
++   	buf[3] = (pwr << 6) | 0x30;
++
++   	// NOTE: since we're using a prescaler of 2, we set the
++	// divisor frequency to 62.5kHz and divide by 125 above
+ 
+ 	return tuner_write (i2c, buf, sizeof(buf));
+ }
+@@ -195,10 +212,10 @@ static int tsa5059_set_tv_freq (struct i
+ }
+ 
+ 
+-static int tuner_set_tv_freq (struct i2c_adapter *i2c, u32 freq, u8 pwr)
++static int tuner_set_tv_freq (struct i2c_adapter *i2c, u32 freq)
+ {
+ 	if ((demod_type == DEMOD_VES1893) && (board_type == BOARD_SIEMENS_PCI))
+-		return sp5659_set_tv_freq (i2c, freq, pwr);
++		return sp5659_set_tv_freq (i2c, freq);
+ 	else if (demod_type == DEMOD_VES1993)
+ 		return tsa5059_set_tv_freq (i2c, freq);
+ 
+@@ -252,17 +269,10 @@ static int ves1x93_init (struct i2c_adap
+ 
+ static int ves1x93_clr_bit (struct i2c_adapter *i2c)
+ {
++	msleep(10);
+         ves1x93_writereg (i2c, 0, init_1x93_tab[0] & 0xfe);
+         ves1x93_writereg (i2c, 0, init_1x93_tab[0]);
+-	msleep(5);
+-	return 0;
+-}
+-
+-static int ves1x93_init_aquire (struct i2c_adapter *i2c)
+-{
+-        ves1x93_writereg (i2c, 3, 0x00);
+-	ves1x93_writereg (i2c, 3, init_1x93_tab[3]);
+-	msleep(5);
++	msleep(50);
+ 	return 0;
+ }
+ 
+@@ -414,26 +424,6 @@ static int ves1x93_set_symbolrate (struc
+ 	return 0;
+ }
+ 
+-
+-static int ves1x93_afc (struct i2c_adapter *i2c, u32 freq, u32 srate)
+-{
+-	int afc;
+-
+-	afc = ((int)((ves1x93_readreg (i2c, 0x0a) << 1) & 0xff))/2;
+-	afc = (afc * (int)(srate/1000/8))/16;
+-    
+-	if (afc) {
+-	
+-		freq -= afc;
+-
+-		tuner_set_tv_freq (i2c, freq, 0);
+-
+-		ves1x93_init_aquire (i2c);
+-	}
+-       
+-	return 0;
+-}
+-
+ static int ves1x93_set_voltage (struct i2c_adapter *i2c, fe_sec_voltage_t voltage)
+ {
+ 	switch (voltage) {
+@@ -464,6 +454,21 @@ static int ves1x93_ioctl (struct dvb_fro
+ 		fe_status_t *status = arg;
+ 		u8 sync = ves1x93_readreg (i2c, 0x0e);
+ 
++		/*
++		 * The ves1893 sometimes returns sync values that make no sense,
++		 * because, e.g., the SIGNAL bit is 0, while some of the higher
++		 * bits are 1 (and how can there be a CARRIER w/o a SIGNAL?).
++		 * Tests showed that the the VITERBI and SYNC bits are returned
++		 * reliably, while the SIGNAL and CARRIER bits ar sometimes wrong.
++		 * If such a case occurs, we read the value again, until we get a
++		 * valid value.
++		 */
++		int maxtry = 10; /* just for safety - let's not get stuck here */
++		while ((sync & 0x03) != 0x03 && (sync & 0x0c) && maxtry--) {
++			msleep(10);
++			sync = ves1x93_readreg (i2c, 0x0e);
++		}
++
+ 		*status = 0;
+ 
+ 		if (sync & 1)
+@@ -525,11 +530,10 @@ static int ves1x93_ioctl (struct dvb_fro
+         {
+ 		struct dvb_frontend_parameters *p = arg;
+ 
+-		tuner_set_tv_freq (i2c, p->frequency, 0);
++		tuner_set_tv_freq (i2c, p->frequency);
+ 		ves1x93_set_inversion (i2c, p->inversion);
+ 		ves1x93_set_fec (i2c, p->u.qpsk.fec_inner);
+ 		ves1x93_set_symbolrate (i2c, p->u.qpsk.symbol_rate);
+-		ves1x93_afc (i2c, p->frequency, p->u.qpsk.symbol_rate);	    
+ 		state->inversion = p->inversion;
+                 break;
+         }
+@@ -650,7 +654,7 @@ static int attach_adapter(struct i2c_ada
+ static int detach_client(struct i2c_client *client)
+ {
+ 	struct ves1x93_state *state = (struct ves1x93_state*)i2c_get_clientdata(client);
+-	dvb_unregister_frontend_new(ves1x93_ioctl, state->dvb);
++	dvb_unregister_frontend(ves1x93_ioctl, state->dvb);
+ 	i2c_detach_client(client);
+ 	BUG_ON(state->dvb);
+ 	kfree(client);
+diff -puN drivers/media/dvb/ttusb-dec/ttusb_dec.c~DVB-frontend-updates drivers/media/dvb/ttusb-dec/ttusb_dec.c
+--- 25/drivers/media/dvb/ttusb-dec/ttusb_dec.c~DVB-frontend-updates	2004-09-20 11:22:40.001569800 -0700
++++ 25-akpm/drivers/media/dvb/ttusb-dec/ttusb_dec.c	2004-09-20 11:22:40.018567216 -0700
+@@ -1689,7 +1689,7 @@ static void ttusb_dec_init_frontend(stru
+ 
+ static void ttusb_dec_exit_frontend(struct ttusb_dec *dec)
+ {
+-	dvb_unregister_frontend_new(dec->frontend_ioctl, dec->adapter);
++	dvb_unregister_frontend(dec->frontend_ioctl, dec->adapter);
+ }
+ 
+ static void ttusb_dec_init_filters(struct ttusb_dec *dec)
+_

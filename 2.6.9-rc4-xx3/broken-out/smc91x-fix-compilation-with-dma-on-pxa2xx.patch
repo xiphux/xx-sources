@@ -1,0 +1,46 @@
+
+From: Nicolas Pitre <nico@cam.org>
+
+This is required for DMA on PXA to compile with the latest changes in
+mainline.  Also moved away from the PCI DMA flags.
+
+Signed-off-by: Nicolas Pitre <nico@cam.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/smc91x.h |    7 ++++---
+ 1 files changed, 4 insertions(+), 3 deletions(-)
+
+diff -puN drivers/net/smc91x.h~smc91x-fix-compilation-with-dma-on-pxa2xx drivers/net/smc91x.h
+--- 25/drivers/net/smc91x.h~smc91x-fix-compilation-with-dma-on-pxa2xx	2004-10-01 20:16:33.575964896 -0700
++++ 25-akpm/drivers/net/smc91x.h	2004-10-01 20:16:33.579964288 -0700
+@@ -248,8 +248,9 @@ static inline void SMC_outsw (unsigned l
+  * different and probably not worth it for that reason, and not as critical
+  * as RX which can overrun memory and lose packets.
+  */
+-#include <linux/pci.h>
++#include <linux/dma-mapping.h>
+ #include <asm/dma.h>
++#include <asm/arch/pxa-regs.h>
+ 
+ #ifdef SMC_insl
+ #undef SMC_insl
+@@ -275,7 +276,7 @@ smc_pxa_dma_insl(u_long ioaddr, u_long p
+ 	}
+ 
+ 	len *= 4;
+-	dmabuf = dma_map_single(NULL, buf, len, PCI_DMA_FROMDEVICE);
++	dmabuf = dma_map_single(NULL, buf, len, DMA_FROM_DEVICE);
+ 	DCSR(dma) = DCSR_NODESC;
+ 	DTADR(dma) = dmabuf;
+ 	DSADR(dma) = physaddr + reg;
+@@ -285,7 +286,7 @@ smc_pxa_dma_insl(u_long ioaddr, u_long p
+ 	while (!(DCSR(dma) & DCSR_STOPSTATE))
+ 		cpu_relax();
+ 	DCSR(dma) = 0;
+-	dma_unmap_single(NULL, dmabuf, len, PCI_DMA_FROMDEVICE);
++	dma_unmap_single(NULL, dmabuf, len, DMA_FROM_DEVICE);
+ }
+ #endif
+ 
+_

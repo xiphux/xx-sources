@@ -1,0 +1,29 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Don't use cpu_sibling_map if !CONFIG_SCHED_SMT
+
+This one spotted by Dimitri Sivanich <sivanich@sgi.com>
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/sched.c |    4 ++++
+ 1 files changed, 4 insertions(+)
+
+diff -puN kernel/sched.c~sched-consolidate-domains-fix-2 kernel/sched.c
+--- 25/kernel/sched.c~sched-consolidate-domains-fix-2	2004-07-26 23:22:32.874643664 -0700
++++ 25-akpm/kernel/sched.c	2004-07-26 23:22:32.880642752 -0700
+@@ -3683,7 +3683,11 @@ static DEFINE_PER_CPU(struct sched_domai
+ static struct sched_group sched_group_phys[NR_CPUS];
+ __init static int cpu_to_phys_group(int cpu)
+ {
++#ifdef CONFIG_SCHED_SMT
+ 	return first_cpu(cpu_sibling_map[cpu]);
++#else
++	return cpu;
++#endif
+ }
+ 
+ #ifdef CONFIG_NUMA
+_

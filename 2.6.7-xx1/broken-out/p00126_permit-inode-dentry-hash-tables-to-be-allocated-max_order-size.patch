@@ -1,0 +1,439 @@
+
+From: David Howells <dhowells@redhat.com>
+
+Here's a patch to allocate memory for big system hash tables with the
+bootmem allocator rather than with main page allocator.
+
+It is needed for three reasons:
+
+(1) So that the size can be bigger than MAX_ORDER.  IBM have done some
+    testing on their big PPC64 systems (64GB of RAM) with linux-2.4 and found
+    that they get better performance if the sizes of the inode cache hash,
+    dentry cache hash, buffer head hash and page cache hash are increased
+    beyond MAX_ORDER (order 11).
+
+     Now the main allocator can't allocate anything larger than MAX_ORDER, but
+     the bootmem allocator can.
+
+     In 2.6 it appears that only the inode and dentry hashes remain of those
+     four, but there are other hash tables that could use this service.
+
+(2) Changing MAX_ORDER appears to have a number of effects beyond just
+    limiting the maximum size that can be allocated in one go.
+
+(3) Should someone want a hash table in which each bucket isn't a power of
+    two in size, memory will be wasted as the chunk of memory allocated will
+    be a power of two in size (to hold a power of two number of buckets).
+
+    On the other hand, using the bootmem allocator means the allocation
+    will only take up sufficient pages to hold it, rather than the next power
+    of two up.
+
+    Admittedly, this point doesn't apply to the dentry and inode hashes,
+    but it might to another hash table that might want to use this service.
+
+
+I've coelesced the meat of the inode and dentry allocation routines into
+one such routine in mm/page_alloc.c that the the respective initialisation
+functions now call before mem_init() is called.
+
+This routine gets it's approximation of memory size by counting up the
+ZONE_NORMAL and ZONE_DMA pages (and ZONE_HIGHMEM if requested) in all the
+nodes passed to the main allocator by paging_init() (or wherever the arch
+does it).  It does not use max_low_pfn as that doesn't seem to be available
+on all archs, and it doesn't use num_physpages since that includes highmem
+pages not available to the kernel for allocating data structures upon -
+which may not be appropriate when calculating hash table size.
+
+On the off chance that the size of each hash bucket may not be exactly a
+power of two, the routine will only allocate as many pages as is necessary
+to ensure that the number of buckets is exactly a power of two, rather than
+allocating the smallest power-of-two sized chunk of memory that will hold
+the same array of buckets.
+
+The maximum size of any single hash table is given by
+MAX_SYS_HASH_TABLE_ORDER, as is now defined in linux/mmzone.h.
+DESC
+permit-inode-dentry-hash-tables-to-be-allocated-max_order-size-warning-fix
+EDESC
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/dcache.c             |   74 ++++++++++++++----------------------
+ 25-akpm/fs/inode.c              |   66 +++++++++++---------------------
+ 25-akpm/include/linux/bootmem.h |    8 +++
+ 25-akpm/include/linux/fs.h      |    2 
+ 25-akpm/include/linux/mmzone.h  |   12 +++++
+ 25-akpm/init/main.c             |    1 
+ 25-akpm/mm/page_alloc.c         |   82 ++++++++++++++++++++++++++++++++++++++++
+ 7 files changed, 159 insertions(+), 86 deletions(-)
+
+diff -puN fs/dcache.c~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size fs/dcache.c
+--- 25/fs/dcache.c~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size	Fri Jun 18 15:41:02 2004
++++ 25-akpm/fs/dcache.c	Fri Jun 18 15:41:02 2004
+@@ -30,6 +30,7 @@
+ #include <linux/security.h>
+ #include <linux/seqlock.h>
+ #include <linux/swap.h>
++#include <linux/bootmem.h>
+ 
+ #define DCACHE_PARANOIA 1
+ /* #define DCACHE_DEBUG 1 */
+@@ -1561,13 +1562,31 @@ static int __init set_dhash_entries(char
+ }
+ __setup("dhash_entries=", set_dhash_entries);
+ 
+-static void __init dcache_init(unsigned long mempages)
++static void __init dcache_init_early(void)
+ {
+-	struct hlist_head *d;
+-	unsigned long order;
+-	unsigned int nr_hash;
+-	int i;
++	struct hlist_head *p;
++	int loop;
++
++	dentry_hashtable =
++		alloc_large_system_hash("Dentry cache",
++					sizeof(struct hlist_head),
++					dhash_entries,
++					13,
++					0,
++					&d_hash_shift,
++					&d_hash_mask);
++
++	p = dentry_hashtable;
++	loop = 1 << d_hash_shift;
++	do {
++		INIT_HLIST_HEAD(p);
++		p++;
++		loop--;
++	} while (loop);
++}
+ 
++static void __init dcache_init(unsigned long mempages)
++{
+ 	/* 
+ 	 * A constructor could be added for stable state like the lists,
+ 	 * but it is probably not worth it because of the cache nature
+@@ -1580,45 +1599,6 @@ static void __init dcache_init(unsigned 
+ 					 NULL, NULL);
+ 	
+ 	set_shrinker(DEFAULT_SEEKS, shrink_dcache_memory);
+-
+-	if (!dhash_entries)
+-		dhash_entries = PAGE_SHIFT < 13 ?
+-				mempages >> (13 - PAGE_SHIFT) :
+-				mempages << (PAGE_SHIFT - 13);
+-
+-	dhash_entries *= sizeof(struct hlist_head);
+-	for (order = 0; ((1UL << order) << PAGE_SHIFT) < dhash_entries; order++)
+-		;
+-
+-	do {
+-		unsigned long tmp;
+-
+-		nr_hash = (1UL << order) * PAGE_SIZE /
+-			sizeof(struct hlist_head);
+-		d_hash_mask = (nr_hash - 1);
+-
+-		tmp = nr_hash;
+-		d_hash_shift = 0;
+-		while ((tmp >>= 1UL) != 0UL)
+-			d_hash_shift++;
+-
+-		dentry_hashtable = (struct hlist_head *)
+-			__get_free_pages(GFP_ATOMIC, order);
+-	} while (dentry_hashtable == NULL && --order >= 0);
+-
+-	printk(KERN_INFO "Dentry cache hash table entries: %d (order: %ld, %ld bytes)\n",
+-			nr_hash, order, (PAGE_SIZE << order));
+-
+-	if (!dentry_hashtable)
+-		panic("Failed to allocate dcache hash table\n");
+-
+-	d = dentry_hashtable;
+-	i = nr_hash;
+-	do {
+-		INIT_HLIST_HEAD(d);
+-		d++;
+-		i--;
+-	} while (i);
+ }
+ 
+ /* SLAB cache for __getname() consumers */
+@@ -1632,6 +1612,12 @@ EXPORT_SYMBOL(d_genocide);
+ extern void bdev_cache_init(void);
+ extern void chrdev_init(void);
+ 
++void __init vfs_caches_init_early(void)
++{
++	dcache_init_early();
++	inode_init_early();
++}
++
+ void __init vfs_caches_init(unsigned long mempages)
+ {
+ 	unsigned long reserve;
+diff -puN fs/inode.c~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size fs/inode.c
+--- 25/fs/inode.c~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size	Fri Jun 18 15:41:02 2004
++++ 25-akpm/fs/inode.c	Fri Jun 18 15:41:02 2004
+@@ -20,6 +20,7 @@
+ #include <linux/security.h>
+ #include <linux/pagemap.h>
+ #include <linux/cdev.h>
++#include <linux/bootmem.h>
+ 
+ /*
+  * This is needed for the following functions:
+@@ -1334,54 +1335,35 @@ __setup("ihash_entries=", set_ihash_entr
+ /*
+  * Initialize the waitqueues and inode hash table.
+  */
+-void __init inode_init(unsigned long mempages)
++void __init inode_init_early(void)
+ {
+-	struct hlist_head *head;
+-	unsigned long order;
+-	unsigned int nr_hash;
+-	int i;
+-
+-	for (i = 0; i < ARRAY_SIZE(i_wait_queue_heads); i++)
+-		init_waitqueue_head(&i_wait_queue_heads[i].wqh);
++	struct hlist_head *p;
++	int loop;
+ 
+-	if (!ihash_entries)
+-		ihash_entries = PAGE_SHIFT < 14 ?
+-				mempages >> (14 - PAGE_SHIFT) :
+-				mempages << (PAGE_SHIFT - 14);
+-
+-	ihash_entries *= sizeof(struct hlist_head);
+-	for (order = 0; ((1UL << order) << PAGE_SHIFT) < ihash_entries; order++)
+-		;
++	inode_hashtable =
++		alloc_large_system_hash("Inode-cache",
++					sizeof(struct hlist_head),
++					ihash_entries,
++					14,
++					0,
++					&i_hash_shift,
++					&i_hash_mask);
+ 
++	p = inode_hashtable;
++	loop = 1 << i_hash_shift;
+ 	do {
+-		unsigned long tmp;
+-
+-		nr_hash = (1UL << order) * PAGE_SIZE /
+-			sizeof(struct hlist_head);
+-		i_hash_mask = (nr_hash - 1);
+-
+-		tmp = nr_hash;
+-		i_hash_shift = 0;
+-		while ((tmp >>= 1UL) != 0UL)
+-			i_hash_shift++;
+-
+-		inode_hashtable = (struct hlist_head *)
+-			__get_free_pages(GFP_ATOMIC, order);
+-	} while (inode_hashtable == NULL && --order >= 0);
+-
+-	printk("Inode-cache hash table entries: %d (order: %ld, %ld bytes)\n",
+-			nr_hash, order, (PAGE_SIZE << order));
++		INIT_HLIST_HEAD(p);
++		p++;
++		loop--;
++	} while (loop);
++}
+ 
+-	if (!inode_hashtable)
+-		panic("Failed to allocate inode hash table\n");
++void __init inode_init(unsigned long mempages)
++{
++	int i;
+ 
+-	head = inode_hashtable;
+-	i = nr_hash;
+-	do {
+-		INIT_HLIST_HEAD(head);
+-		head++;
+-		i--;
+-	} while (i);
++	for (i = 0; i < ARRAY_SIZE(i_wait_queue_heads); i++)
++		init_waitqueue_head(&i_wait_queue_heads[i].wqh);
+ 
+ 	/* inode slab cache */
+ 	inode_cachep = kmem_cache_create("inode_cache", sizeof(struct inode),
+diff -puN include/linux/bootmem.h~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size include/linux/bootmem.h
+--- 25/include/linux/bootmem.h~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size	Fri Jun 18 15:41:02 2004
++++ 25-akpm/include/linux/bootmem.h	Fri Jun 18 15:41:02 2004
+@@ -67,4 +67,12 @@ extern void * __init __alloc_bootmem_nod
+ 	__alloc_bootmem_node((pgdat), (x), PAGE_SIZE, 0)
+ #endif /* !CONFIG_HAVE_ARCH_BOOTMEM_NODE */
+ 
++extern void *__init alloc_large_system_hash(const char *tablename,
++					    unsigned long bucketsize,
++					    unsigned long numentries,
++					    int scale,
++					    int consider_highmem,
++					    unsigned int *_hash_shift,
++					    unsigned int *_hash_mask);
++
+ #endif /* _LINUX_BOOTMEM_H */
+diff -puN include/linux/fs.h~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size include/linux/fs.h
+--- 25/include/linux/fs.h~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size	Fri Jun 18 15:41:02 2004
++++ 25-akpm/include/linux/fs.h	Fri Jun 18 15:41:02 2004
+@@ -222,6 +222,7 @@ extern int leases_enable, dir_notify_ena
+ extern void update_atime (struct inode *);
+ 
+ extern void inode_init(unsigned long);
++extern void inode_init_early(void);
+ extern void mnt_init(unsigned long);
+ extern void files_init(unsigned long);
+ 
+@@ -1203,6 +1204,7 @@ extern int filp_close(struct file *, fl_
+ extern char * getname(const char __user *);
+ 
+ /* fs/dcache.c */
++extern void vfs_caches_init_early(void);
+ extern void vfs_caches_init(unsigned long);
+ 
+ #define __getname()	kmem_cache_alloc(names_cachep, SLAB_KERNEL)
+diff -puN include/linux/mmzone.h~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size include/linux/mmzone.h
+--- 25/include/linux/mmzone.h~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size	Fri Jun 18 15:41:02 2004
++++ 25-akpm/include/linux/mmzone.h	Fri Jun 18 15:41:02 2004
+@@ -20,6 +20,18 @@
+ #define MAX_ORDER CONFIG_FORCE_MAX_ZONEORDER
+ #endif
+ 
++/*
++ * system hash table size limits
++ * - on large memory machines, we may want to allocate a bigger hash than that
++ *   permitted by MAX_ORDER, so we allocate with the bootmem allocator, and are
++ *   limited to this size
++ */
++#if MAX_ORDER > 14
++#define MAX_SYS_HASH_TABLE_ORDER MAX_ORDER
++#else
++#define MAX_SYS_HASH_TABLE_ORDER 14
++#endif
++
+ struct free_area {
+ 	struct list_head	free_list;
+ 	unsigned long		*map;
+diff -puN init/main.c~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size init/main.c
+--- 25/init/main.c~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size	Fri Jun 18 15:41:02 2004
++++ 25-akpm/init/main.c	Fri Jun 18 15:41:02 2004
+@@ -499,6 +499,7 @@ asmlinkage void __init start_kernel(void
+ 		initrd_start = 0;
+ 	}
+ #endif
++	vfs_caches_init_early();
+ 	mem_init();
+ 	kmem_cache_init();
+ 	numa_policy_init();
+diff -puN mm/page_alloc.c~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size mm/page_alloc.c
+--- 25/mm/page_alloc.c~permit-inode-dentry-hash-tables-to-be-allocated-max_order-size	Fri Jun 18 15:41:02 2004
++++ 25-akpm/mm/page_alloc.c	Fri Jun 18 15:41:02 2004
+@@ -55,6 +55,9 @@ EXPORT_SYMBOL(zone_table);
+ static char *zone_names[MAX_NR_ZONES] = { "DMA", "Normal", "HighMem" };
+ int min_free_kbytes = 1024;
+ 
++static unsigned long __initdata nr_kernel_pages;
++static unsigned long __initdata nr_all_pages;
++
+ /*
+  * Temporary debugging check for pages not lying within a given zone.
+  */
+@@ -1430,6 +1433,10 @@ static void __init free_area_init_core(s
+ 		if (zholes_size)
+ 			realsize -= zholes_size[j];
+ 
++		if (j == ZONE_DMA || j == ZONE_NORMAL)
++			nr_kernel_pages += realsize;
++		nr_all_pages += realsize;
++
+ 		zone->spanned_pages = size;
+ 		zone->present_pages = realsize;
+ 		zone->name = zone_names[j];
+@@ -1970,3 +1977,78 @@ int lower_zone_protection_sysctl_handler
+ 	setup_per_zone_protection();
+ 	return 0;
+ }
++
++/*
++ * allocate a large system hash table from bootmem
++ * - it is assumed that the hash table must contain an exact power-of-2
++ *   quantity of entries
++ */
++static inline int calc_log2(unsigned long x) __attribute_pure__;
++static inline int calc_log2(unsigned long x)
++{
++	int r = 0;
++	for (x >>= 1; x > 0; x >>= 1)
++		r++;
++	return r;
++}
++
++void *__init alloc_large_system_hash(const char *tablename,
++				     unsigned long bucketsize,
++				     unsigned long numentries,
++				     int scale,
++				     int consider_highmem,
++				     unsigned int *_hash_shift,
++				     unsigned int *_hash_mask)
++{
++	unsigned long mem, max, log2qty, size;
++	void *table;
++
++	/* round applicable memory size up to nearest megabyte */
++	mem = consider_highmem ? nr_all_pages : nr_kernel_pages;
++	mem += (1UL << (20 - PAGE_SHIFT)) - 1;
++	mem >>= 20 - PAGE_SHIFT;
++	mem <<= 20 - PAGE_SHIFT;
++
++	/* limit to 1 bucket per 2^scale bytes of low memory (rounded up to
++	 * nearest power of 2 in size) */
++	if (scale > PAGE_SHIFT)
++		mem >>= (scale - PAGE_SHIFT);
++	else
++		mem <<= (PAGE_SHIFT - scale);
++
++	mem = 1UL << (calc_log2(mem) + 1);
++
++	/* limit allocation size */
++	max = (1UL << (PAGE_SHIFT + MAX_SYS_HASH_TABLE_ORDER)) / bucketsize;
++	if (max > mem)
++		max = mem;
++
++	/* allow the kernel cmdline to have a say */
++	if (!numentries || numentries > max)
++		numentries = max;
++
++	log2qty = calc_log2(numentries);
++
++	do {
++		size = bucketsize << log2qty;
++
++		table = alloc_bootmem(size);
++
++	} while (!table && size > PAGE_SIZE && --log2qty);
++
++	if (!table)
++		panic("Failed to allocate %s hash table\n", tablename);
++
++	printk("%s hash table entries: %d (order: %d, %lu bytes)\n",
++	       tablename,
++	       (1U << log2qty),
++	       calc_log2(size) - PAGE_SHIFT,
++	       size);
++
++	if (_hash_shift)
++		*_hash_shift = log2qty;
++	if (_hash_mask)
++		*_hash_mask = (1 << log2qty) - 1;
++
++	return table;
++}
+_

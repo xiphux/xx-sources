@@ -1,0 +1,37 @@
+
+
+It seems fair to assume that it is always unlikely that IS_ERR will return
+true.
+
+This patch changes the gcc-3.4-generated kernel text by ~500 bytes (less) so
+it's fair to assume that the compiler is indeed propagating unlikeliness out
+of inline functions.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/err.h |    4 +++-
+ 1 files changed, 3 insertions(+), 1 deletion(-)
+
+diff -puN include/linux/err.h~is_err-is-unlikely include/linux/err.h
+--- 25/include/linux/err.h~is_err-is-unlikely	2004-08-02 20:57:09.468655136 -0700
++++ 25-akpm/include/linux/err.h	2004-08-02 20:57:32.331179504 -0700
+@@ -1,6 +1,8 @@
+ #ifndef _LINUX_ERR_H
+ #define _LINUX_ERR_H
+ 
++#include <linux/compiler.h>
++
+ #include <asm/errno.h>
+ 
+ /*
+@@ -23,7 +25,7 @@ static inline long PTR_ERR(const void *p
+ 
+ static inline long IS_ERR(const void *ptr)
+ {
+-	return (unsigned long)ptr > (unsigned long)-1000L;
++	return unlikely((unsigned long)ptr > (unsigned long)-1000L);
+ }
+ 
+ #endif /* _LINUX_ERR_H */
+_

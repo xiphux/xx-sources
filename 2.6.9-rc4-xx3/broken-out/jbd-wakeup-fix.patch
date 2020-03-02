@@ -1,0 +1,109 @@
+
+
+Processes can sleep in do_get_write_access(), waiting for buffers to be
+removed from the BJ_Shadow state.  We did this by doing a wake_up_buffer() in
+the commit path and sleeping on the buffer in do_get_write_access().
+
+With the filtered bit-level wakeup code this doesn't work properly any more -
+the wake_up_buffer() accidentally wakes up tasks which are sleeping in
+lock_buffer() as well.  Those tasks now implicitly assume that the buffer came
+unlocked.  Net effect: Bogus I/O errors when reading journal blocks, because
+the buffer isn't up to date yet.  Hence the recently spate of journal_bmap()
+failure reports.
+
+The patch creates a new jbd-private BH flag purely for this wakeup function. 
+So a wake_up_bit(..., BH_Unshadow) doesn't wake up someone who is waiting for
+a wake_up_bit(BH_Lock).
+
+JBD was the only user of wake_up_buffer(), so remove it altogether.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/buffer.c                 |   11 ++---------
+ 25-akpm/fs/jbd/commit.c             |    2 +-
+ 25-akpm/fs/jbd/transaction.c        |    7 ++++---
+ 25-akpm/include/linux/buffer_head.h |    1 -
+ 25-akpm/include/linux/jbd.h         |    1 +
+ 5 files changed, 8 insertions(+), 14 deletions(-)
+
+diff -puN fs/jbd/commit.c~jbd-wakeup-fix fs/jbd/commit.c
+--- 25/fs/jbd/commit.c~jbd-wakeup-fix	Mon Sep 20 15:38:55 2004
++++ 25-akpm/fs/jbd/commit.c	Mon Sep 20 15:38:55 2004
+@@ -577,7 +577,7 @@ wait_for_iobuf:
+ 		journal_file_buffer(jh, commit_transaction, BJ_Forget);
+ 		/* Wake up any transactions which were waiting for this
+ 		   IO to complete */
+-		wake_up_buffer(bh);
++		wake_up_bit(&bh->b_state, BH_Unshadow);
+ 		JBUFFER_TRACE(jh, "brelse shadowed buffer");
+ 		__brelse(bh);
+ 	}
+diff -puN fs/jbd/transaction.c~jbd-wakeup-fix fs/jbd/transaction.c
+--- 25/fs/jbd/transaction.c~jbd-wakeup-fix	Mon Sep 20 15:38:55 2004
++++ 25-akpm/fs/jbd/transaction.c	Mon Sep 20 15:38:55 2004
+@@ -633,9 +633,10 @@ repeat:
+ 		 * disk then we cannot do copy-out here. */
+ 
+ 		if (jh->b_jlist == BJ_Shadow) {
+-			DEFINE_WAIT_BIT(wait, &bh->b_state, BH_Lock);
+-			wait_queue_head_t *wqh
+-					= bit_waitqueue(&bh->b_state, BH_Lock);
++			DEFINE_WAIT_BIT(wait, &bh->b_state, BH_Unshadow);
++			wait_queue_head_t *wqh;
++
++			wqh = bit_waitqueue(&bh->b_state, BH_Unshadow);
+ 
+ 			JBUFFER_TRACE(jh, "on shadow: sleep");
+ 			jbd_unlock_bh_state(bh);
+diff -puN include/linux/jbd.h~jbd-wakeup-fix include/linux/jbd.h
+--- 25/include/linux/jbd.h~jbd-wakeup-fix	Mon Sep 20 15:38:55 2004
++++ 25-akpm/include/linux/jbd.h	Mon Sep 20 15:38:55 2004
+@@ -299,6 +299,7 @@ enum jbd_state_bits {
+ 	BH_JBDDirty,		/* Is dirty but journaled */
+ 	BH_State,		/* Pins most journal_head state */
+ 	BH_JournalHead,		/* Pins bh->b_private and jh->b_bh */
++	BH_Unshadow,		/* Dummy bit, for BJ_Shadow wakeup filtering */
+ };
+ 
+ BUFFER_FNS(JBD, jbd)
+diff -puN include/linux/buffer_head.h~jbd-wakeup-fix include/linux/buffer_head.h
+--- 25/include/linux/buffer_head.h~jbd-wakeup-fix	Mon Sep 20 15:38:55 2004
++++ 25-akpm/include/linux/buffer_head.h	Mon Sep 20 15:38:55 2004
+@@ -155,7 +155,6 @@ void invalidate_bdev(struct block_device
+ int sync_blockdev(struct block_device *bdev);
+ void __wait_on_buffer(struct buffer_head *);
+ wait_queue_head_t *bh_waitq_head(struct buffer_head *bh);
+-void wake_up_buffer(struct buffer_head *bh);
+ int fsync_bdev(struct block_device *);
+ struct super_block *freeze_bdev(struct block_device *);
+ void thaw_bdev(struct block_device *, struct super_block *);
+diff -puN fs/buffer.c~jbd-wakeup-fix fs/buffer.c
+--- 25/fs/buffer.c~jbd-wakeup-fix	Mon Sep 20 15:38:55 2004
++++ 25-akpm/fs/buffer.c	Mon Sep 20 15:39:24 2004
+@@ -52,13 +52,6 @@ init_buffer(struct buffer_head *bh, bh_e
+ 	bh->b_private = private;
+ }
+ 
+-void wake_up_buffer(struct buffer_head *bh)
+-{
+-	smp_mb();
+-	wake_up_bit(&bh->b_state, BH_Lock);
+-}
+-EXPORT_SYMBOL(wake_up_buffer);
+-
+ static int sync_buffer(void *word)
+ {
+ 	struct block_device *bd;
+@@ -83,8 +76,8 @@ EXPORT_SYMBOL(__lock_buffer);
+ void fastcall unlock_buffer(struct buffer_head *bh)
+ {
+ 	clear_buffer_locked(bh);
+-	smp_mb__after_clear_bit();
+-	wake_up_buffer(bh);
++	smp_mb();
++	wake_up_bit(&bh->b_state, BH_Lock);
+ }
+ 
+ /*
+_

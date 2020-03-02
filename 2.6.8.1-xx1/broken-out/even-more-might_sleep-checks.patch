@@ -1,0 +1,77 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+here are a couple of might_sleep() additions that i've been using for the
+preemption patch but which i believe are generally useful too.  Perhaps the
+mmap.c one is unjustified?
+
+	Ingo
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/dcache.c                 |    2 ++
+ 25-akpm/fs/file_table.c             |    1 +
+ 25-akpm/fs/fs-writeback.c           |    1 +
+ 25-akpm/include/linux/buffer_head.h |    1 +
+ 25-akpm/mm/mmap.c                   |    1 +
+ 5 files changed, 6 insertions(+)
+
+diff -puN fs/dcache.c~even-more-might_sleep-checks fs/dcache.c
+--- 25/fs/dcache.c~even-more-might_sleep-checks	Wed Aug  4 14:55:01 2004
++++ 25-akpm/fs/dcache.c	Wed Aug  4 14:55:01 2004
+@@ -144,6 +144,8 @@ void dput(struct dentry *dentry)
+ 		return;
+ 
+ repeat:
++	if (atomic_read(&dentry->d_count) == 1)
++		might_sleep();
+ 	if (!atomic_dec_and_lock(&dentry->d_count, &dcache_lock))
+ 		return;
+ 
+diff -puN fs/file_table.c~even-more-might_sleep-checks fs/file_table.c
+--- 25/fs/file_table.c~even-more-might_sleep-checks	Wed Aug  4 14:55:01 2004
++++ 25-akpm/fs/file_table.c	Wed Aug  4 14:55:01 2004
+@@ -169,6 +169,7 @@ void fastcall __fput(struct file *file)
+ 	struct vfsmount *mnt = file->f_vfsmnt;
+ 	struct inode *inode = dentry->d_inode;
+ 
++	might_sleep();
+ 	/*
+ 	 * The function eventpoll_release() should be the first called
+ 	 * in the file cleanup chain.
+diff -puN fs/fs-writeback.c~even-more-might_sleep-checks fs/fs-writeback.c
+--- 25/fs/fs-writeback.c~even-more-might_sleep-checks	Wed Aug  4 14:55:01 2004
++++ 25-akpm/fs/fs-writeback.c	Wed Aug  4 14:55:01 2004
+@@ -554,6 +554,7 @@ void write_inode_now(struct inode *inode
+ 	if (inode->i_mapping->backing_dev_info->memory_backed)
+ 		return;
+ 
++	might_sleep();
+ 	spin_lock(&inode_lock);
+ 	__writeback_single_inode(inode, &wbc);
+ 	spin_unlock(&inode_lock);
+diff -puN include/linux/buffer_head.h~even-more-might_sleep-checks include/linux/buffer_head.h
+--- 25/include/linux/buffer_head.h~even-more-might_sleep-checks	Wed Aug  4 14:55:01 2004
++++ 25-akpm/include/linux/buffer_head.h	Wed Aug  4 14:55:01 2004
+@@ -285,6 +285,7 @@ static inline void wait_on_buffer(struct
+ 
+ static inline void lock_buffer(struct buffer_head *bh)
+ {
++	might_sleep();
+ 	if (test_set_buffer_locked(bh))
+ 		__lock_buffer(bh);
+ }
+diff -puN mm/mmap.c~even-more-might_sleep-checks mm/mmap.c
+--- 25/mm/mmap.c~even-more-might_sleep-checks	Wed Aug  4 14:55:01 2004
++++ 25-akpm/mm/mmap.c	Wed Aug  4 14:55:01 2004
+@@ -90,6 +90,7 @@ static void remove_vm_struct(struct vm_a
+ {
+ 	struct file *file = vma->vm_file;
+ 
++	might_sleep();
+ 	if (file) {
+ 		struct address_space *mapping = file->f_mapping;
+ 		spin_lock(&mapping->i_mmap_lock);
+_

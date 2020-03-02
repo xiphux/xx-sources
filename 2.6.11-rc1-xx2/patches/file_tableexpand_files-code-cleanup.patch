@@ -1,0 +1,260 @@
+
+From: Prasanna Meda <pmeda@akamai.com>
+
+expand_files() cleanup: Make expand_files() common code for
+fork.c:fork/copy_files(), open.c:open/get_unused_fd() and
+fcntl.c:dup/locate_fd().
+
+expand_files() does both expand_fd_array and expand_fd_set based on the
+need.  This is used in dup().  open() and fork() duplicates the work of
+expand files.  At all places we check for expanding fd array, we also check
+for expanding fdset.  There is no need of checking and calling them
+seperately.
+
+This change also moves the expand_files to file.c from fcntl.c, and makes
+the expand_fd_array and expand_fd_set local to that file.
+
+Signed-off-by: Prasanna Meda <pmeda@akamai.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/fcntl.c           |   32 --------------------------------
+ 25-akpm/fs/file.c            |   35 +++++++++++++++++++++++++++++++++--
+ 25-akpm/fs/open.c            |   30 +++++++++++-------------------
+ 25-akpm/include/linux/file.h |    4 ++--
+ 25-akpm/kernel/fork.c        |   41 +++++++++++++++++++----------------------
+ 5 files changed, 65 insertions(+), 77 deletions(-)
+
+diff -puN fs/fcntl.c~file_tableexpand_files-code-cleanup fs/fcntl.c
+--- 25/fs/fcntl.c~file_tableexpand_files-code-cleanup	Wed Jan 12 16:13:02 2005
++++ 25-akpm/fs/fcntl.c	Wed Jan 12 16:13:02 2005
+@@ -41,38 +41,6 @@ static inline int get_close_on_exec(unsi
+ 	return res;
+ }
+ 
+-
+-/* Expand files.  Return <0 on error; 0 nothing done; 1 files expanded,
+- * we may have blocked. 
+- *
+- * Should be called with the files->file_lock spinlock held for write.
+- */
+-static int expand_files(struct files_struct *files, int nr)
+-{
+-	int err, expand = 0;
+-#ifdef FDSET_DEBUG	
+-	printk (KERN_ERR "%s %d: nr = %d\n", __FUNCTION__, current->pid, nr);
+-#endif
+-	
+-	if (nr >= files->max_fdset) {
+-		expand = 1;
+-		if ((err = expand_fdset(files, nr)))
+-			goto out;
+-	}
+-	if (nr >= files->max_fds) {
+-		expand = 1;
+-		if ((err = expand_fd_array(files, nr)))
+-			goto out;
+-	}
+-	err = expand;
+- out:
+-#ifdef FDSET_DEBUG	
+-	if (err)
+-		printk (KERN_ERR "%s %d: return %d\n", __FUNCTION__, current->pid, err);
+-#endif
+-	return err;
+-}
+-
+ /*
+  * locate_fd finds a free file descriptor in the open_fds fdset,
+  * expanding the fd arrays if necessary.  Must be called with the
+diff -puN fs/file.c~file_tableexpand_files-code-cleanup fs/file.c
+--- 25/fs/file.c~file_tableexpand_files-code-cleanup	Wed Jan 12 16:13:02 2005
++++ 25-akpm/fs/file.c	Wed Jan 12 16:13:02 2005
+@@ -53,7 +53,7 @@ void free_fd_array(struct file **array, 
+  * spinlock held for write.
+  */
+ 
+-int expand_fd_array(struct files_struct *files, int nr)
++static int expand_fd_array(struct files_struct *files, int nr)
+ 	__releases(files->file_lock)
+ 	__acquires(files->file_lock)
+ {
+@@ -158,7 +158,7 @@ void free_fdset(fd_set *array, int num)
+  * Expand the fdset in the files_struct.  Called with the files spinlock
+  * held for write.
+  */
+-int expand_fdset(struct files_struct *files, int nr)
++static int expand_fdset(struct files_struct *files, int nr)
+ 	__releases(file->file_lock)
+ 	__acquires(file->file_lock)
+ {
+@@ -229,3 +229,34 @@ out:
+ 	return error;
+ }
+ 
++/*
++ * Expand files.
++ * Return <0 on error; 0 nothing done; 1 files expanded, we may have blocked.
++ * Should be called with the files->file_lock spinlock held for write.
++ */
++int expand_files(struct files_struct *files, int nr)
++{
++	int err, expand = 0;
++#ifdef FDSET_DEBUG
++	printk (KERN_ERR "%s %d: nr = %d\n", __FUNCTION__, current->pid, nr);
++#endif
++
++	if (nr >= files->max_fdset) {
++		expand = 1;
++		if ((err = expand_fdset(files, nr)))
++			goto out;
++	}
++	if (nr >= files->max_fds) {
++		expand = 1;
++		if ((err = expand_fd_array(files, nr)))
++			goto out;
++	}
++	err = expand;
++ out:
++#ifdef FDSET_DEBUG
++	if (err)
++		printk (KERN_ERR "%s %d: return %d\n", __FUNCTION__, current->pid, err);
++#endif
++	return err;
++}
++
+diff -puN fs/open.c~file_tableexpand_files-code-cleanup fs/open.c
+--- 25/fs/open.c~file_tableexpand_files-code-cleanup	Wed Jan 12 16:13:02 2005
++++ 25-akpm/fs/open.c	Wed Jan 12 16:13:02 2005
+@@ -856,26 +856,18 @@ repeat:
+ 	if (fd >= current->signal->rlim[RLIMIT_NOFILE].rlim_cur)
+ 		goto out;
+ 
+-	/* Do we need to expand the fdset array? */
+-	if (fd >= files->max_fdset) {
+-		error = expand_fdset(files, fd);
+-		if (!error) {
+-			error = -EMFILE;
+-			goto repeat;
+-		}
+-		goto out;
+-	}
+-	
+-	/* 
+-	 * Check whether we need to expand the fd array.
+-	 */
+-	if (fd >= files->max_fds) {
+-		error = expand_fd_array(files, fd);
+-		if (!error) {
+-			error = -EMFILE;
+-			goto repeat;
+-		}
++	/* Do we need to expand the fd array or fd set?  */
++	error = expand_files(files, fd);
++	if (error < 0)
+ 		goto out;
++
++	if (error) {
++		/*
++	 	 * If we needed to expand the fs array we
++		 * might have blocked - try again.
++		 */
++		error = -EMFILE;
++		goto repeat;
+ 	}
+ 
+ 	FD_SET(fd, files->open_fds);
+diff -puN include/linux/file.h~file_tableexpand_files-code-cleanup include/linux/file.h
+--- 25/include/linux/file.h~file_tableexpand_files-code-cleanup	Wed Jan 12 16:13:02 2005
++++ 25-akpm/include/linux/file.h	Wed Jan 12 16:13:02 2005
+@@ -53,13 +53,13 @@ extern void filp_ctor(void * objp, struc
+ extern void filp_dtor(void * objp, struct kmem_cache_s *cachep, unsigned long dflags);
+ 
+ extern struct file ** alloc_fd_array(int);
+-extern int expand_fd_array(struct files_struct *, int nr);
+ extern void free_fd_array(struct file **, int);
+ 
+ extern fd_set *alloc_fdset(int);
+-extern int expand_fdset(struct files_struct *, int nr);
+ extern void free_fdset(fd_set *, int);
+ 
++extern int expand_files(struct files_struct *, int nr);
++
+ static inline struct file * fcheck_files(struct files_struct *files, unsigned int fd)
+ {
+ 	struct file * file = NULL;
+diff -puN kernel/fork.c~file_tableexpand_files-code-cleanup kernel/fork.c
+--- 25/kernel/fork.c~file_tableexpand_files-code-cleanup	Wed Jan 12 16:13:02 2005
++++ 25-akpm/kernel/fork.c	Wed Jan 12 16:13:02 2005
+@@ -555,7 +555,7 @@ static int copy_files(unsigned long clon
+ {
+ 	struct files_struct *oldf, *newf;
+ 	struct file **old_fds, **new_fds;
+-	int open_files, nfds, size, i, error = 0;
++	int open_files, size, i, error = 0, expand;
+ 
+ 	/*
+ 	 * A background process may not have any files ...
+@@ -590,36 +590,32 @@ static int copy_files(unsigned long clon
+ 	newf->open_fds	    = &newf->open_fds_init;
+ 	newf->fd	    = &newf->fd_array[0];
+ 
+-	/* We don't yet have the oldf readlock, but even if the old
+-           fdset gets grown now, we'll only copy up to "size" fds */
+-	size = oldf->max_fdset;
+-	if (size > __FD_SETSIZE) {
+-		newf->max_fdset = 0;
+-		spin_lock(&newf->file_lock);
+-		error = expand_fdset(newf, size-1);
+-		spin_unlock(&newf->file_lock);
+-		if (error)
+-			goto out_release;
+-	}
+ 	spin_lock(&oldf->file_lock);
+ 
+-	open_files = count_open_files(oldf, size);
++	open_files = count_open_files(oldf, oldf->max_fdset);
++	expand = 0;
+ 
+ 	/*
+-	 * Check whether we need to allocate a larger fd array.
+-	 * Note: we're not a clone task, so the open count won't
+-	 * change.
++	 * Check whether we need to allocate a larger fd array or fd set.
++	 * Note: we're not a clone task, so the open count won't  change.
+ 	 */
+-	nfds = NR_OPEN_DEFAULT;
+-	if (open_files > nfds) {
+-		spin_unlock(&oldf->file_lock);
++	if (open_files > newf->max_fdset) {
++		newf->max_fdset = 0;
++		expand = 1;
++	}
++	if (open_files > newf->max_fds) {
+ 		newf->max_fds = 0;
++		expand = 1;
++	}
++
++	/* if the old fdset gets grown now, we'll only copy up to "size" fds */
++	if (expand) {
++		spin_unlock(&oldf->file_lock);
+ 		spin_lock(&newf->file_lock);
+-		error = expand_fd_array(newf, open_files-1);
++		error = expand_files(newf, open_files-1);
+ 		spin_unlock(&newf->file_lock);
+-		if (error) 
++		if (error < 0)
+ 			goto out_release;
+-		nfds = newf->max_fds;
+ 		spin_lock(&oldf->file_lock);
+ 	}
+ 
+@@ -668,6 +664,7 @@ out:
+ out_release:
+ 	free_fdset (newf->close_on_exec, newf->max_fdset);
+ 	free_fdset (newf->open_fds, newf->max_fdset);
++	free_fd_array(newf->fd, newf->max_fds);
+ 	kmem_cache_free(files_cachep, newf);
+ 	goto out;
+ }
+_

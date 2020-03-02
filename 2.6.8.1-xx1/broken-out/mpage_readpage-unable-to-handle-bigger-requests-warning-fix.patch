@@ -1,0 +1,25 @@
+
+
+fs/mpage.c: In function `do_mpage_readpage':
+fs/mpage.c:293: warning: comparison of distinct pointer types lacks a cast
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/mpage.c |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletion(-)
+
+diff -puN fs/mpage.c~mpage_readpage-unable-to-handle-bigger-requests-warning-fix fs/mpage.c
+--- 25/fs/mpage.c~mpage_readpage-unable-to-handle-bigger-requests-warning-fix	2004-08-06 23:13:22.151032608 -0700
++++ 25-akpm/fs/mpage.c	2004-08-06 23:14:43.368685648 -0700
+@@ -290,7 +290,8 @@ do_mpage_readpage(struct bio *bio, struc
+ alloc_new:
+ 	if (bio == NULL) {
+ 		bio = mpage_alloc(bdev, blocks[0] << (blkbits - 9),
+-			  min(nr_pages, bio_get_nr_vecs(bdev)), GFP_KERNEL);
++			  	min_t(int, nr_pages, bio_get_nr_vecs(bdev)),
++				GFP_KERNEL);
+ 		if (bio == NULL)
+ 			goto confused;
+ 	}
+_

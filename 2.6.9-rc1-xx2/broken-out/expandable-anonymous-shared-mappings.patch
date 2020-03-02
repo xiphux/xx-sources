@@ -1,0 +1,91 @@
+--- 2.6.7/mm/shmem.c	2004-06-16 06:20:39.000000000 +0100
++++ linux/mm/shmem.c	2004-06-17 20:26:26.567507056 +0100
+@@ -169,6 +169,7 @@ static struct file_operations shmem_file
+ static struct inode_operations shmem_inode_operations;
+ static struct inode_operations shmem_dir_inode_operations;
+ static struct vm_operations_struct shmem_vm_ops;
++static struct vm_operations_struct shmem_zero_vm_ops;
+ 
+ static struct backing_dev_info shmem_backing_dev_info = {
+ 	.ra_pages	= 0,	/* No readahead */
+@@ -1076,7 +1077,8 @@ failed:
+ 	return error;
+ }
+ 
+-struct page *shmem_nopage(struct vm_area_struct *vma, unsigned long address, int *type)
++struct page *shmem_nopage(struct vm_area_struct *vma,
++			  unsigned long address, int *type)
+ {
+ 	struct inode *inode = vma->vm_file->f_dentry->d_inode;
+ 	struct page *page = NULL;
+@@ -1095,6 +1097,36 @@ struct page *shmem_nopage(struct vm_area
+ 	return page;
+ }
+ 
++struct page *shmem_zero_nopage(struct vm_area_struct *vma,
++				unsigned long address, int *type)
++{
++	struct page *page;
++
++	page = shmem_nopage(vma, address, type);
++	if (unlikely(page == NOPAGE_SIGBUS)) {
++		struct inode *inode = vma->vm_file->f_dentry->d_inode;
++		struct shmem_inode_info *info = SHMEM_I(inode);
++		loff_t vm_size, i_size;
++
++		/*
++		 * If mremap has been used to extend the vma,
++		 * now extend the underlying object to match it.
++		 */
++		vm_size = (vma->vm_end - vma->vm_start) +
++				((loff_t)vma->vm_pgoff << PAGE_SHIFT);
++		spin_lock(&info->lock);
++		i_size = i_size_read(inode);
++		if (i_size < vm_size && vm_size <= SHMEM_MAX_BYTES &&
++		    !shmem_acct_size(info->flags, vm_size - i_size)) {
++			i_size_write(inode, vm_size);
++			inode->i_ctime = inode->i_mtime = CURRENT_TIME;
++		}
++		spin_unlock(&info->lock);
++		page = shmem_nopage(vma, address, type);
++	}
++	return page;
++}
++
+ static int shmem_populate(struct vm_area_struct *vma,
+ 	unsigned long addr, unsigned long len,
+ 	pgprot_t prot, unsigned long pgoff, int nonblock)
+@@ -1976,6 +2008,15 @@ static struct vm_operations_struct shmem
+ #endif
+ };
+ 
++static struct vm_operations_struct shmem_zero_vm_ops = {
++	.nopage		= shmem_zero_nopage,
++	.populate	= shmem_populate,
++#ifdef CONFIG_NUMA
++	.set_policy     = shmem_set_policy,
++	.get_policy     = shmem_get_policy,
++#endif
++};
++
+ static struct super_block *shmem_get_sb(struct file_system_type *fs_type,
+ 	int flags, const char *dev_name, void *data)
+ {
+@@ -2098,7 +2139,8 @@ put_memory:
+ int shmem_zero_setup(struct vm_area_struct *vma)
+ {
+ 	struct file *file;
+-	loff_t size = vma->vm_end - vma->vm_start;
++	loff_t size = (vma->vm_end - vma->vm_start) +
++			((loff_t)vma->vm_pgoff << PAGE_SHIFT);
+ 
+ 	file = shmem_file_setup("dev/zero", size, vma->vm_flags);
+ 	if (IS_ERR(file))
+@@ -2107,7 +2149,7 @@ int shmem_zero_setup(struct vm_area_stru
+ 	if (vma->vm_file)
+ 		fput(vma->vm_file);
+ 	vma->vm_file = file;
+-	vma->vm_ops = &shmem_vm_ops;
++	vma->vm_ops = &shmem_zero_vm_ops;
+ 	return 0;
+ }

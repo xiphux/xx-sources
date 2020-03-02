@@ -1,0 +1,230 @@
+
+From: Prasanna S Panchamukhi <prasanna@in.ibm.com>
+
+This patch provides notifiers for i386 architecture exceptions.  This patch
+has been ported from x86_64 architecture as suggested by Andi Kleen.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/i386_ksyms.c |    2 +
+ 25-akpm/arch/i386/kernel/traps.c      |   40 ++++++++++++++++++++++++++-
+ 25-akpm/arch/i386/mm/fault.c          |    4 ++
+ 25-akpm/include/asm-i386/kdebug.h     |   50 ++++++++++++++++++++++++++++++++++
+ 4 files changed, 95 insertions(+), 1 deletion(-)
+
+diff -puN arch/i386/kernel/i386_ksyms.c~i386_exception_notifiers arch/i386/kernel/i386_ksyms.c
+--- 25/arch/i386/kernel/i386_ksyms.c~i386_exception_notifiers	2004-08-25 19:17:55.414947696 -0700
++++ 25-akpm/arch/i386/kernel/i386_ksyms.c	2004-08-25 19:17:55.420946784 -0700
+@@ -32,6 +32,7 @@
+ #include <asm/tlbflush.h>
+ #include <asm/nmi.h>
+ #include <asm/ist.h>
++#include <asm/kdebug.h>
+ 
+ extern void dump_thread(struct pt_regs *, struct user *);
+ extern spinlock_t rtc_lock;
+@@ -177,6 +178,7 @@ EXPORT_SYMBOL_GPL(unset_nmi_callback);
+ extern int memcmp(const void *,const void *,__kernel_size_t);
+ EXPORT_SYMBOL_NOVERS(memcmp);
+ 
++EXPORT_SYMBOL(register_die_notifier);
+ #ifdef CONFIG_HAVE_DEC_LOCK
+ EXPORT_SYMBOL(atomic_dec_and_lock);
+ #endif
+diff -puN arch/i386/kernel/traps.c~i386_exception_notifiers arch/i386/kernel/traps.c
+--- 25/arch/i386/kernel/traps.c~i386_exception_notifiers	2004-08-25 19:17:55.415947544 -0700
++++ 25-akpm/arch/i386/kernel/traps.c	2004-08-25 19:18:43.978564904 -0700
+@@ -48,6 +48,7 @@
+ 
+ #include <asm/smp.h>
+ #include <asm/arch_hooks.h>
++#include <asm/kdebug.h>
+ 
+ #include <linux/irq.h>
+ #include <linux/module.h>
+@@ -92,6 +93,18 @@ asmlinkage void spurious_interrupt_bug(v
+ asmlinkage void machine_check(void);
+ 
+ static int kstack_depth_to_print = 24;
++struct notifier_block *i386die_chain;
++static spinlock_t die_notifier_lock = SPIN_LOCK_UNLOCKED;
++
++int register_die_notifier(struct notifier_block *nb)
++{
++	int err = 0;
++	unsigned long flags;
++	spin_lock_irqsave(&die_notifier_lock, flags);
++	err = notifier_chain_register(&i386die_chain, nb);
++	spin_unlock_irqrestore(&die_notifier_lock, flags);
++	return err;
++}
+ 
+ static int valid_stack_ptr(struct task_struct *task, void *p)
+ {
+@@ -333,6 +346,7 @@ void die(const char * str, struct pt_reg
+ #endif
+ 		if (nl)
+ 			printk("\n");
++	notify_die(DIE_OOPS, (char *)str, regs, err, 255, SIGSEGV);
+ 		show_registers(regs);
+   	} else
+ 		printk(KERN_ERR "Recursive die() failure, output suppressed\n");
+@@ -406,6 +420,9 @@ static inline void do_trap(int trapnr, i
+ #define DO_ERROR(trapnr, signr, str, name) \
+ asmlinkage void do_##name(struct pt_regs * regs, long error_code) \
+ { \
++	if (notify_die(DIE_TRAP, str, regs, error_code, trapnr, signr) \
++						== NOTIFY_OK) \
++		return; \
+ 	do_trap(trapnr, signr, str, 0, regs, error_code, NULL); \
+ }
+ 
+@@ -417,12 +434,18 @@ asmlinkage void do_##name(struct pt_regs
+ 	info.si_errno = 0; \
+ 	info.si_code = sicode; \
+ 	info.si_addr = (void __user *)siaddr; \
++	if (notify_die(DIE_TRAP, str, regs, error_code, trapnr, signr) \
++						== NOTIFY_BAD) \
++		return; \
+ 	do_trap(trapnr, signr, str, 0, regs, error_code, &info); \
+ }
+ 
+ #define DO_VM86_ERROR(trapnr, signr, str, name) \
+ asmlinkage void do_##name(struct pt_regs * regs, long error_code) \
+ { \
++	if (notify_die(DIE_TRAP, str, regs, error_code, trapnr, signr) \
++						== NOTIFY_OK) \
++		return; \
+ 	do_trap(trapnr, signr, str, 1, regs, error_code, NULL); \
+ }
+ 
+@@ -434,6 +457,9 @@ asmlinkage void do_##name(struct pt_regs
+ 	info.si_errno = 0; \
+ 	info.si_code = sicode; \
+ 	info.si_addr = (void __user *)siaddr; \
++	if (notify_die(DIE_TRAP, str, regs, error_code, trapnr, signr) \
++						== NOTIFY_OK) \
++		return; \
+ 	do_trap(trapnr, signr, str, 1, regs, error_code, &info); \
+ }
+ 
+@@ -467,8 +493,12 @@ gp_in_vm86:
+ 	return;
+ 
+ gp_in_kernel:
+-	if (!fixup_exception(regs))
++	if (!fixup_exception(regs)) {
++		if (notify_die(DIE_GPF, "general protection fault", regs,
++				error_code, 13, SIGSEGV) == NOTIFY_OK);
++			return;
+ 		die("general protection fault", regs, error_code);
++	}
+ }
+ 
+ static void mem_parity_error(unsigned char reason, struct pt_regs * regs)
+@@ -538,6 +568,9 @@ static void default_do_nmi(struct pt_reg
+ 	unsigned char reason = get_nmi_reason();
+  
+ 	if (!(reason & 0xc0)) {
++		if (notify_die(DIE_NMI_IPI, "nmi_ipi", regs, reason, 0, SIGINT)
++							== NOTIFY_BAD)
++			return;
+ #ifdef CONFIG_X86_LOCAL_APIC
+ 		/*
+ 		 * Ok, so this is none of the documented NMI sources,
+@@ -551,6 +584,8 @@ static void default_do_nmi(struct pt_reg
+ 		unknown_nmi_error(reason, regs);
+ 		return;
+ 	}
++	if (notify_die(DIE_NMI, "nmi", regs, reason, 0, SIGINT) == NOTIFY_BAD)
++		return;
+ 	if (reason & 0x80)
+ 		mem_parity_error(reason, regs);
+ 	if (reason & 0x40)
+@@ -624,6 +659,9 @@ asmlinkage void do_debug(struct pt_regs 
+ 
+ 	__asm__ __volatile__("movl %%db6,%0" : "=r" (condition));
+ 
++	if (notify_die(DIE_DEBUG, "debug", regs, condition, error_code,
++					SIGTRAP) == NOTIFY_OK)
++		return;
+ 	/* It's safe to allow irq's after DR6 has been saved */
+ 	if (regs->eflags & X86_EFLAGS_IF)
+ 		local_irq_enable();
+diff -puN arch/i386/mm/fault.c~i386_exception_notifiers arch/i386/mm/fault.c
+--- 25/arch/i386/mm/fault.c~i386_exception_notifiers	2004-08-25 19:17:55.417947240 -0700
++++ 25-akpm/arch/i386/mm/fault.c	2004-08-25 19:18:36.246740320 -0700
+@@ -26,6 +26,7 @@
+ #include <asm/uaccess.h>
+ #include <asm/hardirq.h>
+ #include <asm/desc.h>
++#include <asm/kdebug.h>
+ 
+ extern void die(const char *,struct pt_regs *,long);
+ 
+@@ -226,6 +227,9 @@ asmlinkage void do_page_fault(struct pt_
+ 	/* get the address */
+ 	__asm__("movl %%cr2,%0":"=r" (address));
+ 
++	if (notify_die(DIE_PAGE_FAULT, "page fault", regs, error_code, 14,
++					SIGSEGV) == NOTIFY_OK)
++		return;
+ 	/* It's safe to allow irq's after cr2 has been saved */
+ 	if (regs->eflags & (X86_EFLAGS_IF|VM_MASK))
+ 		local_irq_enable();
+diff -puN /dev/null include/asm-i386/kdebug.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-i386/kdebug.h	2004-08-25 19:17:55.423946328 -0700
+@@ -0,0 +1,50 @@
++#ifndef _I386_KDEBUG_H
++#define _I386_KDEBUG_H 1
++
++/*
++ * Aug-05 2004 Ported by Prasanna S Panchamukhi <prasanna@in.ibm.com>
++ * from x86_64 architecture.
++ */
++#include <linux/notifier.h>
++
++struct pt_regs;
++
++struct die_args {
++	struct pt_regs *regs;
++	const char *str;
++	long err;
++	int trapnr;
++	int signr;
++};
++
++/* Note - you should never unregister because that can race with NMIs.
++   If you really want to do it first unregister - then synchronize_kernel - then free.
++  */
++int register_die_notifier(struct notifier_block *nb);
++extern struct notifier_block *i386die_chain;
++
++
++/* Grossly misnamed. */
++enum die_val {
++	DIE_OOPS = 1,
++	DIE_INT3,
++	DIE_DEBUG,
++	DIE_PANIC,
++	DIE_NMI,
++	DIE_DIE,
++	DIE_NMIWATCHDOG,
++	DIE_KERNELDEBUG,
++	DIE_TRAP,
++	DIE_GPF,
++	DIE_CALL,
++	DIE_NMI_IPI,
++	DIE_PAGE_FAULT,
++};
++
++static inline int notify_die(enum die_val val,char *str,struct pt_regs *regs,long err,int trap, int sig)
++{
++	struct die_args args = { .regs=regs, .str=str, .err=err, .trapnr=trap,.signr=sig };
++	return notifier_call_chain(&i386die_chain, val, &args);
++}
++
++#endif
+_

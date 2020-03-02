@@ -1,0 +1,54 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-sparc64-akpm/drivers/serial/sunsu.c    |    9 ++++++---
+ 25-sparc64-akpm/drivers/serial/sunzilog.c |    9 +++++----
+ 2 files changed, 11 insertions(+), 7 deletions(-)
+
+diff -puN drivers/serial/sunsu.c~input-serio-dynamic-allocation-fix-3 drivers/serial/sunsu.c
+--- 25-sparc64/drivers/serial/sunsu.c~input-serio-dynamic-allocation-fix-3	2004-06-19 23:20:15.415255216 -0700
++++ 25-sparc64-akpm/drivers/serial/sunsu.c	2004-06-19 23:23:02.148907848 -0700
+@@ -1316,12 +1316,15 @@ static int __init sunsu_kbd_ms_init(void
+ 		up->serio.type = SERIO_RS232;
+ 		if (up->su_type == SU_PORT_KBD) {
+ 			up->serio.type |= SERIO_SUNKBD;
+-			up->serio.name = "sukbd";
++			strlcpy(up->serio.name, "sukbd",
++					sizeof(up->serio.name));
+ 		} else {
+ 			up->serio.type |= (SERIO_SUN | (1 << 16));
+-			up->serio.name = "sums";
++			strlcpy(up->serio.name, "sums",
++					sizeof(up->serio.name));
+ 		}
+-		up->serio.phys = (i == 0 ? "su/serio0" : "su/serio1");
++		strlcpy(up->serio.phys, (i == 0 ? "su/serio0" : "su/serio1"),
++			sizeof(up->serio.phys));
+ 
+ 		up->serio.write = sunsu_serio_write;
+ 		up->serio.open = sunsu_serio_open;
+diff -puN drivers/serial/sunzilog.c~input-serio-dynamic-allocation-fix-3 drivers/serial/sunzilog.c
+--- 25-sparc64/drivers/serial/sunzilog.c~input-serio-dynamic-allocation-fix-3	2004-06-19 23:20:15.432252632 -0700
++++ 25-sparc64-akpm/drivers/serial/sunzilog.c	2004-06-19 23:24:48.002815608 -0700
+@@ -1554,13 +1554,14 @@ static void __init sunzilog_init_kbdms(s
+ 	up->serio.type = SERIO_RS232;
+ 	if (channel == KEYBOARD_LINE) {
+ 		up->serio.type |= SERIO_SUNKBD;
+-		up->serio.name = "zskbd";
++		strlcpy(up->serio.name, "zskbd", sizeof(up->serio.name));
+ 	} else {
+ 		up->serio.type |= (SERIO_SUN | (1 << 16));
+-		up->serio.name = "zsms";
++		strlcpy(up->serio.name, "zsms", sizeof(up->serio.name));
+ 	}
+-	up->serio.phys = (channel == KEYBOARD_LINE ?
+-			  "zs/serio0" : "zs/serio1");
++	strlcpy(up->serio.phys,
++		(channel == KEYBOARD_LINE ? "zs/serio0" : "zs/serio1"),
++		sizeof(up->serio.phys));
+ 
+ 	up->serio.write = sunzilog_serio_write;
+ 	up->serio.open = sunzilog_serio_open;
+_

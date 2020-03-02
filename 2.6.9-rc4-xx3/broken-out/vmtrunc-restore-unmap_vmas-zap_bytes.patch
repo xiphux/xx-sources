@@ -1,0 +1,55 @@
+
+From: Hugh Dickins <hugh@veritas.com>
+
+The low-latency unmap_vmas patch silently moved the zap_bytes test after the
+TLB finish and lockbreak and regather: why?  That not only makes zap_bytes
+redundant (might as well use ZAP_BLOCK_SIZE), it makes the unmap_vmas level
+redundant too - it's all about saving TLB flushes when unmapping a series of
+small vmas.
+
+Move zap_bytes test back before the lockbreak, and delete the curious comment
+that a small zap block size doesn't matter: it's true need_flush prevents TLB
+flush when no page has been unmapped, but unmapping pages in small blocks
+involves many more TLB flushes than in large blocks.
+
+Signed-off-by: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/memory.c |    9 +++------
+ 1 files changed, 3 insertions(+), 6 deletions(-)
+
+diff -puN mm/memory.c~vmtrunc-restore-unmap_vmas-zap_bytes mm/memory.c
+--- 25/mm/memory.c~vmtrunc-restore-unmap_vmas-zap_bytes	2004-10-03 14:25:10.621468176 -0700
++++ 25-akpm/mm/memory.c	2004-10-03 14:25:10.626467416 -0700
+@@ -498,10 +498,6 @@ static void unmap_page_range(struct mmu_
+ }
+ 
+ #ifdef CONFIG_PREEMPT
+-/*
+- * It's not an issue to have a small zap block size - TLB flushes
+- * only happen once normally, due to the tlb->need_flush optimization.
+- */
+ # define ZAP_BLOCK_SIZE	(8 * PAGE_SIZE)
+ #else
+ /* No preempt: go for improved straight-line efficiency */
+@@ -580,6 +576,9 @@ int unmap_vmas(struct mmu_gather **tlbp,
+ 
+ 			start += block;
+ 			zap_bytes -= block;
++			if ((long)zap_bytes > 0)
++				continue;
++
+ 			if (!atomic) {
+ 				int fullmm = tlb_is_full_mm(*tlbp);
+ 				tlb_finish_mmu(*tlbp, tlb_start, start);
+@@ -587,8 +586,6 @@ int unmap_vmas(struct mmu_gather **tlbp,
+ 				*tlbp = tlb_gather_mmu(mm, fullmm);
+ 				tlb_start_valid = 0;
+ 			}
+-			if ((long)zap_bytes > 0)
+-				continue;
+ 			zap_bytes = ZAP_BLOCK_SIZE;
+ 		}
+ 	}
+_

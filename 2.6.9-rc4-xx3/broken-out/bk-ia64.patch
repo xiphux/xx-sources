@@ -1,0 +1,813 @@
+http://lia64.bkbits.net/linux-ia64-test-2.6.9
+davidm@hpl.hp.com|ChangeSet|20041008194428|08844 davidm
+
+# This is a BitKeeper generated diff -Nru style patch.
+#
+# ChangeSet
+#   2004/10/09 14:47:29-07:00 akpm@bix.(none) 
+#   Merge http://lia64.bkbits.net/linux-ia64-test-2.6.9
+#   into bix.(none):/usr/src/bk-ia64
+# 
+# kernel/timer.c
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# include/linux/timex.h
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# include/asm-ia64/mca.h
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# drivers/char/hpet.c
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/pci/pci.c
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/mm/discontig.c
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/time.c
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/perfmon.c
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/mca.c
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/asm-offsets.c
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/acpi.c
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/Makefile
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/configs/sn2_defconfig
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/Kconfig
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# BitKeeper/deleted/.del-mca_drv_asm.S
+#   2004/10/09 14:47:25-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# BitKeeper/deleted/.del-mca_drv.h
+#   2004/10/09 14:47:24-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# BitKeeper/deleted/.del-mca_drv.c
+#   2004/10/09 14:47:24-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/10/08 19:44:28+00:00 davidm@hpl.hp.com 
+#   [IA64] speedup ptrace by avoiding kernel-stack walk
+#   
+#   This patch changes the syscall entry path to store the
+#   current-frame-mask (CFM) in pt_regs->cr_ifs.  This just takes one
+#   extra instruction (a "dep" to clear the bits other than 0-37) and is
+#   free in terms of cycles.
+#   
+#   The advantage of doing this is that it lets ptrace() avoid having to
+#   walk the stack to determine the end of the user-level backing-store of
+#   a process which is in the middle of a system-call.  Since this is what
+#   strace does all the time, this speeds up strace quite a bit (by ~50%).
+#   More importantly, it makes the syscall vs. non-syscall case much more
+#   symmetric, which is always something I wanted.
+#   
+#   Note that the change to ivt.S looks big but this is just a rippling
+#   effect of instruction-scheduling to keep syscall latency the same.
+#   All that's really going on there is that instead of storing 0 into
+#   cr_ifs member we store the low 38 bits of ar.pfs.
+#   
+#   Signed-off-by: David Mosberger <davidm@hpl.hp.com>
+#   Signed-off-by: Tony Luck <tony.luck@intel.com>
+# 
+# include/asm-ia64/ptrace.h
+#   2004/10/08 19:41:29+00:00 davidm@hpl.hp.com +6 -2
+#   speedup ptrace by avoiding kernel-stack walk
+# 
+# arch/ia64/kernel/signal.c
+#   2004/10/08 19:41:29+00:00 davidm@hpl.hp.com +3 -5
+#   speedup ptrace by avoiding kernel-stack walk
+# 
+# arch/ia64/kernel/ptrace.c
+#   2004/10/08 19:41:29+00:00 davidm@hpl.hp.com +9 -22
+#   speedup ptrace by avoiding kernel-stack walk
+# 
+# arch/ia64/kernel/ivt.S
+#   2004/10/08 19:41:29+00:00 davidm@hpl.hp.com +16 -15
+#   speedup ptrace by avoiding kernel-stack walk
+# 
+# ChangeSet
+#   2004/10/08 19:32:47+00:00 aegl@agluck-lia64.sc.intel.com 
+#   Merge agluck-lia64.sc.intel.com:/data/home/aegl/BK/Linus
+#   into agluck-lia64.sc.intel.com:/data/home/aegl/BK/linux-ia64-test-2.6.9
+# 
+# kernel/timer.c
+#   2004/10/08 19:32:41+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# include/linux/timex.h
+#   2004/10/08 19:32:41+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# include/asm-ia64/mca.h
+#   2004/10/08 19:32:41+00:00 aegl@agluck-lia64.sc.intel.com +0 -7
+#   Auto merged
+# 
+# drivers/char/hpet.c
+#   2004/10/08 19:32:40+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/pci/pci.c
+#   2004/10/08 19:32:40+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/mm/discontig.c
+#   2004/10/08 19:32:40+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/time.c
+#   2004/10/08 19:32:40+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/perfmon.c
+#   2004/10/08 19:32:40+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/mca.c
+#   2004/10/08 19:32:40+00:00 aegl@agluck-lia64.sc.intel.com +0 -35
+#   Auto merged
+# 
+# arch/ia64/kernel/asm-offsets.c
+#   2004/10/08 19:32:40+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/acpi.c
+#   2004/10/08 19:32:40+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/Makefile
+#   2004/10/08 19:32:40+00:00 aegl@agluck-lia64.sc.intel.com +0 -2
+#   Auto merged
+# 
+# arch/ia64/configs/sn2_defconfig
+#   2004/10/08 19:32:40+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/Kconfig
+#   2004/10/08 19:32:40+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# BitKeeper/deleted/.del-mca_drv_asm.S
+#   2004/10/08 19:32:40+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Delete: arch/ia64/kernel/mca_drv_asm.S
+# 
+# BitKeeper/deleted/.del-mca_drv.h
+#   2004/10/08 19:32:36+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Delete: arch/ia64/kernel/mca_drv.h
+# 
+# BitKeeper/deleted/.del-mca_drv.c
+#   2004/10/08 19:32:26+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Delete: arch/ia64/kernel/mca_drv.c
+# 
+# ChangeSet
+#   2004/10/08 12:12:13-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-ia64
+# 
+# arch/ia64/kernel/time.c
+#   2004/10/08 12:12:07-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/perfmon.c
+#   2004/10/08 12:12:07-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/asm-offsets.c
+#   2004/10/08 12:12:06-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/acpi.c
+#   2004/10/08 12:12:06-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/10/03 11:02:05-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-ia64
+# 
+# kernel/timer.c
+#   2004/10/03 11:02:02-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# include/linux/timex.h
+#   2004/10/03 11:02:02-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/10/01 19:36:45-07:00 akpm@bix.(none) 
+#   Merge http://lia64.bkbits.net/linux-ia64-test-2.6.9
+#   into bix.(none):/usr/src/bk-ia64
+# 
+# kernel/timer.c
+#   2004/10/01 19:36:42-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# include/asm-ia64/mca.h
+#   2004/10/01 19:36:42-07:00 akpm@bix.(none) +0 -7
+#   Auto merged
+# 
+# drivers/char/hpet.c
+#   2004/10/01 19:36:42-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/pci/pci.c
+#   2004/10/01 19:36:42-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/mm/discontig.c
+#   2004/10/01 19:36:42-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/perfmon.c
+#   2004/10/01 19:36:42-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/mca.c
+#   2004/10/01 19:36:42-07:00 akpm@bix.(none) +0 -35
+#   Auto merged
+# 
+# arch/ia64/kernel/acpi.c
+#   2004/10/01 19:36:42-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/Makefile
+#   2004/10/01 19:36:42-07:00 akpm@bix.(none) +0 -2
+#   Auto merged
+# 
+# arch/ia64/configs/sn2_defconfig
+#   2004/10/01 19:36:42-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# arch/ia64/Kconfig
+#   2004/10/01 19:36:41-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# BitKeeper/deleted/.del-mca_drv_asm.S
+#   2004/10/01 19:36:41-07:00 akpm@bix.(none) +0 -0
+#   Delete: arch/ia64/kernel/mca_drv_asm.S
+# 
+# BitKeeper/deleted/.del-mca_drv.h
+#   2004/10/01 19:36:36-07:00 akpm@bix.(none) +0 -0
+#   Delete: arch/ia64/kernel/mca_drv.h
+# 
+# BitKeeper/deleted/.del-mca_drv.c
+#   2004/10/01 19:36:22-07:00 akpm@bix.(none) +0 -0
+#   Delete: arch/ia64/kernel/mca_drv.c
+# 
+# ChangeSet
+#   2004/09/16 18:00:23+00:00 tony.luck@intel.com 
+#   [IA64] mca.h, mca_drv.c: cleanup extern declarations
+#   
+#   Move extern declarations of ia64_{reg,unreg}_MCA_extension()
+#   to mca.h.  Delete declaration of ia64_mca_ucmc_other_recover_fp()
+#   which doesn't exist.
+#   
+#   Patch supplied by Hidetoshi Seto.
+#   
+#   Signed-off-by: Tony Luck <tony.luck@intel.com>
+# 
+# include/asm-ia64/mca.h
+#   2004/09/16 17:55:56+00:00 aegl@agluck-lia64.sc.intel.com +2 -1
+#   cleanup extern definitions
+# 
+# arch/ia64/kernel/mca_drv.c
+#   2004/09/16 17:55:56+00:00 aegl@agluck-lia64.sc.intel.com +0 -2
+#   cleanup extern definitions
+# 
+# ChangeSet
+#   2004/09/15 18:25:06+00:00 seto.hidetoshi@jp.fujitsu.com 
+#   [IA64] Recovery from user-mode memory error
+#   
+#   This is the latest/Updated OS_MCA handler which try to do recovery
+#   from multibit-ECC/poisoned memory-read error on user-land.
+#   (Thank you very much for comments, Keith and Grant!)
+#   
+#   I'd still appreciate it if anyone having good test environment
+#   could apply my patch and could report how it works.
+#   (especially reports on non-Tiger/non-Intel platform are welcome.)
+#   
+#   Signed-off-by: Hidetoshi Seto <seto.hidetoshi@jp.fujitsu.com>
+#   Signed-off-by: Tony Luck <tony.luck@intel.com>
+# 
+# arch/ia64/kernel/mca_drv_asm.S
+#   2004/09/15 18:18:04+00:00 aegl@agluck-lia64.sc.intel.com +45 -0
+#   MCA 2xECC memory errors
+# 
+# arch/ia64/kernel/mca_drv.h
+#   2004/09/15 18:18:04+00:00 aegl@agluck-lia64.sc.intel.com +113 -0
+#   MCA 2xECC memory errors
+# 
+# arch/ia64/kernel/mca_drv_asm.S
+#   2004/09/15 18:18:04+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   BitKeeper file /data/home/aegl/BK/work/seto2/arch/ia64/kernel/mca_drv_asm.S
+# 
+# arch/ia64/kernel/mca_drv.h
+#   2004/09/15 18:18:04+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   BitKeeper file /data/home/aegl/BK/work/seto2/arch/ia64/kernel/mca_drv.h
+# 
+# arch/ia64/kernel/mca_drv.c
+#   2004/09/15 18:18:03+00:00 aegl@agluck-lia64.sc.intel.com +641 -0
+#   MCA 2xECC memory errors
+# 
+# arch/ia64/kernel/mca_drv.c
+#   2004/09/15 18:18:03+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   BitKeeper file /data/home/aegl/BK/work/seto2/arch/ia64/kernel/mca_drv.c
+# 
+# include/asm-ia64/mca.h
+#   2004/09/15 18:16:58+00:00 aegl@agluck-lia64.sc.intel.com +6 -0
+#   MCA 2xECC memory errors
+# 
+# arch/ia64/kernel/mca.c
+#   2004/09/15 18:16:57+00:00 aegl@agluck-lia64.sc.intel.com +35 -6
+#   MCA 2xECC memory errors
+# 
+# arch/ia64/kernel/Makefile
+#   2004/09/15 18:16:57+00:00 aegl@agluck-lia64.sc.intel.com +2 -0
+#   MCA 2xECC memory errors
+# 
+# arch/ia64/Kconfig
+#   2004/09/15 18:16:57+00:00 aegl@agluck-lia64.sc.intel.com +3 -0
+#   MCA 2xECC memory errors
+# 
+# ChangeSet
+#   2004/09/15 18:08:25+00:00 aegl@agluck-lia64.sc.intel.com 
+#   Merge agluck-lia64.sc.intel.com:/data/home/aegl/BK/Linus
+#   into agluck-lia64.sc.intel.com:/data/home/aegl/BK/linux-ia64-test-2.6.9
+# 
+# kernel/posix-timers.c
+#   2004/09/15 18:08:19+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# drivers/char/hpet.c
+#   2004/09/15 18:08:18+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/09 23:19:44+00:00 aegl@agluck-lia64.sc.intel.com 
+#   Merge agluck-lia64.sc.intel.com:/data/home/aegl/BK/Linus
+#   into agluck-lia64.sc.intel.com:/data/home/aegl/BK/linux-ia64-test-2.6.9
+# 
+# arch/ia64/pci/pci.c
+#   2004/09/09 23:19:38+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/mm/discontig.c
+#   2004/09/09 23:19:38+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/acpi.c
+#   2004/09/09 23:19:38+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/09 23:17:38+00:00 aegl@agluck-lia64.sc.intel.com 
+#   Merge agluck-lia64.sc.intel.com:/data/home/aegl/BK/work/alex
+#   into agluck-lia64.sc.intel.com:/data/home/aegl/BK/linux-ia64-test-2.6.9
+# 
+# arch/ia64/pci/pci.c
+#   2004/09/09 23:17:32+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/mm/discontig.c
+#   2004/09/09 23:17:32+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/acpi.c
+#   2004/09/09 23:17:32+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/08 18:06:50+00:00 aegl@agluck-lia64.sc.intel.com 
+#   Merge with Linux latest
+# 
+# kernel/timer.c
+#   2004/09/08 18:06:42+00:00 aegl@agluck-lia64.sc.intel.com +1 -10
+#   Merge with Linux latest
+# 
+# kernel/posix-timers.c
+#   2004/09/08 18:06:42+00:00 aegl@agluck-lia64.sc.intel.com +0 -5
+#   Merge with Linux latest
+# 
+# include/linux/timex.h
+#   2004/09/08 18:06:42+00:00 aegl@agluck-lia64.sc.intel.com +2 -44
+#   Merge with Linux latest
+# 
+# arch/ia64/kernel/time.c
+#   2004/09/08 18:06:42+00:00 aegl@agluck-lia64.sc.intel.com +0 -28
+#   Merge with Linux latest
+# 
+# ChangeSet
+#   2004/09/08 18:05:16+00:00 aegl@agluck-lia64.sc.intel.com 
+#   Merge with Linus latest
+# 
+# include/asm-ia64/acpi.h
+#   2004/09/08 17:45:07+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# drivers/char/hpet.c
+#   2004/09/08 17:45:07+00:00 aegl@agluck-lia64.sc.intel.com +0 -3
+#   Auto merged
+# 
+# arch/ia64/sn/kernel/sn2/timer.c
+#   2004/09/08 17:45:06+00:00 aegl@agluck-lia64.sc.intel.com +0 -4
+#   Auto merged
+# 
+# arch/ia64/kernel/perfmon.c
+#   2004/09/08 17:45:06+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/kernel/fsys.S
+#   2004/09/08 17:45:06+00:00 aegl@agluck-lia64.sc.intel.com +0 -185
+#   Auto merged
+# 
+# arch/ia64/kernel/cyclone.c
+#   2004/09/08 17:45:06+00:00 aegl@agluck-lia64.sc.intel.com +0 -4
+#   Auto merged
+# 
+# arch/ia64/kernel/asm-offsets.c
+#   2004/09/08 17:45:06+00:00 aegl@agluck-lia64.sc.intel.com +0 -16
+#   Auto merged
+# 
+# arch/ia64/configs/sn2_defconfig
+#   2004/09/08 17:45:05+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# arch/ia64/configs/generic_defconfig
+#   2004/09/08 17:45:05+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/30 22:23:36+00:00 aegl@agluck-lia64.sc.intel.com 
+#   Merge agluck-lia64.sc.intel.com:/data/home/aegl/BK/work/eranian
+#   into agluck-lia64.sc.intel.com:/data/home/aegl/BK/linux-ia64-test-2.6.9
+# 
+# arch/ia64/kernel/perfmon.c
+#   2004/08/30 22:23:31+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/30 21:16:20+00:00 aegl@agluck-lia64.sc.intel.com 
+#   Merge agluck-lia64.sc.intel.com:/data/home/aegl/BK/work/sn2defconfig
+#   into agluck-lia64.sc.intel.com:/data/home/aegl/BK/linux-ia64-test-2.6.9
+# 
+# arch/ia64/configs/sn2_defconfig
+#   2004/08/30 21:16:15+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/25 23:16:36+00:00 aegl@agluck-lia64.sc.intel.com 
+#   Merge agluck-lia64.sc.intel.com:/data/home/aegl/BK/linux-ia64-test-2.6.8.1
+#   into agluck-lia64.sc.intel.com:/data/home/aegl/BK/linux-ia64-test-2.6.9
+# 
+# arch/ia64/configs/generic_defconfig
+#   2004/08/25 23:16:31+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/24 22:21:59+00:00 aegl@agluck-lia64.sc.intel.com 
+#   Merge agluck-lia64.sc.intel.com:/data/home/aegl/BK/linux-ia64-test-2.6.8.1
+#   into agluck-lia64.sc.intel.com:/data/home/aegl/BK/linux-ia64-test-2.6.9
+# 
+# kernel/timer.c
+#   2004/08/24 22:21:54+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# kernel/posix-timers.c
+#   2004/08/24 22:21:53+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+# include/asm-ia64/acpi.h
+#   2004/08/24 22:21:53+00:00 aegl@agluck-lia64.sc.intel.com +0 -1
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/24 21:26:27+00:00 clameter@sgi.com 
+#   scalability & performance improvements for timers
+#   
+#   Signed-off-by: Christoph Lameter <clameter@sgi.com>
+#   Signed-off-by: Tony Luck <tony.luck@intel.com>
+#   
+#   - Include corrected test data since the test program had a bad
+#     influence on the outcome. Scalability is better than the
+#     test program indicated.
+#   - Correctly setup the timer accuracy.
+#   - Consistently increases performance over existing codebase
+#   - Make the IA64 fastcall work for all clock sources and not only
+#     for ITC based clocking.
+#   - Add fastcall for clock_gettime(REALTIME and MONOTONIC)
+#     (the fastcall also returns nanoseconds instead of usecs*1000)
+#   - Scalability improvements in particular for the use of global clocks
+#     by avoiding the use of a cmpxchg. For applications
+#     that continually "live" in gettimeofday on an SMP system this
+#     will be a significant improvement.
+#   - Ability to switch off the cmpxchg for ITC based systems through
+#     a "nojitter" option on the kernel command line. This increases
+#     scalability of the time functions significantly. The ITC tuning code
+#     that runs during bootup typically insures that ITC offsets are less
+#     than a few cycles which are longer than the delay caused by the gettime
+#     functions and therefore the cmpxchg is not necessary on most systems.
+#   - Self tuning interpolator limiting the jumps forward to 10-20 usecs
+#     on each occurrence and increasing accuracy as well as robustness.
+#     There is no danger anymore that the interpolator is configured to
+#     be running too fast.
+#   - Report the increased accuracy via clock_getres() to userspace.
+#   - Generic interface. An interpolator can be easily setup by simply
+#     setting up a time_interpolator structure with some values.
+#     No coding of special functions needed.
+#   - Supports the HPET timer.
+# 
+# kernel/timer.c
+#   2004/08/24 21:20:31+00:00 aegl@agluck-lia64.sc.intel.com +10 -5
+#   scalability & performance improvements for timers
+# 
+# kernel/posix-timers.c
+#   2004/08/24 21:20:31+00:00 aegl@agluck-lia64.sc.intel.com +5 -0
+#   scalability & performance improvements for timers
+# 
+# include/linux/timex.h
+#   2004/08/24 21:20:31+00:00 aegl@agluck-lia64.sc.intel.com +123 -52
+#   scalability & performance improvements for timers
+# 
+# drivers/char/hpet.c
+#   2004/08/24 21:20:31+00:00 aegl@agluck-lia64.sc.intel.com +3 -33
+#   scalability & performance improvements for timers
+# 
+# arch/ia64/sn/kernel/sn2/timer.c
+#   2004/08/24 21:20:31+00:00 aegl@agluck-lia64.sc.intel.com +4 -45
+#   scalability & performance improvements for timers
+# 
+# arch/ia64/kernel/time.c
+#   2004/08/24 21:20:31+00:00 aegl@agluck-lia64.sc.intel.com +35 -84
+#   scalability & performance improvements for timers
+# 
+# arch/ia64/kernel/fsys.S
+#   2004/08/24 21:20:31+00:00 aegl@agluck-lia64.sc.intel.com +185 -172
+#   scalability & performance improvements for timers
+# 
+# arch/ia64/kernel/cyclone.c
+#   2004/08/24 21:20:31+00:00 aegl@agluck-lia64.sc.intel.com +4 -55
+#   scalability & performance improvements for timers
+# 
+# arch/ia64/kernel/asm-offsets.c
+#   2004/08/24 21:20:31+00:00 aegl@agluck-lia64.sc.intel.com +16 -3
+#   scalability & performance improvements for timers
+# 
+# ChangeSet
+#   2004/08/24 16:16:47+00:00 aegl@agluck-lia64.sc.intel.com 
+#   Merge agluck-lia64.sc.intel.com:/data/home/aegl/BK/Linus
+#   into agluck-lia64.sc.intel.com:/data/home/aegl/BK/linux-ia64-test-2.6.9
+# 
+# include/asm-ia64/acpi.h
+#   2004/08/24 16:16:42+00:00 aegl@agluck-lia64.sc.intel.com +0 -1
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/17 23:50:42+00:00 aegl@agluck-lia64.sc.intel.com 
+#   Merge agluck-lia64.sc.intel.com:/data/home/aegl/BK/linux-ia64-test-2.6.8.1
+#   into agluck-lia64.sc.intel.com:/data/home/aegl/BK/linux-ia64-test-2.6.9
+# 
+# include/asm-ia64/acpi.h
+#   2004/08/17 23:50:37+00:00 aegl@agluck-lia64.sc.intel.com +0 -0
+#   Auto merged
+# 
+diff -Nru a/arch/ia64/Kconfig b/arch/ia64/Kconfig
+--- a/arch/ia64/Kconfig	2004-10-10 22:32:35 -07:00
++++ b/arch/ia64/Kconfig	2004-10-10 22:32:35 -07:00
+@@ -283,6 +283,9 @@
+ config IA64_MCA_RECOVERY
+ 	tristate "MCA recovery from errors other than TLB."
+ 
++config IA64_MCA_RECOVERY
++	tristate "MCA recovery from errors other than TLB."
++
+ config PERFMON
+ 	bool "Performance monitor support"
+ 	help
+diff -Nru a/arch/ia64/kernel/ivt.S b/arch/ia64/kernel/ivt.S
+--- a/arch/ia64/kernel/ivt.S	2004-10-10 22:32:35 -07:00
++++ b/arch/ia64/kernel/ivt.S	2004-10-10 22:32:35 -07:00
+@@ -852,7 +852,7 @@
+ 	add r17=PT(R11),r1			// initialize second base pointer
+ 	;;
+ 	alloc r19=ar.pfs,8,0,0,0		// ensure in0-in7 are writable
+-	st8 [r16]=r29,PT(CR_IFS)-PT(CR_IPSR)	// save cr.ipsr
++	st8 [r16]=r29,PT(AR_PFS)-PT(CR_IPSR)	// save cr.ipsr
+ 	tnat.nz p8,p0=in0
+ 
+ 	st8.spill [r17]=r11,PT(CR_IIP)-PT(R11)	// save r11
+@@ -860,31 +860,31 @@
+ (pKStk)	mov r18=r0				// make sure r18 isn't NaT
+ 	;;
+ 
++	st8 [r16]=r26,PT(CR_IFS)-PT(AR_PFS)	// save ar.pfs
+ 	st8 [r17]=r28,PT(AR_UNAT)-PT(CR_IIP)	// save cr.iip
+ 	mov r28=b0				// save b0 (2 cyc)
+-(p8)	mov in0=-1
+ 	;;
+ 
+-	st8 [r16]=r0,PT(AR_PFS)-PT(CR_IFS)	// clear cr.ifs
+ 	st8 [r17]=r25,PT(AR_RSC)-PT(AR_UNAT)	// save ar.unat
+-(p9)	mov in1=-1
++	dep r19=0,r19,38,26			// clear all bits but 0..37 [I0]
++(p8)	mov in0=-1
+ 	;;
+ 
+-	st8 [r16]=r26,PT(AR_RNAT)-PT(AR_PFS)	// save ar.pfs
++	st8 [r16]=r19,PT(AR_RNAT)-PT(CR_IFS)	// store ar.pfs.pfm in cr.ifs
+ 	st8 [r17]=r27,PT(AR_BSPSTORE)-PT(AR_RSC)// save ar.rsc
+-	tnat.nz p10,p0=in2
++(p9)	mov in1=-1
+ 
+ (pUStk) sub r18=r18,r22				// r18=RSE.ndirty*8
+ 	tbit.nz p15,p0=r29,IA64_PSR_I_BIT
+-	tnat.nz p11,p0=in3
++	tnat.nz p10,p0=in2
+ 	;;
+ (pKStk) adds r16=PT(PR)-PT(AR_RNAT),r16		// skip over ar_rnat field
+ (pKStk) adds r17=PT(B0)-PT(AR_BSPSTORE),r17	// skip over ar_bspstore field
++	tnat.nz p11,p0=in3
++	;;
+ (p10)	mov in2=-1
+-
++	tnat.nz p12,p0=in4				// [I0]
+ (p11)	mov in3=-1
+-	tnat.nz p12,p0=in4
+-	tnat.nz p13,p0=in5
+ 	;;
+ (pUStk) st8 [r16]=r24,PT(PR)-PT(AR_RNAT)	// save ar.rnat
+ (pUStk) st8 [r17]=r23,PT(B0)-PT(AR_BSPSTORE)	// save ar.bspstore
+@@ -892,28 +892,29 @@
+ 	;;
+ 	st8 [r16]=r31,PT(LOADRS)-PT(PR)		// save predicates
+ 	st8 [r17]=r28,PT(R1)-PT(B0)		// save b0
+-(p12)	mov in4=-1
++	tnat.nz p13,p0=in5				// [I0]
+ 	;;
+ 	st8 [r16]=r18,PT(R12)-PT(LOADRS)	// save ar.rsc value for "loadrs"
+ 	st8.spill [r17]=r20,PT(R13)-PT(R1)	// save original r1
+-(p13)	mov in5=-1
++(p12)	mov in4=-1
+ 	;;
+ 
+ .mem.offset 0,0; st8.spill [r16]=r12,PT(AR_FPSR)-PT(R12)	// save r12
+ .mem.offset 8,0; st8.spill [r17]=r13,PT(R15)-PT(R13)		// save r13
+-	tnat.nz p14,p0=in6
++(p13)	mov in5=-1
+ 	;;
+ 	st8 [r16]=r21,PT(R8)-PT(AR_FPSR)	// save ar.fpsr
+ 	st8.spill [r17]=r15			// save r15
+-	tnat.nz p8,p0=in7
++	tnat.nz p14,p0=in6
+ 	;;
+ 	stf8 [r16]=f1		// ensure pt_regs.r8 != 0 (see handle_syscall_error)
+ 	adds r12=-16,r1		// switch to kernel memory stack (with 16 bytes of scratch)
+-(p14)	mov in6=-1
++	tnat.nz p8,p0=in7
+ 
+ 	mov r13=r2				// establish `current'
+ 	movl r1=__gp				// establish kernel global pointer
+ 	;;
++(p14)	mov in6=-1
+ (p8)	mov in7=-1
+ 	tnat.nz p9,p0=r15
+ 
+diff -Nru a/arch/ia64/kernel/ptrace.c b/arch/ia64/kernel/ptrace.c
+--- a/arch/ia64/kernel/ptrace.c	2004-10-10 22:32:35 -07:00
++++ b/arch/ia64/kernel/ptrace.c	2004-10-10 22:32:35 -07:00
+@@ -1,7 +1,7 @@
+ /*
+  * Kernel support for the ptrace() and syscall tracing interfaces.
+  *
+- * Copyright (C) 1999-2003 Hewlett-Packard Co
++ * Copyright (C) 1999-2004 Hewlett-Packard Co
+  *	David Mosberger-Tang <davidm@hpl.hp.com>
+  *
+  * Derived from the x86 and Alpha versions.  Most of the code in here
+@@ -304,7 +304,6 @@
+ 	long num_regs, nbits;
+ 	struct pt_regs *pt;
+ 	unsigned long cfm, *urbs_kargs;
+-	struct unw_frame_info info;
+ 
+ 	pt = ia64_task_regs(task);
+ 	kbsp = (unsigned long *) sw->ar_bspstore;
+@@ -316,11 +315,8 @@
+ 		 * If entered via syscall, don't allow user to set rnat bits
+ 		 * for syscall args.
+ 		 */
+-		unw_init_from_blocked_task(&info,task);
+-		if (unw_unwind_to_user(&info) == 0) {
+-			unw_get_cfm(&info,&cfm);
+-			urbs_kargs = ia64_rse_skip_regs(urbs_end,-(cfm & 0x7f));
+-		}
++		cfm = pt->cr_ifs;
++		urbs_kargs = ia64_rse_skip_regs(urbs_end, -(cfm & 0x7f));
+ 	}
+ 
+ 	if (urbs_kargs >= urnat_addr)
+@@ -480,27 +476,18 @@
+ unsigned long
+ ia64_get_user_rbs_end (struct task_struct *child, struct pt_regs *pt, unsigned long *cfmp)
+ {
+-	unsigned long *krbs, *bspstore, cfm;
+-	struct unw_frame_info info;
++	unsigned long *krbs, *bspstore, cfm = pt->cr_ifs;
+ 	long ndirty;
+ 
+ 	krbs = (unsigned long *) child + IA64_RBS_OFFSET/8;
+ 	bspstore = (unsigned long *) pt->ar_bspstore;
+ 	ndirty = ia64_rse_num_regs(krbs, krbs + (pt->loadrs >> 19));
+-	cfm = pt->cr_ifs & ~(1UL << 63);
+ 
+-	if (in_syscall(pt)) {
+-		/*
+-		 * If bit 63 of cr.ifs is cleared, the kernel was entered via a system
+-		 * call and we need to recover the CFM that existed on entry to the
+-		 * kernel by unwinding the kernel stack.
+-		 */
+-		unw_init_from_blocked_task(&info, child);
+-		if (unw_unwind_to_user(&info) == 0) {
+-			unw_get_cfm(&info, &cfm);
+-			ndirty += (cfm & 0x7f);
+-		}
+-	}
++	if (in_syscall(pt))
++		ndirty += (cfm & 0x7f);
++	else
++		cfm &= ~(1UL << 63);	/* clear valid bit */
++
+ 	if (cfmp)
+ 		*cfmp = cfm;
+ 	return (unsigned long) ia64_rse_skip_regs(bspstore, ndirty);
+diff -Nru a/arch/ia64/kernel/signal.c b/arch/ia64/kernel/signal.c
+--- a/arch/ia64/kernel/signal.c	2004-10-10 22:32:35 -07:00
++++ b/arch/ia64/kernel/signal.c	2004-10-10 22:32:35 -07:00
+@@ -290,12 +290,10 @@
+ 
+ 	if (on_sig_stack((unsigned long) sc))
+ 		flags |= IA64_SC_FLAG_ONSTACK;
+-	if ((ifs & (1UL << 63)) == 0) {
+-		/* if cr_ifs isn't valid, we got here through a syscall */
++	if ((ifs & (1UL << 63)) == 0)
++		/* if cr_ifs doesn't have the valid bit set, we got here through a syscall */
+ 		flags |= IA64_SC_FLAG_IN_SYSCALL;
+-		cfm = scr->ar_pfs & ((1UL << 38) - 1);
+-	} else
+-		cfm = ifs & ((1UL << 38) - 1);
++	cfm = ifs & ((1UL << 38) - 1);
+ 	ia64_flush_fph(current);
+ 	if ((current->thread.flags & IA64_THREAD_FPH_VALID)) {
+ 		flags |= IA64_SC_FLAG_FPH_VALID;
+diff -Nru a/include/asm-ia64/ptrace.h b/include/asm-ia64/ptrace.h
+--- a/include/asm-ia64/ptrace.h	2004-10-10 22:32:35 -07:00
++++ b/include/asm-ia64/ptrace.h	2004-10-10 22:32:35 -07:00
+@@ -2,7 +2,7 @@
+ #define _ASM_IA64_PTRACE_H
+ 
+ /*
+- * Copyright (C) 1998-2003 Hewlett-Packard Co
++ * Copyright (C) 1998-2004 Hewlett-Packard Co
+  *	David Mosberger-Tang <davidm@hpl.hp.com>
+  *	Stephane Eranian <eranian@hpl.hp.com>
+  * Copyright (C) 2003 Intel Co
+@@ -110,7 +110,11 @@
+ 
+ 	unsigned long cr_ipsr;		/* interrupted task's psr */
+ 	unsigned long cr_iip;		/* interrupted task's instruction pointer */
+-	unsigned long cr_ifs;		/* interrupted task's function state */
++	/*
++	 * interrupted task's function state; if bit 63 is cleared, it
++	 * contains syscall's ar.pfs.pfm:
++	 */
++	unsigned long cr_ifs;
+ 
+ 	unsigned long ar_unat;		/* interrupted task's NaT register (preserved) */
+ 	unsigned long ar_pfs;		/* prev function state  */

@@ -1,0 +1,69 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/m32r/kernel/smp.c      |    6 +++---
+ 25-akpm/arch/m32r/kernel/sys_m32r.c |    2 +-
+ 25-akpm/arch/m32r/kernel/traps.c    |    2 +-
+ 3 files changed, 5 insertions(+), 5 deletions(-)
+
+diff -puN arch/m32r/kernel/smp.c~lock-initializer-cleanup-m32r arch/m32r/kernel/smp.c
+--- 25/arch/m32r/kernel/smp.c~lock-initializer-cleanup-m32r	Wed Jan 12 16:54:11 2005
++++ 25-akpm/arch/m32r/kernel/smp.c	Wed Jan 12 16:54:11 2005
+@@ -38,7 +38,7 @@
+  * Structure and data for smp_call_function(). This is designed to minimise
+  * static memory requirements. It also looks cleaner.
+  */
+-static spinlock_t call_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(call_lock);
+ 
+ struct call_data_struct {
+ 	void (*func) (void *info);
+@@ -53,7 +53,7 @@ static struct call_data_struct *call_dat
+ /*
+  * For flush_cache_all()
+  */
+-static spinlock_t flushcache_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(flushcache_lock);
+ static volatile unsigned long flushcache_cpumask = 0;
+ 
+ /*
+@@ -63,7 +63,7 @@ static volatile cpumask_t flush_cpumask;
+ static struct mm_struct *flush_mm;
+ static struct vm_area_struct *flush_vma;
+ static volatile unsigned long flush_va;
+-static spinlock_t tlbstate_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(tlbstate_lock);
+ #define FLUSH_ALL 0xffffffff
+ 
+ DECLARE_PER_CPU(int, prof_multiplier);
+diff -puN arch/m32r/kernel/sys_m32r.c~lock-initializer-cleanup-m32r arch/m32r/kernel/sys_m32r.c
+--- 25/arch/m32r/kernel/sys_m32r.c~lock-initializer-cleanup-m32r	Wed Jan 12 16:54:11 2005
++++ 25-akpm/arch/m32r/kernel/sys_m32r.c	Wed Jan 12 16:54:11 2005
+@@ -48,7 +48,7 @@ asmlinkage int sys_tas(int *addr)
+ #else /* CONFIG_SMP */
+ #include <linux/spinlock.h>
+ 
+-static spinlock_t tas_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(tas_lock);
+ 
+ asmlinkage int sys_tas(int *addr)
+ {
+diff -puN arch/m32r/kernel/traps.c~lock-initializer-cleanup-m32r arch/m32r/kernel/traps.c
+--- 25/arch/m32r/kernel/traps.c~lock-initializer-cleanup-m32r	Wed Jan 12 16:54:11 2005
++++ 25-akpm/arch/m32r/kernel/traps.c	Wed Jan 12 16:54:11 2005
+@@ -223,7 +223,7 @@ bad:
+ 	printk("\n");
+ }
+ 
+-spinlock_t die_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(die_lock);
+ 
+ void die(const char * str, struct pt_regs * regs, long err)
+ {
+_

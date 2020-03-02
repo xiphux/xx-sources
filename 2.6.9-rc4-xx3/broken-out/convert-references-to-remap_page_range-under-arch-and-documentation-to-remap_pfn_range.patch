@@ -1,0 +1,216 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+This patch converts all callers of remap_page_range() under arch/ and all
+references in Documentation/ to use remap_pfn_range().
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/IO-mapping.txt   |    7 ++++---
+ 25-akpm/arch/arm/kernel/bios32.c       |    4 ++--
+ 25-akpm/arch/i386/pci/i386.c           |    2 +-
+ 25-akpm/arch/ia64/kernel/perfmon.c     |   26 ++++----------------------
+ 25-akpm/arch/ia64/pci/pci.c            |    2 +-
+ 25-akpm/arch/ppc/kernel/pci.c          |    2 +-
+ 25-akpm/arch/ppc64/kernel/pci.c        |    2 +-
+ 25-akpm/arch/ppc64/kernel/proc_ppc64.c |    3 ++-
+ 25-akpm/arch/sparc/mm/generic.c        |    2 +-
+ 25-akpm/arch/sparc64/mm/generic.c      |    2 +-
+ 25-akpm/arch/um/drivers/mmapper_kern.c |    4 ++--
+ 11 files changed, 20 insertions(+), 36 deletions(-)
+
+diff -puN arch/arm/kernel/bios32.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range arch/arm/kernel/bios32.c
+--- 25/arch/arm/kernel/bios32.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range	2004-09-30 22:55:59.660495488 -0700
++++ 25-akpm/arch/arm/kernel/bios32.c	2004-09-30 22:55:59.682492144 -0700
+@@ -681,7 +681,7 @@ int pci_mmap_page_range(struct pci_dev *
+ 	if (mmap_state == pci_mmap_io) {
+ 		return -EINVAL;
+ 	} else {
+-		phys = root->mem_offset + (vma->vm_pgoff << PAGE_SHIFT);
++		phys = vma->vm_pgoff + (root->mem_offset >> PAGE_SHIFT);
+ 	}
+ 
+ 	/*
+@@ -690,7 +690,7 @@ int pci_mmap_page_range(struct pci_dev *
+ 	vma->vm_flags |= VM_SHM | VM_LOCKED | VM_IO;
+ 	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+ 
+-	if (remap_page_range(vma, vma->vm_start, phys,
++	if (remap_pfn_range(vma, vma->vm_start, phys,
+ 			     vma->vm_end - vma->vm_start,
+ 			     vma->vm_page_prot))
+ 		return -EAGAIN;
+diff -puN arch/i386/pci/i386.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range arch/i386/pci/i386.c
+--- 25/arch/i386/pci/i386.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range	2004-09-30 22:55:59.661495336 -0700
++++ 25-akpm/arch/i386/pci/i386.c	2004-09-30 22:55:59.683491992 -0700
+@@ -295,7 +295,7 @@ int pci_mmap_page_range(struct pci_dev *
+ 	/* Write-combine setting is ignored, it is changed via the mtrr
+ 	 * interfaces on this platform.
+ 	 */
+-	if (remap_page_range(vma, vma->vm_start, vma->vm_pgoff << PAGE_SHIFT,
++	if (remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
+ 			     vma->vm_end - vma->vm_start,
+ 			     vma->vm_page_prot))
+ 		return -EAGAIN;
+diff -puN arch/ia64/kernel/perfmon.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range arch/ia64/kernel/perfmon.c
+--- 25/arch/ia64/kernel/perfmon.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range	2004-09-30 22:55:59.664494880 -0700
++++ 25-akpm/arch/ia64/kernel/perfmon.c	2004-09-30 22:55:59.689491080 -0700
+@@ -572,12 +572,6 @@ pfm_unreserve_page(unsigned long a)
+ 	ClearPageReserved(vmalloc_to_page((void*)a));
+ }
+ 
+-static inline int
+-pfm_remap_page_range(struct vm_area_struct *vma, unsigned long from, unsigned long phys_addr, unsigned long size, pgprot_t prot)
+-{
+-	return remap_page_range(vma, from, phys_addr, size, prot);
+-}
+-
+ static inline unsigned long
+ pfm_protect_ctx_ctxsw(pfm_context_t *x)
+ {
+@@ -805,18 +799,6 @@ pfm_reset_msgq(pfm_context_t *ctx)
+ 	DPRINT(("ctx=%p msgq reset\n", ctx));
+ }
+ 
+-
+-/* Here we want the physical address of the memory.
+- * This is used when initializing the contents of the
+- * area and marking the pages as reserved.
+- */
+-static inline unsigned long
+-pfm_kvirt_to_pa(unsigned long adr)
+-{
+-	__u64 pa = ia64_tpa(adr);
+-	return pa;
+-}
+-
+ static void *
+ pfm_rvmalloc(unsigned long size)
+ {
+@@ -2243,14 +2225,14 @@ pfm_free_fd(int fd, struct file *file)
+ static int
+ pfm_remap_buffer(struct vm_area_struct *vma, unsigned long buf, unsigned long addr, unsigned long size)
+ {
+-	unsigned long page;
+-
+ 	DPRINT(("CPU%d buf=0x%lx addr=0x%lx size=%ld\n", smp_processor_id(), buf, addr, size));
+ 
+ 	while (size > 0) {
+-		page = pfm_kvirt_to_pa(buf);
++		unsigned long pfn = ia64_tpa(buf) >> PAGE_SHIFT;
++
+ 
+-		if (pfm_remap_page_range(vma, addr, page, PAGE_SIZE, PAGE_READONLY)) return -ENOMEM;
++		if (remap_pfn_range(vma, addr, pfn, PAGE_SIZE, PAGE_READONLY))
++			return -ENOMEM;
+ 
+ 		addr  += PAGE_SIZE;
+ 		buf   += PAGE_SIZE;
+diff -puN arch/ia64/pci/pci.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range arch/ia64/pci/pci.c
+--- 25/arch/ia64/pci/pci.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range	2004-09-30 22:55:59.666494576 -0700
++++ 25-akpm/arch/ia64/pci/pci.c	2004-09-30 22:55:59.690490928 -0700
+@@ -493,7 +493,7 @@ pci_mmap_page_range (struct pci_dev *dev
+ 	else
+ 		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+ 
+-	if (remap_page_range(vma, vma->vm_start, vma->vm_pgoff << PAGE_SHIFT,
++	if (remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
+ 			     vma->vm_end - vma->vm_start, vma->vm_page_prot))
+ 		return -EAGAIN;
+ 
+diff -puN arch/ppc64/kernel/pci.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range arch/ppc64/kernel/pci.c
+--- 25/arch/ppc64/kernel/pci.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range	2004-09-30 22:55:59.667494424 -0700
++++ 25-akpm/arch/ppc64/kernel/pci.c	2004-09-30 22:55:59.692490624 -0700
+@@ -534,7 +534,7 @@ int pci_mmap_page_range(struct pci_dev *
+ 	__pci_mmap_set_flags(dev, vma, mmap_state);
+ 	__pci_mmap_set_pgprot(dev, vma, mmap_state, write_combine);
+ 
+-	ret = remap_page_range(vma, vma->vm_start, vma->vm_pgoff << PAGE_SHIFT,
++	ret = remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
+ 			       vma->vm_end - vma->vm_start, vma->vm_page_prot);
+ 
+ 	return ret;
+diff -puN arch/ppc64/kernel/proc_ppc64.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range arch/ppc64/kernel/proc_ppc64.c
+--- 25/arch/ppc64/kernel/proc_ppc64.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range	2004-09-30 22:55:59.669494120 -0700
++++ 25-akpm/arch/ppc64/kernel/proc_ppc64.c	2004-09-30 22:55:59.692490624 -0700
+@@ -176,7 +176,8 @@ static int page_map_mmap( struct file *f
+ 	if ((vma->vm_end - vma->vm_start) > dp->size)
+ 		return -EINVAL;
+ 
+-	remap_page_range( vma, vma->vm_start, __pa(dp->data), dp->size, vma->vm_page_prot );
++	remap_pfn_range(vma, vma->vm_start, __pa(dp->data) >> PAGE_SHIFT,
++						dp->size, vma->vm_page_prot);
+ 	return 0;
+ }
+ 
+diff -puN arch/ppc/kernel/pci.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range arch/ppc/kernel/pci.c
+--- 25/arch/ppc/kernel/pci.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range	2004-09-30 22:55:59.671493816 -0700
++++ 25-akpm/arch/ppc/kernel/pci.c	2004-09-30 22:55:59.694490320 -0700
+@@ -1591,7 +1591,7 @@ int pci_mmap_page_range(struct pci_dev *
+ 	__pci_mmap_set_flags(dev, vma, mmap_state);
+ 	__pci_mmap_set_pgprot(dev, vma, mmap_state, write_combine);
+ 
+-	ret = remap_page_range(vma, vma->vm_start, vma->vm_pgoff << PAGE_SHIFT,
++	ret = remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
+ 			       vma->vm_end - vma->vm_start, vma->vm_page_prot);
+ 
+ 	return ret;
+diff -puN arch/sparc64/mm/generic.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range arch/sparc64/mm/generic.c
+--- 25/arch/sparc64/mm/generic.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range	2004-09-30 22:55:59.673493512 -0700
++++ 25-akpm/arch/sparc64/mm/generic.c	2004-09-30 22:55:59.695490168 -0700
+@@ -23,7 +23,7 @@ static inline void forget_pte(pte_t page
+ 	}
+ }
+ 
+-/* Remap IO memory, the same way as remap_page_range(), but use
++/* Remap IO memory, the same way as remap_pfn_range(), but use
+  * the obio memory space.
+  *
+  * They use a pgprot that sets PAGE_IO and does not check the
+diff -puN arch/sparc/mm/generic.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range arch/sparc/mm/generic.c
+--- 25/arch/sparc/mm/generic.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range	2004-09-30 22:55:59.674493360 -0700
++++ 25-akpm/arch/sparc/mm/generic.c	2004-09-30 22:55:59.696490016 -0700
+@@ -41,7 +41,7 @@ static inline void forget_pte(pte_t page
+ #endif
+ }
+ 
+-/* Remap IO memory, the same way as remap_page_range(), but use
++/* Remap IO memory, the same way as remap_pfn_range(), but use
+  * the obio memory space.
+  *
+  * They use a pgprot that sets PAGE_IO and does not check the
+diff -puN arch/um/drivers/mmapper_kern.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range arch/um/drivers/mmapper_kern.c
+--- 25/arch/um/drivers/mmapper_kern.c~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range	2004-09-30 22:55:59.676493056 -0700
++++ 25-akpm/arch/um/drivers/mmapper_kern.c	2004-09-30 22:55:59.696490016 -0700
+@@ -81,10 +81,10 @@ mmapper_mmap(struct file *file, struct v
+ 	size = vma->vm_end - vma->vm_start;
+ 	if(size > mmapper_size) return(-EFAULT);
+ 
+-	/* XXX A comment above remap_page_range says it should only be
++	/* XXX A comment above remap_pfn_range says it should only be
+ 	 * called when the mm semaphore is held
+ 	 */
+-	if (remap_page_range(vma, vma->vm_start, p_buf, size, 
++	if (remap_pfn_range(vma, vma->vm_start, p_buf >> PAGE_SHIFT, size,
+ 			     vma->vm_page_prot))
+ 		goto out;
+ 	ret = 0;
+diff -puN Documentation/IO-mapping.txt~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range Documentation/IO-mapping.txt
+--- 25/Documentation/IO-mapping.txt~convert-references-to-remap_page_range-under-arch-and-documentation-to-remap_pfn_range	2004-09-30 22:55:59.678492752 -0700
++++ 25-akpm/Documentation/IO-mapping.txt	2004-09-30 22:55:59.697489864 -0700
+@@ -119,9 +119,10 @@ you can't use it from the bus master. 
+ So why do we care about the physical address at all? We do need the physical
+ address in some cases, it's just not very often in normal code.  The physical
+ address is needed if you use memory mappings, for example, because the
+-"remap_page_range()" mm function wants the physical address of the memory to
+-be remapped (the memory management layer doesn't know about devices outside
+-the CPU, so it shouldn't need to know about "bus addresses" etc). 
++"remap_pfn_range()" mm function wants the physical address of the memory to
++be remapped as measured in units of pages, a.k.a. the pfn (the memory
++management layer doesn't know about devices outside the CPU, so it
++shouldn't need to know about "bus addresses" etc).
+ 
+ NOTE NOTE NOTE! The above is only one part of the whole equation. The above
+ only talks about "real memory", that is, CPU memory (RAM). 
+_

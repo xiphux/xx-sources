@@ -1,0 +1,61 @@
+
+
+We're currently protecting radix_tree_tag_set/clear with an rwlock in write
+mode.  That's silly, because radix_tree_tag_set() only requires that the
+overall tree be stabilised.
+
+So change the radix-tree functions to use atomic bitops.  This permits the
+user to use a read lock while running radix_tree_tag_set() and
+radix_tree_tag_clear().
+
+
+---
+
+ 25-akpm/lib/radix-tree.c |   15 ++++++++++++---
+ 1 files changed, 12 insertions(+), 3 deletions(-)
+
+diff -puN lib/radix-tree.c~radix_tree_tag_set-atomic lib/radix-tree.c
+--- 25/lib/radix-tree.c~radix_tree_tag_set-atomic	Fri May 21 17:25:03 2004
++++ 25-akpm/lib/radix-tree.c	Fri May 21 17:27:17 2004
+@@ -136,13 +136,12 @@ out:
+ 
+ static inline void tag_set(struct radix_tree_node *node, int tag, int offset)
+ {
+-	if (!test_bit(offset, &node->tags[tag][0]))
+-		__set_bit(offset, &node->tags[tag][0]);
++	set_bit(offset, &node->tags[tag][0]);
+ }
+ 
+ static inline void tag_clear(struct radix_tree_node *node, int tag, int offset)
+ {
+-	__clear_bit(offset, &node->tags[tag][0]);
++	clear_bit(offset, &node->tags[tag][0]);
+ }
+ 
+ static inline int tag_get(struct radix_tree_node *node, int tag, int offset)
+@@ -321,6 +320,11 @@ EXPORT_SYMBOL(radix_tree_lookup);
+  *
+  *	Returns the address of the tagged item.   Setting a tag on a not-present
+  *	item is a bug.
++ *
++ *	radix_tree_tag_set() atomically sets the tag and does not actually
++ *	change the overall tree structure.  Consequently it is sufficient that
++ *	the caller use an rwlock in read-mode while running
++ *	radix_tree_tag_set().
+  */
+ void *radix_tree_tag_set(struct radix_tree_root *root,
+ 			unsigned long index, int tag)
+@@ -362,6 +366,11 @@ EXPORT_SYMBOL(radix_tree_tag_set);
+  *
+  *	Returns the address of the tagged item on success, else NULL.  ie:
+  *	has the same return value and semantics as radix_tree_lookup().
++ *
++ *	radix_tree_tag_clear() atomically sets the tag and does not actually
++ *	change the overall tree structure.  Consequently it is sufficient that
++ *	the caller use an rwlock in read-mode while running
++ *	radix_tree_tag_clear().
+  */
+ void *radix_tree_tag_clear(struct radix_tree_root *root,
+ 			unsigned long index, int tag)
+
+_

@@ -1,0 +1,734 @@
+Index: xx-sources/include/linux/scheduler.h
+===================================================================
+--- xx-sources.orig/include/linux/scheduler.h	2005-01-14 23:49:53.987598240 +0000
++++ xx-sources/include/linux/scheduler.h	2005-01-14 23:50:13.723597912 +0000
+@@ -112,6 +112,14 @@
+ };
+ #endif
+ 
++/* Nanosched scheduler */
++#ifdef CONFIG_CPUSCHED_NANOSCHED
++struct cpusched_ns {
++	struct list_head run_list;
++	unsigned int time_slice;
++};
++#endif
++
+ union cpusched {
+ #ifdef CONFIG_CPUSCHED_INGO
+ 		struct cpusched_ingo ingosched;
+@@ -122,6 +130,9 @@
+ #ifdef CONFIG_CPUSCHED_MINISCHED
+ 		struct cpusched_ms mssched;
+ #endif
++#ifdef CONFIG_CPUSCHED_NANOSCHED
++		struct cpusched_ns nssched;
++#endif
+ };
+ 
+ #endif
+Index: xx-sources/init/Kconfig
+===================================================================
+--- xx-sources.orig/init/Kconfig	2005-01-14 23:49:53.988598088 +0000
++++ xx-sources/init/Kconfig	2005-01-14 23:50:13.723597912 +0000
+@@ -289,6 +289,14 @@
+ 	  rr scheduler with real time policy support and co-operative
+ 	  multitasking SCHED_NORMAL for uniprocessor only.
+ 
++config CPUSCHED_DEFAULT_NANOSCHED
++	bool "Nanosched cpu scheduler"
++	depends on !SMP && !PREEMPT
++	select CPUSCHED_NANOSCHED
++	---help---
++	  This scheduler is a minimal overhead O(1) non-preemptible rr
++	  scheduler for uniprocessor only without any priority support.
++
+ endchoice
+ 
+ menuconfig EMBEDDED
+@@ -330,6 +338,16 @@
+ 	  To boot this cpu scheduler, if it is not the default, use the
+ 	  bootparam "cpusched=minisched".
+ 
++config CPUSCHED_NANOSCHED
++	bool "Nanosched cpu scheduler" if EMBEDDED
++	depends on PLUGSCHED && !SMP && !PREEMPT
++	default y
++	---help---
++	  This scheduler is a minimal overhead O(1) non-preemptible rr
++	  scheduler for uniprocessor only without any priority support.
++	  To boot this cpu scheduler, if it is not the default, use the
++	  bootparam "cpusched=nanosched".
++
+ config KALLSYMS
+ 	 bool "Load all symbols for debugging/kksymoops" if EMBEDDED
+ 	 default y
+Index: xx-sources/kernel/Makefile
+===================================================================
+--- xx-sources.orig/kernel/Makefile	2005-01-14 23:49:53.988598088 +0000
++++ xx-sources/kernel/Makefile	2005-01-14 23:50:13.724597760 +0000
+@@ -12,6 +12,7 @@
+ obj-$(CONFIG_CPUSCHED_INGO) += sched.o
+ obj-$(CONFIG_CPUSCHED_STAIRCASE) += staircase.o
+ obj-$(CONFIG_CPUSCHED_MINISCHED) += minisched.o
++obj-$(CONFIG_CPUSCHED_NANOSCHED) += nanosched.o
+ obj-$(CONFIG_FUTEX) += futex.o
+ obj-$(CONFIG_GENERIC_ISA_DMA) += dma.o
+ obj-$(CONFIG_SMP) += cpu.o spinlock.o
+Index: xx-sources/kernel/nanosched.c
+===================================================================
+--- xx-sources.orig/kernel/nanosched.c	2005-01-14 01:38:42.771666504 +0000
++++ xx-sources/kernel/nanosched.c	2005-01-14 23:50:23.692082472 +0000
+@@ -0,0 +1,620 @@
++/*
++ *  kernel/nanosched.c by Con Kolivas 2004.
++ *
++ *  This is "nanosched"; a minimalist uniprocessor scheduler.
++ */
++#include <asm/mmu_context.h>
++#include <linux/interrupt.h>
++#include <linux/blkdev.h>
++
++#define RR_INTERVAL	(10 * HZ / 1000 ? : 1)
++
++/*
++ * This is the runqueue data structure.
++ */
++struct runqueue {
++	unsigned long nr_running, nr_uninterruptible, nr_iowait;
++	unsigned long long nr_switches;
++	task_t *curr, *idle;
++	struct mm_struct *prev_mm;
++	struct list_head queue;
++};
++
++static struct runqueue rq;
++
++static int ns_rt_task(const task_t *p)
++{
++	return 0;
++}
++
++/*
++ * Default context-switch locking:
++ */
++#ifndef prepare_arch_switch
++# define prepare_arch_switch()		do { } while (0)
++# define finish_arch_switch()		local_irq_enable();
++# define task_running(p)		(rq.curr == (p))
++#endif
++
++static int task_queued(task_t *task)
++{
++	return !list_empty(&task->u.nssched.run_list);
++}
++
++/*
++ * Adding/removing a task to/from a runqueue:
++ */
++static void dequeue_task(struct task_struct *p)
++{
++	list_del_init(&p->u.nssched.run_list);
++}
++
++static void enqueue_task(struct task_struct *p)
++{
++	list_add_tail(&p->u.nssched.run_list, &rq.queue);
++}
++
++static void requeue_task(struct task_struct *p)
++{
++	list_move_tail(&p->u.nssched.run_list, &rq.queue);
++}
++
++static void ns_set_oom_timeslice(task_t *p)
++{
++	p->u.nssched.time_slice = HZ;
++}
++
++static void activate_task(task_t *p)
++{
++	p->u.nssched.time_slice = RR_INTERVAL;
++	enqueue_task(p);
++	rq.nr_running++;
++}
++
++/*
++ * deactivate_task - remove a task from the runqueue.
++ */
++static void deactivate_task(struct task_struct *p)
++{
++	rq.nr_running--;
++	if (p->state == TASK_UNINTERRUPTIBLE)
++		rq.nr_uninterruptible++;
++	dequeue_task(p);
++}
++
++/*
++ * resched_task - mark a task 'to be rescheduled now'.
++ *
++ * This means the setting of the need_resched flag;
++ */
++static inline void resched_task(task_t *p)
++{
++	set_tsk_need_resched(p);
++}
++
++/**
++ * task_curr - is this task currently executing?
++ * @p: the task in question.
++ */
++static int ns_task_curr(const task_t *p)
++{
++	return (rq.curr == p);
++}
++
++/***
++ * try_to_wake_up - wake up a thread
++ * @p: the to-be-woken-up thread
++ * @state: the mask of task states that can be woken
++ * @sync: do a synchronous wakeup?
++ *
++ * Put it on the run-queue if it's not already there. The "current"
++ * thread is always on the run-queue (except when the actual
++ * re-schedule is in progress), and as such you're allowed to do
++ * the simpler "current->state = TASK_RUNNING" to mark yourself
++ * runnable without the overhead of this.
++ *
++ * returns failure only if the task is already active.
++ */
++static int ns_try_to_wake_up(task_t * p, unsigned int state, int sync)
++{
++	int success = 0;
++	unsigned long flags;
++	long old_state;
++
++	local_irq_save(flags);
++	old_state = p->state;
++	if (!(old_state & state))
++		goto out;
++
++	if (task_queued(p))
++		goto out_running;
++
++	if (old_state == TASK_UNINTERRUPTIBLE)
++		rq.nr_uninterruptible--;
++
++	activate_task(p);
++	success = 1;
++
++out_running:
++	p->state = TASK_RUNNING;
++out:
++	local_irq_restore(flags);
++
++	return success;
++}
++
++/*
++ * Perform scheduler related setup for a newly forked process p.
++ * p is forked by current.
++ */
++static void ns_sched_fork(task_t *p)
++{
++	/*
++	 * We mark the process as running here, but have not actually
++	 * inserted it onto the runqueue yet. This guarantees that
++	 * nobody will actually run it, and a signal or other external
++	 * event cannot wake it up and insert it on the runqueue either.
++	 */
++	p->state = TASK_RUNNING;
++	INIT_LIST_HEAD(&p->u.nssched.run_list);
++	spin_lock_init(&p->switch_lock);
++#ifdef CONFIG_SCHEDSTATS
++	memset(&p->sched_info, 0, sizeof(p->sched_info));
++#endif
++}
++
++/*
++ * wake_up_new_task - wake up a newly created task for the first time.
++ *
++ * This function will do some initial scheduler statistics housekeeping
++ * that must be done for every newly created context, then puts the task
++ * on the runqueue and wakes it.
++ */
++static void ns_wake_up_new_task(task_t * p, unsigned long clone_flags)
++{
++	unsigned long flags;
++
++	local_irq_save(flags);
++
++	BUG_ON(p->state != TASK_RUNNING);
++
++	activate_task(p);
++	local_irq_restore(flags);
++}
++
++static void ns_sched_exit(task_t * p)
++{
++}
++
++/**
++ * finish_task_switch - clean up after a task-switch
++ * @prev: the thread we just switched away from.
++ *
++ * We enter this with the runqueue still locked, and finish_arch_switch()
++ * will unlock it along with doing any other architecture-specific cleanup
++ * actions.
++ *
++ * Note that we may have delayed dropping an mm in context_switch(). If
++ * so, we finish that here outside of the runqueue lock.  (Doing it
++ * with the lock held can cause deadlocks; see schedule() for
++ * details.)
++ */
++static void finish_task_switch(task_t *prev)
++{
++	struct mm_struct *mm = rq.prev_mm;
++	unsigned long prev_task_flags;
++
++	rq.prev_mm = NULL;
++
++	/*
++	 * A task struct has one reference for the use as "current".
++	 * If a task dies, then it sets EXIT_ZOMBIE in tsk->exit_state and
++	 * calls schedule one last time. The schedule call will never return,
++	 * and the scheduled task must drop that reference.
++	 * The test for EXIT_ZOMBIE must occur while the runqueue locks are
++	 * still held, otherwise prev could be scheduled on another cpu, die
++	 * there before we look at prev->state, and then the reference would
++	 * be dropped twice.
++	 *		Manfred Spraul <manfred@colorfullife.com>
++	 */
++	prev_task_flags = prev->flags;
++	finish_arch_switch();
++	if (mm)
++		mmdrop(mm);
++	if (unlikely(prev_task_flags & PF_DEAD))
++		put_task_struct(prev);
++}
++
++/**
++ * schedule_tail - first thing a freshly forked thread must call.
++ * @prev: the thread we just switched away from.
++ */
++static void ns_schedule_tail(task_t *prev)
++{
++	finish_task_switch(prev);
++
++	if (current->set_child_tid)
++		put_user(current->pid, current->set_child_tid);
++}
++
++/*
++ * context_switch - switch to the new MM and the new
++ * thread's register state.
++ */
++static inline
++task_t * context_switch(task_t *prev, task_t *next)
++{
++	struct mm_struct *mm = next->mm;
++	struct mm_struct *oldmm = prev->active_mm;
++
++	if (unlikely(!mm)) {
++		next->active_mm = oldmm;
++		atomic_inc(&oldmm->mm_count);
++		enter_lazy_tlb(oldmm, next);
++	} else
++		switch_mm(oldmm, mm, next);
++
++	if (unlikely(!prev->mm)) {
++		prev->active_mm = NULL;
++		WARN_ON(rq.prev_mm);
++		rq.prev_mm = oldmm;
++	}
++
++	/* Here we just switch the register state and the stack. */
++	switch_to(prev, next, prev);
++
++	return prev;
++}
++
++/*
++ * nr_running, nr_uninterruptible and nr_context_switches:
++ *
++ * externally visible scheduler statistics: current number of runnable
++ * threads, current number of uninterruptible-sleeping threads, total
++ * number of context switches performed since bootup.
++ */
++static unsigned long ns_nr_running(void)
++{
++	return rq.nr_running;
++}
++
++static unsigned long ns_nr_uninterruptible(void)
++{
++	return rq.nr_uninterruptible;
++}
++
++static unsigned long long ns_nr_context_switches(void)
++{
++	return rq.nr_switches;
++}
++
++static unsigned long ns_nr_iowait(void)
++{
++	return rq.nr_iowait;
++}
++
++static unsigned long ns_nr_iowait_task_cpu(const task_t *p)
++{
++	return rq.nr_iowait;
++}
++
++/*
++ * This function gets called by the timer code, with HZ frequency.
++ * We call it with interrupts disabled.
++ */
++static void ns_scheduler_tick(void)
++{
++	task_t *p = current;
++
++	/* Task might have expired already, but not scheduled off yet */
++	if (unlikely(!task_queued(p))) {
++		set_tsk_need_resched(p);
++		return;
++	}
++
++	if (!--p->u.nssched.time_slice) {
++		p->u.nssched.time_slice = RR_INTERVAL;
++		set_tsk_need_resched(p);
++		requeue_task(p);
++	}
++}
++
++/*
++ * schedule() is the main scheduler function.
++ */
++static void __sched ns_schedule(void)
++{
++	long *switch_count;
++	task_t *prev, *next;
++
++	/*
++	 * Test if we are atomic.  Since do_exit() needs to call into
++	 * schedule() atomically, we ignore that path for now.
++	 * Otherwise, whine if we are scheduling when we should not be.
++	 */
++	if (likely(!(current->exit_state & (EXIT_DEAD | EXIT_ZOMBIE)))) {
++		if (unlikely(in_atomic())) {
++			printk(KERN_ERR "scheduling while atomic: "
++				"%s/0x%08x/%d\n",
++				current->comm, preempt_count(), current->pid);
++			dump_stack();
++		}
++	}
++	profile_hit(SCHED_PROFILING, __builtin_return_address(0));
++
++	prev = current;
++	release_kernel_lock(prev);
++
++	local_irq_disable();
++
++	if (unlikely(current->flags & PF_DEAD))
++		current->state = EXIT_DEAD;
++
++	switch_count = &prev->nivcsw;
++	if (prev->state) {
++		switch_count = &prev->nvcsw;
++		if (unlikely((prev->state & TASK_INTERRUPTIBLE) &&
++				unlikely(signal_pending(prev))))
++			prev->state = TASK_RUNNING;
++		else
++			deactivate_task(prev);
++	}
++
++	if (unlikely(!rq.nr_running)) {
++		next = rq.idle;
++		goto switch_tasks;
++	}
++
++	next = list_entry(rq.queue.next, task_t, u.nssched.run_list);
++
++switch_tasks:
++	prefetch(next);
++	clear_tsk_need_resched(prev);
++	rcu_qsctr_inc(task_cpu(prev));
++
++	if (likely(prev != next)) {
++		rq.nr_switches++;
++		rq.curr = next;
++		++*switch_count;
++
++		prepare_arch_switch();
++		prev = context_switch(prev, next);
++		barrier();
++
++		finish_task_switch(prev);
++	} else
++		local_irq_enable();
++
++	prev = current;
++}
++
++static void __sched ns_wait_for_completion(struct completion *x)
++{
++	might_sleep();
++	local_irq_disable();
++	if (!x->done) {
++		DECLARE_WAITQUEUE(wait, current);
++
++		wait.flags |= WQ_FLAG_EXCLUSIVE;
++		__add_wait_queue_tail(&x->wait, &wait);
++		do {
++			__set_current_state(TASK_UNINTERRUPTIBLE);
++			local_irq_enable();
++			schedule();
++			local_irq_disable();
++		} while (!x->done);
++		__remove_wait_queue(&x->wait, &wait);
++	}
++	x->done--;
++	local_irq_enable();
++}
++
++static void ns_set_user_nice(task_t *p, long nice)
++{
++}
++
++/**
++ * task_prio - return the priority value of a given task.
++ * @p: the task in question.
++ *
++ * This is the priority value as seen by users in /proc.
++ * RT tasks are offset by -200. Normal tasks are all 0.
++ */
++static int ns_task_prio(const task_t *p)
++{
++	return 0;
++}
++
++/**
++ * task_nice - return the nice value of a given task.
++ * @p: the task in question.
++ */
++static int ns_task_nice(const task_t *p)
++{
++	return 0;
++}
++
++/**
++ * idle_cpu - is the cpu idle currently?
++ */
++static int ns_idle_cpu(int cpu)
++{
++	return rq.curr == rq.idle;
++}
++
++/*
++ * setscheduler - change the scheduling policy and/or RT priority of a thread.
++ */
++static int ns_sched_setscheduler(struct task_struct *p, int policy, struct sched_param *param)
++{
++	return -EINVAL;
++}
++
++static int ns_do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
++{
++	return -EINVAL;
++}
++
++/**
++ * sys_sched_yield - yield the current processor to other threads.
++ *
++ * This function yields the current CPU by dropping to end of the runqueue.
++ */
++static long ns_sys_sched_yield(void)
++{
++	task_t *p = current;
++	local_irq_disable();
++
++	set_tsk_need_resched(p);
++	requeue_task(current);
++	current->u.nssched.time_slice = RR_INTERVAL;
++
++	/*
++	 * Since we are going to call schedule() anyway, there's
++	 * no need to enable interrupts:
++	 */
++	schedule();
++
++	return 0;
++}
++
++/*
++ * This task is about to go to sleep on IO.  Increment rq.nr_iowait so
++ * that process accounting knows that this is a task in IO wait state.
++ *
++ * But don't do that if it is a deliberate, throttling IO wait (this task
++ * has set its backing_dev_info: the queue against which it should throttle)
++ */
++static void __sched ns_io_schedule(void)
++{
++	rq.nr_iowait++;
++	schedule();
++	rq.nr_iowait++;
++}
++
++static long __sched ns_io_schedule_timeout(long timeout)
++{
++	long ret;
++
++	rq.nr_iowait++;
++	ret = schedule_timeout(timeout);
++	rq.nr_iowait++;
++	return ret;
++}
++
++/**
++ * sys_sched_rr_get_interval - return the default timeslice of a process.
++ * @pid: pid of the process.
++ * @interval: userspace pointer to the timeslice value.
++ *
++ * this syscall writes the default timeslice value of a given process
++ * into the user-space timespec buffer. A value of '0' means infinity.
++ */
++static long
++ns_sys_sched_rr_get_interval(pid_t pid, struct timespec __user *interval)
++{
++	return (long)RR_INTERVAL;
++}
++
++static void __devinit ns_init_idle(task_t *idle, int cpu)
++{
++	unsigned long flags;
++
++	idle->state = TASK_RUNNING;
++	set_task_cpu(idle, cpu);
++
++	local_irq_save(flags);
++	rq.curr = rq.idle = idle;
++	set_tsk_need_resched(idle);
++	local_irq_restore(flags);
++
++	idle->thread_info->preempt_count = 0;
++}
++
++static void __init ns_sched_init_smp(void)
++{
++}
++
++static void __init ns_sched_init(void)
++{
++	init_task.static_prio = MAX_RT_PRIO;
++	INIT_LIST_HEAD(&init_task.u.nssched.run_list);
++	init_task.u.nssched.time_slice = RR_INTERVAL;
++
++	rq.nr_iowait = 0;
++	INIT_LIST_HEAD(&rq.queue);
++
++	/*
++	 * The boot idle thread does lazy MMU switching as well:
++	 */
++	atomic_inc(&init_mm.mm_count);
++	enter_lazy_tlb(&init_mm, current);
++
++	/*
++	 * Make us the idle thread. Technically, schedule() should not be
++	 * called from this thread, however somewhere below it might be,
++	 * but because we are the idle thread, we just pick up running again
++	 * when this runqueue becomes "idle".
++	 */
++	init_idle(current, 0);
++}
++
++static int ns_is_idle_task(const task_t *p)
++{
++	return p == rq.idle;
++}
++
++#ifdef CONFIG_MAGIC_SYSRQ
++void ns_normalise_rt_tasks(void)
++{
++}
++#endif
++
++#ifdef CONFIG_KGDB
++static struct task_struct *ns_kgdb_get_idle(int this_cpu)
++{
++	return rq.idle;
++}
++#endif
++
++struct sched_drv ns_sched_drv = {
++	.task_cpu		= common_task_cpu,
++	.set_task_cpu		= common_set_task_cpu,
++	.cpusched_name		= "nanosched",
++	.rt_task		= ns_rt_task,
++	.wait_for_completion	= ns_wait_for_completion,
++	.io_schedule		= ns_io_schedule,
++	.io_schedule_timeout	= ns_io_schedule_timeout,
++	.set_oom_timeslice	= ns_set_oom_timeslice,
++	.nr_running		= ns_nr_running,
++	.nr_uninterruptible	= ns_nr_uninterruptible,
++	.nr_context_switches	= ns_nr_context_switches,
++	.nr_iowait		= ns_nr_iowait,
++	.nr_iowait_task_cpu	= ns_nr_iowait_task_cpu,
++	.idle_cpu		= ns_idle_cpu,
++	.init_idle		= ns_init_idle,
++	.exit			= ns_sched_exit,
++	.fork			= ns_sched_fork,
++	.init			= ns_sched_init,
++	.init_smp		= ns_sched_init_smp,
++	.schedule		= ns_schedule,
++	.tick			= ns_scheduler_tick,
++	.tail			= ns_schedule_tail,
++	.do_sched_setscheduler	= ns_do_sched_setscheduler,
++	.sched_setscheduler	= ns_sched_setscheduler,
++	.set_user_nice		= ns_set_user_nice,
++	.rr_get_interval	= ns_sys_sched_rr_get_interval,
++	.yield			= ns_sys_sched_yield,
++	.is_idle_task		= ns_is_idle_task,
++	.task_curr		= ns_task_curr,
++	.task_nice		= ns_task_nice,
++	.task_prio		= ns_task_prio,
++	.try_to_wake_up		= ns_try_to_wake_up,
++	.wake_up_new_task	= ns_wake_up_new_task,
++#ifdef CONFIG_MAGIC_SYSRQ
++	.normalize_rt_tasks	= ns_normalise_rt_tasks,
++#endif
++#ifdef CONFIG_KGDB
++	.kgdb_get_idle		= ns_kgdb_get_idle,
++#endif
++};
+Index: xx-sources/kernel/scheduler.c
+===================================================================
+--- xx-sources.orig/kernel/scheduler.c	2005-01-14 23:49:54.139575136 +0000
++++ xx-sources/kernel/scheduler.c	2005-01-14 23:50:13.725597608 +0000
+@@ -1323,6 +1323,7 @@
+ extern struct sched_drv ingo_sched_drv;
+ extern struct sched_drv sc_sched_drv;
+ extern struct sched_drv ms_sched_drv;
++extern struct sched_drv ns_sched_drv;
+ 
+ struct sched_drv *scheduler =
+ #if defined(CONFIG_CPUSCHED_DEFAULT_INGO)
+@@ -1331,6 +1332,8 @@
+ 	&sc_sched_drv;
+ #elif defined(CONFIG_CPUSCHED_DEFAULT_MINISCHED)
+ 	&ms_sched_drv;
++#elif defined(CONFIG_CPUSCHED_DEFAULT_NANOSCHED)
++	&ns_sched_drv;
+ #else
+ 	NULL;
+ #error "You must have at least 1 cpu scheduler selected"
+@@ -1351,6 +1354,10 @@
+ 	if (!strcmp(str, ms_sched_drv.cpusched_name))
+ 		chosen_sched = &ms_sched_drv;
+ #endif
++#if defined(CONFIG_CPUSCHED_NANOSCHED)
++	if (!strcmp(str, ns_sched_drv.cpusched_name))
++		chosen_sched = &ns_sched_drv;
++#endif
+ 	if (chosen_sched && chosen_sched != scheduler) {
+ 		/*
+ 		 * A different cpu scheduler from the default has been

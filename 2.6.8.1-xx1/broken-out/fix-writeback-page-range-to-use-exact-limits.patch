@@ -1,0 +1,40 @@
+
+From: Suparna Bhattacharya <suparna@in.ibm.com>
+
+wait_on_page_writeback_range shouldn't wait for pages beyond the specified
+range.  Ideally, the radix-tree-lookup could accept an end_index parameter so
+that it doesn't return the extra pages in the first place, but for now we just
+add a few extra checks to skip such pages.
+
+Signed-off-by: Suparna Bhattacharya <suparna@in.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/filemap.c |    7 ++++++-
+ 1 files changed, 6 insertions(+), 1 deletion(-)
+
+diff -puN mm/filemap.c~fix-writeback-page-range-to-use-exact-limits mm/filemap.c
+--- 25/mm/filemap.c~fix-writeback-page-range-to-use-exact-limits	2004-08-01 17:27:47.117791632 -0700
++++ 25-akpm/mm/filemap.c	2004-08-01 17:28:35.817388168 -0700
+@@ -198,7 +198,8 @@ static int wait_on_page_writeback_range(
+ 
+ 	pagevec_init(&pvec, 0);
+ 	index = start;
+-	while ((nr_pages = pagevec_lookup_tag(&pvec, mapping, &index,
++	while ((index <= end) &&
++			(nr_pages = pagevec_lookup_tag(&pvec, mapping, &index,
+ 			PAGECACHE_TAG_WRITEBACK,
+ 			min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1)) != 0) {
+ 		unsigned i;
+@@ -206,6 +207,10 @@ static int wait_on_page_writeback_range(
+ 		for (i = 0; i < nr_pages; i++) {
+ 			struct page *page = pvec.pages[i];
+ 
++			/* until radix tree lookup accepts end_index */
++			if (page->index > end)
++				continue;
++
+ 			wait_on_page_writeback(page);
+ 			if (PageError(page))
+ 				ret = -EIO;
+_

@@ -1,0 +1,40 @@
+
+From: Venkatesh Pallipadi <venkatesh.pallipadi@intel.com>
+
+phys_proc_id gets initialized only when (smp_num_siblings > 1).  But gets
+printed even when (smp_num_siblings == 1).  As a result we print incorrect
+physical processor id in /proc/cpuinfo, when HT is disabled.
+
+Signed-off-by:: "Venkatesh Pallipadi" <venkatesh.pallipadi@intel.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/cpu/proc.c |    2 +-
+ 25-akpm/arch/x86_64/kernel/setup.c  |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN arch/i386/kernel/cpu/proc.c~display-phys_proc_id-only-when-it-is-initialized arch/i386/kernel/cpu/proc.c
+--- 25/arch/i386/kernel/cpu/proc.c~display-phys_proc_id-only-when-it-is-initialized	2004-10-01 20:18:58.344956664 -0700
++++ 25-akpm/arch/i386/kernel/cpu/proc.c	2004-10-01 20:18:58.349955904 -0700
+@@ -88,7 +88,7 @@ static int show_cpuinfo(struct seq_file 
+ 	if (c->x86_cache_size >= 0)
+ 		seq_printf(m, "cache size\t: %d KB\n", c->x86_cache_size);
+ #ifdef CONFIG_X86_HT
+-	if (cpu_has_ht) {
++	if (smp_num_siblings > 1) {
+ 		extern int phys_proc_id[NR_CPUS];
+ 		seq_printf(m, "physical id\t: %d\n", phys_proc_id[n]);
+ 		seq_printf(m, "siblings\t: %d\n", smp_num_siblings);
+diff -puN arch/x86_64/kernel/setup.c~display-phys_proc_id-only-when-it-is-initialized arch/x86_64/kernel/setup.c
+--- 25/arch/x86_64/kernel/setup.c~display-phys_proc_id-only-when-it-is-initialized	2004-10-01 20:18:58.345956512 -0700
++++ 25-akpm/arch/x86_64/kernel/setup.c	2004-10-01 20:18:58.351955600 -0700
+@@ -1132,7 +1132,7 @@ static int show_cpuinfo(struct seq_file 
+ 		seq_printf(m, "cache size\t: %d KB\n", c->x86_cache_size);
+ 	
+ #ifdef CONFIG_X86_HT
+-	if (cpu_has_ht) {
++	if (smp_num_siblings > 1) {
+ 		seq_printf(m, "physical id\t: %d\n", phys_proc_id[c - cpu_data]);
+ 		seq_printf(m, "siblings\t: %d\n", smp_num_siblings);
+ 	}
+_

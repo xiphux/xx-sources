@@ -1,0 +1,443 @@
+---
+
+ linux-2.6.5-xx21-xiphux/arch/i386/boot/vesafb_modes.h   |    1 
+ linux-2.6.5-xx21-xiphux/arch/i386/boot/video.S          |   98 +++++++++-
+ linux-2.6.5-xx21-xiphux/arch/x86_64/boot/vesafb_modes.h |    1 
+ linux-2.6.5-xx21-xiphux/arch/x86_64/boot/video.S        |   89 ++++++++-
+ linux-2.6.5-xx21-xiphux/scripts/vesa_modeline_gen.pl    |  152 ++++++++++++++++
+ 5 files changed, 332 insertions(+), 9 deletions(-)
+
+diff -puN /dev/null arch/i386/boot/vesafb_modes.h
+--- /dev/null	2004-04-03 08:05:03.000000000 -0500
++++ linux-2.6.5-xx21-xiphux/arch/i386/boot/vesafb_modes.h	2004-05-07 15:29:17.707967128 -0400
+@@ -0,0 +1 @@
++# dummy file
+diff -puN arch/i386/boot/video.S~vesafb-rrc-0.1.6 arch/i386/boot/video.S
+--- linux-2.6.5-xx21/arch/i386/boot/video.S~vesafb-rrc-0.1.6	2004-05-07 15:29:17.700968192 -0400
++++ linux-2.6.5-xx21-xiphux/arch/i386/boot/video.S	2004-05-07 15:29:17.709966824 -0400
+@@ -7,6 +7,8 @@
+  *
+  *	Rewritten to use GNU 'as' by Chris Noe <stiker@northlink.com> May 1999
+  *
++ *      VBE 3.0 refresh rate change code (c) 2003 by Michal 'Spock' Januszewski <spock@o2.pl>
++ *
+  *	For further information, look at Documentation/svga.txt.
+  *
+  */
+@@ -53,6 +55,9 @@
+ /* VESA BIOS video modes (VESA number + 0x0200) */
+ #define VIDEO_FIRST_VESA 0x0200
+ 
++/* VESA BIOS video modes with modified refresh rates (VESA number + 0x0400) */
++#define VIDEO_FIRST_VESA_RR 0x0400
++
+ /* Video7 special modes (BIOS number + 0x0900) */
+ #define VIDEO_FIRST_V7 0x0900
+ 
+@@ -532,13 +537,27 @@ setr1:	lodsw
+ 	movw	-4(%si), %ax			# Fetch mode ID
+ 	jmp	_m_s
+ 
++vesa_crtc:
++#include "vesafb_modes.h"
++
+ check_vesa:
+ 	leaw	modelist+1024, %di
+-	subb	$VIDEO_FIRST_VESA>>8, %bh
+-	movw	%bx, %cx			# Get mode information structure
+-	movw	$0x4f01, %ax
++
++#ifdef VIDEO_VESAFB_CRTC_DATA
++	movw	$0x4f00, %ax
++	int     $0x10				# Get VBE Controller information
++
++	cmpw	$0x004f, %ax
++	jnz	setbad
++
++	mov	0x04(%di),%dx			# Save VBE version in DX
++#endif /* VIDEO_VESAFB_CRTC_DATA */
++
++	movw	%bx, %cx
++	andb	$0b11111001, %ch		# Clear 'special' bits (0x200 & 0x400)
++	movw	$0x4f01, %ax			# Get mode information structure
+ 	int	$0x10
+-	addb	$VIDEO_FIRST_VESA>>8, %bh
++
+ 	cmpw	$0x004f, %ax
+ 	jnz	setbad
+ 
+@@ -552,10 +571,76 @@ check_vesa:
+ 	cmpb	$0x99, %al
+ 	jnz	_setbad				# Doh! No linear frame buffer.
+ 
+-	subb	$VIDEO_FIRST_VESA>>8, %bh
++	andb	$0b11111101, %bh
+ 	orw	$0x4000, %bx			# Use linear frame buffer
++
+ 	movw	$0x4f02, %ax			# VESA BIOS mode set call
++
++	cmpb	$0x45, %bh			# 0100 0101 - part of VESA mode number
++	jnz	vesacall				#  |    |
++							# LFB   set if user wants modified refresh rate
++	andb	$0b11111001, %bh
++
++#ifdef VIDEO_VESAFB_CRTC_DATA
++	cmpb	$0x03, %dh			# Do we have VBE 3.0+?
++	jge	_vesa_vbe_ok			# We do..
++
++	leaw	badvbe, %si			# We don't..
++	push	%bx
++	push	%ax
++	call	prtstr
++	pop	%ax
++	pop	%bx
++	jmp	vesacall
++
++_vesa_vbe_ok:
++	orb	$0x08, %bh			# Make sure BIOS will use our refresh rates
++	leaw	vesa_crtc, %di
++
++	cmpb	$0x0d, %bl
++	jge	higher_bpp
++
++	addw	$0x003b, %di
++	cmpb	$0x00, %bl			# 640x400 x 256
++	jz	vesacall
++
++	addw	$0x003b, %di
++	cmpb	$0x01, %bl			# 640x480 x 256
++	jz	vesacall
++
++	addw	$0x003b, %di
++	cmpb	$0x03, %bl			# 800x600 x 256/16
++	jle	vesacall
++
++	addw	$0x003b, %di
++	cmpb	$0x05, %bl			# 1024x768 x 256/16
++	jle	vesacall
++
++	addw	$0x003b, %di
++	jle	vesacall				# 1280x1024 x 256/16
++
++higher_bpp:					# 16, 24, 32bpp
++	cmpb	$0x0f, %bl			# 320x200
++	jle	vesacall
++
++	addw	$0x0076, %di			# skip 640x400
++	cmpb	$0x12, %bl			# 640x480
++	jle	vesacall
++
++	addw	$0x003b, %di
++	cmpb	$0x15, %bl			# 800x600
++	jle	vesacall
++
++	addw	$0x003b, %di
++	cmpb	$0x18, %bl			# 1024x768
++	jle	vesacall
++
++	addw	$0x003b, %di			# 1280x1024
++#endif /* VIDEO_VESAFB_CRTC_DATA */
++
++vesacall:
+ 	int	$0x10
++
+ 	cmpw	$0x004f, %ax			# AL=4f if implemented
+ 	jnz	_setbad				# AH=0 if OK
+ 
+@@ -1948,6 +2033,9 @@ unknt:		.asciz	"Unknown mode ID. Try aga
+ badmdt:		.ascii	"You passed an undefined mode number."
+ 		.byte	0x0d, 0x0a, 0
+ 
++badvbe:		.ascii	"Cannot change refresh rate with VBE < 3.0"
++		.byte	0x0d, 0x0a, 0
++
+ vesaer:		.ascii	"Error: Scanning of VESA modes failed. Please "
+ 		.ascii	"report to <mj@ucw.cz>."
+ 		.byte	0x0d, 0x0a, 0
+diff -puN /dev/null arch/x86_64/boot/vesafb_modes.h
+--- /dev/null	2004-04-03 08:05:03.000000000 -0500
++++ linux-2.6.5-xx21-xiphux/arch/x86_64/boot/vesafb_modes.h	2004-05-07 15:29:17.710966672 -0400
+@@ -0,0 +1 @@
++# dummy file
+diff -puN arch/x86_64/boot/video.S~vesafb-rrc-0.1.6 arch/x86_64/boot/video.S
+--- linux-2.6.5-xx21/arch/x86_64/boot/video.S~vesafb-rrc-0.1.6	2004-05-07 15:29:17.703967736 -0400
++++ linux-2.6.5-xx21-xiphux/arch/x86_64/boot/video.S	2004-05-07 15:29:17.714966064 -0400
+@@ -53,6 +53,8 @@
+ /* VESA BIOS video modes (VESA number + 0x0200) */
+ #define VIDEO_FIRST_VESA 0x0200
+ 
++#define VIDEO_FIRST_VESA_RR 0x0400
++
+ /* Video7 special modes (BIOS number + 0x0900) */
+ #define VIDEO_FIRST_V7 0x0900
+ 
+@@ -531,10 +533,24 @@ setr1:	lodsw
+ 	movw	-4(%si), %ax			# Fetch mode ID
+ 	jmp	_m_s
+ 
++vesa_crtc:
++#include "vesafb_modes.h"
++
+ check_vesa:
+ 	leaw	modelist+1024, %di
+-	subb	$VIDEO_FIRST_VESA>>8, %bh
+-	movw	%bx, %cx			# Get mode information structure
++
++#ifdef VIDEO_VESAFB_CRTC_DATA
++	movw	$0x4f00, %ax
++	int	$0x10
++
++	cmpw	$0x004f, %ax
++	jnz	setbad
++
++	mov	0x04(%di),%dx
++#endif
++
++	movw	%bx, %cx
++	andb	$0b11111001, %ch
+ 	movw	$0x4f01, %ax
+ 	int	$0x10
+ 	addb	$VIDEO_FIRST_VESA>>8, %bh
+@@ -551,9 +567,73 @@ check_vesa:
+ 	cmpb	$0x99, %al
+ 	jnz	_setbad				# Doh! No linear frame buffer.
+ 
+-	subb	$VIDEO_FIRST_VESA>>8, %bh
++	andb	$0b11111101, %bh
+ 	orw	$0x4000, %bx			# Use linear frame buffer
+ 	movw	$0x4f02, %ax			# VESA BIOS mode set call
++       cmpb    $0x45, %bh                      # 0100 0101 - part of VESA mode number
++       jnz     vesacall                                #  |    |
++                                                       # LFB   set if user wants modified refresh rate
++       andb    $0b11111001, %bh
++
++#ifdef VIDEO_VESAFB_CRTC_DATA
++       cmpb    $0x03, %dh                      # Do we have VBE 3.0+?
++       jge     _vesa_vbe_ok                    # We do..
++
++       leaw    badvbe, %si                     # We don't..
++       push    %bx
++       push    %ax
++       call    prtstr
++       pop     %ax
++       pop     %bx
++       jmp     vesacall
++
++_vesa_vbe_ok:
++       orb     $0x08, %bh                      # Make sure BIOS will use our refresh rates
++       leaw    vesa_crtc, %di
++
++       cmpb    $0x0d, %bl
++       jge     higher_bpp
++
++       addw    $0x003b, %di
++       cmpb    $0x00, %bl                      # 640x400 x 256
++       jz      vesacall
++
++       addw    $0x003b, %di
++       cmpb    $0x01, %bl                      # 640x480 x 256
++       jz      vesacall
++
++       addw    $0x003b, %di
++       cmpb    $0x03, %bl                      # 800x600 x 256/16
++       jle     vesacall
++
++       addw    $0x003b, %di
++       cmpb    $0x05, %bl                      # 1024x768 x 256/16
++       jle     vesacall
++
++       addw    $0x003b, %di
++       jle     vesacall                                # 1280x1024 x 256/16
++
++higher_bpp:                                    # 16, 24, 32bpp
++       cmpb    $0x0f, %bl                      # 320x200
++       jle     vesacall
++
++       addw    $0x0076, %di                    # skip 640x400
++       cmpb    $0x12, %bl                      # 640x480
++       jle     vesacall
++
++       addw    $0x003b, %di
++       cmpb    $0x15, %bl                      # 800x600
++       jle     vesacall
++
++       addw    $0x003b, %di
++       cmpb    $0x18, %bl                      # 1024x768
++       jle     vesacall
++
++       addw    $0x003b, %di                    # 1280x1024
++#endif /* VIDEO_VESAFB_CRTC_DATA */
++
++vesacall:
++
+ 	int	$0x10
+ 	cmpw	$0x004f, %ax			# AL=4f if implemented
+ 	jnz	_setbad				# AH=0 if OK
+@@ -1901,7 +1981,8 @@ unknt:		.asciz	"Unknown mode ID. Try aga
+ 
+ badmdt:		.ascii	"You passed an undefined mode number."
+ 		.byte	0x0d, 0x0a, 0
+-
++badvbe:		.ascii	"Cannot change refresh rate with VBE < 3.0"
++		.byte	0x0d, 0x0a, 0
+ vesaer:		.ascii	"Error: Scanning of VESA modes failed. Please "
+ 		.ascii	"report to <mj@ucw.cz>."
+ 		.byte	0x0d, 0x0a, 0
+diff -puN /dev/null scripts/vesa_modeline_gen.pl
+--- /dev/null	2004-04-03 08:05:03.000000000 -0500
++++ linux-2.6.5-xx21-xiphux/scripts/vesa_modeline_gen.pl	2004-05-07 15:29:17.715965912 -0400
+@@ -0,0 +1,152 @@
++#!/usr/bin/perl
++
++# VESAFB Modeline Generator Script v0.2
++# -------------------------------------
++# Author: Michal 'Spock' Januszewski <spock@o2.pl>
++# Last modified: 2003-08-01
++# Distributed under the terms of the GNU General Public License v2
++#
++# Timing calculations based on Colas Nahaboo's XFree86 modeline generator script
++#
++
++# path to the Linux kernel source tree
++$path = "/usr/src/linux";
++$path = `pwd` unless (-d $path);
++
++print "\nVESAFB Modeline Generator Script v0.2\n";
++print "-------------------------------------\n\n";
++print "Note that to achieve best results you might want to make\n";
++print "these values a little lower than your monitor's best.\n\n";
++print "1) Maximal vertical refresh rate [Hz]\n";
++print "   [100]: ";
++
++$ok = 0;
++while (!$ok) {
++    $max_vf = <STDIN>;
++    $max_vf = 100 if ($max_vf =~ /^\s*$/);
++
++    if ($max_vf <= 300 && $max_vf >= 56) {
++        $ok = 1;
++    } else {
++        print "\n\033[1;31mInvalid vertical refresh rate. Please enter a number from range 56 - 300.\033[0;38m\n";
++        print "New value: ";
++    }
++}
++
++print "2) Maximal horizontal refresh rate [kHz]\n";
++print "   [70]: ";
++
++$ok = 0;
++while (!$ok) {
++    $max_hf = <STDIN>;
++    $max_hf = 70 if ($max_hf =~ /^\s*$/);
++
++    if ($max_hf <= 300 && $max_hf >= 30) {
++        $ok = 1;
++    } else {
++        print "\n\033[1;31mInvalid horizontal refresh rate. Please enter a number from range 30 - 300.\033[0;38m\n";
++        print "New value: ";
++    }
++}
++
++print "3) Monitor's maximal bandwidth (aka pixel clock) [MHz]\n";
++print "   [100]: ";
++
++$ok = 0;
++while (!$ok) {
++    $max_bw = <STDIN>;
++    $max_bw = 100 if ($max_bw =~ /^\s*$/);
++
++    if ($max_bw <= 300 && $max_bw >= 30) {
++        $ok = 1;
++    } else {
++        print "\n\033[1;31mInvalid bandwidth. Please enter a number from range 30 - 300.\033[0;38m\n";
++        print "New value: ";
++    }
++}
++
++print "\n";
++
++# (width, height, flags)
++@res = ((320,200,0x00), (640,400,0x04), (640,480,0x0C), (800,600,0x00), (1024,768,0x00), (1280,1024,0x00));
++
++sub round8 {
++    my $a = shift;
++    $a = (int($a/8)+1)*8;
++    return $a;
++}
++
++sub calc() {
++
++    $d = round8 ($x/24);
++    $x1 = round8 ($x + $d);
++    $x2 = round8 ($x + 6*$d);
++    $hfl = round8 ($x + 8*$d);
++
++    $y1 = $y+2;
++    $y2 = $y+14;
++    $vfl = $y+40;
++
++    $dcf = $hfl*$vfl*$vf;
++    $bw = $dcf / 1000000;
++    $hsf = $dcf / $hfl / 1000;
++
++    $ok = 0;
++
++}
++
++open MODES,">$path/arch/i386/boot/vesafb_modes.h";
++
++print MODES "# The contents of this file were generated automatically.\n";
++print MODES "# Please do not modify them, unless you are sure what you're doing.\n\n";
++print MODES "# Format:     HorizontalSyncTotal, HorizontalSyncStart, HorizontalSyncEnd\n";
++print MODES "#             VerticalSyncTotal, VerticalSyncStart, VerticalSyndEnd\n";
++print MODES "#             Flags (0 = hsync+, vsync+; 12 = hsync-, vsync-; 8 = hsync-, vsync+, 4 = hsync+, vsync-)\n";
++print MODES "#             Pixel Clock Rate (Hz)\n";
++print MODES "#             Vertical Refresh Rate (in units of 0.01 Hz)\n\n";
++print MODES "#define VIDEO_VESAFB_CRTC_DATA\n\n";
++
++for ($i = 0; $i < $#res; $i += 3) {
++
++    $x = $res[$i];
++    $y = $res[$i+1];
++    $fl = $res[$i+2];
++
++    $vf = $max_vf;
++
++    calc();
++
++    while (!$ok) {
++
++	$ok = 1;
++
++	if ($hsf > $max_hf) {
++	    $hfl = $dcf / (1000*$max_hf);
++	    $vf = $dcf / ($hfl * $vfl);
++	    calc();
++	}
++
++	if ($bw > $max_bw) {
++	    $dcf = 1000000*$max_bw;
++	    $vf = $dcf / ($hfl * $vfl);
++	    calc();
++	}
++    }
++
++    $vf = int($vf*100);
++
++    print MODES "# ".$x."x".$y." @ ".($vf/100)."Hz\n";
++    print MODES "        .word   $hfl, $x1, $x2\n";	# horizontal
++    print MODES "        .word   $vfl, $y2, $y2\n";	# vertical
++    print MODES "        .byte   $fl\n";		# flags
++    print MODES "        .long   $dcf\n";		# pixel clock in Hz
++    print MODES "        .word   $vf\n";		# refresh rate in 0.01 Hz
++    print MODES "        .space  40\n\n";
++
++}
++
++close(MODES);
++
++`ln -s $path/arch/i386/boot/vesafb_modes.h $path/arch/x86_64/boot/vesafb_modes.h`
++
++print "Successfully writen CRTC data for all ".(($#res+1)/3)." predefined VESA resolutions to $path/arch/i386/boot/vesafb_modes.h.\n\n";
+
+_

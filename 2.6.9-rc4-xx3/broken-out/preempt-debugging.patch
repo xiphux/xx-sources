@@ -1,0 +1,275 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+btw., this bug was particularly nasty costing me a couple of hours,
+since it triggered in neigh_periodic_timer() and due to the softirq
+count the mismatch didnt show only until much later in irq_exit() when
+there was no trace of the timer context anymore. So i obviously first
+suspected the IRQ changes ... To prevent similar bugs:
+
+The patch below does quite extensive preempt-count debugging and catches
+this bug (and others) right when they happen. It also consolidates
+DEBUG_SMP_PROCESSOR_ID into DEBUG_PREEMPT. We might want to carry this
+in -mm a bit?
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/hardirq.h   |    6 ++--
+ 25-akpm/include/linux/interrupt.h |    4 +--
+ 25-akpm/include/linux/preempt.h   |   25 ++++++++++++--------
+ 25-akpm/include/linux/smp.h       |    2 -
+ 25-akpm/kernel/irq/handle.c       |    2 -
+ 25-akpm/kernel/sched.c            |   47 ++++++++++++++++++++++++++++++++------
+ 25-akpm/kernel/softirq.c          |    2 -
+ 25-akpm/kernel/timer.c            |    9 ++++++-
+ 25-akpm/lib/Kconfig.debug         |    7 +++--
+ 9 files changed, 76 insertions(+), 28 deletions(-)
+
+diff -puN include/linux/hardirq.h~preempt-debugging include/linux/hardirq.h
+--- 25/include/linux/hardirq.h~preempt-debugging	2004-10-05 02:00:53.517786872 -0700
++++ 25-akpm/include/linux/hardirq.h	2004-10-05 02:00:53.532784592 -0700
+@@ -82,10 +82,10 @@ extern void synchronize_irq(unsigned int
+ #endif
+ 
+ #ifdef CONFIG_GENERIC_HARDIRQS
+-#define nmi_enter()		(preempt_count() += HARDIRQ_OFFSET)
+-#define nmi_exit()		(preempt_count() -= HARDIRQ_OFFSET)
+ 
+-#define irq_enter()		(preempt_count() += HARDIRQ_OFFSET)
++#define irq_enter()		add_preempt_count(HARDIRQ_OFFSET)
++#define nmi_enter()		irq_enter()
++#define nmi_exit()		sub_preempt_count(HARDIRQ_OFFSET)
+ extern void irq_exit(void);
+ #endif
+ 
+diff -puN include/linux/interrupt.h~preempt-debugging include/linux/interrupt.h
+--- 25/include/linux/interrupt.h~preempt-debugging	2004-10-05 02:00:53.518786720 -0700
++++ 25-akpm/include/linux/interrupt.h	2004-10-05 02:00:53.532784592 -0700
+@@ -70,9 +70,9 @@ extern void enable_irq(unsigned int irq)
+ 
+ /* SoftIRQ primitives.  */
+ #define local_bh_disable() \
+-		do { preempt_count() += SOFTIRQ_OFFSET; barrier(); } while (0)
++		do { add_preempt_count(SOFTIRQ_OFFSET); barrier(); } while (0)
+ #define __local_bh_enable() \
+-		do { barrier(); preempt_count() -= SOFTIRQ_OFFSET; } while (0)
++		do { barrier(); sub_preempt_count(SOFTIRQ_OFFSET); } while (0)
+ 
+ extern void local_bh_enable(void);
+ 
+diff -puN include/linux/preempt.h~preempt-debugging include/linux/preempt.h
+--- 25/include/linux/preempt.h~preempt-debugging	2004-10-05 02:00:53.520786416 -0700
++++ 25-akpm/include/linux/preempt.h	2004-10-05 02:00:53.533784440 -0700
+@@ -9,17 +9,18 @@
+ #include <linux/config.h>
+ #include <linux/linkage.h>
+ 
+-#define preempt_count()	(current_thread_info()->preempt_count)
++#ifdef CONFIG_DEBUG_PREEMPT
++  extern void fastcall add_preempt_count(int val);
++  extern void fastcall sub_preempt_count(int val);
++#else
++# define add_preempt_count(val)	do { preempt_count() += (val); } while (0)
++# define sub_preempt_count(val)	do { preempt_count() -= (val); } while (0)
++#endif
+ 
+-#define inc_preempt_count() \
+-do { \
+-	preempt_count()++; \
+-} while (0)
++#define inc_preempt_count() add_preempt_count(1)
++#define dec_preempt_count() sub_preempt_count(1)
+ 
+-#define dec_preempt_count() \
+-do { \
+-	preempt_count()--; \
+-} while (0)
++#define preempt_count()	(current_thread_info()->preempt_count)
+ 
+ #ifdef CONFIG_PREEMPT
+ 
+@@ -51,9 +52,15 @@ do { \
+ 
+ #else
+ 
++#ifdef CONFIG_PREEMPT_TIMING
++#define preempt_disable()		inc_preempt_count()
++#define preempt_enable_no_resched()	dec_preempt_count()
++#define preempt_enable()		dec_preempt_count()
++#else
+ #define preempt_disable()		do { } while (0)
+ #define preempt_enable_no_resched()	do { } while (0)
+ #define preempt_enable()		do { } while (0)
++#endif
+ #define preempt_check_resched()		do { } while (0)
+ 
+ #endif
+diff -puN include/linux/smp.h~preempt-debugging include/linux/smp.h
+--- 25/include/linux/smp.h~preempt-debugging	2004-10-05 02:00:53.521786264 -0700
++++ 25-akpm/include/linux/smp.h	2004-10-05 02:00:53.533784440 -0700
+@@ -110,7 +110,7 @@ static inline void smp_send_reschedule(i
+ #endif /* !SMP */
+ 
+ #ifdef __smp_processor_id
+-# if defined(CONFIG_PREEMPT) && defined(CONFIG_DEBUG_SMP_PROCESSOR_ID)
++# if defined(CONFIG_PREEMPT) && defined(CONFIG_DEBUG_PREEMPT)
+   /*
+    * temporary debugging check detecting places that use
+    * smp_processor_id() in a potentially unsafe way:
+diff -puN kernel/irq/handle.c~preempt-debugging kernel/irq/handle.c
+--- 25/kernel/irq/handle.c~preempt-debugging	2004-10-05 02:00:53.523785960 -0700
++++ 25-akpm/kernel/irq/handle.c	2004-10-05 02:00:53.534784288 -0700
+@@ -77,7 +77,7 @@ irqreturn_t no_action(int cpl, void *dev
+  */
+ void irq_exit(void)
+ {
+-	preempt_count() -= IRQ_EXIT_OFFSET;
++	sub_preempt_count(IRQ_EXIT_OFFSET);
+ 	if (!in_interrupt() && local_softirq_pending())
+ 		do_softirq();
+ 	preempt_enable_no_resched();
+diff -puN kernel/sched.c~preempt-debugging kernel/sched.c
+--- 25/kernel/sched.c~preempt-debugging	2004-10-05 02:00:53.525785656 -0700
++++ 25-akpm/kernel/sched.c	2004-10-05 02:00:53.537783832 -0700
+@@ -2471,8 +2471,37 @@ static inline int dependent_sleeper(int 
+ }
+ #endif
+ 
+-#if defined(CONFIG_PREEMPT) && defined(__smp_processor_id) && \
+-				defined(CONFIG_DEBUG_SMP_PROCESSOR_ID)
++#if defined(CONFIG_PREEMPT) && defined(CONFIG_DEBUG_PREEMPT)
++
++void fastcall add_preempt_count(int val)
++{
++	/*
++	 * Underflow?
++	 */
++	BUG_ON(((int)preempt_count() < 0));
++	preempt_count() += val;
++	/*
++	 * Spinlock count overflowing soon?
++	 */
++	BUG_ON((preempt_count() & PREEMPT_MASK) >= PREEMPT_MASK-10);
++}
++EXPORT_SYMBOL(add_preempt_count);
++
++void fastcall sub_preempt_count(int val)
++{
++	/*
++	 * Underflow?
++	 */
++	BUG_ON(val > preempt_count());
++	/*
++	 * Is the spinlock portion underflowing?
++	 */
++	BUG_ON((val < PREEMPT_MASK) && !(preempt_count() & PREEMPT_MASK));
++	preempt_count() -= val;
++}
++EXPORT_SYMBOL(sub_preempt_count);
++
++#ifdef __smp_processor_id
+ /*
+  * Debugging check.
+  */
+@@ -2523,7 +2552,9 @@ out:
+ 
+ EXPORT_SYMBOL(smp_processor_id);
+ 
+-#endif
++#endif /* __smp_processor_id */
++
++#endif /* PREEMPT && DEBUG_PREEMPT */
+ 
+ #if defined(CONFIG_SMP) || defined(CONFIG_PREEMPT)
+ 
+@@ -2880,7 +2911,7 @@ asmlinkage void __sched preempt_schedule
+ 		return;
+ 
+ need_resched:
+-	preempt_count() += PREEMPT_ACTIVE;
++	add_preempt_count(PREEMPT_ACTIVE);
+ 	/*
+ 	 * We keep the big kernel semaphore locked, but we
+ 	 * clear ->lock_depth so that schedule() doesnt
+@@ -2894,7 +2925,7 @@ need_resched:
+ #ifdef CONFIG_PREEMPT_BKL
+ 	task->lock_depth = saved_lock_depth;
+ #endif
+-	preempt_count() -= PREEMPT_ACTIVE;
++	sub_preempt_count(PREEMPT_ACTIVE);
+ 
+ 	/* we could miss a preemption opportunity between schedule and now */
+ 	barrier();
+@@ -3633,12 +3664,14 @@ asmlinkage long sys_sched_yield(void)
+ 
+ static inline void __cond_resched(void)
+ {
++
++
+ 	if (preempt_count() & PREEMPT_ACTIVE)
+ 		return;
+ 	do {
+-		preempt_count() += PREEMPT_ACTIVE;
++		add_preempt_count(PREEMPT_ACTIVE);
+ 		schedule();
+-		preempt_count() -= PREEMPT_ACTIVE;
++		sub_preempt_count(PREEMPT_ACTIVE);
+ 	} while (need_resched());
+ }
+ 
+diff -puN kernel/softirq.c~preempt-debugging kernel/softirq.c
+--- 25/kernel/softirq.c~preempt-debugging	2004-10-05 02:00:53.526785504 -0700
++++ 25-akpm/kernel/softirq.c	2004-10-05 02:00:53.538783680 -0700
+@@ -142,7 +142,7 @@ void local_bh_enable(void)
+ 	 * Keep preemption disabled until we are done with
+ 	 * softirq processing:
+  	 */
+-	preempt_count() -= SOFTIRQ_OFFSET - 1;
++	sub_preempt_count(SOFTIRQ_OFFSET - 1);
+ 
+ 	if (unlikely(!in_interrupt() && local_softirq_pending()))
+ 		invoke_softirq();
+diff -puN kernel/timer.c~preempt-debugging kernel/timer.c
+--- 25/kernel/timer.c~preempt-debugging	2004-10-05 02:00:53.527785352 -0700
++++ 25-akpm/kernel/timer.c	2004-10-05 02:00:53.540783376 -0700
+@@ -465,7 +465,14 @@ repeat:
+ 			smp_wmb();
+ 			timer->base = NULL;
+ 			spin_unlock_irq(&base->lock);
+-			fn(data);
++			{
++				u32 preempt_count = preempt_count();
++				fn(data);
++				if (preempt_count != preempt_count()) {
++					printk("huh, entered %p with %08x, exited with %08x?\n", fn, preempt_count, preempt_count());
++					BUG();
++				}
++			}
+ 			spin_lock_irq(&base->lock);
+ 			goto repeat;
+ 		}
+diff -puN lib/Kconfig.debug~preempt-debugging lib/Kconfig.debug
+--- 25/lib/Kconfig.debug~preempt-debugging	2004-10-05 02:00:53.529785048 -0700
++++ 25-akpm/lib/Kconfig.debug	2004-10-05 02:00:53.540783376 -0700
+@@ -52,14 +52,15 @@ config DEBUG_SPINLOCK_SLEEP
+ 	  If you say Y here, various routines which may sleep will become very
+ 	  noisy if they are called with a spinlock held.
+ 
+-config DEBUG_SMP_PROCESSOR_ID
+-	bool "Preempt-unsafe smp_processor_id() checking"
++config DEBUG_PREEMPT
++	bool "Debug preemptible kernel"
+ 	depends on PREEMPT && X86
+ 	default y
+ 	help
+ 	  If you say Y here then the kernel will use a debug variant of the
+ 	  commonly used smp_processor_id() function and will print warnings
+-	  if kernel code uses it in a preemption-unsafe way.
++	  if kernel code uses it in a preemption-unsafe way. Also, the kernel
++	  will detect preemption count underflows.
+ 
+ config DEBUG_HIGHMEM
+ 	bool "Highmem debugging"
+_

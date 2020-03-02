@@ -1,0 +1,31 @@
+
+From: Pavel Machek <pavel@ucw.cz>
+
+Currently, fan.c ignores errors from acpi_bus_get_power.  On compaq evo
+notebook that leads to very confusing empty output.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/acpi/fan.c |    8 ++++----
+ 1 files changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN drivers/acpi/fan.c~acpi-report-errors-in-fanc drivers/acpi/fan.c
+--- 25/drivers/acpi/fan.c~acpi-report-errors-in-fanc	Mon Oct  4 15:10:42 2004
++++ 25-akpm/drivers/acpi/fan.c	Mon Oct  4 15:10:42 2004
+@@ -94,10 +94,10 @@ acpi_fan_read_state (
+ 		goto end;
+ 
+ 	if (acpi_bus_get_power(fan->handle, &state))
+-		goto end;
+-
+-	p += sprintf(p, "status:                  %s\n",
+-		!state?"on":"off");
++		p += sprintf(p, "status:                  ERROR\n");
++	else
++		p += sprintf(p, "status:                  %s\n",
++			     !state?"on":"off");
+ 
+ end:
+ 	len = (p - page);
+_

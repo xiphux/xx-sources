@@ -1,0 +1,27 @@
+
+From: Anton Blanchard <anton@samba.org>
+
+We were passing in the hole size as kB not pages to free_area_init which
+made the VM misbehave.  This only hit on POWER3 because POWER4 and newer
+places IO above all memory and so doesnt have a hole.
+
+Signed-off-by: Anton Blanchard <anton@samba.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc64/mm/numa.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN arch/ppc64/mm/numa.c~fix-power3-numa-init arch/ppc64/mm/numa.c
+--- 25/arch/ppc64/mm/numa.c~fix-power3-numa-init	2004-06-21 23:23:37.759901176 -0700
++++ 25-akpm/arch/ppc64/mm/numa.c	2004-06-21 23:23:37.763900568 -0700
+@@ -457,7 +457,7 @@ void __init paging_init(void)
+ 		zones_size[ZONE_DMA] = end_pfn - start_pfn;
+ 		zholes_size[ZONE_DMA] = 0;
+ 		if (nid == 0)
+-			zholes_size[ZONE_DMA] = node0_io_hole_size;
++			zholes_size[ZONE_DMA] = node0_io_hole_size >> PAGE_SHIFT;
+ 
+ 		dbg("free_area_init node %d %lx %lx (hole: %lx)\n", nid,
+ 		    zones_size[ZONE_DMA], start_pfn, zholes_size[ZONE_DMA]);
+_

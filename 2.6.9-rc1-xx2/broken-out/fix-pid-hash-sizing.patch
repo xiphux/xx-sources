@@ -1,0 +1,55 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Export nr_kernel_pages, nr_all_pages.  Use nr_kernel_pages when sizing the
+PID hash.  This fixes a sizing problem I'm seeing with the x86-64 kernel on
+an Opteron.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/bootmem.h |    3 +++
+ 25-akpm/kernel/pid.c            |    2 +-
+ 25-akpm/mm/page_alloc.c         |    4 ++--
+ 3 files changed, 6 insertions(+), 3 deletions(-)
+
+diff -puN include/linux/bootmem.h~fix-pid-hash-sizing include/linux/bootmem.h
+--- 25/include/linux/bootmem.h~fix-pid-hash-sizing	2004-08-21 23:58:14.453251184 -0700
++++ 25-akpm/include/linux/bootmem.h	2004-08-21 23:58:14.459250272 -0700
+@@ -67,6 +67,9 @@ extern void * __init __alloc_bootmem_nod
+ 	__alloc_bootmem_node((pgdat), (x), PAGE_SIZE, 0)
+ #endif /* !CONFIG_HAVE_ARCH_BOOTMEM_NODE */
+ 
++extern unsigned long __initdata nr_kernel_pages;
++extern unsigned long __initdata nr_all_pages;
++
+ extern void *__init alloc_large_system_hash(const char *tablename,
+ 					    unsigned long bucketsize,
+ 					    unsigned long numentries,
+diff -puN kernel/pid.c~fix-pid-hash-sizing kernel/pid.c
+--- 25/kernel/pid.c~fix-pid-hash-sizing	2004-08-21 23:58:14.455250880 -0700
++++ 25-akpm/kernel/pid.c	2004-08-21 23:58:14.460250120 -0700
+@@ -276,7 +276,7 @@ int kgdb_pid_init_done; /* so we don't c
+ void __init pidhash_init(void)
+ {
+ 	int i, j, pidhash_size;
+-	unsigned long megabytes = max_pfn >> (20 - PAGE_SHIFT);
++	unsigned long megabytes = nr_kernel_pages >> (20 - PAGE_SHIFT);
+ 
+ 	pidhash_shift = max(4, fls(megabytes * 4));
+ 	pidhash_shift = min(12, pidhash_shift);
+diff -puN mm/page_alloc.c~fix-pid-hash-sizing mm/page_alloc.c
+--- 25/mm/page_alloc.c~fix-pid-hash-sizing	2004-08-21 23:58:14.456250728 -0700
++++ 25-akpm/mm/page_alloc.c	2004-08-21 23:58:14.462249816 -0700
+@@ -58,8 +58,8 @@ EXPORT_SYMBOL(zone_table);
+ static char *zone_names[MAX_NR_ZONES] = { "DMA", "Normal", "HighMem" };
+ int min_free_kbytes = 1024;
+ 
+-static unsigned long __initdata nr_kernel_pages;
+-static unsigned long __initdata nr_all_pages;
++unsigned long __initdata nr_kernel_pages;
++unsigned long __initdata nr_all_pages;
+ 
+ /*
+  * Temporary debugging check for pages not lying within a given zone.
+_

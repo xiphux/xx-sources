@@ -1,0 +1,60 @@
+
+From: Jens Axboe <axboe@suse.de>
+
+A few fixes related to cdrom media event notification.  These are from
+Alexander Kern <alex.kern@gmx.de>
+
+Signed-off-by: Jens Axboe <axboe@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/cdrom/cdrom.c |    3 +++
+ 25-akpm/drivers/ide/ide-cd.c  |   14 +++++++++-----
+ 2 files changed, 12 insertions(+), 5 deletions(-)
+
+diff -puN drivers/cdrom/cdrom.c~cdrom-event-notification-fixes drivers/cdrom/cdrom.c
+--- 25/drivers/cdrom/cdrom.c~cdrom-event-notification-fixes	2004-08-02 00:26:48.195766832 -0700
++++ 25-akpm/drivers/cdrom/cdrom.c	2004-08-02 00:26:48.204765464 -0700
+@@ -472,6 +472,9 @@ int cdrom_get_media_event(struct cdrom_d
+ 	if (be16_to_cpu(eh->data_len) < sizeof(*med))
+ 		return 1;
+ 
++	if (eh->nea || eh->notification_class != 0x4)
++		return 1;
++
+ 	memcpy(med, &buffer[sizeof(*eh)], sizeof(*med));
+ 	return 0;
+ }
+diff -puN drivers/ide/ide-cd.c~cdrom-event-notification-fixes drivers/ide/ide-cd.c
+--- 25/drivers/ide/ide-cd.c~cdrom-event-notification-fixes	2004-08-02 00:26:48.198766376 -0700
++++ 25-akpm/drivers/ide/ide-cd.c	2004-08-02 00:26:48.214763944 -0700
+@@ -2721,8 +2721,10 @@ int ide_cdrom_drive_status (struct cdrom
+ 	if (!cdrom_get_media_event(cdi, &med)) {
+ 		if (med.media_present)
+ 			return CDS_DISC_OK;
+-		if (med.door_open)
++		else if (med.door_open)
+ 			return CDS_TRAY_OPEN;
++		else
++			return CDS_NO_DISC;
+ 	}
+ 
+ 	if (sense.sense_key == NOT_READY && sense.asc == 0x04 && sense.ascq == 0x04)
+@@ -2734,10 +2736,12 @@ int ide_cdrom_drive_status (struct cdrom
+ 	 * any other way to detect this...
+ 	 */
+ 	if (sense.sense_key == NOT_READY) {
+-		if (sense.asc == 0x3a && sense.ascq == 1)
+-			return CDS_NO_DISC;
+-		else
+-			return CDS_TRAY_OPEN;
++		if (sense.asc == 0x3a) {
++			if (sense.ascq == 0 || sense.ascq == 1)
++				return CDS_NO_DISC;
++			else if (sense.ascq == 2)
++				return CDS_TRAY_OPEN;
++		}
+ 	}
+ 
+ 	return CDS_DRIVE_NOT_READY;
+_

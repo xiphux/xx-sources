@@ -1,0 +1,41 @@
+
+From: "Ed Schouten" <ed@il.fontys.nl>
+
+print a couple of ipv4 addresses as dotted quads, not as hex.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/nfsd/nfsfh.c   |    4 ++--
+ 25-akpm/fs/nfsd/nfsproc.c |    4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN fs/nfsd/nfsfh.c~nfsd-insecure-port-warning-shows-decimal-ipv4-address fs/nfsd/nfsfh.c
+--- 25/fs/nfsd/nfsfh.c~nfsd-insecure-port-warning-shows-decimal-ipv4-address	2004-10-03 16:00:52.027641768 -0700
++++ 25-akpm/fs/nfsd/nfsfh.c	2004-10-03 16:00:52.032641008 -0700
+@@ -181,8 +181,8 @@ fh_verify(struct svc_rqst *rqstp, struct
+ 		error = nfserr_perm;
+ 		if (!rqstp->rq_secure && EX_SECURE(exp)) {
+ 			printk(KERN_WARNING
+-			       "nfsd: request from insecure port (%08x:%d)!\n",
+-			       ntohl(rqstp->rq_addr.sin_addr.s_addr),
++			       "nfsd: request from insecure port (%u.%u.%u.%u:%d)!\n",
++			       NIPQUAD(rqstp->rq_addr.sin_addr.s_addr),
+ 			       ntohs(rqstp->rq_addr.sin_port));
+ 			goto out;
+ 		}
+diff -puN fs/nfsd/nfsproc.c~nfsd-insecure-port-warning-shows-decimal-ipv4-address fs/nfsd/nfsproc.c
+--- 25/fs/nfsd/nfsproc.c~nfsd-insecure-port-warning-shows-decimal-ipv4-address	2004-10-03 16:00:52.028641616 -0700
++++ 25-akpm/fs/nfsd/nfsproc.c	2004-10-03 16:00:52.033640856 -0700
+@@ -128,8 +128,8 @@ nfsd_proc_read(struct svc_rqst *rqstp, s
+ 
+ 	if (NFSSVC_MAXBLKSIZE < argp->count) {
+ 		printk(KERN_NOTICE
+-			"oversized read request from %08x:%d (%d bytes)\n",
+-				ntohl(rqstp->rq_addr.sin_addr.s_addr),
++			"oversized read request from %u.%u.%u.%u:%d (%d bytes)\n",
++				NIPQUAD(rqstp->rq_addr.sin_addr.s_addr),
+ 				ntohs(rqstp->rq_addr.sin_port),
+ 				argp->count);
+ 		argp->count = NFSSVC_MAXBLKSIZE;
+_

@@ -1,0 +1,46 @@
+
+
+
+---
+
+ 25-akpm/arch/i386/kernel/nmi.c |    2 +-
+ 25-akpm/kernel/sysctl.c        |    6 +++---
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN arch/i386/kernel/nmi.c~nmi-trigger-switch-support-for-debuggingupdated-fix arch/i386/kernel/nmi.c
+--- 25/arch/i386/kernel/nmi.c~nmi-trigger-switch-support-for-debuggingupdated-fix	2004-07-27 02:53:16.419560040 -0700
++++ 25-akpm/arch/i386/kernel/nmi.c	2004-07-27 02:53:28.659699256 -0700
+@@ -35,7 +35,7 @@
+ #include "mach_traps.h"
+ 
+ unsigned int nmi_watchdog = NMI_NONE;
+-int unknown_nmi_panic;
++extern int unknown_nmi_panic;
+ static unsigned int nmi_hz = HZ;
+ static unsigned int nmi_perfctr_msr;	/* the MSR to reset in NMI handler */
+ static unsigned int nmi_p4_cccr_val;
+diff -puN kernel/sysctl.c~nmi-trigger-switch-support-for-debuggingupdated-fix kernel/sysctl.c
+--- 25/kernel/sysctl.c~nmi-trigger-switch-support-for-debuggingupdated-fix	2004-07-27 02:53:16.422559584 -0700
++++ 25-akpm/kernel/sysctl.c	2004-07-27 02:53:16.429558520 -0700
+@@ -65,8 +65,8 @@ extern int min_free_kbytes;
+ extern int printk_ratelimit_jiffies;
+ extern int printk_ratelimit_burst;
+ 
+-#if defined(CONFIG_X86_LOCAL_APIC)
+-extern int unknown_nmi_panic;
++#if defined(CONFIG_X86_LOCAL_APIC) && defined(__i386__)
++int unknown_nmi_panic;
+ extern int proc_unknown_nmi_panic(ctl_table *, int, struct file *,
+ 				  void __user *, size_t *);
+ #endif
+@@ -626,7 +626,7 @@ static ctl_table kern_table[] = {
+ 		.mode		= 0444,
+ 		.proc_handler	= &proc_dointvec,
+ 	},
+-#if defined(CONFIG_X86_LOCAL_APIC)
++#if defined(CONFIG_X86_LOCAL_APIC) && defined(__i386__)
+ 	{
+ 		.ctl_name       = KERN_UNKNOWN_NMI_PANIC,
+ 		.procname       = "unknown_nmi_panic",
+
+_

@@ -1,0 +1,27 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+nfsd is missing a put_group_info in the auth_null case.
+
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/net/sunrpc/svcauth_unix.c |    3 +++
+ 1 files changed, 3 insertions(+)
+
+diff -puN net/sunrpc/svcauth_unix.c~nfsd-nfsd-is-missing-a-put_group_info-in-the-auth_null net/sunrpc/svcauth_unix.c
+--- 25/net/sunrpc/svcauth_unix.c~nfsd-nfsd-is-missing-a-put_group_info-in-the-auth_null	2004-08-01 21:09:42.455552608 -0700
++++ 25-akpm/net/sunrpc/svcauth_unix.c	2004-08-01 21:09:42.458552152 -0700
+@@ -405,6 +405,9 @@ svcauth_null_release(struct svc_rqst *rq
+ 	if (rqstp->rq_client)
+ 		auth_domain_put(rqstp->rq_client);
+ 	rqstp->rq_client = NULL;
++	if (rqstp->rq_cred.cr_group_info)
++		put_group_info(rqstp->rq_cred.cr_group_info);
++	rqstp->rq_cred.cr_group_info = NULL;
+ 
+ 	return 0; /* don't drop */
+ }
+_

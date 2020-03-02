@@ -1,0 +1,57 @@
+
+
+hacky fix for a gcc-2.95 (at least) shortcoming.
+
+fs/built-in.o(.text+0x4585d): In function `keyfs_root_readdir':
+/usr/src/25/fs/keyfs/root.c:87: undefined reference to `__ucmpdi2'
+fs/built-in.o(.text+0x46902): In function `keyfs_dir_readdir':
+/usr/src/25/fs/keyfs/keydir.c:190: undefined reference to `__ucmpdi2'
+fs/built-in.o(.text+0x481a9): In function `keyfs_ring_readdir':
+/usr/src/25/fs/keyfs/ringdir.c:181: undefined reference to `__cmpdi2'
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/keyfs/keydir.c  |    2 +-
+ 25-akpm/fs/keyfs/ringdir.c |    2 +-
+ 25-akpm/fs/keyfs/root.c    |    2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff -puN fs/keyfs/root.c~keyfs-build-fix fs/keyfs/root.c
+--- 25/fs/keyfs/root.c~keyfs-build-fix	2004-08-18 21:58:49.978806320 -0700
++++ 25-akpm/fs/keyfs/root.c	2004-08-18 21:58:49.981805864 -0700
+@@ -84,7 +84,7 @@ static int keyfs_root_readdir(struct fil
+ 	/* read the usual "." and ".." first and then the master control files
+ 	 * and special symlinks to process/user specific keyrings
+ 	 */
+-	switch (file->f_pos) {
++	switch ((int)file->f_pos) {
+ 	case 0:
+ 		ret = filldir(cookie, ".", 1, file->f_pos,
+ 			      file->f_dentry->d_inode->i_ino, DT_DIR);
+diff -puN fs/keyfs/keydir.c~keyfs-build-fix fs/keyfs/keydir.c
+--- 25/fs/keyfs/keydir.c~keyfs-build-fix	2004-08-18 21:58:57.072727880 -0700
++++ 25-akpm/fs/keyfs/keydir.c	2004-08-18 21:59:09.865783040 -0700
+@@ -187,7 +187,7 @@ static int keyfs_dir_readdir(struct file
+ 
+ 	/* read the usual "." and ".." first followed by the key control
+ 	 * files */
+-	switch (file->f_pos) {
++	switch ((int)file->f_pos) {
+ 	case 0:
+ 		ret = filldir(cookie, ".", 1, file->f_pos,
+ 			      file->f_dentry->d_inode->i_ino, DT_DIR);
+diff -puN fs/keyfs/ringdir.c~keyfs-build-fix fs/keyfs/ringdir.c
+--- 25/fs/keyfs/ringdir.c~keyfs-build-fix	2004-08-18 21:59:16.158826352 -0700
++++ 25-akpm/fs/keyfs/ringdir.c	2004-08-18 21:59:21.264050240 -0700
+@@ -178,7 +178,7 @@ static int keyfs_ring_readdir(struct fil
+ 	pos = file->f_pos;
+ 
+ 	/* read the usual "." and ".." first followed by the key symlinks */
+-	switch (file->f_pos) {
++	switch ((int)file->f_pos) {
+ 	case 0:
+ 		ret = filldir(cookie, ".", 1, file->f_pos,
+ 			      file->f_dentry->d_inode->i_ino, DT_DIR);
+_

@@ -1,0 +1,151 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/alpha/kernel/irq_i8259.c    |    2 +-
+ 25-akpm/arch/alpha/kernel/irq_srm.c      |    2 +-
+ 25-akpm/arch/alpha/kernel/smc37c669.c    |    2 +-
+ 25-akpm/arch/alpha/kernel/srmcons.c      |    4 ++--
+ 25-akpm/arch/alpha/kernel/sys_dp264.c    |    2 +-
+ 25-akpm/arch/alpha/kernel/sys_rawhide.c  |    2 +-
+ 25-akpm/arch/alpha/kernel/sys_sable.c    |    2 +-
+ 25-akpm/arch/alpha/kernel/sys_titan.c    |    2 +-
+ 25-akpm/arch/alpha/kernel/sys_wildfire.c |    2 +-
+ 25-akpm/arch/alpha/kernel/time.c         |    2 +-
+ 10 files changed, 11 insertions(+), 11 deletions(-)
+
+diff -puN arch/alpha/kernel/irq_i8259.c~lock-initializer-cleanup-alpha arch/alpha/kernel/irq_i8259.c
+--- 25/arch/alpha/kernel/irq_i8259.c~lock-initializer-cleanup-alpha	Wed Jan 12 16:55:07 2005
++++ 25-akpm/arch/alpha/kernel/irq_i8259.c	Wed Jan 12 16:55:07 2005
+@@ -22,7 +22,7 @@
+ 
+ /* Note mask bit is true for DISABLED irqs.  */
+ static unsigned int cached_irq_mask = 0xffff;
+-static spinlock_t i8259_irq_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(i8259_irq_lock);
+ 
+ static inline void
+ i8259_update_irq_hw(unsigned int irq, unsigned long mask)
+diff -puN arch/alpha/kernel/irq_srm.c~lock-initializer-cleanup-alpha arch/alpha/kernel/irq_srm.c
+--- 25/arch/alpha/kernel/irq_srm.c~lock-initializer-cleanup-alpha	Wed Jan 12 16:55:07 2005
++++ 25-akpm/arch/alpha/kernel/irq_srm.c	Wed Jan 12 16:55:07 2005
+@@ -15,7 +15,7 @@
+  * at the same time in multiple CPUs? To be safe I added a spinlock
+  * but it can be removed trivially if the palcode is robust against smp.
+  */
+-spinlock_t srm_irq_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(srm_irq_lock);
+ 
+ static inline void
+ srm_enable_irq(unsigned int irq)
+diff -puN arch/alpha/kernel/smc37c669.c~lock-initializer-cleanup-alpha arch/alpha/kernel/smc37c669.c
+--- 25/arch/alpha/kernel/smc37c669.c~lock-initializer-cleanup-alpha	Wed Jan 12 16:55:07 2005
++++ 25-akpm/arch/alpha/kernel/smc37c669.c	Wed Jan 12 16:55:07 2005
+@@ -1104,7 +1104,7 @@ static int SMC37c669_xlate_drq(
+     int drq 
+ );
+ 
+-static spinlock_t smc_lock __cacheline_aligned = SPIN_LOCK_UNLOCKED;
++static  __cacheline_aligned DEFINE_SPINLOCK(smc_lock);
+ 
+ /*
+ **++
+diff -puN arch/alpha/kernel/srmcons.c~lock-initializer-cleanup-alpha arch/alpha/kernel/srmcons.c
+--- 25/arch/alpha/kernel/srmcons.c~lock-initializer-cleanup-alpha	Wed Jan 12 16:55:07 2005
++++ 25-akpm/arch/alpha/kernel/srmcons.c	Wed Jan 12 16:55:07 2005
+@@ -22,7 +22,7 @@
+ #include <asm/uaccess.h>
+ 
+ 
+-static spinlock_t srmcons_callback_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(srmcons_callback_lock);
+ static int srm_is_registered_console = 0;
+ 
+ /* 
+@@ -160,7 +160,7 @@ static int
+ srmcons_get_private_struct(struct srmcons_private **ps)
+ {
+ 	static struct srmcons_private *srmconsp = NULL;
+-	static spinlock_t srmconsp_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(srmconsp_lock);
+ 	unsigned long flags;
+ 	int retval = 0;
+ 
+diff -puN arch/alpha/kernel/sys_dp264.c~lock-initializer-cleanup-alpha arch/alpha/kernel/sys_dp264.c
+--- 25/arch/alpha/kernel/sys_dp264.c~lock-initializer-cleanup-alpha	Wed Jan 12 16:55:07 2005
++++ 25-akpm/arch/alpha/kernel/sys_dp264.c	Wed Jan 12 16:55:07 2005
+@@ -43,7 +43,7 @@ static unsigned long cached_irq_mask;
+ /* dp264 boards handle at max four CPUs */
+ static unsigned long cpu_irq_affinity[4] = { 0UL, 0UL, 0UL, 0UL };
+ 
+-spinlock_t dp264_irq_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(dp264_irq_lock);
+ 
+ static void
+ tsunami_update_irq_hw(unsigned long mask)
+diff -puN arch/alpha/kernel/sys_rawhide.c~lock-initializer-cleanup-alpha arch/alpha/kernel/sys_rawhide.c
+--- 25/arch/alpha/kernel/sys_rawhide.c~lock-initializer-cleanup-alpha	Wed Jan 12 16:55:07 2005
++++ 25-akpm/arch/alpha/kernel/sys_rawhide.c	Wed Jan 12 16:55:07 2005
+@@ -42,7 +42,7 @@ static unsigned int hose_irq_masks[4] = 
+ 	0xff0000, 0xfe0000, 0xff0000, 0xff0000
+ };
+ static unsigned int cached_irq_masks[4];
+-spinlock_t rawhide_irq_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(rawhide_irq_lock);
+ 
+ static inline void
+ rawhide_update_irq_hw(int hose, int mask)
+diff -puN arch/alpha/kernel/sys_sable.c~lock-initializer-cleanup-alpha arch/alpha/kernel/sys_sable.c
+--- 25/arch/alpha/kernel/sys_sable.c~lock-initializer-cleanup-alpha	Wed Jan 12 16:55:07 2005
++++ 25-akpm/arch/alpha/kernel/sys_sable.c	Wed Jan 12 16:55:07 2005
+@@ -31,7 +31,7 @@
+ #include "pci_impl.h"
+ #include "machvec_impl.h"
+ 
+-spinlock_t sable_lynx_irq_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(sable_lynx_irq_lock);
+ 
+ typedef struct irq_swizzle_struct
+ {
+diff -puN arch/alpha/kernel/sys_titan.c~lock-initializer-cleanup-alpha arch/alpha/kernel/sys_titan.c
+--- 25/arch/alpha/kernel/sys_titan.c~lock-initializer-cleanup-alpha	Wed Jan 12 16:55:07 2005
++++ 25-akpm/arch/alpha/kernel/sys_titan.c	Wed Jan 12 16:55:07 2005
+@@ -56,7 +56,7 @@ static unsigned long titan_cached_irq_ma
+ /*
+  * Need SMP-safe access to interrupt CSRs
+  */
+-spinlock_t titan_irq_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(titan_irq_lock);
+ 
+ static void
+ titan_update_irq_hw(unsigned long mask)
+diff -puN arch/alpha/kernel/sys_wildfire.c~lock-initializer-cleanup-alpha arch/alpha/kernel/sys_wildfire.c
+--- 25/arch/alpha/kernel/sys_wildfire.c~lock-initializer-cleanup-alpha	Wed Jan 12 16:55:07 2005
++++ 25-akpm/arch/alpha/kernel/sys_wildfire.c	Wed Jan 12 16:55:07 2005
+@@ -32,7 +32,7 @@
+ 
+ static unsigned long cached_irq_mask[WILDFIRE_NR_IRQS/(sizeof(long)*8)];
+ 
+-spinlock_t wildfire_irq_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(wildfire_irq_lock);
+ 
+ static int doing_init_irq_hw = 0;
+ 
+diff -puN arch/alpha/kernel/time.c~lock-initializer-cleanup-alpha arch/alpha/kernel/time.c
+--- 25/arch/alpha/kernel/time.c~lock-initializer-cleanup-alpha	Wed Jan 12 16:55:07 2005
++++ 25-akpm/arch/alpha/kernel/time.c	Wed Jan 12 16:55:07 2005
+@@ -63,7 +63,7 @@ extern unsigned long wall_jiffies;	/* ke
+ 
+ static int set_rtc_mmss(unsigned long);
+ 
+-spinlock_t rtc_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(rtc_lock);
+ 
+ #define TICK_SIZE (tick_nsec / 1000)
+ 
+_

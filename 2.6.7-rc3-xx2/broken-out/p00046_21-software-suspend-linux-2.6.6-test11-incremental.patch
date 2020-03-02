@@ -1,0 +1,173 @@
+---
+
+ linux-2.6.7-rc2-xx3-xiphux/drivers/serial/8250.c                    |    7 +-
+ linux-2.6.7-rc2-xx3-xiphux/include/linux/suspend-version-specific.h |    2 
+ linux-2.6.7-rc2-xx3-xiphux/kernel/sched.c                           |    9 ---
+ linux-2.6.7-rc2-xx3-xiphux/mm/page_alloc.c                          |   30 +++++++++-
+ linux-2.6.7-rc2-xx3-xiphux/mm/slab.c                                |    6 ++
+ 5 files changed, 38 insertions(+), 16 deletions(-)
+
+diff -puN drivers/serial/8250.c~21-software-suspend-linux-2.6.6-test11-incremental drivers/serial/8250.c
+--- linux-2.6.7-rc2-xx3/drivers/serial/8250.c~21-software-suspend-linux-2.6.6-test11-incremental	2004-06-04 00:43:02.701030536 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/drivers/serial/8250.c	2004-06-04 00:43:53.646285680 -0400
+@@ -866,6 +866,9 @@ static inline void suspend_handle_charac
+ 			return;
+ 	}
+ 
++	if (ch >= 'A')
++		ch |= 32;
++
+ 	switch (ch) {
+ 		case 27:
+ 			/* Abort suspend */
+@@ -885,28 +888,24 @@ static inline void suspend_handle_charac
+ 			wakeup_suspend();
+ 			break;
+ #ifdef CONFIG_SOFTWARE_SUSPEND_DEBUG
+-		case 80:
+ 		case 112:
+ 			/* During suspend, toggle pausing with Pause or Break if kdb active */
+ 			suspend_action ^= (1 << SUSPEND_PAUSE);
+ 			schedule_suspend_message(1);
+ 			wakeup_suspend();
+ 			break;
+-		case 82:
+ 		case 114:
+ 			/* Otherwise, if R pressed, toggle rebooting */
+ 			suspend_action ^= (1 << SUSPEND_REBOOT);
+ 			schedule_suspend_message(2);
+ 			wakeup_suspend();
+ 			break;
+-		case 83:
+ 		case 115:
+ 			/* Otherwise, if S pressed, toggle single-stepping */
+ 			suspend_action ^= (1 << SUSPEND_SINGLESTEP);
+ 			schedule_suspend_message(3);
+ 			wakeup_suspend();
+ 			break;
+-		case 76:
+ 		case 108:
+ 			/* Otherwise, if L pressed, toggle logging everything */
+ 			suspend_action ^= (1 << SUSPEND_LOGALL);
+diff -puN include/linux/suspend-version-specific.h~21-software-suspend-linux-2.6.6-test11-incremental include/linux/suspend-version-specific.h
+--- linux-2.6.7-rc2-xx3/include/linux/suspend-version-specific.h~21-software-suspend-linux-2.6.6-test11-incremental	2004-06-04 00:44:08.547020424 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/linux/suspend-version-specific.h	2004-06-04 00:44:44.056622144 -0400
+@@ -113,5 +113,5 @@ do { \
+  } \
+ } while(0)
+ 
+-extern void drain_local_pages(void);
++extern void smp_drain_local_pages(void);
+ #endif
+diff -puN kernel/sched.c~21-software-suspend-linux-2.6.6-test11-incremental kernel/sched.c
+--- linux-2.6.7-rc2-xx3/kernel/sched.c~21-software-suspend-linux-2.6.6-test11-incremental	2004-06-04 00:44:57.549570904 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/kernel/sched.c	2004-06-04 00:46:04.736356960 -0400
+@@ -3126,15 +3126,6 @@ need_resched:
+ 	}
+ #endif
+ 	/*
+-	 * if this task is only one running, don't preempt it
+-	 * with idle thread.
+-	 */
+-
+-	if (unlikely((preempt_count() & PREEMPT_ACTIVE) &&
+-		(rq->nr_running == 1)))
+-		return;
+-
+-	/*
+ 	 * if entering off of a kernel preemption go straight
+ 	 * to picking the next task.
+ 	 */
+diff -puN mm/page_alloc.c~21-software-suspend-linux-2.6.6-test11-incremental mm/page_alloc.c
+--- linux-2.6.7-rc2-xx3/mm/page_alloc.c~21-software-suspend-linux-2.6.6-test11-incremental	2004-06-04 00:46:10.616463048 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/mm/page_alloc.c	2004-06-04 00:49:09.113327400 -0400
+@@ -429,6 +429,8 @@ static void __drain_pages(unsigned int c
+ 			pcp = &pset->pcp[i];
+ 			pcp->count -= free_pages_bulk(zone, pcp->count,
+ 						&pcp->list, 0);
++			printk("CPU %d Zone %s PCP %d count is now %d.\n",
++				cpu, zone->name, i, pcp->count);
+ 		}
+ 	}
+ }
+@@ -468,6 +470,24 @@ void drain_local_pages(void)
+ 	__drain_pages(smp_processor_id());
+ 	local_irq_restore(flags);	
+ }
++
++#ifdef CONFIG_SMP
++void __smp_drain_local_pages(void * data)
++{
++	drain_local_pages();
++}
++
++void smp_drain_local_pages(void)
++{
++	smp_call_function(__smp_drain_local_pages, NULL, 0, 1);
++	drain_local_pages();
++}
++#else
++void smp_drain_local_pages(void)
++{
++	drain_local_pages();
++}
++#endif
+ #endif /* CONFIG_PM */
+ 
+ static void zone_statistics(struct zonelist *zonelist, struct zone *z)
+@@ -506,6 +526,11 @@ static void fastcall free_hot_cold_page(
+ 	struct per_cpu_pages *pcp;
+ 	unsigned long flags;
+ 
++	if (unlikely(software_suspend_state & SOFTWARE_SUSPEND_RUNNING)) {
++		__free_pages_ok(page, 0);
++		return;
++	}
++
+ 	kernel_map_pages(page, 1, 0);
+ 	inc_page_state(pgfree);
+ 	free_pages_check(__FUNCTION__, page);
+@@ -637,7 +662,8 @@ buffered_rmqueue(struct zone *zone, int 
+ 	struct page *page = NULL;
+ 	int cold = !!(gfp_flags & __GFP_COLD);
+ 
+-	if ((order == 0) && (!suspend_task)) {
++	if ((order == 0) &&
++	    (likely(!(software_suspend_state & SOFTWARE_SUSPEND_RUNNING)))) {
+ 		struct per_cpu_pages *pcp;
+ 
+ 		pcp = &zone->pageset[get_cpu()].pcp[cold];
+@@ -945,7 +971,7 @@ void __pagevec_free(struct pagevec *pvec
+ fastcall void __free_pages(struct page *page, unsigned int order)
+ {
+ 	if (!PageReserved(page) && put_page_testzero(page)) {
+-		if ((order == 0) && (!suspend_task))
++		if (order == 0)
+ 			free_hot_page(page);
+ 		else
+ 			__free_pages_ok(page, order);
+diff -puN mm/slab.c~21-software-suspend-linux-2.6.6-test11-incremental mm/slab.c
+--- linux-2.6.7-rc2-xx3/mm/slab.c~21-software-suspend-linux-2.6.6-test11-incremental	2004-06-04 00:49:13.760620904 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/mm/slab.c	2004-06-04 00:50:00.774473712 -0400
+@@ -91,6 +91,7 @@
+ #include	<linux/cpu.h>
+ #include	<linux/sysctl.h>
+ #include	<linux/module.h>
++#include	<linux/suspend.h>
+ 
+ #include	<asm/uaccess.h>
+ #include	<asm/cacheflush.h>
+@@ -2702,6 +2703,11 @@ static inline void cache_reap (void)
+ {
+ 	struct list_head *walk;
+ 
++#ifdef CONFIG_SOFTWARE_SUSPEND2
++	if (software_suspend_state & SOFTWARE_SUSPEND_RUNNING)
++		return;
++#endif
++
+ #if DEBUG
+ 	BUG_ON(!in_interrupt());
+ 	BUG_ON(in_irq());
+
+_

@@ -1,0 +1,41 @@
+
+From: Christian Borntraeger <linux-kernel@borntraeger.net>
+
+Various people have reported deadlocks and it has aways seemed a bit risky
+to try to sync the filesystems at this stage anyway.
+
+"I have seen panic failing two times lately on an SMP system. The box 
+ panic'ed but was running happily on the other cpus. The culprit of this 
+ failure is the fact, that these panics have been caused by a block device 
+ or a filesystem (e.g. using errors=panic). In these cases the  likelihood 
+ of a failure/hang of  sys_sync() is high. This is exactly what happened in 
+ both cases I have seen. Meanwhile the other cpus are happily continuing  
+ destroying data as the kernel has a severe problem but its not aware of 
+ that as smp_send_stop happens after sys_sync."
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/panic.c |    8 +-------
+ 1 files changed, 1 insertion(+), 7 deletions(-)
+
+diff -puN kernel/panic.c~was-removal-of-sync-in-panic kernel/panic.c
+--- 25/kernel/panic.c~was-removal-of-sync-in-panic	2004-07-26 14:59:17.556029832 -0700
++++ 25-akpm/kernel/panic.c	2004-07-26 14:59:17.559029376 -0700
+@@ -59,13 +59,7 @@ NORET_TYPE void panic(const char * fmt, 
+ 	va_start(args, fmt);
+ 	vsnprintf(buf, sizeof(buf), fmt, args);
+ 	va_end(args);
+-	printk(KERN_EMERG "Kernel panic: %s\n",buf);
+-	if (in_interrupt())
+-		printk(KERN_EMERG "In interrupt handler - not syncing\n");
+-	else if (!current->pid)
+-		printk(KERN_EMERG "In idle task - not syncing\n");
+-	else
+-		sys_sync();
++	printk(KERN_EMERG "Kernel panic - not syncing: %s\n",buf);
+ 	bust_spinlocks(0);
+ 
+ #ifdef CONFIG_SMP
+_

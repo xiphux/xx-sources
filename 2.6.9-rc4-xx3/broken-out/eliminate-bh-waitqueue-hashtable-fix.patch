@@ -1,0 +1,25 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+wait_on_bit_lock() needs to test_and_set_bit() in the fastpath, not
+test_bit().
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/wait.h |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN include/linux/wait.h~eliminate-bh-waitqueue-hashtable-fix include/linux/wait.h
+--- 25/include/linux/wait.h~eliminate-bh-waitqueue-hashtable-fix	2004-09-30 22:36:44.446114768 -0700
++++ 25-akpm/include/linux/wait.h	2004-09-30 22:36:44.451114008 -0700
+@@ -382,7 +382,7 @@ static inline int wait_on_bit(void *word
+ 	DEFINE_WAIT_BIT(q, word, bit);
+ 	wait_queue_head_t *wqh;
+ 
+-	if (!test_bit(bit, word))
++	if (!test_and_set_bit(bit, word))
+ 		return 0;
+ 
+ 	wqh = bit_waitqueue(word, bit);
+_

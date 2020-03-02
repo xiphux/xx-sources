@@ -1,0 +1,87 @@
+bd-claim
+
+A patch was merged between 2.6.0-test3 and -test4 that breaks EVMS on many
+systems by not allowing Device-Mapper to activate DM devices on top of disks
+that also contain mounted partitions.
+
+There are three solutions to this problem.
+
+1. Switch to using EVMS for *all* your volumes and partitions. This is, of
+   course, the preferred solution, but also requires some extra work on your
+   part to convert to mounting your root filesystem using an EVMS volume.
+
+2. Tell EVMS to exclude any disks that contain partitions that you are going
+   to mount through the kernel-provided-partitions. You can do this by adding
+   an entry to the "exclude" line in your /etc/evms.conf file.
+
+3. Apply this patch, which will revert the change that disallows EVMS to use
+   the disk at the same time the kernel-partitions are.
+
+   cd /usr/src/linux-2.6.3/
+   patch -p1 < bd_claim.patch
+
+
+
+===============================================================================
+Current devices can be 'claimed' by filesystems (when mounting) or
+md/raid (when being included in an array) or 'raw' or ....
+This stop concurrent access by these systems.
+
+However it is still possible for one system to claim the whole device
+and a second system to claim one partition, which is not good.
+
+With this patch, when a partition is claimed, the whole device is
+claimed for partitioning.  So you cannot have a partition and the
+whole devices claimed at the same time (except if the whole device
+is claimed for partitioning).
+
+--- diff/fs/block_dev.c	2004-04-24 17:00:19.000000000 -0500
++++ source/fs/block_dev.c	2004-04-24 17:17:34.000000000 -0500
+@@ -430,34 +430,12 @@
+ 
+ int bd_claim(struct block_device *bdev, void *holder)
+ {
+-	int res;
++	int res = -EBUSY;
+ 	spin_lock(&bdev_lock);
+-
+-	/* first decide result */
+-	if (bdev->bd_holder == holder)
+-		res = 0;	 /* already a holder */
+-	else if (bdev->bd_holder != NULL)
+-		res = -EBUSY; 	 /* held by someone else */
+-	else if (bdev->bd_contains == bdev)
+-		res = 0;  	 /* is a whole device which isn't held */
+-
+-	else if (bdev->bd_contains->bd_holder == bd_claim)
+-		res = 0; 	 /* is a partition of a device that is being partitioned */
+-	else if (bdev->bd_contains->bd_holder != NULL)
+-		res = -EBUSY;	 /* is a partition of a held device */
+-	else
+-		res = 0;	 /* is a partition of an un-held device */
+-
+-	/* now impose change */
+-	if (res==0) {
+-		/* note that for a whole device bd_holders
+-		 * will be incremented twice, and bd_holder will
+-		 * be set to bd_claim before being set to holder
+-		 */
+-		bdev->bd_contains->bd_holders ++;
+-		bdev->bd_contains->bd_holder = bd_claim;
+-		bdev->bd_holders++;
++	if (!bdev->bd_holder || bdev->bd_holder == holder) {
+ 		bdev->bd_holder = holder;
++		bdev->bd_holders++;
++		res = 0;
+ 	}
+ 	spin_unlock(&bdev_lock);
+ 	return res;
+@@ -468,8 +446,6 @@
+ void bd_release(struct block_device *bdev)
+ {
+ 	spin_lock(&bdev_lock);
+-	if (!--bdev->bd_contains->bd_holders)
+-		bdev->bd_contains->bd_holder = NULL;
+ 	if (!--bdev->bd_holders)
+ 		bdev->bd_holder = NULL;
+ 	spin_unlock(&bdev_lock);

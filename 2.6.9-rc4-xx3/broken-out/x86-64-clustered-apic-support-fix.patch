@@ -1,0 +1,33 @@
+
+From: James Cleverdon <jamesclv@us.ibm.com>
+
+Rafael has managed to dereference the genapic pointer before
+clustered_apic_check() was called to initialize it.  I deliberately left
+genapic NULL to catch this.
+
+OK, between the PCI bridge blacklisted in check_ioapic() turning off APIC
+support, the bad checksum found in acpi_table_init(), and the v1.1 MPS
+table, the stray code path is in there somewhere....
+
+A quick and dirty patch to get folks working again, would be to initialize
+genapic to &apic_flat in genapic.c:
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/x86_64/kernel/genapic.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN arch/x86_64/kernel/genapic.c~x86-64-clustered-apic-support-fix arch/x86_64/kernel/genapic.c
+--- 25/arch/x86_64/kernel/genapic.c~x86-64-clustered-apic-support-fix	Mon Oct  4 15:43:10 2004
++++ 25-akpm/arch/x86_64/kernel/genapic.c	Mon Oct  4 15:43:10 2004
+@@ -26,7 +26,7 @@ u8 x86_cpu_to_log_apicid[NR_CPUS] = { [0
+ extern struct genapic apic_cluster;
+ extern struct genapic apic_flat;
+ 
+-struct genapic *genapic;
++struct genapic *genapic = &apic_flat;
+ 
+ 
+ /*
+_

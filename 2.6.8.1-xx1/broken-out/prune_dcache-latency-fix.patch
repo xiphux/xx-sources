@@ -1,0 +1,24 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/dcache.c |    5 +++++
+ 1 files changed, 5 insertions(+)
+
+diff -puN fs/dcache.c~prune_dcache-latency-fix fs/dcache.c
+--- 25/fs/dcache.c~prune_dcache-latency-fix	2004-08-04 20:39:20.826520456 -0700
++++ 25-akpm/fs/dcache.c	2004-08-04 20:39:20.831519696 -0700
+@@ -381,6 +381,11 @@ static void prune_dcache(int count)
+ 		struct dentry *dentry;
+ 		struct list_head *tmp;
+ 
++		if (unlikely((count & 255) == 0)) {
++			spin_unlock(&dcache_lock);
++			cpu_relax();
++			spin_lock(&dcache_lock);
++		}
+ 		tmp = dentry_unused.prev;
+ 		if (tmp == &dentry_unused)
+ 			break;
+_

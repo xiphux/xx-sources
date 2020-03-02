@@ -1,0 +1,62 @@
+
+From: Hariprasad Nellitheertha <hari@in.ibm.com>
+
+This patch moves some crashdump related calls out of machine_kexec so that
+we leave the core kexec code untouched.
+
+Signed-off-by: Vivek Goyal <vgoyal@in.ibm.com>
+Signed-off-by: Hariprasad Nellitheertha <hari@in.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/machine_kexec.c |   10 ----------
+ 25-akpm/kernel/crash.c                   |    9 +++++++++
+ 2 files changed, 9 insertions(+), 10 deletions(-)
+
+diff -puN arch/i386/kernel/machine_kexec.c~crashdump-cleanups-to-the-kexec-based-crashdump-code arch/i386/kernel/machine_kexec.c
+--- 25/arch/i386/kernel/machine_kexec.c~crashdump-cleanups-to-the-kexec-based-crashdump-code	Wed Oct 20 16:22:25 2004
++++ 25-akpm/arch/i386/kernel/machine_kexec.c	Wed Oct 20 16:22:25 2004
+@@ -195,9 +195,6 @@ void machine_kexec(struct kimage *image)
+ 	unsigned long reboot_code_buffer;
+ 	relocate_new_kernel_t rnk;
+ 
+-	crash_dump_stop_cpus();
+-	crash_dump_save_registers();
+-
+ 	/* Interrupts aren't acceptable while we reboot */
+ 	local_irq_disable();
+ 
+@@ -208,13 +205,6 @@ void machine_kexec(struct kimage *image)
+ 	/* Set up an identity mapping for the reboot_code_buffer */
+ 	identity_map_page(reboot_code_buffer);
+ 
+-	/*
+-	 * If we are here to do a crash dump, save the memory from
+-	 * 0-640k before we copy over the kexec kernel image.  Otherwise
+-	 * our dump will show the wrong kernel entirely.
+-	 */
+-	crash_relocate_mem();
+-
+ 	/* copy it out */
+ 	memcpy((void *)reboot_code_buffer, relocate_new_kernel, relocate_new_kernel_size);
+ 
+diff -puN kernel/crash.c~crashdump-cleanups-to-the-kexec-based-crashdump-code kernel/crash.c
+--- 25/kernel/crash.c~crashdump-cleanups-to-the-kexec-based-crashdump-code	Wed Oct 20 16:22:25 2004
++++ 25-akpm/kernel/crash.c	Wed Oct 20 16:22:25 2004
+@@ -71,6 +71,15 @@ void __crash_machine_kexec(void)
+ 	if (image) {
+ 		crashed = 1;
+ 		printk(KERN_EMERG "kexec: opening parachute\n");
++		crash_dump_stop_cpus();
++		crash_dump_save_registers();
++
++	/* If we are here to do a crash dump, save the memory from
++	 * 0-640k before we copy over the kexec kernel image.  Otherwise
++	 * our dump will show the wrong kernel entirely.
++	 */
++		crash_relocate_mem();
++
+ 		machine_kexec(image);
+ 	} else {
+ 		printk(KERN_EMERG "kexec: No kernel image loaded!\n");
+_

@@ -1,0 +1,850 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+Handling of prof_cpu_mask is grossly inconsistent.  Some arches have it as a
+cpumask_t, others unsigned long, and even within arches it's treated
+inconsistently.  This makes it cpumask_t across the board, and consolidates
+the handling in kernel/profile.c
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/alpha/kernel/irq.c      |   34 -----------------------
+ 25-akpm/arch/alpha/kernel/irq_impl.h |    4 --
+ 25-akpm/arch/i386/kernel/irq.c       |   42 ----------------------------
+ 25-akpm/arch/ia64/kernel/irq.c       |   38 --------------------------
+ 25-akpm/arch/ia64/kernel/time.c      |    1 
+ 25-akpm/arch/mips/kernel/irq.c       |   37 -------------------------
+ 25-akpm/arch/parisc/kernel/time.c    |    5 ---
+ 25-akpm/arch/ppc/kernel/irq.c        |   37 -------------------------
+ 25-akpm/arch/ppc/kernel/time.c       |    3 --
+ 25-akpm/arch/ppc64/kernel/irq.c      |   51 -----------------------------------
+ 25-akpm/arch/ppc64/kernel/time.c     |    3 --
+ 25-akpm/arch/s390/kernel/profile.c   |   40 ---------------------------
+ 25-akpm/arch/s390/kernel/time.c      |    1 
+ 25-akpm/arch/sh/kernel/time.c        |    1 
+ 25-akpm/arch/um/kernel/irq.c         |   35 ------------------------
+ 25-akpm/arch/x86_64/kernel/irq.c     |   39 --------------------------
+ 25-akpm/include/asm-i386/hw_irq.h    |    4 --
+ 25-akpm/include/asm-x86_64/hw_irq.h  |    3 --
+ 25-akpm/include/linux/profile.h      |    5 +++
+ 25-akpm/kernel/profile.c             |   45 ++++++++++++++++++++++++++++++
+ 20 files changed, 65 insertions(+), 363 deletions(-)
+
+diff -puN arch/alpha/kernel/irq.c~consolidate-prof_cpu_mask arch/alpha/kernel/irq.c
+--- 25/arch/alpha/kernel/irq.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.496064336 -0700
++++ 25-akpm/arch/alpha/kernel/irq.c	2004-08-04 20:41:02.531059016 -0700
+@@ -288,31 +288,6 @@ irq_affinity_write_proc(struct file *fil
+ 	return full_count;
+ }
+ 
+-static int
+-prof_cpu_mask_read_proc(char *page, char **start, off_t off,
+-			int count, int *eof, void *data)
+-{
+-	int len = cpumask_scnprintf(page, count, *(cpumask_t *)data);
+-	if (count - len < 2)
+-		return -EINVAL;
+-	len += sprintf(page + len, "\n");
+-	return len;
+-}
+-
+-static int
+-prof_cpu_mask_write_proc(struct file *file, const char __user *buffer,
+-			 unsigned long count, void *data)
+-{
+-	unsigned long full_count = count, err;
+-	cpumask_t new_value, *mask = (cpumask_t *)data;
+-
+-	err = cpumask_parse(buffer, count, new_value);
+-	if (err)
+-		return err;
+-
+-	*mask = new_value;
+-	return full_count;
+-}
+ #endif /* CONFIG_SMP */
+ 
+ #define MAX_NAMELEN 10
+@@ -350,8 +325,6 @@ register_irq_proc (unsigned int irq)
+ #endif
+ }
+ 
+-unsigned long prof_cpu_mask = ~0UL;
+-
+ void
+ init_irq_proc (void)
+ {
+@@ -365,12 +338,7 @@ init_irq_proc (void)
+ 
+ #ifdef CONFIG_SMP 
+ 	/* create /proc/irq/prof_cpu_mask */
+-	entry = create_proc_entry("prof_cpu_mask", 0600, root_irq_dir);
+-
+-	entry->nlink = 1;
+-	entry->data = (void *)&prof_cpu_mask;
+-	entry->read_proc = prof_cpu_mask_read_proc;
+-	entry->write_proc = prof_cpu_mask_write_proc;
++	create_prof_cpu_mask(root_irq_dir);
+ #endif
+ 
+ 	/*
+diff -puN arch/alpha/kernel/irq_impl.h~consolidate-prof_cpu_mask arch/alpha/kernel/irq_impl.h
+--- 25/arch/alpha/kernel/irq_impl.h~consolidate-prof_cpu_mask	2004-08-04 20:41:02.497064184 -0700
++++ 25-akpm/arch/alpha/kernel/irq_impl.h	2004-08-04 20:41:02.532058864 -0700
+@@ -41,8 +41,6 @@ extern void init_i8259a_irqs(void);
+ 
+ extern void handle_irq(int irq, struct pt_regs * regs);
+ 
+-extern unsigned long prof_cpu_mask;
+-
+ static inline void
+ alpha_do_profile(unsigned long pc)
+ {
+@@ -55,7 +53,7 @@ alpha_do_profile(unsigned long pc)
+ 	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+ 	 * (default is all CPUs.)
+ 	 */
+-	if (!((1<<smp_processor_id()) & prof_cpu_mask))
++	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+ 		return;
+ 
+ 	pc -= (unsigned long) &_stext;
+diff -puN arch/i386/kernel/irq.c~consolidate-prof_cpu_mask arch/i386/kernel/irq.c
+--- 25/arch/i386/kernel/irq.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.500063728 -0700
++++ 25-akpm/arch/i386/kernel/irq.c	2004-08-04 20:41:02.533058712 -0700
+@@ -1084,32 +1084,6 @@ void fixup_irqs(void)
+ #endif
+ }
+ #endif
+-
+-static int prof_cpu_mask_read_proc (char *page, char **start, off_t off,
+-			int count, int *eof, void *data)
+-{
+-	int len = cpumask_scnprintf(page, count, *(cpumask_t *)data);
+-	if (count - len < 2)
+-		return -EINVAL;
+-	len += sprintf(page + len, "\n");
+-	return len;
+-}
+-
+-static int prof_cpu_mask_write_proc (struct file *file, const char __user *buffer,
+-					unsigned long count, void *data)
+-{
+-	cpumask_t *mask = (cpumask_t *)data;
+-	unsigned long full_count = count, err;
+-	cpumask_t new_value;
+-
+-	err = cpumask_parse(buffer, count, new_value);
+-	if (err)
+-		return err;
+-
+-	*mask = new_value;
+-	return full_count;
+-}
+-
+ #define MAX_NAMELEN 10
+ 
+ static void register_irq_proc (unsigned int irq)
+@@ -1145,27 +1119,13 @@ static void register_irq_proc (unsigned 
+ #endif
+ }
+ 
+-unsigned long prof_cpu_mask = -1;
+-
+ void init_irq_proc (void)
+ {
+-	struct proc_dir_entry *entry;
+ 	int i;
+ 
+ 	/* create /proc/irq */
+ 	root_irq_dir = proc_mkdir("irq", NULL);
+-
+-	/* create /proc/irq/prof_cpu_mask */
+-	entry = create_proc_entry("prof_cpu_mask", 0600, root_irq_dir);
+-
+-	if (!entry)
+-	    return;
+-
+-	entry->nlink = 1;
+-	entry->data = (void *)&prof_cpu_mask;
+-	entry->read_proc = prof_cpu_mask_read_proc;
+-	entry->write_proc = prof_cpu_mask_write_proc;
+-
++	create_prof_cpu_mask(root_irq_dir);
+ 	/*
+ 	 * Create entries for all existing IRQs.
+ 	 */
+diff -puN arch/ia64/kernel/irq.c~consolidate-prof_cpu_mask arch/ia64/kernel/irq.c
+--- 25/arch/ia64/kernel/irq.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.502063424 -0700
++++ 25-akpm/arch/ia64/kernel/irq.c	2004-08-04 20:41:02.534058560 -0700
+@@ -1142,31 +1142,6 @@ void fixup_irqs(void)
+ }
+ #endif
+ 
+-static int prof_cpu_mask_read_proc (char *page, char **start, off_t off,
+-			int count, int *eof, void *data)
+-{
+-	int len = cpumask_scnprintf(page, count, *(cpumask_t *)data);
+-	if (count - len < 2)
+-		return -EINVAL;
+-	len += sprintf(page + len, "\n");
+-	return len;
+-}
+-
+-static int prof_cpu_mask_write_proc (struct file *file, const char *buffer,
+-					unsigned long count, void *data)
+-{
+-	cpumask_t *mask = (cpumask_t *)data;
+-	unsigned long full_count = count, err;
+-	cpumask_t new_value;
+-
+-	err = cpumask_parse(buffer, count, new_value);
+-	if (err)
+-		return err;
+-
+-	*mask = new_value;
+-	return full_count;
+-}
+-
+ #define MAX_NAMELEN 10
+ 
+ static void register_irq_proc (unsigned int irq)
+@@ -1201,26 +1176,15 @@ static void register_irq_proc (unsigned 
+ #endif
+ }
+ 
+-cpumask_t prof_cpu_mask = CPU_MASK_ALL;
+-
+ void init_irq_proc (void)
+ {
+-	struct proc_dir_entry *entry;
+ 	int i;
+ 
+ 	/* create /proc/irq */
+ 	root_irq_dir = proc_mkdir("irq", 0);
+ 
+ 	/* create /proc/irq/prof_cpu_mask */
+-	entry = create_proc_entry("prof_cpu_mask", 0600, root_irq_dir);
+-
+-	if (!entry)
+-		return;
+-
+-	entry->nlink = 1;
+-	entry->data = (void *)&prof_cpu_mask;
+-	entry->read_proc = prof_cpu_mask_read_proc;
+-	entry->write_proc = prof_cpu_mask_write_proc;
++	create_prof_cpu_mask(root_irq_dir);
+ 
+ 	/*
+ 	 * Create entries for all existing IRQs.
+diff -puN arch/ia64/kernel/time.c~consolidate-prof_cpu_mask arch/ia64/kernel/time.c
+--- 25/arch/ia64/kernel/time.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.504063120 -0700
++++ 25-akpm/arch/ia64/kernel/time.c	2004-08-04 20:41:02.535058408 -0700
+@@ -196,7 +196,6 @@ static inline void
+ ia64_do_profile (struct pt_regs * regs)
+ {
+ 	unsigned long ip, slot;
+-	extern cpumask_t prof_cpu_mask;
+ 
+ 	profile_hook(regs);
+ 
+diff -puN arch/mips/kernel/irq.c~consolidate-prof_cpu_mask arch/mips/kernel/irq.c
+--- 25/arch/mips/kernel/irq.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.505062968 -0700
++++ 25-akpm/arch/mips/kernel/irq.c	2004-08-04 20:41:02.536058256 -0700
+@@ -872,30 +872,6 @@ static int irq_affinity_write_proc (stru
+ 
+ #endif
+ 
+-static int prof_cpu_mask_read_proc (char *page, char **start, off_t off,
+-			int count, int *eof, void *data)
+-{
+-	int len = cpumask_scnprintf(page, count, *(cpumask_t *)data);
+-	if (count - len < 2)
+-		return -EINVAL;
+-	len += sprintf(page + len, "\n");
+-	return len;
+-}
+-
+-static int prof_cpu_mask_write_proc (struct file *file, const char *buffer,
+-					unsigned long count, void *data)
+-{
+-	cpumask_t *mask = (cpumask_t *)data, new_value;
+-	unsigned long full_count = count, err;
+-
+-	err = cpumask_parse(buffer, count, new_value);
+-	if (err)
+-		return err;
+-
+-	*mask = new_value;
+-	return full_count;
+-}
+-
+ #define MAX_NAMELEN 10
+ 
+ static void register_irq_proc (unsigned int irq)
+@@ -931,26 +907,15 @@ static void register_irq_proc (unsigned 
+ #endif
+ }
+ 
+-unsigned long prof_cpu_mask = -1;
+-
+ void init_irq_proc (void)
+ {
+-	struct proc_dir_entry *entry;
+ 	int i;
+ 
+ 	/* create /proc/irq */
+ 	root_irq_dir = proc_mkdir("irq", 0);
+ 
+ 	/* create /proc/irq/prof_cpu_mask */
+-	entry = create_proc_entry("prof_cpu_mask", 0600, root_irq_dir);
+-
+-	if (!entry)
+-	    return;
+-
+-	entry->nlink = 1;
+-	entry->data = (void *)&prof_cpu_mask;
+-	entry->read_proc = prof_cpu_mask_read_proc;
+-	entry->write_proc = prof_cpu_mask_write_proc;
++	create_prof_cpu_mask(root_irq_dir);
+ 
+ 	/*
+ 	 * Create entries for all existing IRQs.
+diff -puN arch/parisc/kernel/time.c~consolidate-prof_cpu_mask arch/parisc/kernel/time.c
+--- 25/arch/parisc/kernel/time.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.507062664 -0700
++++ 25-akpm/arch/parisc/kernel/time.c	2004-08-04 20:41:02.537058104 -0700
+@@ -51,9 +51,6 @@ static inline void
+ parisc_do_profile(struct pt_regs *regs)
+ {
+ 	unsigned long pc = regs->iaoq[0];
+-#if 0
+-	extern unsigned long prof_cpu_mask;
+-#endif
+ 	extern char _stext;
+ 
+ 	profile_hook(regs);
+@@ -69,7 +66,7 @@ parisc_do_profile(struct pt_regs *regs)
+ 	 * only look at the cpus specified in this mask 
+ 	 */
+ 
+-	if (!((1 << smp_processor_id()) & prof_cpu_mask))
++	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+ 		return;
+ #endif
+ 
+diff -puN arch/ppc64/kernel/irq.c~consolidate-prof_cpu_mask arch/ppc64/kernel/irq.c
+--- 25/arch/ppc64/kernel/irq.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.508062512 -0700
++++ 25-akpm/arch/ppc64/kernel/irq.c	2004-08-04 20:41:02.538057952 -0700
+@@ -757,44 +757,6 @@ out:
+ 	return ret;
+ }
+ 
+-static int prof_cpu_mask_read_proc (char *page, char **start, off_t off,
+-			int count, int *eof, void *data)
+-{
+-	int len = cpumask_scnprintf(page, count, *(cpumask_t *)data);
+-	if (count - len < 2)
+-		return -EINVAL;
+-	len += sprintf(page + len, "\n");
+-	return len;
+-}
+-
+-static int prof_cpu_mask_write_proc (struct file *file, const char __user *buffer,
+-					unsigned long count, void *data)
+-{
+-	cpumask_t *mask = (cpumask_t *)data;
+-	unsigned long full_count = count, err;
+-	cpumask_t new_value;
+-
+-	err = cpumask_parse(buffer, count, new_value);
+-	if (err)
+-		return err;
+-
+-	*mask = new_value;
+-
+-#ifdef CONFIG_PPC_ISERIES
+-	{
+-		unsigned i;
+-		for (i=0; i<NR_CPUS; ++i) {
+-			if ( paca[i].prof_buffer && cpu_isset(i, new_value) )
+-				paca[i].prof_enabled = 1;
+-			else
+-				paca[i].prof_enabled = 0;
+-		}
+-	}
+-#endif
+-
+-	return full_count;
+-}
+-
+ #define MAX_NAMELEN 10
+ 
+ static void register_irq_proc (unsigned int irq)
+@@ -824,26 +786,15 @@ static void register_irq_proc (unsigned 
+ 	smp_affinity_entry[irq] = entry;
+ }
+ 
+-unsigned long prof_cpu_mask = -1;
+-
+ void init_irq_proc (void)
+ {
+-	struct proc_dir_entry *entry;
+ 	int i;
+ 
+ 	/* create /proc/irq */
+ 	root_irq_dir = proc_mkdir("irq", NULL);
+ 
+ 	/* create /proc/irq/prof_cpu_mask */
+-	entry = create_proc_entry("prof_cpu_mask", 0600, root_irq_dir);
+-
+-	if (!entry)
+-		return;
+-
+-	entry->nlink = 1;
+-	entry->data = (void *)&prof_cpu_mask;
+-	entry->read_proc = prof_cpu_mask_read_proc;
+-	entry->write_proc = prof_cpu_mask_write_proc;
++	create_prof_cpu_mask(root_irq_dir);
+ 
+ 	/*
+ 	 * Create entries for all existing IRQs.
+diff -puN arch/ppc64/kernel/time.c~consolidate-prof_cpu_mask arch/ppc64/kernel/time.c
+--- 25/arch/ppc64/kernel/time.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.510062208 -0700
++++ 25-akpm/arch/ppc64/kernel/time.c	2004-08-04 20:41:02.539057800 -0700
+@@ -114,7 +114,6 @@ static unsigned adjusting_time = 0;
+ static inline void ppc64_do_profile(struct pt_regs *regs)
+ {
+ 	unsigned long nip;
+-	extern unsigned long prof_cpu_mask;
+ 
+ 	profile_hook(regs);
+ 
+@@ -130,7 +129,7 @@ static inline void ppc64_do_profile(stru
+ 	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+ 	 * (default is all CPUs.)
+ 	 */
+-	if (!((1<<smp_processor_id()) & prof_cpu_mask))
++	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+ 		return;
+ 
+ 	nip -= (unsigned long)_stext;
+diff -puN arch/ppc/kernel/irq.c~consolidate-prof_cpu_mask arch/ppc/kernel/irq.c
+--- 25/arch/ppc/kernel/irq.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.512061904 -0700
++++ 25-akpm/arch/ppc/kernel/irq.c	2004-08-04 20:41:02.540057648 -0700
+@@ -620,32 +620,6 @@ static int irq_affinity_write_proc (stru
+ 	return full_count;
+ }
+ 
+-static int prof_cpu_mask_read_proc (char *page, char **start, off_t off,
+-			int count, int *eof, void *data)
+-{
+-	int len = cpumask_scnprintf(page, count, *(cpumask_t *)data);
+-	if (count - len < 2)
+-		return -EINVAL;
+-	len += sprintf(page + len, "\n");
+-	return len;
+-}
+-
+-static int prof_cpu_mask_write_proc (struct file *file, const char __user *buffer,
+-					unsigned long count, void *data)
+-{
+-	int err;
+-	int full_count = count;
+-	cpumask_t *mask = (cpumask_t *)data;
+-	cpumask_t new_value;
+-
+-	err = cpumask_parse(buffer, count, new_value);
+-	if (err)
+-		return err;
+-
+-	*mask = new_value;
+-	return full_count;
+-}
+-
+ #define MAX_NAMELEN 10
+ 
+ static void register_irq_proc (unsigned int irq)
+@@ -673,23 +647,14 @@ static void register_irq_proc (unsigned 
+ 	smp_affinity_entry[irq] = entry;
+ }
+ 
+-unsigned long prof_cpu_mask = -1;
+-
+ void init_irq_proc (void)
+ {
+-	struct proc_dir_entry *entry;
+ 	int i;
+ 
+ 	/* create /proc/irq */
+ 	root_irq_dir = proc_mkdir("irq", NULL);
+-
+ 	/* create /proc/irq/prof_cpu_mask */
+-	entry = create_proc_entry("prof_cpu_mask", 0600, root_irq_dir);
+-
+-	entry->nlink = 1;
+-	entry->data = (void *)&prof_cpu_mask;
+-	entry->read_proc = prof_cpu_mask_read_proc;
+-	entry->write_proc = prof_cpu_mask_write_proc;
++	create_prof_cpu_mask(root_irq_dir);
+ 
+ 	/*
+ 	 * Create entries for all existing IRQs.
+diff -puN arch/ppc/kernel/time.c~consolidate-prof_cpu_mask arch/ppc/kernel/time.c
+--- 25/arch/ppc/kernel/time.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.513061752 -0700
++++ 25-akpm/arch/ppc/kernel/time.c	2004-08-04 20:41:02.541057496 -0700
+@@ -113,7 +113,6 @@ extern char _stext;
+ static inline void ppc_do_profile (struct pt_regs *regs)
+ {
+ 	unsigned long nip;
+-	extern unsigned long prof_cpu_mask;
+ 
+ 	profile_hook(regs);
+ 
+@@ -129,7 +128,7 @@ static inline void ppc_do_profile (struc
+ 	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+ 	 * (default is all CPUs.)
+ 	 */
+-	if (!((1<<smp_processor_id()) & prof_cpu_mask))
++	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+ 		return;
+ 
+ 	nip -= (unsigned long) &_stext;
+diff -puN arch/s390/kernel/profile.c~consolidate-prof_cpu_mask arch/s390/kernel/profile.c
+--- 25/arch/s390/kernel/profile.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.515061448 -0700
++++ 25-akpm/arch/s390/kernel/profile.c	2004-08-04 20:41:02.542057344 -0700
+@@ -9,49 +9,11 @@
+ 
+ static struct proc_dir_entry * root_irq_dir;
+ 
+-static int prof_cpu_mask_read_proc (char *page, char **start, off_t off,
+-					int count, int *eof, void *data)
+-{
+-	int len = cpumask_scnprintf(page, count, *(cpumask_t *)data);
+-	if (count - len < 2)
+-		return -EINVAL;
+-	len += sprintf(page + len, "\n");
+-	return len;
+-}
+-
+-static int prof_cpu_mask_write_proc (struct file *file,
+-					const char __user *buffer,
+-					unsigned long count, void *data)
+-{
+-	cpumask_t *mask = (cpumask_t *)data;
+-	unsigned long full_count = count, err;
+-	cpumask_t new_value;
+-
+-	err = cpumask_parse(buffer, count, new_value);
+-	if (err)
+-		return err;
+-
+-	*mask = new_value;
+-	return full_count;
+-}
+-
+-cpumask_t prof_cpu_mask = CPU_MASK_ALL;
+-
+ void init_irq_proc(void)
+ {
+-	struct proc_dir_entry *entry;
+-
+ 	/* create /proc/irq */
+ 	root_irq_dir = proc_mkdir("irq", 0);
+ 
+ 	/* create /proc/irq/prof_cpu_mask */
+-	entry = create_proc_entry("prof_cpu_mask", 0600, root_irq_dir);
+-
+-	if (!entry)
+-		return;
+-
+-	entry->nlink = 1;
+-	entry->data = (void *)&prof_cpu_mask;
+-	entry->read_proc = prof_cpu_mask_read_proc;
+-	entry->write_proc = prof_cpu_mask_write_proc;
++	create_prof_cpu_mask(root_irq_dir);
+ }
+diff -puN arch/s390/kernel/time.c~consolidate-prof_cpu_mask arch/s390/kernel/time.c
+--- 25/arch/s390/kernel/time.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.516061296 -0700
++++ 25-akpm/arch/s390/kernel/time.c	2004-08-04 20:41:02.543057192 -0700
+@@ -185,7 +185,6 @@ extern char _stext, _etext;
+ static inline void s390_do_profile(struct pt_regs * regs)
+ {
+ 	unsigned long eip;
+-	extern cpumask_t prof_cpu_mask;
+ 
+ 	profile_hook(regs);
+ 
+diff -puN arch/sh/kernel/time.c~consolidate-prof_cpu_mask arch/sh/kernel/time.c
+--- 25/arch/sh/kernel/time.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.518060992 -0700
++++ 25-akpm/arch/sh/kernel/time.c	2004-08-04 20:41:02.544057040 -0700
+@@ -251,7 +251,6 @@ EXPORT_SYMBOL(do_settimeofday);
+ static long last_rtc_update;
+ 
+ /* Profiling definitions */
+-extern unsigned long prof_cpu_mask;
+ extern unsigned int * prof_buffer;
+ extern unsigned long prof_len;
+ extern unsigned long prof_shift;
+diff -puN arch/um/kernel/irq.c~consolidate-prof_cpu_mask arch/um/kernel/irq.c
+--- 25/arch/um/kernel/irq.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.520060688 -0700
++++ 25-akpm/arch/um/kernel/irq.c	2004-08-04 20:41:02.545056888 -0700
+@@ -609,30 +609,6 @@ static int irq_affinity_write_proc (stru
+ 	return full_count;
+ }
+ 
+-static int prof_cpu_mask_read_proc (char *page, char **start, off_t off,
+-			int count, int *eof, void *data)
+-{
+-	int len = cpumask_scnprintf(page, count, *(cpumask_t *)data);
+-	if (count - len < 2)
+-		return -EINVAL;
+-	len += sprintf(page + len, "\n");
+-	return len;
+-}
+-
+-static int prof_cpu_mask_write_proc (struct file *file, const char *buffer,
+-					unsigned long count, void *data)
+-{
+-	cpumask_t *mask = (cpumask_t *)data, new_value;
+-	unsigned long full_count = count, err;
+-
+-	err = cpumask_parse(buffer, count, new_value);
+-	if (err)
+-		return err;
+-
+-	*mask = new_value;
+-	return full_count;
+-}
+-
+ #define MAX_NAMELEN 10
+ 
+ static void register_irq_proc (unsigned int irq)
+@@ -661,24 +637,15 @@ static void register_irq_proc (unsigned 
+ 	smp_affinity_entry[irq] = entry;
+ }
+ 
+-/* Read and written as a long */
+-cpumask_t prof_cpu_mask = CPU_MASK_ALL;
+-
+ void __init init_irq_proc (void)
+ {
+-	struct proc_dir_entry *entry;
+ 	int i;
+ 
+ 	/* create /proc/irq */
+ 	root_irq_dir = proc_mkdir("irq", 0);
+ 
+ 	/* create /proc/irq/prof_cpu_mask */
+-	entry = create_proc_entry("prof_cpu_mask", 0600, root_irq_dir);
+-
+-	entry->nlink = 1;
+-	entry->data = (void *)&prof_cpu_mask;
+-	entry->read_proc = prof_cpu_mask_read_proc;
+-	entry->write_proc = prof_cpu_mask_write_proc;
++	create_prof_cpu_mask(root_irq_dir);
+ 
+ 	/*
+ 	 * Create entries for all existing IRQs.
+diff -puN arch/x86_64/kernel/irq.c~consolidate-prof_cpu_mask arch/x86_64/kernel/irq.c
+--- 25/arch/x86_64/kernel/irq.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.521060536 -0700
++++ 25-akpm/arch/x86_64/kernel/irq.c	2004-08-04 20:41:02.546056736 -0700
+@@ -865,31 +865,6 @@ static int irq_affinity_write_proc (stru
+ 
+ #endif
+ 
+-static int prof_cpu_mask_read_proc (char *page, char **start, off_t off,
+-			int count, int *eof, void *data)
+-{
+-	int len = cpumask_scnprintf(page, count, *(cpumask_t *)data);
+-	if (count - len < 2)
+-		return -EINVAL;
+-	len += sprintf(page + len, "\n");
+-	return len;
+-}
+-
+-static int prof_cpu_mask_write_proc (struct file *file,
+-					const char __user *buffer,
+-					unsigned long count, void *data)
+-{
+-	unsigned long full_count = count, err;
+-	cpumask_t new_value, *mask = (cpumask_t *)data;
+-
+-	err = cpumask_parse(buffer, count, new_value);
+-	if (err)
+-		return err;
+-
+-	*mask = new_value;
+-	return full_count;
+-}
+-
+ #define MAX_NAMELEN 10
+ 
+ static void register_irq_proc (unsigned int irq)
+@@ -925,26 +900,15 @@ static void register_irq_proc (unsigned 
+ #endif
+ }
+ 
+-unsigned long prof_cpu_mask = -1;
+-
+ void init_irq_proc (void)
+ {
+-	struct proc_dir_entry *entry;
+ 	int i;
+ 
+ 	/* create /proc/irq */
+ 	root_irq_dir = proc_mkdir("irq", NULL);
+ 
+ 	/* create /proc/irq/prof_cpu_mask */
+-	entry = create_proc_entry("prof_cpu_mask", 0600, root_irq_dir);
+-
+-	if (!entry)
+-	    return;
+-
+-	entry->nlink = 1;
+-	entry->data = (void *)&prof_cpu_mask;
+-	entry->read_proc = prof_cpu_mask_read_proc;
+-	entry->write_proc = prof_cpu_mask_write_proc;
++	create_prof_cpu_mask(root_irq_dir);
+ 
+ 	/*
+ 	 * Create entries for all existing IRQs.
+@@ -952,4 +916,3 @@ void init_irq_proc (void)
+ 	for (i = 0; i < NR_IRQS; i++)
+ 		register_irq_proc(i);
+ }
+-
+diff -puN include/asm-i386/hw_irq.h~consolidate-prof_cpu_mask include/asm-i386/hw_irq.h
+--- 25/include/asm-i386/hw_irq.h~consolidate-prof_cpu_mask	2004-08-04 20:41:02.522060384 -0700
++++ 25-akpm/include/asm-i386/hw_irq.h	2004-08-04 20:41:02.546056736 -0700
+@@ -70,8 +70,6 @@ extern atomic_t irq_mis_count;
+ 
+ static inline void __do_profile(unsigned long eip)
+ {
+-	extern unsigned long prof_cpu_mask;
+- 
+ 	if (!prof_buffer)
+ 		return;
+ 
+@@ -79,7 +77,7 @@ static inline void __do_profile(unsigned
+ 	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+ 	 * (default is all CPUs.)
+ 	 */
+-	if (!((1<<smp_processor_id()) & prof_cpu_mask))
++	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+ 		return;
+ 
+ 	eip -= (unsigned long)_stext;
+diff -puN include/asm-x86_64/hw_irq.h~consolidate-prof_cpu_mask include/asm-x86_64/hw_irq.h
+--- 25/include/asm-x86_64/hw_irq.h~consolidate-prof_cpu_mask	2004-08-04 20:41:02.524060080 -0700
++++ 25-akpm/include/asm-x86_64/hw_irq.h	2004-08-04 20:41:02.547056584 -0700
+@@ -133,7 +133,6 @@ __asm__( \
+ static inline void x86_do_profile (struct pt_regs *regs) 
+ {
+ 	unsigned long rip;
+-	extern unsigned long prof_cpu_mask;
+ 	extern char _stext[];
+  
+ 	profile_hook(regs);
+@@ -149,7 +148,7 @@ static inline void x86_do_profile (struc
+ 	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+ 	 * (default is all CPUs.)
+ 	 */
+-	if (!((1<<smp_processor_id()) & prof_cpu_mask))
++	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+ 		return;
+ 
+ 	rip -= (unsigned long) &_stext;
+diff -puN include/linux/profile.h~consolidate-prof_cpu_mask include/linux/profile.h
+--- 25/include/linux/profile.h~consolidate-prof_cpu_mask	2004-08-04 20:41:02.526059776 -0700
++++ 25-akpm/include/linux/profile.h	2004-08-04 20:41:02.547056584 -0700
+@@ -6,18 +6,23 @@
+ #include <linux/kernel.h>
+ #include <linux/config.h>
+ #include <linux/init.h>
++#include <linux/cpumask.h>
+ #include <asm/errno.h>
+ 
++struct proc_dir_entry;
++
+ /* parse command line */
+ int __init profile_setup(char * str);
+ 
+ /* init basic kernel profiler */
+ void __init profile_init(void);
++void create_prof_cpu_mask(struct proc_dir_entry *);
+ 
+ extern unsigned int * prof_buffer;
+ extern unsigned long prof_len;
+ extern unsigned long prof_shift;
+ extern int prof_on;
++extern cpumask_t prof_cpu_mask;
+ 
+ 
+ enum profile_type {
+diff -puN kernel/profile.c~consolidate-prof_cpu_mask kernel/profile.c
+--- 25/kernel/profile.c~consolidate-prof_cpu_mask	2004-08-04 20:41:02.527059624 -0700
++++ 25-akpm/kernel/profile.c	2004-08-04 20:41:02.548056432 -0700
+@@ -8,12 +8,14 @@
+ #include <linux/bootmem.h>
+ #include <linux/notifier.h>
+ #include <linux/mm.h>
++#include <linux/cpumask.h>
+ #include <asm/sections.h>
+ 
+ unsigned int * prof_buffer;
+ unsigned long prof_len;
+ unsigned long prof_shift;
+ int prof_on;
++cpumask_t prof_cpu_mask = CPU_MASK_ALL;
+ 
+ int __init profile_setup(char * str)
+ {
+@@ -163,3 +165,46 @@ EXPORT_SYMBOL_GPL(unregister_profile_not
+ 
+ EXPORT_SYMBOL_GPL(profile_event_register);
+ EXPORT_SYMBOL_GPL(profile_event_unregister);
++
++#ifdef CONFIG_PROC_FS
++#include <linux/proc_fs.h>
++#include <asm/uaccess.h>
++
++static int prof_cpu_mask_read_proc (char *page, char **start, off_t off,
++			int count, int *eof, void *data)
++{
++	int len = cpumask_scnprintf(page, count, *(cpumask_t *)data);
++	if (count - len < 2)
++		return -EINVAL;
++	len += sprintf(page + len, "\n");
++	return len;
++}
++
++static int prof_cpu_mask_write_proc (struct file *file, const char __user *buffer,
++					unsigned long count, void *data)
++{
++	cpumask_t *mask = (cpumask_t *)data;
++	unsigned long full_count = count, err;
++	cpumask_t new_value;
++
++	err = cpumask_parse(buffer, count, new_value);
++	if (err)
++		return err;
++
++	*mask = new_value;
++	return full_count;
++}
++
++void create_prof_cpu_mask(struct proc_dir_entry *root_irq_dir)
++{
++	struct proc_dir_entry *entry;
++
++	/* create /proc/irq/prof_cpu_mask */
++	if (!(entry = create_proc_entry("prof_cpu_mask", 0600, root_irq_dir)))
++		return;
++	entry->nlink = 1;
++	entry->data = (void *)&prof_cpu_mask;
++	entry->read_proc = prof_cpu_mask_read_proc;
++	entry->write_proc = prof_cpu_mask_write_proc;
++}
++#endif /* CONFIG_PROC_FS */
+_

@@ -1,0 +1,47 @@
+
+From: Kaigai Kohei <kaigai@ak.jp.nec.com>
+
+This patch implements atomic_inc_return() and so on for ARM26.  Because
+Hugh says that SMP is not supported in arm26, it is implemented by normal
+operations between local_irq_save() and local_irq_restore() like another
+atomic operations.
+
+Signed-off-by: KaiGai, Kohei <kaigai@ak.jp.nec.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/asm-arm26/atomic.h |   21 +++++++++++++++++++++
+ 1 files changed, 21 insertions(+)
+
+diff -puN include/asm-arm26/atomic.h~atomic_inc_return-for-arm26 include/asm-arm26/atomic.h
+--- 25/include/asm-arm26/atomic.h~atomic_inc_return-for-arm26	2004-09-11 16:08:29.108677648 -0700
++++ 25-akpm/include/asm-arm26/atomic.h	2004-09-11 16:08:29.111677192 -0700
+@@ -105,6 +105,27 @@ static inline void atomic_clear_mask(uns
+ 	local_irq_restore(flags);
+ }
+ 
++static inline int atomic_add_return(int i, volatile atomic_t *v)
++{
++	unsigned long flags;
++	int val;
++
++	local_irq_save(flags);
++	val = v->counter + i;
++	v->counter = val;
++	local_irq_restore(flags);
++
++	return val;
++}
++
++static inline int atomic_sub_return(int i, volatile atomic_t *v)
++{
++	return atomic_add_return(-i, v);
++}
++
++#define atomic_inc_return(v)  (atomic_add_return(1,v))
++#define atomic_dec_return(v)  (atomic_sub_return(1,v))
++
+ /* Atomic operations are already serializing on ARM */
+ #define smp_mb__before_atomic_dec()	barrier()
+ #define smp_mb__after_atomic_dec()	barrier()
+_

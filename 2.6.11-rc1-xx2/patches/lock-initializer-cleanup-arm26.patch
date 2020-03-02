@@ -1,0 +1,103 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/arm26/kernel/dma.c       |    2 +-
+ 25-akpm/arch/arm26/kernel/irq.c       |    2 +-
+ 25-akpm/arch/arm26/kernel/semaphore.c |    2 +-
+ 25-akpm/arch/arm26/kernel/setup.c     |    2 +-
+ 25-akpm/arch/arm26/kernel/time.c      |    2 +-
+ 25-akpm/arch/arm26/kernel/traps.c     |    2 +-
+ 25-akpm/arch/arm26/mm/small_page.c    |    2 +-
+ 7 files changed, 7 insertions(+), 7 deletions(-)
+
+diff -puN arch/arm26/kernel/dma.c~lock-initializer-cleanup-arm26 arch/arm26/kernel/dma.c
+--- 25/arch/arm26/kernel/dma.c~lock-initializer-cleanup-arm26	Wed Jan 12 16:54:49 2005
++++ 25-akpm/arch/arm26/kernel/dma.c	Wed Jan 12 16:54:49 2005
+@@ -22,7 +22,7 @@
+ 
+ #include <asm/dma.h>
+ 
+-spinlock_t dma_spin_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(dma_spin_lock);
+ 
+ static dma_t dma_chan[MAX_DMA_CHANNELS];
+ 
+diff -puN arch/arm26/kernel/irq.c~lock-initializer-cleanup-arm26 arch/arm26/kernel/irq.c
+--- 25/arch/arm26/kernel/irq.c~lock-initializer-cleanup-arm26	Wed Jan 12 16:54:49 2005
++++ 25-akpm/arch/arm26/kernel/irq.c	Wed Jan 12 16:54:49 2005
+@@ -50,7 +50,7 @@ void __init arc_init_irq(void);
+ #define MAX_IRQ_CNT	100000
+ 
+ static volatile unsigned long irq_err_count;
+-static spinlock_t irq_controller_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(irq_controller_lock);
+ 
+ struct irqdesc irq_desc[NR_IRQS];
+ 
+diff -puN arch/arm26/kernel/semaphore.c~lock-initializer-cleanup-arm26 arch/arm26/kernel/semaphore.c
+--- 25/arch/arm26/kernel/semaphore.c~lock-initializer-cleanup-arm26	Wed Jan 12 16:54:49 2005
++++ 25-akpm/arch/arm26/kernel/semaphore.c	Wed Jan 12 16:54:49 2005
+@@ -56,7 +56,7 @@ void __up(struct semaphore *sem)
+ 	wake_up(&sem->wait);
+ }
+ 
+-static spinlock_t semaphore_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(semaphore_lock);
+ 
+ void __sched __down(struct semaphore * sem)
+ {
+diff -puN arch/arm26/kernel/setup.c~lock-initializer-cleanup-arm26 arch/arm26/kernel/setup.c
+--- 25/arch/arm26/kernel/setup.c~lock-initializer-cleanup-arm26	Wed Jan 12 16:54:49 2005
++++ 25-akpm/arch/arm26/kernel/setup.c	Wed Jan 12 16:54:49 2005
+@@ -37,7 +37,7 @@
+ #endif
+ 
+ #ifdef CONFIG_PREEMPT
+-spinlock_t kernel_flag = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(kernel_flag);
+ #endif
+ 
+ #if defined(CONFIG_FPE_NWFPE)
+diff -puN arch/arm26/kernel/time.c~lock-initializer-cleanup-arm26 arch/arm26/kernel/time.c
+--- 25/arch/arm26/kernel/time.c~lock-initializer-cleanup-arm26	Wed Jan 12 16:54:49 2005
++++ 25-akpm/arch/arm26/kernel/time.c	Wed Jan 12 16:54:49 2005
+@@ -41,7 +41,7 @@ EXPORT_SYMBOL(jiffies_64);
+ extern unsigned long wall_jiffies;
+ 
+ /* this needs a better home */
+-spinlock_t rtc_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(rtc_lock);
+ 
+ /* change this if you have some constant time drift */
+ #define USECS_PER_JIFFY	(1000000/HZ)
+diff -puN arch/arm26/kernel/traps.c~lock-initializer-cleanup-arm26 arch/arm26/kernel/traps.c
+--- 25/arch/arm26/kernel/traps.c~lock-initializer-cleanup-arm26	Wed Jan 12 16:54:49 2005
++++ 25-akpm/arch/arm26/kernel/traps.c	Wed Jan 12 16:54:49 2005
+@@ -171,7 +171,7 @@ void show_stack(struct task_struct *task
+ 	dump_mem("Stack: ", (unsigned long)sp, 8192+(unsigned long)task->thread_info);
+ }
+ 
+-spinlock_t die_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(die_lock);
+ 
+ /*
+  * This function is protected against re-entrancy.
+diff -puN arch/arm26/mm/small_page.c~lock-initializer-cleanup-arm26 arch/arm26/mm/small_page.c
+--- 25/arch/arm26/mm/small_page.c~lock-initializer-cleanup-arm26	Wed Jan 12 16:54:49 2005
++++ 25-akpm/arch/arm26/mm/small_page.c	Wed Jan 12 16:54:49 2005
+@@ -75,7 +75,7 @@ static struct order orders[] = {
+ #define TEST_AND_CLEAR_USED(pg,off)	(test_and_clear_bit(off, &USED_MAP(pg)))
+ #define SET_USED(pg,off)		(set_bit(off, &USED_MAP(pg)))
+ 
+-static spinlock_t small_page_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(small_page_lock);
+ 
+ static unsigned long __get_small_page(int priority, struct order *order)
+ {
+_

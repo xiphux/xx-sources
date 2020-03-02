@@ -1,0 +1,26 @@
+
+From: Andrea Arcangeli <andrea@suse.de>
+
+A trap gate shouldn't affect the irq status at all, so we don't need to
+test whether the trapping code had interrupts enabled.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/traps.c |    3 ---
+ 1 files changed, 3 deletions(-)
+
+diff -puN arch/i386/kernel/traps.c~do_general_protection-doesnt-disable-irq arch/i386/kernel/traps.c
+--- 25/arch/i386/kernel/traps.c~do_general_protection-doesnt-disable-irq	2004-07-29 21:27:33.915055472 -0700
++++ 25-akpm/arch/i386/kernel/traps.c	2004-07-29 21:27:33.919054864 -0700
+@@ -496,9 +496,6 @@ DO_ERROR_INFO(17, SIGBUS, "alignment che
+ 
+ asmlinkage void do_general_protection(struct pt_regs * regs, long error_code)
+ {
+-	if (regs->eflags & X86_EFLAGS_IF)
+-		local_irq_enable();
+- 
+ 	if (regs->eflags & VM_MASK)
+ 		goto gp_in_vm86;
+ 
+_

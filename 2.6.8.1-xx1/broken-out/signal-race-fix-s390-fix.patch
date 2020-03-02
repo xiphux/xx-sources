@@ -1,0 +1,86 @@
+
+From: Mikael Pettersson <mikpe@csd.uu.se>
+
+The signal-race-fixes patch in 2.6.8-rc2-mm1 appears to be a bit broken on
+s390.
+
+When forcing a SIGSEGV the old code updated "*ka", where ka was a pointer
+to current's k_sigaction for SIGSEGV.  Now "ka_copy" points to a copy of
+that structure, so assigning "*ka_copy" doesn't do what we want.  Instead
+do the assignment via current->...  just like i386 and x86_64 do.
+
+Furthermore, the SA_ONESHOT handling wasn't deleted.  That is now handled
+by generic code in the kernel.
+
+This patch has not been tested.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/s390/kernel/compat_signal.c |    7 ++-----
+ 25-akpm/arch/s390/kernel/signal.c        |    7 ++-----
+ 2 files changed, 4 insertions(+), 10 deletions(-)
+
+diff -puN arch/s390/kernel/compat_signal.c~signal-race-fix-s390-fix arch/s390/kernel/compat_signal.c
+--- 25/arch/s390/kernel/compat_signal.c~signal-race-fix-s390-fix	2004-08-07 19:28:23.112401920 -0700
++++ 25-akpm/arch/s390/kernel/compat_signal.c	2004-08-07 19:28:23.123400248 -0700
+@@ -553,7 +553,7 @@ static void setup_frame32(int sig, struc
+ 
+ give_sigsegv:
+ 	if (sig == SIGSEGV)
+-		ka_copy->sa.sa_handler = SIG_DFL;
++		current->sighand->action[sig-1].sa.sa_handler = SIG_DFL;
+ 	force_sig(SIGSEGV, current);
+ }
+ 
+@@ -606,7 +606,7 @@ static void setup_rt_frame32(int sig, st
+ 
+ give_sigsegv:
+ 	if (sig == SIGSEGV)
+-		ka_copy->sa.sa_handler = SIG_DFL;
++		current->sighand->action[sig-1].sa.sa_handler = SIG_DFL;
+ 	force_sig(SIGSEGV, current);
+ }
+ 
+@@ -624,9 +624,6 @@ handle_signal32(unsigned long sig, struc
+ 	else
+ 		setup_frame32(sig, ka_copy, oldset, regs);
+ 
+-	if (ka_copy->sa.sa_flags & SA_ONESHOT)
+-		ka_copy->sa.sa_handler = SIG_DFL;
+-
+ 	if (!(ka_copy->sa.sa_flags & SA_NODEFER)) {
+ 		spin_lock_irq(&current->sighand->siglock);
+ 		sigorsets(&current->blocked,&current->blocked,
+diff -puN arch/s390/kernel/signal.c~signal-race-fix-s390-fix arch/s390/kernel/signal.c
+--- 25/arch/s390/kernel/signal.c~signal-race-fix-s390-fix	2004-08-07 19:28:23.119400856 -0700
++++ 25-akpm/arch/s390/kernel/signal.c	2004-08-07 19:28:23.124400096 -0700
+@@ -359,7 +359,7 @@ static void setup_frame(int sig, struct 
+ 
+ give_sigsegv:
+ 	if (sig == SIGSEGV)
+-		ka_copy->sa.sa_handler = SIG_DFL;
++		current->sighand->action[sig-1].sa.sa_handler = SIG_DFL;
+ 	force_sig(SIGSEGV, current);
+ }
+ 
+@@ -415,7 +415,7 @@ static void setup_rt_frame(int sig, stru
+ 
+ give_sigsegv:
+ 	if (sig == SIGSEGV)
+-		ka_copy->sa.sa_handler = SIG_DFL;
++		current->sighand->action[sig-1].sa.sa_handler = SIG_DFL;
+ 	force_sig(SIGSEGV, current);
+ }
+ 
+@@ -433,9 +433,6 @@ handle_signal(unsigned long sig, struct 
+ 	else
+ 		setup_frame(sig, ka_copy, oldset, regs);
+ 
+-	if (ka_copy->sa.sa_flags & SA_ONESHOT)
+-		ka_copy->sa.sa_handler = SIG_DFL;
+-
+ 	if (!(ka_copy->sa.sa_flags & SA_NODEFER)) {
+ 		spin_lock_irq(&current->sighand->siglock);
+ 		sigorsets(&current->blocked,&current->blocked,
+_

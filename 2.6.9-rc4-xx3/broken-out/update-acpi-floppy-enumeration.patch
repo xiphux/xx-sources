@@ -1,0 +1,68 @@
+
+From: Bjorn Helgaas <bjorn.helgaas@hp.com>
+
+Switch from CONFIG_ACPI_BUS to CONFIG_ACPI, and touch up the probe messages
+to be more ACPI-like.  
+
+Signed-off-by: Bjorn Helgaas <bjorn.helgaas@hp.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/floppy.c |   15 +++++++++------
+ 1 files changed, 9 insertions(+), 6 deletions(-)
+
+diff -puN drivers/block/floppy.c~update-acpi-floppy-enumeration drivers/block/floppy.c
+--- 25/drivers/block/floppy.c~update-acpi-floppy-enumeration	2004-10-05 02:10:23.833085768 -0700
++++ 25-akpm/drivers/block/floppy.c	2004-10-05 02:10:23.839084856 -0700
+@@ -181,7 +181,7 @@ static int print_unex = 1;
+ #include <linux/device.h>
+ #include <linux/buffer_head.h>	/* for invalidate_buffers() */
+ 
+-#ifdef CONFIG_ACPI_BUS
++#ifdef CONFIG_ACPI
+ #include <linux/acpi.h>
+ #include <acpi/acpi_bus.h>
+ 
+@@ -4157,7 +4157,7 @@ static struct param_table {
+ 	{"slow", NULL, &slow_floppy, 1, 0},
+ 	{"unexpected_interrupts", NULL, &print_unex, 1, 0},
+ 	{"no_unexpected_interrupts", NULL, &print_unex, 0, 0},
+-#ifdef CONFIG_ACPI_BUS
++#ifdef CONFIG_ACPI
+ 	{"no_acpi", NULL, &no_acpi_floppy, 1, 0},
+ #endif
+ 	{"L40SX", NULL, &print_unex, 0, 0}
+@@ -4232,7 +4232,7 @@ static struct kobject *floppy_find(dev_t
+ 	return get_disk(disks[drive]);
+ }
+ 
+-#ifdef CONFIG_ACPI_BUS
++#ifdef CONFIG_ACPI
+ static int acpi_floppy_registered;
+ static int acpi_floppies;
+ 
+@@ -4301,8 +4301,9 @@ static int acpi_floppy_add(struct acpi_d
+ 	if (ACPI_FAILURE(status))
+ 		return -ENODEV;
+ 
+-	printk("%s: controller ACPI %s at I/O 0x%x-0x%x",
+-		DEVICE_NAME, device->pnp.bus_id, fd.io_region[0].base,
++	printk("%s: ACPI %s [%s] at I/O 0x%x-0x%x", DEVICE_NAME,
++		acpi_device_name(device), acpi_device_bid(device),
++		fd.io_region[0].base,
+ 		fd.io_region[0].base + fd.io_region[0].size - 1);
+ 	if (fd.nr_io_regions > 1) {
+ 		if (fd.io_region[1].size == 1)
+@@ -4371,8 +4372,10 @@ static int acpi_floppy_init(void)
+ {
+ 	int err;
+ 
+-	if (no_acpi_floppy)
++	if (no_acpi_floppy) {
++		printk("%s: ACPI detection disabled\n", DEVICE_NAME);
+ 		return -ENODEV;
++	}
+ 	err = acpi_bus_register_driver(&acpi_floppy_driver);
+ 	if (err >= 0)
+ 		acpi_floppy_registered = 1;
+_

@@ -1,0 +1,45 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Introduce CPU_DOWN_FAILED notifier, so we can cope with a failure after a
+CPU_DOWN_PREPARE notice.
+
+This fixes 3/8 "add CPU_DOWN_PREPARE notifier" to be useful
+
+Signed-off-by: Nick Piggin <nickpiggin@yahoo.com.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/notifier.h |    3 ++-
+ 25-akpm/kernel/cpu.c             |    5 +++++
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff -puN include/linux/notifier.h~sched-hotplug-add-a-cpu_down_failed-notifier include/linux/notifier.h
+--- 25/include/linux/notifier.h~sched-hotplug-add-a-cpu_down_failed-notifier	2004-10-03 16:42:37.608735544 -0700
++++ 25-akpm/include/linux/notifier.h	2004-10-03 16:42:37.613734784 -0700
+@@ -68,7 +68,8 @@ extern int notifier_call_chain(struct no
+ #define CPU_UP_PREPARE		0x0003 /* CPU (unsigned)v coming up */
+ #define CPU_UP_CANCELED		0x0004 /* CPU (unsigned)v NOT coming up */
+ #define CPU_DOWN_PREPARE	0x0005 /* CPU (unsigned)v going down */
+-#define CPU_DEAD		0x0006 /* CPU (unsigned)v dead */
++#define CPU_DOWN_FAILED		0x0006 /* CPU (unsigned)v NOT going down */
++#define CPU_DEAD		0x0007 /* CPU (unsigned)v dead */
+ 
+ #endif /* __KERNEL__ */
+ #endif /* _LINUX_NOTIFIER_H */
+diff -puN kernel/cpu.c~sched-hotplug-add-a-cpu_down_failed-notifier kernel/cpu.c
+--- 25/kernel/cpu.c~sched-hotplug-add-a-cpu_down_failed-notifier	2004-10-03 16:42:37.610735240 -0700
++++ 25-akpm/kernel/cpu.c	2004-10-03 16:42:37.613734784 -0700
+@@ -141,6 +141,11 @@ int cpu_down(unsigned int cpu)
+ 
+ 	p = __stop_machine_run(take_cpu_down, NULL, cpu);
+ 	if (IS_ERR(p)) {
++		/* CPU didn't die: tell everyone.  Can't complain. */
++		if (notifier_call_chain(&cpu_chain, CPU_DOWN_FAILED,
++				(void *)(long)cpu) == NOTIFY_BAD)
++			BUG();
++
+ 		err = PTR_ERR(p);
+ 		goto out_allowed;
+ 	}
+_

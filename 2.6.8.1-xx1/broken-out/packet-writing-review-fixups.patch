@@ -1,0 +1,347 @@
+
+From: Peter Osterlund <petero2@telia.com>
+
+Various cleanups in the pktcdvd driver suggested by Christoph Hellwig.
+
+- Removed obsolete comment.
+- Don't redefine SCSI_IOCTL_SEND_COMMAND locally, use the proper
+  #include instead.
+- Removed the disks[] gendisk* array and added a gendisk pointer to
+  struct pktcdvd_device instead.
+- No need to set current->comm in kcdrwd, since daemonize does that by
+  itself.
+- No need to call fsync_bdev() in pkt_release_dev(), because it is
+  handled by fs/block_dev.c.
+- After a successful fget(), file->f_dentry->d_inode can't be NULL, so
+  kill the useless check.
+- The BLKROSET, BLKROGET, BLKSSZGET and BLKFLSBUF ioctls aren't
+  handled by drivers any more in 2.6.
+- Removed no longer needed function pkt_get_minor().
+- Use the kernel/kthread.c infrastructure in the pktcdvd driver.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/pktcdvd.c |  117 +++++++++-------------------------------
+ 25-akpm/include/linux/pktcdvd.h |    5 -
+ 2 files changed, 31 insertions(+), 91 deletions(-)
+
+diff -puN drivers/block/pktcdvd.c~packet-writing-review-fixups drivers/block/pktcdvd.c
+--- 25/drivers/block/pktcdvd.c~packet-writing-review-fixups	2004-07-31 22:48:31.285236712 -0700
++++ 25-akpm/drivers/block/pktcdvd.c	2004-07-31 22:48:31.396219840 -0700
+@@ -12,8 +12,6 @@
+  * TODO: (circa order of when I will fix it)
+  * - Only able to write on CD-RW media right now.
+  * - check host application code on media and set it in write page
+- * - Generic interface for UDF to submit large packets for variable length
+- *   packet writing
+  * - interface for UDF <-> packet to negotiate a new location when a write
+  *   fails.
+  * - handle OPC, especially for -RW media
+@@ -40,24 +38,23 @@
+ #include <linux/module.h>
+ #include <linux/types.h>
+ #include <linux/kernel.h>
++#include <linux/kthread.h>
+ #include <linux/errno.h>
+ #include <linux/spinlock.h>
+ #include <linux/file.h>
+ #include <linux/proc_fs.h>
+-#include <linux/buffer_head.h>
++#include <linux/buffer_head.h>		/* for invalidate_bdev() */
+ #include <linux/devfs_fs_kernel.h>
+ #include <linux/suspend.h>
+ #include <scsi/scsi_cmnd.h>
++#include <scsi/scsi_ioctl.h>
+ 
+ #include <asm/uaccess.h>
+ 
+-#define SCSI_IOCTL_SEND_COMMAND	1
+-
+ #define ZONE(sector, pd) (((sector) + (pd)->offset) & ~((pd)->settings.size - 1))
+ 
+ static struct pktcdvd_device *pkt_devs;
+ static struct proc_dir_entry *pkt_proc;
+-static struct gendisk *disks[MAX_WRITERS];
+ 
+ static int pkt_lock_door(struct pktcdvd_device *pd, int lockflag);
+ 
+@@ -1174,19 +1171,7 @@ static int kcdrwd(void *foobar)
+ 	struct packet_data *pkt;
+ 	long min_sleep_time, residue;
+ 
+-	/*
+-	 * exit_files, mm (move to lazy-tlb, so context switches are come
+-	 * extremely cheap) etc
+-	 */
+-	daemonize(pd->name);
+-
+ 	set_user_nice(current, -20);
+-	sprintf(current->comm, pd->name);
+-
+-	siginitsetinv(&current->blocked, sigmask(SIGKILL));
+-	flush_signals(current);
+-
+-	up(&pd->cdrw.thr_sem);
+ 
+ 	for (;;) {
+ 		DECLARE_WAITQUEUE(wait, current);
+@@ -1254,14 +1239,14 @@ static int kcdrwd(void *foobar)
+ 			if (signal_pending(current)) {
+ 				flush_signals(current);
+ 			}
+-			if (pd->cdrw.time_to_die)
++			if (kthread_should_stop())
+ 				break;
+ 		}
+ work_to_do:
+ 		set_current_state(TASK_RUNNING);
+ 		remove_wait_queue(&pd->wqueue, &wait);
+ 
+-		if (pd->cdrw.time_to_die)
++		if (kthread_should_stop())
+ 			break;
+ 
+ 		/*
+@@ -1282,7 +1267,6 @@ work_to_do:
+ 		pkt_iosched_process_queue(pd);
+ 	}
+ 
+-	up(&pd->cdrw.thr_sem);
+ 	return 0;
+ }
+ 
+@@ -1902,16 +1886,6 @@ static int pkt_open_write(struct pktcdvd
+ 	return 0;
+ }
+ 
+-static int pkt_get_minor(struct pktcdvd_device *pd)
+-{
+-	int minor;
+-	for (minor = 0; minor < MAX_WRITERS; minor++)
+-		if (pd == &pkt_devs[minor])
+-			break;
+-	BUG_ON(minor == MAX_WRITERS);
+-	return minor;
+-}
+-
+ /*
+  * called at open time.
+  */
+@@ -1942,7 +1916,7 @@ static int pkt_open_dev(struct pktcdvd_d
+ 		return ret;
+ 	}
+ 
+-	set_capacity(disks[pkt_get_minor(pd)], lba << 2);
++	set_capacity(pd->disk, lba << 2);
+ 
+ 	/*
+ 	 * The underlying block device needs to have its merge logic
+@@ -2000,14 +1974,6 @@ restore_queue:
+  */
+ static void pkt_release_dev(struct pktcdvd_device *pd, int flush)
+ {
+-	struct block_device *bdev;
+-
+-	bdev = bdget(pd->pkt_dev);
+-	if (bdev) {
+-		fsync_bdev(bdev);
+-		bdput(bdev);
+-	}
+-
+ 	if (flush && pkt_flush_cache(pd))
+ 		DPRINTK("pktcdvd: %s not flushing cache\n", pd->name);
+ 
+@@ -2304,7 +2270,7 @@ static int pkt_merge_bvec(request_queue_
+ 
+ static void pkt_init_queue(struct pktcdvd_device *pd)
+ {
+-	request_queue_t *q = disks[pkt_get_minor(pd)]->queue;
++	request_queue_t *q = pd->disk->queue;
+ 
+ 	blk_queue_make_request(q, pkt_make_request);
+ 	blk_queue_hardsect_size(q, CD_FRAMESIZE);
+@@ -2394,19 +2360,17 @@ static int pkt_read_proc(char *page, cha
+ static int pkt_new_dev(struct pktcdvd_device *pd, struct block_device *bdev)
+ {
+ 	dev_t dev = bdev->bd_dev;
+-	int minor;
++	int i;
+ 	int ret = 0;
+ 	char b[BDEVNAME_SIZE];
+ 
+-	for (minor = 0; minor < MAX_WRITERS; minor++) {
+-		if (pkt_devs[minor].dev == dev) {
++	for (i = 0; i < MAX_WRITERS; i++) {
++		if (pkt_devs[i].dev == dev) {
+ 			printk("pktcdvd: %s already setup\n", bdevname(bdev, b));
+ 			return -EBUSY;
+ 		}
+ 	}
+ 
+-	minor = pkt_get_minor(pd);
+-
+ 	/* This is safe, since we have a reference from open(). */
+ 	__module_get(THIS_MODULE);
+ 
+@@ -2424,17 +2388,15 @@ static int pkt_new_dev(struct pktcdvd_de
+ 
+ 	pkt_init_queue(pd);
+ 
+-	pd->cdrw.time_to_die = 0;
+-	pd->cdrw.pid = kernel_thread(kcdrwd, pd, CLONE_FS | CLONE_FILES | CLONE_SIGHAND);
+-	if (pd->cdrw.pid < 0) {
++	pd->cdrw.thread = kthread_run(kcdrwd, pd, "%s", pd->name);
++	if (IS_ERR(pd->cdrw.thread)) {
+ 		printk("pktcdvd: can't start kernel thread\n");
+-		ret = -EBUSY;
++		ret = -ENOMEM;
+ 		goto out_thread;
+ 	}
+-	down(&pd->cdrw.thr_sem);
+ 
+ 	create_proc_read_entry(pd->name, 0, pkt_proc, pkt_read_proc, pd);
+-	DPRINTK("pktcdvd: writer %d mapped to %s\n", minor, bdevname(bdev, b));
++	DPRINTK("pktcdvd: writer %s mapped to %s\n", pd->name, bdevname(bdev, b));
+ 	return 0;
+ 
+ out_thread:
+@@ -2459,11 +2421,7 @@ static int pkt_setup_dev(struct pktcdvd_
+ 		return -EBADF;
+ 	}
+ 
+-	ret = -EINVAL;
+-	if ((inode = file->f_dentry->d_inode) == NULL) {
+-		printk("pktcdvd: huh? file descriptor contains no inode?\n");
+-		goto out;
+-	}
++	inode = file->f_dentry->d_inode;
+ 	ret = -ENOTBLK;
+ 	if (!S_ISBLK(inode->i_mode)) {
+ 		printk("pktcdvd: device is not a block device (duh)\n");
+@@ -2484,18 +2442,9 @@ out:
+ static int pkt_remove_dev(struct pktcdvd_device *pd)
+ {
+ 	struct block_device *bdev;
+-	int ret;
+ 
+-	if (pd->cdrw.pid >= 0) {
+-		pd->cdrw.time_to_die = 1;
+-		wmb();
+-		ret = kill_proc(pd->cdrw.pid, SIGKILL, 1);
+-		if (ret) {
+-			printk("pkt_remove_dev: can't kill kernel thread\n");
+-			return ret;
+-		}
+-		down(&pd->cdrw.thr_sem);
+-	}
++	if (!IS_ERR(pd->cdrw.thread))
++		kthread_stop(pd->cdrw.thread);
+ 
+ 	/*
+ 	 * will also invalidate buffers for CD-ROM
+@@ -2510,7 +2459,7 @@ static int pkt_remove_dev(struct pktcdvd
+ 
+ 	remove_proc_entry(pd->name, pkt_proc);
+ 	pd->dev = 0;
+-	DPRINTK("pktcdvd: writer %d unmapped\n", pkt_get_minor(pd));
++	DPRINTK("pktcdvd: writer %s unmapped\n", pd->name);
+ 	/* This is safe: open() is still holding a reference. */
+ 	module_put(THIS_MODULE);
+ 	return 0;
+@@ -2570,16 +2519,6 @@ static int pkt_ioctl(struct inode *inode
+ 		up(&pd->ctl_mutex);
+ 		return ret;
+ 
+-	case BLKROSET:
+-		if (capable(CAP_SYS_ADMIN))
+-			clear_bit(PACKET_WRITABLE, &pd->flags);
+-	case BLKROGET:
+-	case BLKSSZGET:
+-	case BLKFLSBUF:
+-		if (!pd->bdev)
+-			return -ENXIO;
+-		return -EINVAL;		    /* Handled by blkdev layer */
+-
+ 	/*
+ 	 * forward selected CDROM ioctls to CD-ROM, for UDF
+ 	 */
+@@ -2634,21 +2573,22 @@ int pkt_init(void)
+ 	memset(pkt_devs, 0, MAX_WRITERS * sizeof(struct pktcdvd_device));
+ 
+ 	for (i = 0; i < MAX_WRITERS; i++) {
+-		disks[i] = alloc_disk(1);
+-		if (!disks[i])
++		struct pktcdvd_device *pd = &pkt_devs[i];
++
++		pd->disk = alloc_disk(1);
++		if (!pd->disk)
+ 			goto out_mem2;
+ 	}
+ 
+ 	for (i = 0; i < MAX_WRITERS; i++) {
+ 		struct pktcdvd_device *pd = &pkt_devs[i];
+-		struct gendisk *disk = disks[i];
++		struct gendisk *disk = pd->disk;
+ 
+ 		spin_lock_init(&pd->lock);
+ 		spin_lock_init(&pd->iosched.lock);
+ 		pd->pkt_dev = MKDEV(PACKET_MAJOR, i);
+ 		sprintf(pd->name, "pktcdvd%d", i);
+ 		init_waitqueue_head(&pd->wqueue);
+-		init_MUTEX_LOCKED(&pd->cdrw.thr_sem);
+ 		init_MUTEX(&pd->ctl_mutex);
+ 
+ 		disk->major = PACKET_MAJOR;
+@@ -2671,11 +2611,11 @@ int pkt_init(void)
+ 
+ out_mem3:
+ 	while (i--)
+-		blk_put_queue(disks[i]->queue);
++		blk_put_queue(pkt_devs[i].disk->queue);
+ 	i = MAX_WRITERS;
+ out_mem2:
+ 	while (i--)
+-		put_disk(disks[i]);
++		put_disk(pkt_devs[i].disk);
+ 	kfree(pkt_devs);
+ out_mem:
+ 	printk("pktcdvd: out of memory\n");
+@@ -2688,9 +2628,10 @@ void pkt_exit(void)
+ {
+ 	int i;
+ 	for (i = 0; i < MAX_WRITERS; i++) {
+-		del_gendisk(disks[i]);
+-		blk_put_queue(disks[i]->queue);
+-		put_disk(disks[i]);
++		struct gendisk *disk = pkt_devs[i].disk;
++		del_gendisk(disk);
++		blk_put_queue(disk->queue);
++		put_disk(disk);
+ 	}
+ 
+ 	devfs_remove("pktcdvd");
+diff -puN include/linux/pktcdvd.h~packet-writing-review-fixups include/linux/pktcdvd.h
+--- 25/include/linux/pktcdvd.h~packet-writing-review-fixups	2004-07-31 22:48:31.287236408 -0700
++++ 25-akpm/include/linux/pktcdvd.h	2004-07-31 22:48:31.397219688 -0700
+@@ -137,9 +137,7 @@ struct packet_cdrw
+ 	struct list_head	pkt_free_list;
+ 	struct list_head	pkt_active_list;
+ 	spinlock_t		active_list_lock; /* Serialize access to pkt_active_list */
+-	pid_t			pid;
+-	int			time_to_die;
+-	struct semaphore	thr_sem;
++	struct task_struct	*thread;
+ 	elevator_merge_fn	*elv_merge_fn;
+ 	elevator_completed_req_fn *elv_completed_req_fn;
+ 	merge_requests_fn	*merge_requests_fn;
+@@ -255,6 +253,7 @@ struct pktcdvd_device
+ 	atomic_t		scan_queue;	/* Set to non-zero when pkt_handle_queue */
+ 						/* needs to be run. */
+ 	struct packet_iosched   iosched;
++	struct gendisk		*disk;
+ };
+ 
+ #endif /* __KERNEL__ */
+_

@@ -1,0 +1,28 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+Must not put side-effects into a macro that is NOP on !SMP.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/net/neighbour.h |    5 +++--
+ 1 files changed, 3 insertions(+), 2 deletions(-)
+
+diff -puN include/net/neighbour.h~neigh_stat-preempt-fix-fix include/net/neighbour.h
+--- 25/include/net/neighbour.h~neigh_stat-preempt-fix-fix	Mon Oct  4 14:39:22 2004
++++ 25-akpm/include/net/neighbour.h	Mon Oct  4 14:39:22 2004
+@@ -113,8 +113,9 @@ struct neigh_statistics
+ 
+ #define NEIGH_CACHE_STAT_INC(tbl, field)				\
+ 	do {								\
+-		(per_cpu_ptr((tbl)->stats, get_cpu())->field)++;	\
+-		put_cpu();						\
++		preempt_disable();					\
++		(per_cpu_ptr((tbl)->stats, smp_processor_id())->field)++; \
++		preempt_enable();					\
+ 	} while (0)
+ 
+ struct neighbour
+_

@@ -1,0 +1,30 @@
+
+From: Jesper Juhl <juhl-lkml@dif.dk>
+
+Patch adds a check of the return value and returns -EFAULT if
+__copy_to_user fails.
+
+Signed-off-by: Jesper Juhl <juhl-lkml@dif.dk>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/pcmcia/ds.c |    6 +++++-
+ 1 files changed, 5 insertions(+), 1 deletion(-)
+
+diff -puN drivers/pcmcia/ds.c~ds_ioctl-usercopy-check drivers/pcmcia/ds.c
+--- 25/drivers/pcmcia/ds.c~ds_ioctl-usercopy-check	Thu Oct  7 13:45:23 2004
++++ 25-akpm/drivers/pcmcia/ds.c	Thu Oct  7 13:45:23 2004
+@@ -1046,7 +1046,11 @@ static int ds_ioctl(struct inode * inode
+ 	}
+     }
+ 
+-    if (cmd & IOC_OUT) __copy_to_user(uarg, (char *)&buf, size);
++    if (cmd & IOC_OUT) {
++        if (__copy_to_user(uarg, (char *)&buf, size))
++            err = -EFAULT;
++    }
++
+ 
+     return err;
+ } /* ds_ioctl */
+_

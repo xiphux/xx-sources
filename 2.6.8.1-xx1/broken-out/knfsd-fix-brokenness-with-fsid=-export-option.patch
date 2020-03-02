@@ -1,0 +1,43 @@
+
+From: Bruce Allan <bwa@us.ibm.com>
+
+Bruce Allan says:
+The user-specified fsid= export option still doesn't work after the
+changes made 5 months ago.  Below is a patch against 2.6.7 through
+the recent 2.6.8-rc2-bk13.
+
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/nfsd/nfsfh.c |   17 ++++++++++-------
+ 1 files changed, 10 insertions(+), 7 deletions(-)
+
+diff -puN fs/nfsd/nfsfh.c~knfsd-fix-brokenness-with-fsid=-export-option fs/nfsd/nfsfh.c
+--- 25/fs/nfsd/nfsfh.c~knfsd-fix-brokenness-with-fsid=-export-option	2004-08-09 02:08:02.767143800 -0700
++++ 25-akpm/fs/nfsd/nfsfh.c	2004-08-09 02:08:02.771143192 -0700
+@@ -339,13 +339,16 @@ fh_compose(struct svc_fh *fhp, struct sv
+ 			ref_fh_fsid_type = ref_fh->fh_handle.fh_fsid_type;
+ 		if (ref_fh_fsid_type > 3)
+ 			ref_fh_fsid_type = 0;
+-	}
+-	/* make sure ref_fh type works for given export */
+-	if (ref_fh_fsid_type == 1 &&
+-	    !(exp->ex_flags & NFSEXP_FSID)) {
+-		/* if we don't have an fsid, we cannot provide one... */
+-		ref_fh_fsid_type = 0;
+-	}
++
++		/* make sure ref_fh type works for given export */
++		if (ref_fh_fsid_type == 1 &&
++		    !(exp->ex_flags & NFSEXP_FSID)) {
++			/* if we don't have an fsid, we cannot provide one... */
++			ref_fh_fsid_type = 0;
++		}
++	} else if (exp->ex_flags & NFSEXP_FSID)
++		ref_fh_fsid_type = 1;
++
+ 	if (!old_valid_dev(ex_dev) && ref_fh_fsid_type == 0) {
+ 		/* for newer device numbers, we must use a newer fsid format */
+ 		ref_fh_version = 1;
+_

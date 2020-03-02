@@ -1,0 +1,61 @@
+
+From: Hiroyuki KAMEZAWA <kamezawa.hiroyu@jp.fujitsu.com>
+
+Followings are patches for removing bitmaps from the buddy allocator.  This
+is benefical to memory-hot-plug stuffs, because this removes a data
+structure which must meet to a host's physical memory layout.
+
+This is one step to manage physical memory in nonlinear / discontiguous way
+and will reduce some amounts of codes to implement memory-hot-plug.
+
+This patch removes bitmaps from zone->free_area[] in include/linux/mmzone.h,
+and adds some comments on page->private field in include/linux/mm.h.
+
+non-atomic ops for changing PG_private bit is added in include/page-flags.h.
+zone->lock is always acquired when PG_private of "a free page" is changed.
+
+Signed-off-by: KAMEZAWA Hiroyuki <kamezawa.hiroyu@jp.fujitsu.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/mm.h         |    2 ++
+ 25-akpm/include/linux/mmzone.h     |    1 -
+ 25-akpm/include/linux/page-flags.h |    2 ++
+ 3 files changed, 4 insertions(+), 1 deletion(-)
+
+diff -puN include/linux/mm.h~no-buddy-bitmap-patch-revist-intro-and-includes include/linux/mm.h
+--- 25/include/linux/mm.h~no-buddy-bitmap-patch-revist-intro-and-includes	Fri Oct  8 14:23:44 2004
++++ 25-akpm/include/linux/mm.h	Fri Oct  8 14:23:44 2004
+@@ -214,6 +214,8 @@ struct page {
+ 					 * usually used for buffer_heads
+ 					 * if PagePrivate set; used for
+ 					 * swp_entry_t if PageSwapCache
++					 * When page is free, this indicates
++					 * order in the buddy system.
+ 					 */
+ 	struct address_space *mapping;	/* If low bit clear, points to
+ 					 * inode address_space, or NULL.
+diff -puN include/linux/mmzone.h~no-buddy-bitmap-patch-revist-intro-and-includes include/linux/mmzone.h
+--- 25/include/linux/mmzone.h~no-buddy-bitmap-patch-revist-intro-and-includes	Fri Oct  8 14:23:44 2004
++++ 25-akpm/include/linux/mmzone.h	Fri Oct  8 14:23:44 2004
+@@ -22,7 +22,6 @@
+ 
+ struct free_area {
+ 	struct list_head	free_list;
+-	unsigned long		*map;
+ };
+ 
+ struct pglist_data;
+diff -puN include/linux/page-flags.h~no-buddy-bitmap-patch-revist-intro-and-includes include/linux/page-flags.h
+--- 25/include/linux/page-flags.h~no-buddy-bitmap-patch-revist-intro-and-includes	Fri Oct  8 14:23:44 2004
++++ 25-akpm/include/linux/page-flags.h	Fri Oct  8 14:23:44 2004
+@@ -239,6 +239,8 @@ extern unsigned long __read_page_state(u
+ #define SetPagePrivate(page)	set_bit(PG_private, &(page)->flags)
+ #define ClearPagePrivate(page)	clear_bit(PG_private, &(page)->flags)
+ #define PagePrivate(page)	test_bit(PG_private, &(page)->flags)
++#define __SetPagePrivate(page)  __set_bit(PG_private, &(page)->flags)
++#define __ClearPagePrivate(page) __clear_bit(PG_private, &(page)->flags)
+ 
+ #define PageWriteback(page)	test_bit(PG_writeback, &(page)->flags)
+ #define SetPageWriteback(page)						\
+_

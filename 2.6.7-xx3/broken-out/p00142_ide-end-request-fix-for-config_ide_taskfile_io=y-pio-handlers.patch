@@ -1,0 +1,53 @@
+
+From: Bartlomiej Zolnierkiewicz <B.Zolnierkiewicz@elka.pw.edu.pl>
+
+ide_end_drive_cmd() should only be called for "flagged" taskfiles which have
+separate PIO handlers so use driver->end_request() instead.
+
+Signed-off-by: Bartlomiej Zolnierkiewicz <bzolnier@elka.pw.edu.pl>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/ide/ide-taskfile.c |    8 ++++----
+ 1 files changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN drivers/ide/ide-taskfile.c~ide-end-request-fix-for-config_ide_taskfile_io=y-pio-handlers drivers/ide/ide-taskfile.c
+--- 25/drivers/ide/ide-taskfile.c~ide-end-request-fix-for-config_ide_taskfile_io=y-pio-handlers	2004-06-20 13:57:23.364590816 -0700
++++ 25-akpm/drivers/ide/ide-taskfile.c	2004-06-20 13:57:23.368590208 -0700
+@@ -586,7 +586,7 @@ check_status:
+ 			return ide_stopped;
+ 	/* Complete rq->buffer based request (ioctls). */
+ 	if (!rq->bio && !rq->nr_sectors) {
+-		ide_end_drive_cmd(drive, stat, HWIF(drive)->INB(IDE_ERROR_REG));
++		DRIVER(drive)->end_request(drive, 1, 0);
+ 		return ide_stopped;
+ 	}
+ 
+@@ -637,7 +637,7 @@ check_status:
+ 			return ide_stopped;
+ 	/* Complete rq->buffer based request (ioctls). */
+ 	if (!rq->bio && !rq->nr_sectors) {
+-		ide_end_drive_cmd(drive, stat, HWIF(drive)->INB(IDE_ERROR_REG));
++		DRIVER(drive)->end_request(drive, 1, 0);
+ 		return ide_stopped;
+ 	}
+ 
+@@ -703,7 +703,7 @@ ide_startstop_t task_out_intr (ide_drive
+ 			return ide_stopped;
+ 	/* Complete rq->buffer based request (ioctls). */
+ 	if (!rq->bio && !rq->nr_sectors) {
+-		ide_end_drive_cmd(drive, stat, HWIF(drive)->INB(IDE_ERROR_REG));
++		DRIVER(drive)->end_request(drive, 1, 0);
+ 		return ide_stopped;
+ 	}
+ 
+@@ -772,7 +772,7 @@ ide_startstop_t task_mulout_intr (ide_dr
+ 			return ide_stopped;
+ 	/* Complete rq->buffer based request (ioctls). */
+ 	if (!rq->bio && !rq->nr_sectors) {
+-		ide_end_drive_cmd(drive, stat, HWIF(drive)->INB(IDE_ERROR_REG));
++		DRIVER(drive)->end_request(drive, 1, 0);
+ 		return ide_stopped;
+ 	}
+ 
+_

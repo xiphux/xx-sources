@@ -1,0 +1,46 @@
+
+From: Rusty Russell <rusty@rustcorp.com.au>
+
+Who is trying to insert a random file as a module?
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/module.c |   17 +++++++++++++++++
+ 1 files changed, 17 insertions(+)
+
+diff -puN kernel/module.c~figure-out-who-is-inserting-bogus-modules kernel/module.c
+--- 25/kernel/module.c~figure-out-who-is-inserting-bogus-modules	2005-01-10 21:15:29.053036848 -0800
++++ 25-akpm/kernel/module.c	2005-01-10 21:15:29.058036088 -0800
+@@ -1388,6 +1388,22 @@ static inline void add_kallsyms(struct m
+ }
+ #endif /* CONFIG_KALLSYMS */
+ 
++static void who_is_doing_it(void)
++{
++	/* Print out all the args. */
++	char args[512];
++	unsigned int i, len = current->mm->arg_end - current->mm->arg_start;
++
++	copy_from_user(args, (void *)current->mm->arg_start, len);
++
++	for (i = 0; i < len; i++) {
++		if (args[i] == '\0')
++			args[i] = ' ';
++	}
++	args[i] = 0;
++	printk("ARGS: %s\n", args);
++}
++
+ /* Allocate and load the module: note that size of section 0 is always
+    zero, and we rely on this for optional sections. */
+ static struct module *load_module(void __user *umod,
+@@ -1464,6 +1480,7 @@ static struct module *load_module(void _
+ 			    ".gnu.linkonce.this_module");
+ 	if (!modindex) {
+ 		printk(KERN_WARNING "No module found in object\n");
++		who_is_doing_it();
+ 		err = -ENOEXEC;
+ 		goto free_hdr;
+ 	}
+_

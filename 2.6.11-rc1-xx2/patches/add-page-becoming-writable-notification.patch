@@ -1,0 +1,217 @@
+
+From: David Howells <dhowells@redhat.com>
+
+The attached patch creates a facility by which a filesystem, character
+device or block device can detect a page mapped to an inode is about to
+become writable.  This provides the facility at two levels: a vma operation
+and an address space operation.  This can be used by a netfs to synchronise
+with a cache writing the page to disc.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/fs.h |    3 +
+ 25-akpm/include/linux/mm.h |    4 +
+ 25-akpm/mm/filemap.c       |   23 ++++++++++-
+ 25-akpm/mm/memory.c        |   93 +++++++++++++++++++++++++++++++++++----------
+ 4 files changed, 102 insertions(+), 21 deletions(-)
+
+diff -puN include/linux/fs.h~add-page-becoming-writable-notification include/linux/fs.h
+--- 25/include/linux/fs.h~add-page-becoming-writable-notification	2005-01-10 21:15:04.515767080 -0800
++++ 25-akpm/include/linux/fs.h	2005-01-10 21:15:04.524765712 -0800
+@@ -329,6 +329,9 @@ struct address_space_operations {
+ 	int (*releasepage) (struct page *, int);
+ 	ssize_t (*direct_IO)(int, struct kiocb *, const struct iovec *iov,
+ 			loff_t offset, unsigned long nr_segs);
++
++	/* notification that a page is about to become writable */
++	int (*page_mkwrite)(struct page *page);
+ };
+ 
+ struct backing_dev_info;
+diff -puN include/linux/mm.h~add-page-becoming-writable-notification include/linux/mm.h
+--- 25/include/linux/mm.h~add-page-becoming-writable-notification	2005-01-10 21:15:04.517766776 -0800
++++ 25-akpm/include/linux/mm.h	2005-01-10 21:15:04.525765560 -0800
+@@ -198,6 +198,10 @@ struct vm_operations_struct {
+ 	void (*close)(struct vm_area_struct * area);
+ 	struct page * (*nopage)(struct vm_area_struct * area, unsigned long address, int *type);
+ 	int (*populate)(struct vm_area_struct * area, unsigned long address, unsigned long len, pgprot_t prot, unsigned long pgoff, int nonblock);
++
++	/* notification that a previously read-only page is about to become
++	 * writable, if an error is returned it will cause a SIGBUS */
++	int (*page_mkwrite)(struct vm_area_struct *vma, struct page *page);
+ #ifdef CONFIG_NUMA
+ 	int (*set_policy)(struct vm_area_struct *vma, struct mempolicy *new);
+ 	struct mempolicy *(*get_policy)(struct vm_area_struct *vma,
+diff -puN mm/filemap.c~add-page-becoming-writable-notification mm/filemap.c
+--- 25/mm/filemap.c~add-page-becoming-writable-notification	2005-01-10 21:15:04.518766624 -0800
++++ 25-akpm/mm/filemap.c	2005-01-10 21:15:04.527765256 -0800
+@@ -1503,11 +1503,29 @@ repeat:
+ 	return 0;
+ }
+ 
++/*
++ * pass notification that a page is becoming writable up to the filesystem
++ */
++static int filemap_page_mkwrite(struct vm_area_struct *vma, struct page *page)
++{
++	return page->mapping->a_ops->page_mkwrite(page);
++}
++
+ struct vm_operations_struct generic_file_vm_ops = {
+ 	.nopage		= filemap_nopage,
+ 	.populate	= filemap_populate,
+ };
+ 
++struct vm_operations_struct generic_file_vm_mkwr_ops = {
++	.nopage		= filemap_nopage,
++	.populate	= filemap_populate,
++	.page_mkwrite	= filemap_page_mkwrite,
++#ifdef CONFIG_NUMA
++	.set_policy     = generic_file_set_policy,
++	.get_policy     = generic_file_get_policy,
++#endif
++};
++
+ /* This is used for a general mmap of a disk file */
+ 
+ int generic_file_mmap(struct file * file, struct vm_area_struct * vma)
+@@ -1517,7 +1535,10 @@ int generic_file_mmap(struct file * file
+ 	if (!mapping->a_ops->readpage)
+ 		return -ENOEXEC;
+ 	file_accessed(file);
+-	vma->vm_ops = &generic_file_vm_ops;
++	if (!mapping->a_ops->page_mkwrite)
++		vma->vm_ops = &generic_file_vm_ops;
++	else
++		vma->vm_ops = &generic_file_vm_mkwr_ops;
+ 	return 0;
+ }
+ 
+diff -puN mm/memory.c~add-page-becoming-writable-notification mm/memory.c
+--- 25/mm/memory.c~add-page-becoming-writable-notification	2005-01-10 21:15:04.520766320 -0800
++++ 25-akpm/mm/memory.c	2005-01-10 21:15:04.529764952 -0800
+@@ -1264,6 +1264,54 @@ static inline void break_cow(struct vm_a
+ }
+ 
+ /*
++ * Make a PTE writeable for do_wp_page() on a shared-writable page
++ */
++static inline int do_wp_page_mk_pte_writable(struct mm_struct *mm,
++					     struct vm_area_struct *vma,
++					     unsigned long address,
++					     pte_t *page_table,
++					     struct page *old_page,
++					     pte_t pte)
++{
++	pte_t entry;
++
++	/* See if the VMA's owner wants to know that the page is about to
++	 * become writable */
++	if (vma->vm_ops && vma->vm_ops->page_mkwrite) {
++		/* Notify the page owner without the lock held so they can
++		 * sleep if they want to */
++		spin_unlock(&mm->page_table_lock);
++
++		if (vma->vm_ops->page_mkwrite(vma, old_page) < 0)
++			goto bus_error;
++
++		spin_lock(&mm->page_table_lock);
++
++		/* Since we dropped the lock we need to revalidate the PTE as
++		 * someone else may have changed it. If they did, we just
++		 * return, as we can count on the MMU to tell us if they didn't
++		 * also make it writable
++		 */
++		if (!pte_same(*page_table, pte))
++			goto minor_fault;
++	}
++
++	flush_cache_page(vma, address);
++	entry = maybe_mkwrite(pte_mkyoung(pte_mkdirty(pte)),
++			      vma);
++	ptep_set_access_flags(vma, address, page_table, entry, 1);
++	update_mmu_cache(vma, address, entry);
++	pte_unmap(page_table);
++
++ minor_fault:
++	spin_unlock(&mm->page_table_lock);
++	return VM_FAULT_MINOR;
++
++ bus_error:
++	return VM_FAULT_SIGBUS;
++}
++
++/*
+  * This routine handles present pages, when users try to write
+  * to a shared page. It is done by copying the page to a new address
+  * and decrementing the shared-page counter for the old page.
+@@ -1288,7 +1336,6 @@ static int do_wp_page(struct mm_struct *
+ {
+ 	struct page *old_page, *new_page;
+ 	unsigned long pfn = pte_pfn(pte);
+-	pte_t entry;
+ 
+ 	if (unlikely(!pfn_valid(pfn))) {
+ 		/*
+@@ -1308,14 +1355,10 @@ static int do_wp_page(struct mm_struct *
+ 		int reuse = can_share_swap_page(old_page);
+ 		unlock_page(old_page);
+ 		if (reuse) {
+-			flush_cache_page(vma, address);
+-			entry = maybe_mkwrite(pte_mkyoung(pte_mkdirty(pte)),
+-					      vma);
+-			ptep_set_access_flags(vma, address, page_table, entry, 1);
+-			update_mmu_cache(vma, address, entry);
+-			pte_unmap(page_table);
+-			spin_unlock(&mm->page_table_lock);
+-			return VM_FAULT_MINOR;
++			/* We can just make the PTE writable */
++			return do_wp_page_mk_pte_writable(mm, vma, address,
++							  page_table, old_page,
++							  pte);
+ 		}
+ 	}
+ 	pte_unmap(page_table);
+@@ -1878,18 +1921,28 @@ retry:
+ 	/*
+ 	 * Should we do an early C-O-W break?
+ 	 */
+-	if (write_access && !(vma->vm_flags & VM_SHARED)) {
+-		struct page *page;
++	if (write_access) {
++		if (!(vma->vm_flags & VM_SHARED)) {
++			struct page *page;
+ 
+-		if (unlikely(anon_vma_prepare(vma)))
+-			goto oom;
+-		page = alloc_page_vma(GFP_HIGHUSER, vma, address);
+-		if (!page)
+-			goto oom;
+-		copy_user_highpage(page, new_page, address);
+-		page_cache_release(new_page);
+-		new_page = page;
+-		anon = 1;
++			if (unlikely(anon_vma_prepare(vma)))
++				goto oom;
++			page = alloc_page_vma(GFP_HIGHUSER, vma, address);
++			if (!page)
++				goto oom;
++			copy_user_highpage(page, new_page, address);
++			page_cache_release(new_page);
++			new_page = page;
++			anon = 1;
++
++		} else {
++			/* if the page will be shareable, see if the backing
++			 * address space wants to know that the page is about
++			 * to become writable */
++			if (vma->vm_ops->page_mkwrite &&
++			    vma->vm_ops->page_mkwrite(vma, new_page) < 0)
++				return VM_FAULT_SIGBUS;
++		}
+ 	}
+ 
+ 	spin_lock(&mm->page_table_lock);
+_

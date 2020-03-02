@@ -1,0 +1,432 @@
+Index: xx-sources/include/linux/sched.h
+===================================================================
+--- xx-sources.orig/include/linux/sched.h	2004-10-10 21:19:40.812982272 -0400
++++ xx-sources/include/linux/sched.h	2004-10-10 21:21:22.079587408 -0400
+@@ -364,11 +364,6 @@
+ #define MAX_PRIO		(MAX_RT_PRIO + 40)
+ #define NICK_MAX_PRIO		(MAX_RT_PRIO + 59)
+ 
+-#define default_rt_task(p)		(unlikely((p)->default_data.prio < MAX_RT_PRIO))
+-#define nicksched_rt_task(p)		(unlikely((p)->nicksched_data.prio < MAX_RT_PRIO))
+-#define staircase_rt_task(p)		(unlikely((p)->staircase_data.prio < MAX_RT_PRIO))
+-#define xsched_rt_task(p)		(unlikely((p)->xsched_data.prio < MAX_RT_PRIO))
+-
+ /*
+  * Some day this will be a full-fledged user tracking system..
+  */
+@@ -1261,12 +1256,42 @@
+ extern scheduler_t *current_scheduler;
+ static inline int rt_task(const struct task_struct *p)
+ {
+-	if (current_scheduler->type == SCHED_NICKSCHED)
+-		return nicksched_rt_task(p);
+-	else if (current_scheduler->type == SCHED_DEFAULT)
+-		return default_rt_task(p);
+-	else
+-		return 0;
++	int prio;
++	switch (current_scheduler->type) {
++		case SCHED_XSCHED:
++			prio = p->xsched_data.prio;
++			break;
++		case SCHED_STAIRCASE:
++			prio = p->staircase_data.prio;
++			break;
++		case SCHED_NICKSCHED:
++			prio = p->nicksched_data.prio;
++			break;
++		case SCHED_DEFAULT:
++			prio = p->default_data.prio;
++			break;
++		default:
++			prio = MAX_RT_PRIO;
++			break;
++	}
++	return (unlikely(prio < MAX_RT_PRIO));
++}
++
++static inline int task_queued(const struct task_struct *p)
++{
++	prio_array_t *array = NULL;
++	switch (current_scheduler->type) {
++		case SCHED_XSCHED:
++		case SCHED_STAIRCASE:
++			return !list_empty(&p->run_list);
++		case SCHED_NICKSCHED:
++			array = p->nicksched_data.array;
++			break;
++		case SCHED_DEFAULT:
++			array = p->default_data.array;
++			break;
++	}
++	return ((array) ? 1 : 0);
+ }
+ 
+ #endif /* __KERNEL__ */
+Index: xx-sources/kernel/default-sched.c
+===================================================================
+--- xx-sources.orig/kernel/default-sched.c	2004-10-10 21:19:40.800984096 -0400
++++ xx-sources/kernel/default-sched.c	2004-10-10 21:21:31.058222448 -0400
+@@ -588,7 +588,7 @@
+ {
+ 	int bonus, prio;
+ 
+-	if (default_rt_task(p))
++	if (rt_task(p))
+ 		return p->default_data.prio;
+ 
+ 	bonus = CURRENT_BONUS(p) - MAX_BONUS / 2;
+@@ -2251,7 +2251,7 @@
+ 	 * timeslice. This makes it possible for interactive tasks
+ 	 * to use up their timeslices at their highest priority levels.
+ 	 */
+-	if (default_rt_task(p)) {
++	if (rt_task(p)) {
+ 		/*
+ 		 * RR tasks need a special form of timeslice management.
+ 		 * FIFO tasks have no timeslices.
+@@ -2410,8 +2410,8 @@
+ 		 * physical cpu's resources. -ck
+ 		 */
+ 		if (((smt_curr->default_data.time_slice * (100 - sd->per_cpu_gain) / 100) >
+-			task_timeslice(p) || default_rt_task(smt_curr)) &&
+-			p->mm && smt_curr->mm && !default_rt_task(p))
++			task_timeslice(p) || rt_task(smt_curr)) &&
++			p->mm && smt_curr->mm && !rt_task(p))
+ 				ret = 1;
+ 
+ 		/*
+@@ -2420,8 +2420,8 @@
+ 		 * reasons.
+ 		 */
+ 		if ((((p->default_data.time_slice * (100 - sd->per_cpu_gain) / 100) >
+-			task_timeslice(smt_curr) || default_rt_task(p)) &&
+-			smt_curr->mm && p->mm && !default_rt_task(smt_curr)) ||
++			task_timeslice(smt_curr) || rt_task(p)) &&
++			smt_curr->mm && p->mm && !rt_task(smt_curr)) ||
+ 			(smt_curr == smt_rq->idle && smt_rq->nr_running))
+ 				resched_task(smt_curr);
+ 	}
+@@ -2564,7 +2564,7 @@
+ 	queue = array->queue + idx;
+ 	next = list_entry(queue->next, task_t, run_list);
+ 
+-	if (!default_rt_task(next) && next->default_data.activated > 0) {
++	if (!rt_task(next) && next->default_data.activated > 0) {
+ 		unsigned long long delta = now - next->timestamp;
+ 
+ 		if (next->default_data.activated == 1)
+@@ -2815,7 +2815,7 @@
+ 	 * it wont have any effect on scheduling until the task is
+ 	 * not SCHED_NORMAL:
+ 	 */
+-	if (default_rt_task(p)) {
++	if (rt_task(p)) {
+ 		p->default_data.static_prio = NICE_TO_PRIO(nice);
+ 		goto out_unlock;
+ 	}
+@@ -3241,7 +3241,7 @@
+ 	 * (special rule: RT tasks will just roundrobin in the active
+ 	 *  array.)
+ 	 */
+-	if (default_rt_task(current))
++	if (rt_task(current))
+ 		target = rq->active;
+ 
+ 	if (current->default_data.array->nr_active == 1) {
+Index: xx-sources/kernel/nicksched-sched.c
+===================================================================
+--- xx-sources.orig/kernel/nicksched-sched.c	2004-10-10 21:19:40.808982880 -0400
++++ xx-sources/kernel/nicksched-sched.c	2004-10-10 21:21:36.900334312 -0400
+@@ -477,7 +477,7 @@
+ 	struct list_head *entry = array->queue + p->nicksched_data.prio;
+ 	sched_info_queued(p);
+ 
+-	if (!nicksched_rt_task(p)) {
++	if (!rt_task(p)) {
+ 		/*
+ 		 * Cycle tasks on the same priority level. This reduces their
+ 		 * timeslice fluctuations due to higher priority tasks expiring.
+@@ -563,7 +563,7 @@
+ 	int idx, base, delta;
+ 	int timeslice;
+ 
+-	if (nicksched_rt_task(p))
++	if (rt_task(p))
+ 		return RT_TIMESLICE;
+ 
+ 	idx = min(p->nicksched_data.prio, rq->expired->min_prio);
+@@ -591,7 +591,7 @@
+ 	unsigned long sleep_avg;
+ 	int bonus, prio;
+ 
+-	if (nicksched_rt_task(p))
++	if (rt_task(p))
+ 		return p->nicksched_data.prio;
+ 
+ 	sleep_avg = task_sleep_avg(p);
+@@ -616,7 +616,7 @@
+ {
+ 	enqueue_task(p, array);
+ 	rq->nr_running++;
+-	if (!nicksched_rt_task(p)) {
++	if (!rt_task(p)) {
+ 		if (p->nicksched_data.prio < array->min_prio)
+ 			array->min_prio = p->nicksched_data.prio;
+ 	}
+@@ -1479,7 +1479,7 @@
+ 	set_task_cpu(p, this_cpu);
+ 	this_rq->nr_running++;
+ 	enqueue_task(p, this_array);
+-	if (!nicksched_rt_task(p)) {
++	if (!rt_task(p)) {
+ 		if (p->nicksched_data.prio < this_array->min_prio)
+ 			this_array->min_prio = p->nicksched_data.prio;
+ 	}
+@@ -2231,7 +2231,7 @@
+ 		 * physical cpu's resources. -ck
+ 		 */
+ 		if ((smt_curr->nicksched_data.static_prio + 5 < p->nicksched_data.static_prio) &&
+-			p->mm && smt_curr->mm && !nicksched_rt_task(p))
++			p->mm && smt_curr->mm && !rt_task(p))
+ 				ret = 1;
+ 
+ 		/*
+@@ -2240,7 +2240,7 @@
+ 		 * reasons.
+ 		 */
+ 		if ((p->nicksched_data.static_prio + 5 < smt_curr->nicksched_data.static_prio &&
+-			smt_curr->mm && p->mm && !nicksched_rt_task(smt_curr)) ||
++			smt_curr->mm && p->mm && !rt_task(smt_curr)) ||
+ 			(smt_curr == smt_rq->idle && smt_rq->nr_running))
+ 				resched_task(smt_curr);
+ 	}
+@@ -2329,7 +2329,7 @@
+ 	}
+ 
+ 	if (unlikely(prev->nicksched_data.used_slice == -1)) {
+-		if (nicksched_rt_task(prev)) {
++		if (rt_task(prev)) {
+ 			/* SCHED_FIFO can come in here too, from sched_yield */
+ 			dequeue_task(prev, prev->nicksched_data.array);
+ 			enqueue_task(prev, rq->active);
+@@ -2641,7 +2641,7 @@
+ 	 * it wont have any effect on scheduling until the task is
+ 	 * not SCHED_NORMAL:
+ 	 */
+-	if (nicksched_rt_task(p)) {
++	if (rt_task(p)) {
+ 		p->nicksched_data.static_prio = NICE_TO_PRIO(nice);
+ 		goto out_unlock;
+ 	}
+Index: xx-sources/kernel/staircase-sched.c
+===================================================================
+--- xx-sources.orig/kernel/staircase-sched.c	2004-10-10 21:19:40.810982576 -0400
++++ xx-sources/kernel/staircase-sched.c	2004-10-10 21:21:22.107583152 -0400
+@@ -433,11 +433,6 @@
+ #define sched_info_switch(t, next)	do { } while (0)
+ #endif /* CONFIG_SCHEDSTATS */
+ 
+-static inline int task_queued(task_t *task)
+-{
+-	return !list_empty(&task->run_list);
+-}
+-
+ /*
+  * Adding/removing a task to/from a runqueue:
+  */
+@@ -490,7 +485,7 @@
+  */
+ static unsigned int burst(task_t *p)
+ {
+-	if (likely(!staircase_rt_task(p))) {
++	if (likely(!rt_task(p))) {
+ 		unsigned int task_user_prio = TASK_USER_PRIO(p);
+ 		return 39 - task_user_prio;
+ 	} else
+@@ -518,7 +513,7 @@
+ static unsigned int slice(task_t *p)
+ {
+ 	unsigned int slice = RR_INTERVAL();
+-	if (likely(!staircase_rt_task(p)))
++	if (likely(!rt_task(p)))
+ 		slice += burst(p) * RR_INTERVAL();
+ 	return slice;
+ }
+@@ -539,7 +534,7 @@
+ 	int prio;
+ 	unsigned int full_slice, used_slice, first_slice;
+ 	unsigned int best_burst;
+-	if (staircase_rt_task(p))
++	if (rt_task(p))
+ 		return p->staircase_data.prio;
+ 
+ 	best_burst = burst(p);
+@@ -693,10 +688,10 @@
+ 	if (task->staircase_data.prio > curr->staircase_data.prio)
+ 		return;
+ 	else if (task->staircase_data.prio == curr->staircase_data.prio && 
+-		(task->staircase_data.totalrun || staircase_rt_task(curr)))
++		(task->staircase_data.totalrun || rt_task(curr)))
+ 			return;
+ 	else if (staircase_sched_compute && rq->cache_ticks < cache_delay &&
+-		task->mm && !staircase_rt_task(task)) {
++		task->mm && !rt_task(task)) {
+ 			rq->preempted = 1;
+ 			return;
+ 	}
+@@ -2145,8 +2140,8 @@
+ 		 * physical cpu's resources. -ck
+ 		 */
+ 		if (((smt_curr->staircase_data.time_slice * (100 - sd->per_cpu_gain) / 100) >
+-			slice(p) || staircase_rt_task(smt_curr)) &&
+-			p->mm && smt_curr->mm && !staircase_rt_task(p))
++			slice(p) || rt_task(smt_curr)) &&
++			p->mm && smt_curr->mm && !rt_task(p))
+ 				ret = 1;
+ 
+ 		/*
+@@ -2155,8 +2150,8 @@
+ 		 * reasons.
+ 		 */
+ 		if ((((p->staircase_data.time_slice * (100 - sd->per_cpu_gain) / 100) >
+-			slice(smt_curr) || staircase_rt_task(p)) &&
+-			smt_curr->mm && p->mm && !staircase_rt_task(smt_curr)) ||
++			slice(smt_curr) || rt_task(p)) &&
++			smt_curr->mm && p->mm && !rt_task(smt_curr)) ||
+ 			(smt_curr == smt_rq->idle && smt_rq->nr_running))
+ 				resched_task(smt_curr);
+ 	}
+@@ -2523,7 +2518,7 @@
+ 	 * it wont have any effect on scheduling until the task is
+ 	 * not SCHED_NORMAL:
+ 	 */
+-	if (staircase_rt_task(p)) {
++	if (rt_task(p)) {
+ 		p->staircase_data.static_prio = NICE_TO_PRIO(nice);
+ 		goto out_unlock;
+ 	}
+@@ -2940,7 +2935,7 @@
+ 	dequeue_task(current, rq);
+ 	current->staircase_data.slice = slice(current);
+ 	current->staircase_data.time_slice = RR_INTERVAL();
+-	if (likely(!staircase_rt_task(current))) {
++	if (likely(!rt_task(current))) {
+ 		current->flags |= PF_YIELDED;
+ 		current->staircase_data.prio = MAX_PRIO - 1;
+ 	}
+Index: xx-sources/kernel/xsched-sched.c
+===================================================================
+--- xx-sources.orig/kernel/xsched-sched.c	2004-10-10 21:19:40.807983032 -0400
++++ xx-sources/kernel/xsched-sched.c	2004-10-10 21:21:22.128579960 -0400
+@@ -516,7 +516,7 @@
+ static inline int task_preempts_curr(const struct task_struct *p, runqueue_t *rq)
+ {
+ 	if (p->xsched_data.prio < rq->current_prio_slot->prio) {
+-		if (xsched_rt_task(p) || rq->cache_ticks >= cache_decay_ticks ||
++		if (rt_task(p) || rq->cache_ticks >= cache_decay_ticks ||
+ 			!p->mm || rq->curr == rq->idle)
+ 				return 1;
+ 		rq->preempted = 1;
+@@ -525,14 +525,9 @@
+ 	return 0;
+ }
+ 
+-static inline int task_queued(const task_t *task)
+-{
+-	return !list_empty(&task->run_list);
+-}
+-
+ static inline void update_min_prio(const task_t *p, runqueue_t *rq)
+ {
+-	if (likely(!xsched_rt_task(p))) {
++	if (likely(!rt_task(p))) {
+ 		if (p->xsched_data.prio < rq->min_prio)
+ 			rq->min_prio = p->xsched_data.prio;
+ 		if (p->xsched_data.static_prio < rq->min_nice)
+@@ -555,7 +550,7 @@
+ {
+ 	struct list_head *entry = &rq->queues[p->xsched_data.prio].queue;
+ 	sched_info_queued(p);
+-	if (!xsched_rt_task(p)) {
++	if (!rt_task(p)) {
+ 		/*
+ 		 * Cycle tasks on the same priority level. This reduces their
+ 		 * timeslice fluctuations due to higher priority tasks expiring.
+@@ -636,7 +631,7 @@
+ 	int idx, base, delta;
+ 	int timeslice;
+ 
+-	if (xsched_rt_task(p)) {
++	if (rt_task(p)) {
+ 		if (!xsched_sched_interactive)
+ 			return RT_TIMESLICE;
+ 		timeslice = scaled_rt_timeslice;
+@@ -688,7 +683,7 @@
+ {
+  	int prio, bonus;
+ 
+-	if (xsched_rt_task(p))
++	if (rt_task(p))
+ 		return p->xsched_data.prio;
+ 
+ 	if (p->flags & PF_YIELDED)
+@@ -2351,7 +2346,7 @@
+ 		 * physical cpu's resources. -ck
+ 		 */
+ 		if ((smt_curr->xsched_data.static_prio + 5 < p->xsched_data.static_prio) &&
+-			p->mm && smt_curr->mm && !xsched_rt_task(p))
++			p->mm && smt_curr->mm && !rt_task(p))
+ 				ret = 1;
+ 
+ 		/*
+@@ -2360,7 +2355,7 @@
+ 		 * reasons.
+ 		 */
+ 		if ((p->xsched_data.static_prio + 5 < smt_curr->xsched_data.static_prio &&
+-			smt_curr->mm && p->mm && !xsched_rt_task(smt_curr)) ||
++			smt_curr->mm && p->mm && !rt_task(smt_curr)) ||
+ 			(smt_curr == smt_rq->idle && smt_rq->nr_running))
+ 				resched_task(smt_curr);
+ 	}
+@@ -2450,7 +2445,7 @@
+ 
+ 	if (unlikely(task_timeslice(prev, rq) <= 1)) {
+ 		set_tsk_need_resched(prev);
+-		if (xsched_rt_task(prev)) {
++		if (rt_task(prev)) {
+ 			list_del_init(&prev->run_list);
+ 			list_add_tail(&prev->run_list, &rq->current_prio_slot->queue);
+ 		} else {
+@@ -2505,7 +2500,7 @@
+ 
+ 	if (next->flags & PF_YIELDED) {
+ 		next->flags &= ~PF_YIELDED;
+-		if (xsched_rt_task(next)) {
++		if (rt_task(next)) {
+ 			if (next->policy == SCHED_RR) {
+ 				list_del_init(&next->run_list);
+ 				list_add(&next->run_list, &rq->current_prio_slot->queue);
+@@ -2747,11 +2742,11 @@
+ 	 * it wont have any effect on scheduling until the task is
+ 	 * not SCHED_NORMAL:
+ 	 */
+-	if (xsched_rt_task(p)) {
++	if (rt_task(p)) {
+ 		p->xsched_data.static_prio = NICE_TO_PRIO(nice);
+ 		goto out_unlock;
+ 	}
+-	if ((queued = (!xsched_rt_task(p) && task_queued(p))))
++	if ((queued = (!rt_task(p) && task_queued(p))))
+ 		dequeue_task(p);
+ 
+ 	old_prio = p->xsched_data.prio;
+@@ -3174,7 +3169,7 @@
+ {
+ 	runqueue_t *rq = this_rq_lock();
+ 
+-	if (likely(!xsched_rt_task(current))) {
++	if (likely(!rt_task(current))) {
+ 		int idx;
+ 
+ 		/* If there's other tasks on this CPU make sure that at least

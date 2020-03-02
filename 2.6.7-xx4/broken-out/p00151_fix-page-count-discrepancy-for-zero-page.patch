@@ -1,0 +1,42 @@
+
+From: Dave Hansen <haveblue@us.ibm.com>
+
+While writing some analysis tools for memory hot-remove, we came across a
+single page which had a ->count that always increased, without bound.  It
+ended up always being the zero page, and it was caused by a leaked
+reference in some do_wp_page() code that ends up avoiding PG_reserved
+pages.
+
+Basically what happens is that page_cache_release()/put_page() ignore
+PG_reserved pages, while page_cache_get()/get_page() go ahead and take the
+reference.  So, each time there's a COW fault on the zero-page, you get a
+leaked page->count increment.
+
+It's pretty rare to have a COW fault on anything that's PG_reserved, in
+fact, I can't think of anything else that this applies to other than the
+zero page.
+
+In any case, it the bug doesn't cause any real problems, but it is a bit of
+an annoyance and is obviously incorrect.  We've been running with this
+patch for about 3 months now, and haven't run into any problems with it.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/memory.c |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletion(-)
+
+diff -puN mm/memory.c~fix-page-count-discrepancy-for-zero-page mm/memory.c
+--- 25/mm/memory.c~fix-page-count-discrepancy-for-zero-page	2004-06-28 17:42:54.109988488 -0700
++++ 25-akpm/mm/memory.c	2004-06-28 17:42:54.114987728 -0700
+@@ -1089,7 +1089,8 @@ static int do_wp_page(struct mm_struct *
+ 	/*
+ 	 * Ok, we need to copy. Oh, well..
+ 	 */
+-	page_cache_get(old_page);
++	if (!PageReserved(old_page))
++		page_cache_get(old_page);
+ 	spin_unlock(&mm->page_table_lock);
+ 
+ 	if (unlikely(anon_vma_prepare(vma)))
+_

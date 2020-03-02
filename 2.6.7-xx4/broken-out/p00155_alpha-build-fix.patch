@@ -1,0 +1,45 @@
+
+From: Peter Chubb <peterc@gelato.unsw.edu.au>
+
+When using gcc 3.3.3 on alpha, the current BK head doesn't compile.
+
+- there's an external declaration for abs() in the same scope as a macro
+  definition in arch/alpha/time.c
+
+- The compiler is picky about `const' declarations, which breaks on
+  bitops.h.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/alpha/kernel/time.c   |    1 -
+ 25-akpm/include/asm-alpha/bitops.h |    4 ++--
+ 2 files changed, 2 insertions(+), 3 deletions(-)
+
+diff -puN arch/alpha/kernel/time.c~alpha-build-fix arch/alpha/kernel/time.c
+--- 25/arch/alpha/kernel/time.c~alpha-build-fix	2004-06-28 21:16:58.522341008 -0700
++++ 25-akpm/arch/alpha/kernel/time.c	2004-06-28 21:16:58.528340096 -0700
+@@ -523,7 +523,6 @@ EXPORT_SYMBOL(do_settimeofday);
+  *      sets the minutes. Usually you won't notice until after reboot!
+  */
+ 
+-extern int abs(int);
+ 
+ static int
+ set_rtc_mmss(unsigned long nowtime)
+diff -puN include/asm-alpha/bitops.h~alpha-build-fix include/asm-alpha/bitops.h
+--- 25/include/asm-alpha/bitops.h~alpha-build-fix	2004-06-28 21:16:58.524340704 -0700
++++ 25-akpm/include/asm-alpha/bitops.h	2004-06-28 21:16:58.528340096 -0700
+@@ -418,9 +418,9 @@ find_next_zero_bit(void * addr, unsigned
+  * Find next one bit in a bitmap reasonably efficiently.
+  */
+ static inline unsigned long
+-find_next_bit(void * addr, unsigned long size, unsigned long offset)
++find_next_bit(const void * addr, unsigned long size, unsigned long offset)
+ {
+-	unsigned long * p = ((unsigned long *) addr) + (offset >> 6);
++	const unsigned long * p = ((const unsigned long *) addr) + (offset >> 6);
+ 	unsigned long result = offset & ~63UL;
+ 	unsigned long tmp;
+ 
+_

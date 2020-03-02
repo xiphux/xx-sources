@@ -1,0 +1,377 @@
+---
+
+ linux-2.6.7-xx1-xiphux/include/linux/sysctl.h |    1 
+ linux-2.6.7-xx1-xiphux/kernel/sched.c         |  203 +++++++++++++++++++++-----
+ linux-2.6.7-xx1-xiphux/kernel/sysctl.c        |   14 +
+ 3 files changed, 182 insertions(+), 36 deletions(-)
+
+diff -puN include/linux/sysctl.h~spa-cntl-v0.1 include/linux/sysctl.h
+--- linux-2.6.7-xx1/include/linux/sysctl.h~spa-cntl-v0.1	2004-06-22 04:59:36.583376760 -0400
++++ linux-2.6.7-xx1-xiphux/include/linux/sysctl.h	2004-06-22 04:59:36.647367032 -0400
+@@ -133,6 +133,7 @@ enum
+ 	KERN_NGROUPS_MAX=63,	/* int: NGROUPS_MAX */
+ 	KERN_SPARC_SCONS_PWROFF=64, /* int: serial console power-off halt */
+ 	KERN_HZ_TIMER=65,	/* int: hz timer on or off */
++	KERN_CPU_SCHED=66,	/* CPU scheduler stuff */
+ };
+ 
+ 
+diff -puN kernel/sched.c~spa-cntl-v0.1 kernel/sched.c
+--- linux-2.6.7-xx1/kernel/sched.c~spa-cntl-v0.1	2004-06-22 04:59:36.640368096 -0400
++++ linux-2.6.7-xx1-xiphux/kernel/sched.c	2004-06-22 04:59:36.654365968 -0400
+@@ -87,10 +87,17 @@
+ #ifdef CONFIG_SPA
+ /*
+  * These are the 'tuning knobs' of the scheduler:
+- */
+-#define MAX_IA_BONUS 10
+-#define MAX_TPT_BONUS ((MAX_IA_BONUS) / 2)
+-#define MAX_BONUS (MAX_IA_BONUS + MAX_TPT_BONUS)
++ * Making MAX_TOTAL_BONUS bigger than 19 causes mysterious crashes during boot
++ * this causes the number of longs in the bitmap to increase from 5 to 6
++ * but I can't see why that matters P.W.
++ */
++#define MAX_TOTAL_BONUS 19
++#define MAX_MAX_IA_BONUS 10
++#define MAX_MAX_TPT_BONUS (MAX_TOTAL_BONUS - MAX_MAX_IA_BONUS)
++#define DEFAULT_MAX_IA_BONUS MAX_MAX_IA_BONUS
++#define DEFAULT_MAX_TPT_BONUS ((DEFAULT_MAX_IA_BONUS) / 2)
++static unsigned int max_ia_bonus = DEFAULT_MAX_IA_BONUS;
++static unsigned int max_tpt_bonus = DEFAULT_MAX_TPT_BONUS;
+ 
+ /*
+  * Define some mini Kalman filter for estimating various averages, etc.
+@@ -137,15 +144,16 @@ static inline void update_sched_ia_bonus
+ #define CURRENT_BONUS(p) (SCHED_IA_BONUS_RND((p)->interactive_bonus) + (p)->throughput_bonus)
+ 
+ /*
+- * Tasks with a CPU usage rate greater than 50% are considered to be CPU bound
++ * Tasks that are off the CPU less than this threshold (in parts per thousand)
++ * are considered to be CPU bound
+  */
+-#define SCHED_CPU_BOUND_THRESHOLD ((MAX_IA_BONUS * (100 - 50)) / 100)
++static unsigned int cpu_hog_threshold = 500;
+ /*
+- * Tasks that would sleep for more than 90% of the time if they had the CPU to
+- * themselves are considered to be interactive provided that their average
+- * sleep duration per scheduling cycle isn't too long
++ * Tasks that would sleep for more than 900 parts per thousand of the time if
++ * they had the CPU to themselves are considered to be interactive provided
++ * that their average sleep duration per scheduling cycle isn't too long
+  */
+-#define SCHED_IA_THRESHOLD ((MAX_IA_BONUS * 90) / 100)
++static unsigned int ia_threshold = 900;
+ #define LOWER_MAX_IA_SLEEP SCHED_AVG_REAL(15 * 60LL * NSEC_PER_SEC)
+ #define UPPER_MAX_IA_SLEEP SCHED_AVG_REAL(2 * 60 * 60LL * NSEC_PER_SEC)
+ 
+@@ -155,9 +163,12 @@ static inline void update_sched_ia_bonus
+ /*
+  * What "base time slice" for nice 0 and  "average time slice" evaluated to
+  */
+-#define TIME_SLICE_MSECS 100
+-#define TIME_SLICE_TICKS \
+-	(((TIME_SLICE_MSECS * HZ) / 1000) ? ((TIME_SLICE_MSECS * HZ) / 1000) : 1)
++#define MSECS_TO_JIFFIES(x) (((x) * (HZ * 2 + 1)) / 2000)
++#define MSECS_TO_JIFFIES_MIN_1(x) (MSECS_TO_JIFFIES(x) ? MSECS_TO_JIFFIES(x) : 1)
++#define DEFAULT_TIME_SLICE_MSECS 100
++#define MAX_TIME_SLICE_MSECS 1000
++
++static unsigned int time_slice_ticks = MSECS_TO_JIFFIES_MIN_1(DEFAULT_TIME_SLICE_MSECS);
+ 
+ #else
+ /*
+@@ -272,7 +283,7 @@ unsigned int task_timeslice(
+ 		task_t *p)
+ {
+ #ifdef CONFIG_SPA
+-	return TIME_SLICE_TICKS;
++	return time_slice_ticks;
+ #else
+ 	return BASE_TIMESLICE(p);
+ #endif
+@@ -284,7 +295,8 @@ unsigned int task_timeslice(
+  * These are the runqueue data structures:
+  */
+ #ifdef CONFIG_SPA
+-#define IDLE_PRIO (MAX_PRIO + MAX_BONUS)
++#define IDLE_PRIO (MAX_PRIO + MAX_TOTAL_BONUS)
++#define NUM_PRIO_SLOTS (IDLE_PRIO + 1)
+ 
+ /*
+  * Is the run queue idle?
+@@ -294,12 +306,13 @@ unsigned int task_timeslice(
+ /*
+  * Control values for niceness
+  */
+-#define PROSPECTIVE_BASE_PROM_INTERVAL ((TIME_SLICE_TICKS * 55) / 100)
+-#if (PROSPECTIVE_BASE_PROM_INTERVAL > 0)
+-#define BASE_PROM_INTERVAL PROSPECTIVE_BASE_PROM_INTERVAL
++#define PROSPECTIVE_BASE_PROM_INTERVAL_MSECS ((DEFAULT_TIME_SLICE_MSECS * 55) / 100)
++#if (PROSPECTIVE_BASE_PROM_INTERVAL_MSECS > 0)
++#define BASE_PROM_INTERVAL_MSECS PROSPECTIVE_BASE_PROM_INTERVAL_MSECS
+ #else
+-#define BASE_PROM_INTERVAL TIME_SLICE_TICKS
++#define BASE_PROM_INTERVAL_MSECS DEFAULT_TIME_SLICE_MSECS
+ #endif
++static unsigned int base_prom_interval_ticks = MSECS_TO_JIFFIES_MIN_1(BASE_PROM_INTERVAL_MSECS);
+ 
+ #else
+ #define BITMAP_SIZE ((((MAX_PRIO+1+7)/8)+sizeof(long)-1)/sizeof(long))
+@@ -347,8 +360,8 @@ struct runqueue {
+ 	task_t *curr, *idle;
+ 	struct mm_struct *prev_mm;
+ #ifdef CONFIG_SPA
+-	unsigned long bitmap[BITS_TO_LONGS(IDLE_PRIO+1)];
+-	struct prio_slot queues[IDLE_PRIO + 1];
++	DECLARE_BITMAP(bitmap, NUM_PRIO_SLOTS);
++	struct prio_slot queues[NUM_PRIO_SLOTS];
+  	struct prio_slot *current_prio_slot;
+ 	unsigned long next_prom_due;
+ #else
+@@ -392,8 +405,8 @@ static DEFINE_PER_CPU(struct runqueue, r
+ static inline unsigned long get_prom_interval(const struct runqueue *rq)
+ {
+ 	if (rq->nr_running < 2)
+-		return BASE_PROM_INTERVAL;
+-	return rq->nr_running * BASE_PROM_INTERVAL;
++		return base_prom_interval_ticks;
++	return rq->nr_running * base_prom_interval_ticks;
+ }
+ #endif
+ 
+@@ -562,7 +575,7 @@ int effective_prio(
+ 	if (p->mm == NULL)
+ 		return p->static_prio;
+ 
+-	return p->static_prio + MAX_BONUS - CURRENT_BONUS(p);
++	return p->static_prio + MAX_TOTAL_BONUS - CURRENT_BONUS(p);
+ #else
+ 	int bonus, prio;
+ 
+@@ -653,8 +666,9 @@ static inline unsigned long sched_div_64
+ #else
+ #define sched_div_64(a, b) ((a) / (b))
+ #endif
+-#define BONUS_RND(mb, e, d) \
+-	((unsigned int)sched_div_64((e) * ((mb) * 2 + 1), ((e) + (d)) * 2))
++#define MILLI_BONUS_RND(e, d) \
++	((unsigned int)sched_div_64((e) * (2001), ((e) + (d)) * 2))
++#define MAP_MILLI_BONUS(mb, x) (((x) * ((mb) * 2 + 1)) / 2000)
+ 
+ static void reassess_cpu_boundness(task_t *p)
+ {
+@@ -668,9 +682,9 @@ static void reassess_cpu_boundness(task_
+ 	if (p->avg_cpu_per_cycle == 0)
+ 		return;
+ 	off_cpu_avg = p->avg_sleep_per_cycle + p->avg_delay_per_cycle;
+-	bonus = BONUS_RND(MAX_IA_BONUS, off_cpu_avg, p->avg_cpu_per_cycle);
+-	if (bonus < SCHED_CPU_BOUND_THRESHOLD)
+-		update_sched_ia_bonus(p, bonus);
++	bonus = MILLI_BONUS_RND(off_cpu_avg, p->avg_cpu_per_cycle);
++	if (bonus < cpu_hog_threshold)
++		update_sched_ia_bonus(p, 0);
+ }
+ 
+ static void reassess_interactiveness(task_t *p)
+@@ -683,7 +697,7 @@ static void reassess_interactiveness(tas
+ 	 */
+ 	if (p->avg_sleep_per_cycle == 0) {
+ 		if (p->avg_cpu_per_cycle == 0)
+-			update_sched_ia_bonus(p, MAX_IA_BONUS);
++			update_sched_ia_bonus(p, max_ia_bonus);
+ 		return;
+ 	} else if (p->avg_sleep_per_cycle > LOWER_MAX_IA_SLEEP) {
+ 		/*
+@@ -693,15 +707,16 @@ static void reassess_interactiveness(tas
+ 			update_sched_ia_bonus(p, 0);
+ 		return;
+ 	}
+-	bonus = BONUS_RND(MAX_IA_BONUS, p->avg_sleep_per_cycle, p->avg_cpu_per_cycle);
+-	if (bonus > SCHED_IA_THRESHOLD)
+-		update_sched_ia_bonus(p, bonus);
++	bonus = MILLI_BONUS_RND(p->avg_sleep_per_cycle, p->avg_cpu_per_cycle);
++	if (bonus > ia_threshold)
++		update_sched_ia_bonus(p, MAP_MILLI_BONUS(max_ia_bonus, bonus));
+ 	else if (p->sub_cycle_count == 0)
+ 		reassess_cpu_boundness(p);
+ }
+ 
+ static void recalc_throughput_bonus(task_t *p, u64 load)
+ {
++	unsigned int bonus;
+ 	/*
+ 	 * No delay means no bonus, but
+ 	 * NB this test also avoids a possible divide by zero error if
+@@ -711,8 +726,8 @@ static void recalc_throughput_bonus(task
+ 		p->throughput_bonus = 0;
+ 		return;
+ 	}
+-	p->throughput_bonus = BONUS_RND(MAX_TPT_BONUS, p->avg_delay_per_cycle,
+-			load * p->avg_cpu_per_cycle);
++	bonus = MILLI_BONUS_RND(p->avg_delay_per_cycle, load * p->avg_cpu_per_cycle);
++	p->throughput_bonus = MAP_MILLI_BONUS(max_tpt_bonus, bonus);
+ }
+ #else
+ static void recalc_task_prio(task_t *p, unsigned long long now)
+@@ -4854,7 +4869,7 @@ void __init sched_init(void)
+ 			INIT_LIST_HEAD(&rq->queues[j].queue);
+ 			__clear_bit(j, rq->bitmap);
+ 		}
+-		memset(rq->bitmap, 0, BITS_TO_LONGS(IDLE_PRIO+1)*sizeof(long));
++		bitmap_zero(rq->bitmap, NUM_PRIO_SLOTS);
+ 		// delimiter for bitsearch
+ 		__set_bit(IDLE_PRIO, rq->bitmap);
+ 		rq->current_prio_slot = rq->queues + (IDLE_PRIO - 20);
+@@ -4956,3 +4971,119 @@ void __sched __preempt_write_lock(rwlock
+ 
+ EXPORT_SYMBOL(__preempt_write_lock);
+ #endif /* defined(CONFIG_SMP) && defined(CONFIG_PREEMPT) */
++
++#if defined(CONFIG_SPA) && defined(CONFIG_SYSCTL)
++/*
++ * CPU scheduler control via /proc/sys/cpusched/xxx
++ */
++enum
++{
++	CPU_SCHED_END_OF_LIST=0,
++	CPU_SCHED_TIME_SLICE=1,
++	CPU_SCHED_BASE_PROMOTION_INTERVAL,
++	CPU_SCHED_MAX_IA_BONUS,
++	CPU_SCHED_MAX_TPT_BONUS,
++	CPU_SCHED_IA_THRESHOLD,
++	CPU_SCHED_CPU_HOG_THRESHOLD,
++};
++
++static const unsigned int min_milli_value = 0;
++static const unsigned int max_milli_value = 1000;
++static const unsigned int min_max_ia_bonus = 0;
++static const unsigned int max_max_ia_bonus = MAX_MAX_IA_BONUS;
++#define min_max_tpt_bonus min_max_ia_bonus
++static const unsigned int max_max_tpt_bonus = MAX_MAX_TPT_BONUS;
++static unsigned int time_slice_msecs = DEFAULT_TIME_SLICE_MSECS;
++static const unsigned int min_time_slice_msecs = 1;
++static const unsigned int max_time_slice_msecs = MAX_TIME_SLICE_MSECS;
++static unsigned int base_prom_interval_msecs = BASE_PROM_INTERVAL_MSECS;
++static const unsigned int min_base_prom_interval_msecs = 1;
++static const unsigned int max_base_prom_interval_msecs = UINT_MAX;
++
++static int proc_time_slice_msecs(ctl_table *ctp, int write, struct file *fp,
++				void __user *buffer, size_t *lenp)
++{
++	int res = proc_dointvec_minmax(ctp, write, fp, buffer, lenp);
++
++	if ((res == 0) && write)
++		time_slice_ticks = MSECS_TO_JIFFIES_MIN_1(time_slice_msecs);
++
++	return res;
++}
++
++static int proc_base_prom_interval_msecs(ctl_table *ctp, int write, struct file *fp,
++				void __user *buffer, size_t *lenp)
++{
++	int res = proc_dointvec_minmax(ctp, write, fp, buffer, lenp);
++
++	if ((res == 0) && write)
++		base_prom_interval_ticks = MSECS_TO_JIFFIES_MIN_1(base_prom_interval_msecs);
++
++	return res;
++}
++
++
++ctl_table cpu_sched_table[] = {
++	{
++		.ctl_name	= CPU_SCHED_TIME_SLICE,
++		.procname	= "time_slice",
++		.data		= &time_slice_msecs,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_time_slice_msecs,
++		.extra1		= (void *)&min_time_slice_msecs,
++		.extra2		= (void *)&max_time_slice_msecs
++	},
++	{
++		.ctl_name	= CPU_SCHED_BASE_PROMOTION_INTERVAL,
++		.procname	= "base_promotion_interval",
++		.data		= &base_prom_interval_msecs,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_base_prom_interval_msecs,
++		.extra1		= (void *)&min_base_prom_interval_msecs,
++		.extra2		= (void *)&max_base_prom_interval_msecs
++	},
++	{
++		.ctl_name	= CPU_SCHED_MAX_IA_BONUS,
++		.procname	= "max_ai_bonus",
++		.data		= &max_ia_bonus,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec_minmax,
++		.extra1		= (void *)&min_max_ia_bonus,
++		.extra2		= (void *)&max_max_ia_bonus
++	},
++	{
++		.ctl_name	= CPU_SCHED_MAX_TPT_BONUS,
++		.procname	= "max_tpt_bonus",
++		.data		= &max_tpt_bonus,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec_minmax,
++		.extra1		= (void *)&min_max_tpt_bonus,
++		.extra2		= (void *)&max_max_tpt_bonus
++	},
++	{
++		.ctl_name	= CPU_SCHED_IA_THRESHOLD,
++		.procname	= "ia_threshold",
++		.data		= &ia_threshold,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec_minmax,
++		.extra1		= (void *)&min_milli_value,
++		.extra2		= (void *)&max_milli_value
++	},
++	{
++		.ctl_name	= CPU_SCHED_CPU_HOG_THRESHOLD,
++		.procname	= "cpu_hog_threshold",
++		.data		= &cpu_hog_threshold,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec_minmax,
++		.extra1		= (void *)&min_milli_value,
++		.extra2		= (void *)&max_milli_value
++	},
++	{ .ctl_name = CPU_SCHED_END_OF_LIST }
++};
++#endif
+diff -puN kernel/sysctl.c~spa-cntl-v0.1 kernel/sysctl.c
+--- linux-2.6.7-xx1/kernel/sysctl.c~spa-cntl-v0.1	2004-06-22 04:59:36.643367640 -0400
++++ linux-2.6.7-xx1-xiphux/kernel/sysctl.c	2004-06-22 04:59:36.657365512 -0400
+@@ -142,6 +142,12 @@ extern ctl_table random_table[];
+ #ifdef CONFIG_UNIX98_PTYS
+ extern ctl_table pty_table[];
+ #endif
++#ifdef CONFIG_SPA
++/*
++ * CPU scheduler control variables (lives in sched.c)
++ */
++extern ctl_table cpu_sched_table[];
++#endif
+ 
+ /* /proc declarations: */
+ 
+@@ -636,6 +642,14 @@ static ctl_table kern_table[] = {
+ 		.mode		= 0444,
+ 		.proc_handler	= &proc_dointvec,
+ 	},
++#ifdef CONFIG_SPA
++	{
++		.ctl_name	= KERN_CPU_SCHED,
++		.procname	= "cpusched",
++		.mode		= 0555,
++		.child		= cpu_sched_table,
++	},
++#endif
+ 	{ .ctl_name = 0 }
+ };
+ 
+
+_

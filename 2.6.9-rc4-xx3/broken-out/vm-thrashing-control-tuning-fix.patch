@@ -1,0 +1,64 @@
+
+From: Hideo AOKI <aoki@sdl.hitachi.co.jp>
+
+Since I made the patch for 2.6.9-rc3, the patch caused trouble 
+to sysctl code in -mm tree.
+
+Attached patch fixes this issue.
+
+Signed-off-by: Hideo Aoki <aoki@sdl.hitachi.co.jp>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/sysctl.h |    2 +-
+ 25-akpm/kernel/sysctl.c        |   18 +++++++++---------
+ 2 files changed, 10 insertions(+), 10 deletions(-)
+
+diff -puN include/linux/sysctl.h~vm-thrashing-control-tuning-fix include/linux/sysctl.h
+--- 25/include/linux/sysctl.h~vm-thrashing-control-tuning-fix	Fri Oct  8 13:50:59 2004
++++ 25-akpm/include/linux/sysctl.h	Fri Oct  8 13:50:59 2004
+@@ -168,7 +168,7 @@ enum
+ 	VM_VFS_CACHE_PRESSURE=26, /* dcache/icache reclaim pressure */
+ 	VM_LEGACY_VA_LAYOUT=27, /* legacy/compatibility virtual address space layout */
+  	VM_HEAP_STACK_GAP=28,	/* int: page gap between heap and stack */
+-	VM_SWAP_TOKEN_TIMEOUT=28, /* default time for token time out */
++	VM_SWAP_TOKEN_TIMEOUT=29, /* default time for token time out */
+ };
+ 
+ 
+diff -puN kernel/sysctl.c~vm-thrashing-control-tuning-fix kernel/sysctl.c
+--- 25/kernel/sysctl.c~vm-thrashing-control-tuning-fix	Fri Oct  8 13:50:59 2004
++++ 25-akpm/kernel/sysctl.c	Fri Oct  8 13:50:59 2004
+@@ -624,15 +624,6 @@ static ctl_table kern_table[] = {
+ 		.proc_handler   = &proc_unknown_nmi_panic,
+ 	},
+ #endif
+-	{
+-		.ctl_name	= VM_SWAP_TOKEN_TIMEOUT,
+-		.procname	= "swap_token_timeout",
+-		.data		= &swap_token_default_timeout,
+-		.maxlen		= sizeof(swap_token_default_timeout),
+-		.mode		= 0644,
+-		.proc_handler	= &proc_dointvec_jiffies,
+-		.strategy	= &sysctl_jiffies,
+-	},
+ 	{ .ctl_name = 0 }
+ };
+ 
+@@ -822,6 +813,15 @@ static ctl_table vm_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= &proc_dointvec,
+ 	},
++	{
++		.ctl_name	= VM_SWAP_TOKEN_TIMEOUT,
++		.procname	= "swap_token_timeout",
++		.data		= &swap_token_default_timeout,
++		.maxlen		= sizeof(swap_token_default_timeout),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec_jiffies,
++		.strategy	= &sysctl_jiffies,
++	},
+ 	{ .ctl_name = 0 }
+ };
+ 
+_

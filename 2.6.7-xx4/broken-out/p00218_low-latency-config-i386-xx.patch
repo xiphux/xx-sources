@@ -1,0 +1,152 @@
+
+One of the few patches written by me (xiphux).  And as such, the code most
+likely sucks, so I felt a need for some notes.
+
+In the gentoo-dev-sources, there is a patch called
+low-latency-cond_resched.patch.  It enables low latency scheduling by adding a
+fex extra scheduling calls in various files of the filesystem code.  It is
+supposed to be used with preempt disabled, and supposedly is significantly
+better than using preempt.  I am skeptical about this.  So, for testing
+purposes, I figured I'd make it a configure option, so I didn't have to
+reverse/repply the patch every time I wanted to switch.  It was just a few
+simple ifdefs.  And since low-latency and preempt are not supposed to be used
+together (kind of like the 2.4 versions of those patches), I made them
+mutually exclusive.
+
+- xiphux
+
+
+---
+
+ linux-2.6.6-xx2-xiphux/arch/i386/Kconfig |   34 ++++++++++++++++++++++++++++++-
+ linux-2.6.6-xx2-xiphux/fs/fs-writeback.c |    4 +++
+ linux-2.6.6-xx2-xiphux/fs/mpage.c        |    2 +
+ linux-2.6.6-xx2-xiphux/fs/super.c        |    2 +
+ linux-2.6.6-xx2-xiphux/mm/memory.c       |    7 +++++-
+ 5 files changed, 47 insertions(+), 2 deletions(-)
+
+diff -puN arch/i386/Kconfig~low-latency-config-i386-xx arch/i386/Kconfig
+--- linux-2.6.6-xx2/arch/i386/Kconfig~low-latency-config-i386-xx	2004-05-28 05:44:36.642063744 -0400
++++ linux-2.6.6-xx2-xiphux/arch/i386/Kconfig	2004-05-28 05:44:36.658061312 -0400
+@@ -490,6 +490,23 @@ config SCHED_SMT
+ 	  cost of slightly increased overhead in some places. If unsure say
+ 	  N here.
+ 
++choice
++	prompt "Latency management"
++	default LATENCY_NONE
++	help
++	  This will allow you to choose between different ways to improve
++	  the latency of the kernel.  These options are, for the moment,
++	  mutually exclusive.
++
++	  Nothing is selected by default.
++
++config LATENCY_NONE
++	bool "None"
++	help
++	  With this option, the kernel will not be enhanced to be preemptible
++	  nor low latency.  This is not recommended for a desktop system, and
++	  should really only be used for troubleshooting.
++
+ config PREEMPT
+ 	bool "Preemptible Kernel"
+ 	help
+@@ -500,7 +517,22 @@ config PREEMPT
+ 	  under load.
+ 
+ 	  Say Y here if you are building a kernel for a desktop, embedded
+-	  or real-time system.  Say N if you are unsure.
++	  or real-time system.  Say N if you are unsure.  Low-latency
++	  must be disabled.
++
++config LOW_LATENCY
++	bool "Low-latency Kernel"
++	depends on EXPERIMENTAL
++	help
++	  Activating the low-latency patch theoretically fixes 90% of
++	  latency issues and supposedly outperforms preempt.  This
++	  config option is only temporary, for testing.
++
++	  Say Y if you want to test the low latency calls instead of the
++	  standard preempt.  Preempt must be disabled.  Say N if you
++	  are unsure.
++
++endchoice
+ 
+ config X86_UP_APIC
+ 	bool "Local APIC support on uniprocessors" if !SMP
+diff -puN fs/mpage.c~low-latency-config-i386-xx fs/mpage.c
+--- linux-2.6.6-xx2/fs/mpage.c~low-latency-config-i386-xx	2004-05-28 05:44:36.645063288 -0400
++++ linux-2.6.6-xx2-xiphux/fs/mpage.c	2004-05-28 05:44:36.666060096 -0400
+@@ -677,7 +677,9 @@ retry:
+ 			}
+ 		}
+ 		pagevec_release(&pvec);
++#ifdef CONFIG_LOW_LATENCY
+ 		cond_resched();
++#endif
+ 	}
+ 	if (!scanned && !done) {
+ 		/*
+diff -puN fs/super.c~low-latency-config-i386-xx fs/super.c
+--- linux-2.6.6-xx2/fs/super.c~low-latency-config-i386-xx	2004-05-28 05:44:36.648062832 -0400
++++ linux-2.6.6-xx2-xiphux/fs/super.c	2004-05-28 05:44:36.668059792 -0400
+@@ -523,7 +523,9 @@ void sync_supers(void)
+ {
+ 	struct super_block * sb;
+ restart:
++#ifdef CONFIG_LOW_LATENCY
+ 	cond_resched();
++#endif
+ 	spin_lock(&sb_lock);
+ 	sb = sb_entry(super_blocks.next);
+ 	while (sb != sb_entry(&super_blocks))
+diff -puN fs/fs-writeback.c~low-latency-config-i386-xx fs/fs-writeback.c
+--- linux-2.6.6-xx2/fs/fs-writeback.c~low-latency-config-i386-xx	2004-05-28 05:44:36.650062528 -0400
++++ linux-2.6.6-xx2-xiphux/fs/fs-writeback.c	2004-05-28 05:44:36.670059488 -0400
+@@ -359,7 +359,9 @@ generic_sync_sb_inodes(struct super_bloc
+ 		}
+ 		spin_unlock(&inode_lock);
+ 		iput(inode);
++#ifdef CONFIG_LOW_LATENCY
+ 		cond_resched();
++#endif
+ 		spin_lock(&inode_lock);
+ 		if (wbc->nr_to_write <= 0)
+ 			break;
+@@ -420,7 +422,9 @@ restart:
+ 	}
+ 	spin_unlock(&sb_lock);
+ 	spin_unlock(&inode_lock);
++#ifdef CONFIG_LOW_LATENCY
+ 	cond_resched();
++#endif
+ }
+ 
+ /*
+diff -puN mm/memory.c~low-latency-config-i386-xx mm/memory.c
+--- linux-2.6.6-xx2/mm/memory.c~low-latency-config-i386-xx	2004-05-28 05:44:36.653062072 -0400
++++ linux-2.6.6-xx2-xiphux/mm/memory.c	2004-05-28 05:44:36.675058728 -0400
+@@ -469,13 +469,18 @@ static void unmap_page_range(struct mmu_
+ 	tlb_end_vma(tlb, vma);
+ }
+ 
+-#ifdef CONFIG_SMP
++#if defined(CONFIG_PREEMPT) || defined(CONFIG_LOW_LATENCY)
+ /* Dispose of an entire struct mmu_gather per rescheduling point */
++#if defined(CONFIG_SMP)
+ #define ZAP_BLOCK_SIZE	(FREE_PTE_NR * PAGE_SIZE)
+ #else
+ /* For UP, 256 pages at a time gives nice low latency */
+ #define ZAP_BLOCK_SIZE	(256 * PAGE_SIZE)
+ #endif
++#else
++/* No preempt: go for the best straight-line efficiency */
++#define ZAP_BLOCK_SIZE	(1024 * PAGE_SIZE)
++#endif
+ 
+ /**
+  * unmap_vmas - unmap a range of memory covered by a list of vma's
+
+_

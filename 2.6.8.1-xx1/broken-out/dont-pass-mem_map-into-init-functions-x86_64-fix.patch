@@ -1,0 +1,27 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+x86-64 wouldn't compile with NUMA support on, as node_alloc_mem_map()
+references mem_map outside #ifdefs on CONFIG_NUMA/CONFIG_DISCONTIGMEM. 
+This patch wraps that reference in such an #ifdef.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/page_alloc.c |    2 ++
+ 1 files changed, 2 insertions(+)
+
+diff -puN mm/page_alloc.c~dont-pass-mem_map-into-init-functions-x86_64-fix mm/page_alloc.c
+--- 25/mm/page_alloc.c~dont-pass-mem_map-into-init-functions-x86_64-fix	2004-08-07 21:47:48.897609256 -0700
++++ 25-akpm/mm/page_alloc.c	2004-08-07 21:47:48.902608496 -0700
+@@ -1575,7 +1575,9 @@ void __init node_alloc_mem_map(struct pg
+ 
+ 	size = (pgdat->node_spanned_pages + 1) * sizeof(struct page);
+ 	pgdat->node_mem_map = alloc_bootmem_node(pgdat, size);
++#ifndef CONFIG_DISCONTIGMEM
+ 	mem_map = contig_page_data.node_mem_map;
++#endif
+ }
+ 
+ void __init free_area_init_node(int nid, struct pglist_data *pgdat,
+_

@@ -1,0 +1,288 @@
+
+From: "Shai Fultheim" <shai@scalex86.org>
+
+Use the percpu infrastructure rather than open-coded array[NR_CPUS].
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/apm.c          |   34 ++++++++++++++++----------------
+ 25-akpm/arch/i386/kernel/cpu/common.c   |   21 ++++++++++++-------
+ 25-akpm/arch/i386/kernel/head.S         |    3 --
+ 25-akpm/arch/i386/mm/fault.c            |    2 -
+ 25-akpm/arch/i386/power/cpu.c           |    2 -
+ 25-akpm/drivers/pnp/pnpbios/bioscalls.c |   14 ++++++-------
+ 25-akpm/include/asm-i386/desc.h         |   10 +++++----
+ 7 files changed, 45 insertions(+), 41 deletions(-)
+
+diff -puN arch/i386/kernel/apm.c~per_cpu-per_cpu-cpu_gdt_table arch/i386/kernel/apm.c
+--- 25/arch/i386/kernel/apm.c~per_cpu-per_cpu-cpu_gdt_table	2004-07-10 17:37:05.434437360 -0700
++++ 25-akpm/arch/i386/kernel/apm.c	2004-07-10 17:37:05.447435384 -0700
+@@ -601,8 +601,8 @@ static u8 apm_bios_call(u32 func, u32 eb
+ 	cpus = apm_save_cpus();
+ 	
+ 	cpu = get_cpu();
+-	save_desc_40 = cpu_gdt_table[cpu][0x40 / 8];
+-	cpu_gdt_table[cpu][0x40 / 8] = bad_bios_desc;
++	save_desc_40 = per_cpu(cpu_gdt_table, cpu)[0x40 / 8];
++	per_cpu(cpu_gdt_table, cpu)[0x40 / 8] = bad_bios_desc;
+ 
+ 	local_save_flags(flags);
+ 	APM_DO_CLI;
+@@ -610,7 +610,7 @@ static u8 apm_bios_call(u32 func, u32 eb
+ 	apm_bios_call_asm(func, ebx_in, ecx_in, eax, ebx, ecx, edx, esi);
+ 	APM_DO_RESTORE_SEGS;
+ 	local_irq_restore(flags);
+-	cpu_gdt_table[cpu][0x40 / 8] = save_desc_40;
++	per_cpu(cpu_gdt_table, cpu)[0x40 / 8] = save_desc_40;
+ 	put_cpu();
+ 	apm_restore_cpus(cpus);
+ 	
+@@ -644,8 +644,8 @@ static u8 apm_bios_call_simple(u32 func,
+ 	cpus = apm_save_cpus();
+ 	
+ 	cpu = get_cpu();
+-	save_desc_40 = cpu_gdt_table[cpu][0x40 / 8];
+-	cpu_gdt_table[cpu][0x40 / 8] = bad_bios_desc;
++	save_desc_40 = per_cpu(cpu_gdt_table, cpu)[0x40 / 8];
++	per_cpu(cpu_gdt_table, cpu)[0x40 / 8] = bad_bios_desc;
+ 
+ 	local_save_flags(flags);
+ 	APM_DO_CLI;
+@@ -653,7 +653,7 @@ static u8 apm_bios_call_simple(u32 func,
+ 	error = apm_bios_call_simple_asm(func, ebx_in, ecx_in, eax);
+ 	APM_DO_RESTORE_SEGS;
+ 	local_irq_restore(flags);
+-	cpu_gdt_table[smp_processor_id()][0x40 / 8] = save_desc_40;
++	__get_cpu_var(cpu_gdt_table)[0x40 / 8] = save_desc_40;
+ 	put_cpu();
+ 	apm_restore_cpus(cpus);
+ 	return error;
+@@ -2292,35 +2292,35 @@ static int __init apm_init(void)
+ 	apm_bios_entry.segment = APM_CS;
+ 
+ 	for (i = 0; i < NR_CPUS; i++) {
+-		set_base(cpu_gdt_table[i][APM_CS >> 3],
++		set_base(per_cpu(cpu_gdt_table, i)[APM_CS >> 3],
+ 			 __va((unsigned long)apm_info.bios.cseg << 4));
+-		set_base(cpu_gdt_table[i][APM_CS_16 >> 3],
++		set_base(per_cpu(cpu_gdt_table, i)[APM_CS_16 >> 3],
+ 			 __va((unsigned long)apm_info.bios.cseg_16 << 4));
+-		set_base(cpu_gdt_table[i][APM_DS >> 3],
++		set_base(per_cpu(cpu_gdt_table, i)[APM_DS >> 3],
+ 			 __va((unsigned long)apm_info.bios.dseg << 4));
+ #ifndef APM_RELAX_SEGMENTS
+ 		if (apm_info.bios.version == 0x100) {
+ #endif
+ 			/* For ASUS motherboard, Award BIOS rev 110 (and others?) */
+-			_set_limit((char *)&cpu_gdt_table[i][APM_CS >> 3], 64 * 1024 - 1);
++			_set_limit((char *)&per_cpu(cpu_gdt_table, i)[APM_CS >> 3], 64 * 1024 - 1);
+ 			/* For some unknown machine. */
+-			_set_limit((char *)&cpu_gdt_table[i][APM_CS_16 >> 3], 64 * 1024 - 1);
++			_set_limit((char *)&per_cpu(cpu_gdt_table, i)[APM_CS_16 >> 3], 64 * 1024 - 1);
+ 			/* For the DEC Hinote Ultra CT475 (and others?) */
+-			_set_limit((char *)&cpu_gdt_table[i][APM_DS >> 3], 64 * 1024 - 1);
++			_set_limit((char *)&per_cpu(cpu_gdt_table, i)[APM_DS >> 3], 64 * 1024 - 1);
+ #ifndef APM_RELAX_SEGMENTS
+ 		} else {
+-			_set_limit((char *)&cpu_gdt_table[i][APM_CS >> 3],
++			_set_limit((char *)&per_cpu(cpu_gdt_table, i)[APM_CS >> 3],
+ 				(apm_info.bios.cseg_len - 1) & 0xffff);
+-			_set_limit((char *)&cpu_gdt_table[i][APM_CS_16 >> 3],
++			_set_limit((char *)&per_cpu(cpu_gdt_table, i)[APM_CS_16 >> 3],
+ 				(apm_info.bios.cseg_16_len - 1) & 0xffff);
+-			_set_limit((char *)&cpu_gdt_table[i][APM_DS >> 3],
++			_set_limit((char *)&per_cpu(cpu_gdt_table, i)[APM_DS >> 3],
+ 				(apm_info.bios.dseg_len - 1) & 0xffff);
+ 		      /* workaround for broken BIOSes */
+ 	                if (apm_info.bios.cseg_len <= apm_info.bios.offset)
+-        	                _set_limit((char *)&cpu_gdt_table[i][APM_CS >> 3], 64 * 1024 -1);
++        	                _set_limit((char *)&per_cpu(cpu_gdt_table, i)[APM_CS >> 3], 64 * 1024 -1);
+                        if (apm_info.bios.dseg_len <= 0x40) { /* 0x40 * 4kB == 64kB */
+                         	/* for the BIOS that assumes granularity = 1 */
+-                        	cpu_gdt_table[i][APM_DS >> 3].b |= 0x800000;
++                        	per_cpu(cpu_gdt_table, i)[APM_DS >> 3].b |= 0x800000;
+                         	printk(KERN_NOTICE "apm: we set the granularity of dseg.\n");
+         	        }
+ 		}
+diff -puN arch/i386/kernel/cpu/common.c~per_cpu-per_cpu-cpu_gdt_table arch/i386/kernel/cpu/common.c
+--- 25/arch/i386/kernel/cpu/common.c~per_cpu-per_cpu-cpu_gdt_table	2004-07-10 17:37:05.435437208 -0700
++++ 25-akpm/arch/i386/kernel/cpu/common.c	2004-07-10 17:37:05.448435232 -0700
+@@ -2,6 +2,7 @@
+ #include <linux/string.h>
+ #include <linux/delay.h>
+ #include <linux/smp.h>
++#include <linux/percpu.h>
+ #include <asm/semaphore.h>
+ #include <asm/processor.h>
+ #include <asm/i387.h>
+@@ -11,6 +12,8 @@
+ 
+ #include "cpu.h"
+ 
++DEFINE_PER_CPU(struct desc_struct, cpu_gdt_table[GDT_ENTRIES]);
++
+ static int cachesize_override __initdata = -1;
+ static int disable_x86_fxsr __initdata = 0;
+ static int disable_x86_serial_nr __initdata = 1;
+@@ -523,15 +526,17 @@ void __init cpu_init (void)
+ 	 * Initialize the per-CPU GDT with the boot GDT,
+ 	 * and set up the GDT descriptor:
+ 	 */
+-	if (cpu) {
+-		memcpy(cpu_gdt_table[cpu], cpu_gdt_table[0], GDT_SIZE);
+-		cpu_gdt_descr[cpu].size = GDT_SIZE - 1;
+-		cpu_gdt_descr[cpu].address = (unsigned long)cpu_gdt_table[cpu];
+-	}
++	memcpy(&per_cpu(cpu_gdt_table, cpu), cpu_gdt_table,
++	       GDT_SIZE);
++	cpu_gdt_descr[cpu].size = GDT_SIZE - 1;
++	cpu_gdt_descr[cpu].address =
++	    (unsigned long)&per_cpu(cpu_gdt_table, cpu);
++
+ 	/*
+ 	 * Set up the per-thread TLS descriptor cache:
+ 	 */
+-	memcpy(thread->tls_array, cpu_gdt_table[cpu], GDT_ENTRY_TLS_ENTRIES * 8);
++	memcpy(thread->tls_array, &per_cpu(cpu_gdt_table, cpu),
++		GDT_ENTRY_TLS_ENTRIES * 8);
+ 
+ 	__asm__ __volatile__("lgdt %0" : : "m" (cpu_gdt_descr[cpu]));
+ 	__asm__ __volatile__("lidt %0" : : "m" (idt_descr));
+@@ -552,13 +557,13 @@ void __init cpu_init (void)
+ 
+ 	load_esp0(t, thread);
+ 	set_tss_desc(cpu,t);
+-	cpu_gdt_table[cpu][GDT_ENTRY_TSS].b &= 0xfffffdff;
++	per_cpu(cpu_gdt_table,cpu)[GDT_ENTRY_TSS].b &= 0xfffffdff;
+ 	load_TR_desc();
+ 	load_LDT(&init_mm.context);
+ 
+ 	/* Set up doublefault TSS pointer in the GDT */
+ 	__set_tss_desc(cpu, GDT_ENTRY_DOUBLEFAULT_TSS, &doublefault_tss);
+-	cpu_gdt_table[cpu][GDT_ENTRY_DOUBLEFAULT_TSS].b &= 0xfffffdff;
++	per_cpu(cpu_gdt_table, cpu)[GDT_ENTRY_DOUBLEFAULT_TSS].b &= 0xfffffdff;
+ 
+ 	/* Clear %fs and %gs. */
+ 	asm volatile ("xorl %eax, %eax; movl %eax, %fs; movl %eax, %gs");
+diff -puN arch/i386/kernel/head.S~per_cpu-per_cpu-cpu_gdt_table arch/i386/kernel/head.S
+--- 25/arch/i386/kernel/head.S~per_cpu-per_cpu-cpu_gdt_table	2004-07-10 17:37:05.437436904 -0700
++++ 25-akpm/arch/i386/kernel/head.S	2004-07-10 17:37:05.449435080 -0700
+@@ -521,6 +521,3 @@ ENTRY(cpu_gdt_table)
+ 	.quad 0x0000000000000000	/* 0xf0 - unused */
+ 	.quad 0x0000000000000000	/* 0xf8 - GDT entry 31: double-fault TSS */
+ 
+-#ifdef CONFIG_SMP
+-	.fill (NR_CPUS-1)*GDT_ENTRIES,8,0 /* other CPU's GDT */
+-#endif
+diff -puN arch/i386/mm/fault.c~per_cpu-per_cpu-cpu_gdt_table arch/i386/mm/fault.c
+--- 25/arch/i386/mm/fault.c~per_cpu-per_cpu-cpu_gdt_table	2004-07-10 17:37:05.438436752 -0700
++++ 25-akpm/arch/i386/mm/fault.c	2004-07-10 17:37:05.449435080 -0700
+@@ -107,7 +107,7 @@ static inline unsigned long get_segment_
+ 		desc = (void *)desc + (seg & ~7);
+ 	} else {
+ 		/* Must disable preemption while reading the GDT. */
+-		desc = (u32 *)&cpu_gdt_table[get_cpu()];
++		desc = (u32 *)&per_cpu(cpu_gdt_table, get_cpu());
+ 		desc = (void *)desc + (seg & ~7);
+ 	}
+ 
+diff -puN arch/i386/power/cpu.c~per_cpu-per_cpu-cpu_gdt_table arch/i386/power/cpu.c
+--- 25/arch/i386/power/cpu.c~per_cpu-per_cpu-cpu_gdt_table	2004-07-10 17:37:05.440436448 -0700
++++ 25-akpm/arch/i386/power/cpu.c	2004-07-10 17:37:05.450434928 -0700
+@@ -86,7 +86,7 @@ static void fix_processor_context(void)
+ 	struct tss_struct * t = init_tss + cpu;
+ 
+ 	set_tss_desc(cpu,t);	/* This just modifies memory; should not be necessary. But... This is necessary, because 386 hardware has concept of busy TSS or some similar stupidity. */
+-        cpu_gdt_table[cpu][GDT_ENTRY_TSS].b &= 0xfffffdff;
++        per_cpu(cpu_gdt_table, cpu)[GDT_ENTRY_TSS].b &= 0xfffffdff;
+ 
+ 	load_TR_desc();				/* This does ltr */
+ 	load_LDT(&current->active_mm->context);	/* This does lldt */
+diff -puN drivers/pnp/pnpbios/bioscalls.c~per_cpu-per_cpu-cpu_gdt_table drivers/pnp/pnpbios/bioscalls.c
+--- 25/drivers/pnp/pnpbios/bioscalls.c~per_cpu-per_cpu-cpu_gdt_table	2004-07-10 17:37:05.441436296 -0700
++++ 25-akpm/drivers/pnp/pnpbios/bioscalls.c	2004-07-10 17:37:05.450434928 -0700
+@@ -69,14 +69,14 @@ __asm__(
+ 
+ #define Q_SET_SEL(cpu, selname, address, size) \
+ do { \
+-set_base(cpu_gdt_table[cpu][(selname) >> 3], __va((u32)(address))); \
+-set_limit(cpu_gdt_table[cpu][(selname) >> 3], size); \
++set_base(per_cpu(cpu_gdt_table,cpu)[(selname) >> 3], __va((u32)(address))); \
++set_limit(per_cpu(cpu_gdt_table,cpu)[(selname) >> 3], size); \
+ } while(0)
+ 
+ #define Q2_SET_SEL(cpu, selname, address, size) \
+ do { \
+-set_base(cpu_gdt_table[cpu][(selname) >> 3], (u32)(address)); \
+-set_limit(cpu_gdt_table[cpu][(selname) >> 3], size); \
++set_base(per_cpu(cpu_gdt_table,cpu)[(selname) >> 3], (u32)(address)); \
++set_limit(per_cpu(cpu_gdt_table,cpu)[(selname) >> 3], size); \
+ } while(0)
+ 
+ static struct desc_struct bad_bios_desc = { 0, 0x00409200 };
+@@ -115,8 +115,8 @@ static inline u16 call_pnp_bios(u16 func
+ 		return PNP_FUNCTION_NOT_SUPPORTED;
+ 
+ 	cpu = get_cpu();
+-	save_desc_40 = cpu_gdt_table[cpu][0x40 / 8];
+-	cpu_gdt_table[cpu][0x40 / 8] = bad_bios_desc;
++	save_desc_40 = per_cpu(cpu_gdt_table,cpu)[0x40 / 8];
++	per_cpu(cpu_gdt_table,cpu)[0x40 / 8] = bad_bios_desc;
+ 
+ 	/* On some boxes IRQ's during PnP BIOS calls are deadly.  */
+ 	spin_lock_irqsave(&pnp_bios_lock, flags);
+@@ -158,7 +158,7 @@ static inline u16 call_pnp_bios(u16 func
+ 	);
+ 	spin_unlock_irqrestore(&pnp_bios_lock, flags);
+ 
+-	cpu_gdt_table[cpu][0x40 / 8] = save_desc_40;
++	per_cpu(cpu_gdt_table,cpu)[0x40 / 8] = save_desc_40;
+ 	put_cpu();
+ 
+ 	/* If we get here and this is set then the PnP BIOS faulted on us. */
+diff -puN include/asm-i386/desc.h~per_cpu-per_cpu-cpu_gdt_table include/asm-i386/desc.h
+--- 25/include/asm-i386/desc.h~per_cpu-per_cpu-cpu_gdt_table	2004-07-10 17:37:05.442436144 -0700
++++ 25-akpm/include/asm-i386/desc.h	2004-07-10 17:37:05.451434776 -0700
+@@ -8,10 +8,12 @@
+ 
+ #include <linux/preempt.h>
+ #include <linux/smp.h>
++#include <linux/percpu.h>
+ 
+ #include <asm/mmu.h>
+ 
+-extern struct desc_struct cpu_gdt_table[NR_CPUS][GDT_ENTRIES];
++extern struct desc_struct cpu_gdt_table[GDT_ENTRIES];
++DECLARE_PER_CPU(struct desc_struct, cpu_gdt_table[GDT_ENTRIES]);
+ 
+ struct Xgt_desc_struct {
+ 	unsigned short size;
+@@ -44,7 +46,7 @@ __asm__ __volatile__ ("movw %w3,0(%2)\n\
+ 
+ static inline void __set_tss_desc(unsigned int cpu, unsigned int entry, void *addr)
+ {
+-	_set_tssldt_desc(&cpu_gdt_table[cpu][entry], (int)addr,
++	_set_tssldt_desc(&per_cpu(cpu_gdt_table, cpu)[entry], (int)addr,
+ 		offsetof(struct tss_struct, __cacheline_filler) - 1, 0x89);
+ }
+ 
+@@ -52,7 +54,7 @@ static inline void __set_tss_desc(unsign
+ 
+ static inline void set_ldt_desc(unsigned int cpu, void *addr, unsigned int size)
+ {
+-	_set_tssldt_desc(&cpu_gdt_table[cpu][GDT_ENTRY_LDT], (int)addr, ((size << 3)-1), 0x82);
++	_set_tssldt_desc(&per_cpu(cpu_gdt_table, cpu)[GDT_ENTRY_LDT], (int)addr, ((size << 3)-1), 0x82);
+ }
+ 
+ #define LDT_entry_a(info) \
+@@ -86,7 +88,7 @@ static inline void set_ldt_desc(unsigned
+ 
+ static inline void load_TLS(struct thread_struct *t, unsigned int cpu)
+ {
+-#define C(i) cpu_gdt_table[cpu][GDT_ENTRY_TLS_MIN + i] = t->tls_array[i]
++#define C(i) per_cpu(cpu_gdt_table, cpu)[GDT_ENTRY_TLS_MIN + i] = t->tls_array[i]
+ 	C(0); C(1); C(2);
+ #undef C
+ }
+_

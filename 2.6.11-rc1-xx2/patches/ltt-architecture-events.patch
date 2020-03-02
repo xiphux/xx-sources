@@ -1,0 +1,1724 @@
+
+From: Karim Yaghmour <karim@opersys.com>
+
+signed-off-by: Karim Yaghmour <karim@opersys.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/arm/kernel/entry-common.S |   18 +++++
+ 25-akpm/arch/arm/kernel/irq.c          |    5 +
+ 25-akpm/arch/arm/kernel/process.c      |    9 ++
+ 25-akpm/arch/arm/kernel/sys_arm.c      |    3 
+ 25-akpm/arch/arm/kernel/traps.c        |   73 ++++++++++++++++++++++++
+ 25-akpm/arch/i386/kernel/entry.S       |   18 +++++
+ 25-akpm/arch/i386/kernel/process.c     |    9 ++
+ 25-akpm/arch/i386/kernel/sys_i386.c    |    3 
+ 25-akpm/arch/i386/kernel/traps.c       |  100 ++++++++++++++++++++++++++++++++-
+ 25-akpm/arch/i386/mm/fault.c           |   21 +++++-
+ 25-akpm/arch/mips/kernel/irq.c         |    4 +
+ 25-akpm/arch/mips/kernel/traps.c       |   72 +++++++++++++++++++++++
+ 25-akpm/arch/mips/kernel/unaligned.c   |   11 +++
+ 25-akpm/arch/mips/mm/fault.c           |    6 +
+ 25-akpm/arch/ppc/kernel/entry.S        |   35 +++++++++++
+ 25-akpm/arch/ppc/kernel/misc.S         |    4 +
+ 25-akpm/arch/ppc/kernel/process.c      |   14 ++++
+ 25-akpm/arch/ppc/kernel/syscalls.c     |    3 
+ 25-akpm/arch/ppc/kernel/time.c         |    5 +
+ 25-akpm/arch/ppc/kernel/traps.c        |   76 +++++++++++++++++++++++++
+ 25-akpm/arch/ppc/mm/fault.c            |   16 ++++-
+ 25-akpm/arch/s390/kernel/entry.S       |    8 ++
+ 25-akpm/arch/s390/kernel/sys_s390.c    |    2 
+ 25-akpm/arch/s390/kernel/traps.c       |   23 +++++++
+ 25-akpm/arch/s390/mm/fault.c           |    9 ++
+ 25-akpm/arch/sh/kernel/irq.c           |    1 
+ 25-akpm/arch/sh/kernel/process.c       |    1 
+ 25-akpm/arch/sh/kernel/sys_sh.c        |    3 
+ 25-akpm/arch/sh/kernel/traps.c         |   78 +++++++++++++++++++++++++
+ 25-akpm/arch/sh/mm/fault.c             |   13 ++++
+ 25-akpm/include/asm-arm/ltt.h          |   15 ++++
+ 25-akpm/include/asm-i386/ltt.h         |   15 ++++
+ 25-akpm/include/asm-mips/ltt.h         |   15 ++++
+ 25-akpm/include/asm-ppc/ltt.h          |   30 +++++++++
+ 25-akpm/include/asm-s390/ltt.h         |   15 ++++
+ 25-akpm/include/asm-sh/ltt.h           |   15 ++++
+ 36 files changed, 737 insertions(+), 11 deletions(-)
+
+diff -puN arch/arm/kernel/entry-common.S~ltt-architecture-events arch/arm/kernel/entry-common.S
+--- 25/arch/arm/kernel/entry-common.S~ltt-architecture-events	2005-01-13 23:01:17.920472824 -0800
++++ 25-akpm/arch/arm/kernel/entry-common.S	2005-01-13 23:01:17.967465680 -0800
+@@ -29,6 +29,11 @@
+  * stack.
+  */
+ ret_fast_syscall:
++#if (CONFIG_LTT)
++	mov	r7, r0				@ save returned r0
++	bl	trace_real_syscall_exit
++	mov	r0, r7
++#endif
+ 	disable_irq r1				@ disable interrupts
+ 	ldr	r1, [tsk, #TI_FLAGS]
+ 	tst	r1, #_TIF_WORK_MASK
+@@ -126,6 +131,16 @@ ENTRY(vector_swi)
+ 	mcr	p15, 0, ip, c1, c0		@ update control register
+ #endif
+ 	enable_irq ip
++#if (CONFIG_LTT)
++	/* zzz note that validity of scno is not yet checked.
++	 * zzz The visualizer checks it.
++	 */
++	add	r1, sp, #S_R0			@ pointer to regs
++	mov	r0, scno  		        @ syscall number
++	bl	trace_real_syscall_entry
++	add	r1, sp, #S_R0			@ pointer to regs
++	ldmia	r1, {r0 - r3}			@ have to reload r0 - r3
++#endif
+ 
+ 	str	r4, [sp, #-S_OFF]!		@ push fifth arg
+ 
+@@ -166,6 +181,9 @@ __sys_trace:
+ 
+ __sys_trace_return:
+ 	str	r0, [sp, #S_R0 + S_OFF]!	@ save returned r0
++#if (CONFIG_LTT)
++	bl	trace_real_syscall_exit
++#endif
+ 	mov	r1, sp
+ 	mov	r0, #1				@ trace exit [IP = 1]
+ 	bl	syscall_trace
+diff -puN arch/arm/kernel/irq.c~ltt-architecture-events arch/arm/kernel/irq.c
+--- 25/arch/arm/kernel/irq.c~ltt-architecture-events	2005-01-13 23:01:17.921472672 -0800
++++ 25-akpm/arch/arm/kernel/irq.c	2005-01-13 23:01:17.968465528 -0800
+@@ -31,6 +31,7 @@
+ #include <linux/seq_file.h>
+ #include <linux/errno.h>
+ #include <linux/list.h>
++#include <linux/ltt-events.h>
+ #include <linux/kallsyms.h>
+ #include <linux/proc_fs.h>
+ 
+@@ -515,6 +516,8 @@ asmlinkage void asm_do_IRQ(unsigned int 
+ {
+ 	struct irqdesc *desc = irq_desc + irq;
+ 
++	ltt_ev_irq_entry(irq, !(user_mode(regs)));
++
+ 	/*
+ 	 * Some hardware gives randomly wrong interrupts.  Rather
+ 	 * than crashing, do something sensible.
+@@ -534,6 +537,8 @@ asmlinkage void asm_do_IRQ(unsigned int 
+ 
+ 	spin_unlock(&irq_controller_lock);
+ 	irq_exit();
++
++	ltt_ev_irq_exit();
+ }
+ 
+ void __set_irq_handler(unsigned int irq, irq_handler_t handle, int is_chained)
+diff -puN arch/arm/kernel/process.c~ltt-architecture-events arch/arm/kernel/process.c
+--- 25/arch/arm/kernel/process.c~ltt-architecture-events	2005-01-13 23:01:17.922472520 -0800
++++ 25-akpm/arch/arm/kernel/process.c	2005-01-13 23:01:17.969465376 -0800
+@@ -26,6 +26,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/kallsyms.h>
+ #include <linux/init.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/system.h>
+ #include <asm/io.h>
+@@ -421,6 +422,7 @@ asm(	".section .text\n"
+ pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
+ {
+ 	struct pt_regs regs;
++	long pid;
+ 
+ 	memset(&regs, 0, sizeof(regs));
+ 
+@@ -430,7 +432,12 @@ pid_t kernel_thread(int (*fn)(void *), v
+ 	regs.ARM_pc = (unsigned long)kernel_thread_helper;
+ 	regs.ARM_cpsr = SVC_MODE;
+ 
+-	return do_fork(flags|CLONE_VM|CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
++	pid = do_fork(flags|CLONE_VM|CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
++#if (CONFIG_LTT)
++	if(pid >= 0)
++		ltt_ev_process(LTT_EV_PROCESS_KTHREAD, pid, (int) fn);
++#endif
++	return pid;
+ }
+ EXPORT_SYMBOL(kernel_thread);
+ 
+diff -puN arch/arm/kernel/sys_arm.c~ltt-architecture-events arch/arm/kernel/sys_arm.c
+--- 25/arch/arm/kernel/sys_arm.c~ltt-architecture-events	2005-01-13 23:01:17.924472216 -0800
++++ 25-akpm/arch/arm/kernel/sys_arm.c	2005-01-13 23:01:17.969465376 -0800
+@@ -26,6 +26,7 @@
+ #include <linux/fs.h>
+ #include <linux/file.h>
+ #include <linux/utsname.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/ipc.h>
+@@ -167,6 +168,8 @@ asmlinkage int sys_ipc(uint call, int fi
+ 	version = call >> 16; /* hack for backward compatibility */
+ 	call &= 0xffff;
+ 
++	ltt_ev_ipc(LTT_EV_IPC_CALL, call, first);
++
+ 	switch (call) {
+ 	case SEMOP:
+ 		return sys_semop(first, (struct sembuf __user *)ptr, second);
+diff -puN arch/arm/kernel/traps.c~ltt-architecture-events arch/arm/kernel/traps.c
+--- 25/arch/arm/kernel/traps.c~ltt-architecture-events	2005-01-13 23:01:17.926471912 -0800
++++ 25-akpm/arch/arm/kernel/traps.c	2005-01-13 23:01:17.970465224 -0800
+@@ -20,6 +20,7 @@
+ #include <linux/ptrace.h>
+ #include <linux/kallsyms.h>
+ #include <linux/init.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/atomic.h>
+ #include <asm/cacheflush.h>
+@@ -200,6 +201,69 @@ void show_stack(struct task_struct *tsk,
+ 	barrier();
+ }
+ 
++#if (CONFIG_LTT)
++asmlinkage void trace_real_syscall_entry(int scno,struct pt_regs * regs)
++{
++	int			depth = 0;
++	unsigned long           end_code;
++	unsigned long		*fp;			/* frame pointer */
++	unsigned long		lower_bound;
++	unsigned long		lr;			/* link register */
++	unsigned long		*prev_fp;
++	int			seek_depth;
++	unsigned long           start_code;
++	unsigned long           *start_stack;
++	ltt_syscall_entry	trace_syscall_event;
++	unsigned long		upper_bound;
++	int			use_bounds;
++	int			use_depth;
++
++	trace_syscall_event.syscall_id = (uint8_t)scno;
++	trace_syscall_event.address    = instruction_pointer(regs);
++
++	if (! (user_mode(regs) ))
++		goto trace_syscall_end;
++
++	if (ltt_get_trace_config(&use_depth, &use_bounds, &seek_depth,
++				(void*)&lower_bound, (void*)&upper_bound) < 0)
++		goto trace_syscall_end;
++
++	if ((use_depth == 1) || (use_bounds == 1)) {
++		fp          = (unsigned long *)regs->ARM_fp;
++		end_code    = current->mm->end_code;
++		start_code  = current->mm->start_code;
++		start_stack = (unsigned long *)current->mm->start_stack;
++
++		while (!__get_user(lr, (unsigned long *)(fp - 1))) {
++			if ((lr > start_code) && (lr < end_code)) {
++				if (((use_depth == 1) && (depth >= seek_depth)) ||
++				    ((use_bounds == 1) && (lr > lower_bound) && (lr < upper_bound))) {
++					trace_syscall_event.address = lr;
++					goto trace_syscall_end;
++				} else {
++					depth++;
++				}
++			}
++
++			if ((__get_user((unsigned long)prev_fp, (fp - 3))) ||
++			    (prev_fp > start_stack) ||
++			    (prev_fp <= fp)) {
++				goto trace_syscall_end;
++			}
++			fp = prev_fp;
++		}
++	}
++
++trace_syscall_end:
++	ltt_log_event(LTT_EV_SYSCALL_ENTRY, &trace_syscall_event);
++}
++
++asmlinkage void trace_real_syscall_exit(void)
++{
++        ltt_log_event(LTT_EV_SYSCALL_EXIT, NULL);
++}
++#endif /* (CONFIG_LTT) */
++
+ spinlock_t die_lock = SPIN_LOCK_UNLOCKED;
+ 
+ /*
+@@ -307,8 +371,12 @@ asmlinkage void do_undefinstr(struct pt_
+ 	info.si_code  = ILL_ILLOPC;
+ 	info.si_addr  = pc;
+ 
++	ltt_ev_trap_entry(current->thread.trap_no, (uint32_t)pc);
++
+ 	force_sig_info(SIGILL, &info, current);
+ 
++	ltt_ev_trap_exit();
++
+ 	die_if_kernel("Oops - undefined instruction", regs, 0);
+ }
+ 
+@@ -512,7 +580,12 @@ baddataabort(int code, unsigned long ins
+ 	info.si_code  = ILL_ILLOPC;
+ 	info.si_addr  = (void __user *)addr;
+ 
++	ltt_ev_trap_entry(18, addr);	/* machine check */
++
+ 	force_sig_info(SIGILL, &info, current);
++
++	ltt_ev_trap_exit();
++
+ 	die_if_kernel("unknown data abort code", regs, instr);
+ }
+ 
+diff -puN arch/i386/kernel/entry.S~ltt-architecture-events arch/i386/kernel/entry.S
+--- 25/arch/i386/kernel/entry.S~ltt-architecture-events	2005-01-13 23:01:17.928471608 -0800
++++ 25-akpm/arch/i386/kernel/entry.S	2005-01-13 23:01:17.971465072 -0800
+@@ -250,9 +250,27 @@ ENTRY(system_call)
+ 	cmpl $(nr_syscalls), %eax
+ 	jae syscall_badsys
+ syscall_call:
++#if (CONFIG_LTT)
++	movl syscall_entry_trace_active, %eax
++	cmpl $1, %eax                   # are we tracing system call entries
++	jne no_syscall_entry_trace
++	movl %esp, %eax                 # copy the stack pointer
++	pushl %eax                      # pass the stack pointer copy
++	call trace_real_syscall_entry
++	addl $4,%esp                    # return stack to state before pass
++no_syscall_entry_trace:
++	movl ORIG_EAX(%esp),%eax	# restore eax to it's original content
++#endif
+ 	call *sys_call_table(,%eax,4)
+ 	movl %eax,EAX(%esp)		# store the return value
+ syscall_exit:
++#if (CONFIG_LTT)
++	movl syscall_exit_trace_active, %eax
++	cmpl $1, %eax                   # are we tracing system call exits
++	jne no_syscall_exit_trace
++	call trace_real_syscall_exit
++no_syscall_exit_trace:
++#endif
+ 	cli				# make sure we don't miss an interrupt
+ 					# setting need_resched or sigpending
+ 					# between sampling and the iret
+diff -puN arch/i386/kernel/process.c~ltt-architecture-events arch/i386/kernel/process.c
+--- 25/arch/i386/kernel/process.c~ltt-architecture-events	2005-01-13 23:01:17.929471456 -0800
++++ 25-akpm/arch/i386/kernel/process.c	2005-01-13 23:01:17.972464920 -0800
+@@ -36,6 +36,7 @@
+ #include <linux/module.h>
+ #include <linux/kallsyms.h>
+ #include <linux/ptrace.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
+@@ -297,6 +298,7 @@ __asm__(".section .text\n"
+ int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
+ {
+ 	struct pt_regs regs;
++	long pid;
+ 
+ 	memset(&regs, 0, sizeof(regs));
+ 
+@@ -311,7 +313,12 @@ int kernel_thread(int (*fn)(void *), voi
+ 	regs.eflags = X86_EFLAGS_IF | X86_EFLAGS_SF | X86_EFLAGS_PF | 0x2;
+ 
+ 	/* Ok, create the new process.. */
+-	return do_fork(flags | CLONE_VM | CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
++	pid = do_fork(flags | CLONE_VM | CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
++#if (CONFIG_LTT)
++	if(pid >= 0)
++		ltt_ev_process(LTT_EV_PROCESS_KTHREAD, pid, (int) fn);
++#endif
++	return pid;
+ }
+ 
+ /*
+diff -puN arch/i386/kernel/sys_i386.c~ltt-architecture-events arch/i386/kernel/sys_i386.c
+--- 25/arch/i386/kernel/sys_i386.c~ltt-architecture-events	2005-01-13 23:01:17.930471304 -0800
++++ 25-akpm/arch/i386/kernel/sys_i386.c	2005-01-13 23:01:17.972464920 -0800
+@@ -19,6 +19,7 @@
+ #include <linux/mman.h>
+ #include <linux/file.h>
+ #include <linux/utsname.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/ipc.h>
+@@ -136,6 +137,8 @@ asmlinkage int sys_ipc (uint call, int f
+ 	version = call >> 16; /* hack for backward compatibility */
+ 	call &= 0xffff;
+ 
++	ltt_ev_ipc(LTT_EV_IPC_CALL, call, first);
++
+ 	switch (call) {
+ 	case SEMOP:
+ 		return sys_semtimedop (first, (struct sembuf __user *)ptr, second, NULL);
+diff -puN arch/i386/kernel/traps.c~ltt-architecture-events arch/i386/kernel/traps.c
+--- 25/arch/i386/kernel/traps.c~ltt-architecture-events	2005-01-13 23:01:17.932471000 -0800
++++ 25-akpm/arch/i386/kernel/traps.c	2005-01-13 23:01:17.974464616 -0800
+@@ -27,6 +27,7 @@
+ #include <linux/ptrace.h>
+ #include <linux/utsname.h>
+ #include <linux/kprobes.h>
++#include <linux/ltt-events.h>
+ 
+ #ifdef CONFIG_EISA
+ #include <linux/ioport.h>
+@@ -293,6 +294,73 @@ bug:
+ 	printk("Kernel BUG\n");
+ }
+ 
++/* Trace related code */
++#if (CONFIG_LTT)
++asmlinkage void trace_real_syscall_entry(struct pt_regs *regs)
++{
++	int use_depth;
++	int use_bounds;
++	int depth = 0;
++	int seek_depth;
++	unsigned long lower_bound;
++	unsigned long upper_bound;
++	unsigned long addr;
++	unsigned long *stack;
++	ltt_syscall_entry trace_syscall_event;
++
++	/* Set the syscall ID */
++	trace_syscall_event.syscall_id = (uint8_t) regs->orig_eax;
++
++	/* Set the address in any case */
++	trace_syscall_event.address = regs->eip;
++
++	/* Are we in the kernel (This is a kernel thread)? */
++	if (!(regs->xcs & 3))
++		/* Don't go digining anywhere */
++		goto trace_syscall_end;
++
++	/* Get the trace configuration */
++	if (ltt_get_trace_config(&use_depth, &use_bounds, &seek_depth,
++				(void *) &lower_bound, (void *) &upper_bound) < 0)
++		goto trace_syscall_end;
++
++	/* Do we have to search for an eip address range */
++	if ((use_depth == 1) || (use_bounds == 1)) {
++		/* Start at the top of the stack (bottom address since stacks grow downward) */
++		stack = (unsigned long *) regs->esp;
++
++		/* Keep on going until we reach the end of the process' stack limit (wherever it may be) */
++		while (!get_user(addr, stack)) {
++			/* Does this LOOK LIKE an address in the program */
++			if ((addr > current->mm->start_code)
++			    && (addr < current->mm->end_code)) {
++				/* Does this address fit the description */
++				if (((use_depth == 1) && (depth == seek_depth))
++				    || ((use_bounds == 1) && (addr > lower_bound) && (addr < upper_bound))) {
++					/* Set the address */
++					trace_syscall_event.address = addr;
++
++					/* We're done */
++					goto trace_syscall_end;
++				} else
++					/* We're one depth more */
++					depth++;
++			}
++			/* Go on to the next address */
++			stack++;
++		}
++	}
++trace_syscall_end:
++	/* Trace the event */
++	ltt_log_event(LTT_EV_SYSCALL_ENTRY, &trace_syscall_event);
++}
++
++asmlinkage void trace_real_syscall_exit(void)
++{
++	ltt_log_event(LTT_EV_SYSCALL_EXIT, NULL);
++}
++#endif				/* (CONFIG_LTT) */
++
+ void die(const char * str, struct pt_regs * regs, long err)
+ {
+ 	static struct {
+@@ -361,6 +429,8 @@ static inline void die_if_kernel(const c
+ static void do_trap(int trapnr, int signr, char *str, int vm86,
+ 			   struct pt_regs * regs, long error_code, siginfo_t *info)
+ {
++        ltt_ev_trap_entry(trapnr, regs->eip);
++
+ 	if (regs->eflags & VM_MASK) {
+ 		if (vm86)
+ 			goto vm86_trap;
+@@ -378,20 +448,24 @@ static void do_trap(int trapnr, int sign
+ 			force_sig_info(signr, info, tsk);
+ 		else
+ 			force_sig(signr, tsk);
++		ltt_ev_trap_exit();
+ 		return;
+ 	}
+ 
+ 	kernel_trap: {
+ 		if (!fixup_exception(regs))
+ 			die(str, regs, error_code);
++		ltt_ev_trap_exit();
+ 		return;
+ 	}
+ 
+ 	vm86_trap: {
+ 		int ret = handle_vm86_trap((struct kernel_vm86_regs *) regs, error_code, trapnr);
+ 		if (ret) goto trap_signal;
++		ltt_ev_trap_exit();
+ 		return;
+ 	}
++	ltt_ev_trap_exit();
+ }
+ 
+ #define DO_ERROR(trapnr, signr, str, name) \
+@@ -493,12 +567,16 @@ fastcall void do_general_protection(stru
+ 
+ 	current->thread.error_code = error_code;
+ 	current->thread.trap_no = 13;
++        ltt_ev_trap_entry(13, regs->eip);
+ 	force_sig(SIGSEGV, current);
++        ltt_ev_trap_exit();
+ 	return;
+ 
+ gp_in_vm86:
+ 	local_irq_enable();
++        ltt_ev_trap_entry(13, regs->eip);
+ 	handle_vm86_fault((struct kernel_vm86_regs *) regs, error_code);
++        ltt_ev_trap_exit();
+ 	return;
+ 
+ gp_in_kernel:
+@@ -579,6 +657,12 @@ static void default_do_nmi(struct pt_reg
+ 	/* Only the BSP gets external NMIs from the system.  */
+ 	if (!smp_processor_id())
+ 		reason = get_nmi_reason();
++
++#ifndef CONFIG_X86_LOCAL_APIC
++/* On machines with APIC enabled, NMIs are used to implement a watchdog
++and will hang the machine if traced. */
++	ltt_ev_trap_entry(2, regs->eip);
++#endif
+  
+ 	if (!(reason & 0xc0)) {
+ 		if (notify_die(DIE_NMI_IPI, "nmi_ipi", regs, reason, 0, SIGINT)
+@@ -595,6 +679,9 @@ static void default_do_nmi(struct pt_reg
+ 		}
+ #endif
+ 		unknown_nmi_error(reason, regs);
++#ifndef CONFIG_X86_LOCAL_APIC
++	        ltt_ev_trap_exit();
++#endif
+ 		return;
+ 	}
+ 	if (notify_die(DIE_NMI, "nmi", regs, reason, 0, SIGINT) == NOTIFY_STOP)
+@@ -608,6 +695,10 @@ static void default_do_nmi(struct pt_reg
+ 	 * as it's edge-triggered.
+ 	 */
+ 	reassert_nmi();
++
++#ifndef CONFIG_X86_LOCAL_APIC
++        ltt_ev_trap_exit();
++#endif
+ }
+ 
+ static int dummy_nmi_callback(struct pt_regs * regs, int cpu)
+@@ -726,7 +817,9 @@ fastcall void do_debug(struct pt_regs * 
+ 	}
+ 
+ 	/* Ok, finally something we can handle */
++	ltt_ev_trap_entry(1, regs->eip);
+ 	send_sigtrap(tsk, regs, error_code);
++	ltt_ev_trap_exit();
+ 
+ 	/* Disable additional traps. They'll be re-enabled when
+ 	 * the signal is delivered.
+@@ -738,7 +831,9 @@ clear_dr7:
+ 	return;
+ 
+ debug_vm86:
++        ltt_ev_trap_entry(1, regs->eip);
+ 	handle_vm86_trap((struct kernel_vm86_regs *) regs, error_code, 1);
++        ltt_ev_trap_exit();
+ 	return;
+ 
+ clear_TF_reenable:
+@@ -889,10 +984,12 @@ fastcall void do_simd_coprocessor_error(
+ fastcall void do_spurious_interrupt_bug(struct pt_regs * regs,
+ 					  long error_code)
+ {
++        ltt_ev_trap_entry(16, regs->eip);
+ #if 0
+ 	/* No need to warn about this any longer. */
+ 	printk("Ignoring P6 Local APIC Spurious Interrupt Bug...\n");
+ #endif
++        ltt_ev_trap_exit();
+ }
+ 
+ /*
+@@ -923,8 +1020,10 @@ asmlinkage void math_emulate(long arg)
+ {
+ 	printk("math-emulation not enabled and no coprocessor found.\n");
+ 	printk("killing %s.\n",current->comm);
++        ltt_ev_trap_entry(7, 0);
+ 	force_sig(SIGFPE,current);
+ 	schedule();
++        ltt_ev_trap_exit();
+ }
+ 
+ #endif /* CONFIG_MATH_EMULATION */
+@@ -956,7 +1055,6 @@ do { \
+ 	 "3" ((char *) (addr)),"2" ((seg) << 16)); \
+ } while (0)
+ 
+-
+ /*
+  * This needs to use 'idt_table' rather than 'idt', and
+  * thus use the _nonmapped_ version of the IDT, as the
+diff -puN arch/i386/mm/fault.c~ltt-architecture-events arch/i386/mm/fault.c
+--- 25/arch/i386/mm/fault.c~ltt-architecture-events	2005-01-13 23:01:17.933470848 -0800
++++ 25-akpm/arch/i386/mm/fault.c	2005-01-13 23:01:17.975464464 -0800
+@@ -21,6 +21,7 @@
+ #include <linux/vt_kern.h>		/* For unblank_screen() */
+ #include <linux/highmem.h>
+ #include <linux/module.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/system.h>
+ #include <asm/uaccess.h>
+@@ -267,6 +268,8 @@ fastcall void do_page_fault(struct pt_re
+ 	if (in_atomic() || !mm)
+ 		goto bad_area_nosemaphore;
+ 
++	ltt_ev_trap_entry(14, regs->eip);
++
+ 	/* When running in the kernel we expect faults to occur only to
+ 	 * addresses in user space.  All other faults represent errors in the
+ 	 * kernel and should generate an OOPS.  Unfortunatly, in the case of an
+@@ -364,6 +367,7 @@ good_area:
+ 			tsk->thread.screen_bitmap |= 1 << bit;
+ 	}
+ 	up_read(&mm->mmap_sem);
++        ltt_ev_trap_exit();
+ 	return;
+ 
+ /*
+@@ -406,6 +410,7 @@ bad_area_nosemaphore:
+ 
+ 		if (nr == 6) {
+ 			do_invalid_op(regs, 0);
++			ltt_ev_trap_exit();
+ 			return;
+ 		}
+ 	}
+@@ -413,16 +418,20 @@ bad_area_nosemaphore:
+ 
+ no_context:
+ 	/* Are we prepared to handle this kernel fault?  */
+-	if (fixup_exception(regs))
++	if (fixup_exception(regs)) {
++		ltt_ev_trap_exit();
+ 		return;
++	}
+ 
+ 	/* 
+ 	 * Valid to do another page fault here, because if this fault
+ 	 * had been triggered by is_prefetch fixup_exception would have 
+ 	 * handled it.
+ 	 */
+- 	if (is_prefetch(regs, address, error_code))
++ 	if (is_prefetch(regs, address, error_code)) {
++		ltt_ev_trap_exit();
+  		return;
++	}
+ 
+ /*
+  * Oops. The kernel tried to access some bad page. We'll have to
+@@ -491,8 +500,10 @@ do_sigbus:
+ 		goto no_context;
+ 
+ 	/* User space => ok to do another page fault */
+-	if (is_prefetch(regs, address, error_code))
++	if (is_prefetch(regs, address, error_code)) {
++		ltt_ev_trap_exit();
+ 		return;
++	}
+ 
+ 	tsk->thread.cr2 = address;
+ 	tsk->thread.error_code = error_code;
+@@ -502,6 +513,7 @@ do_sigbus:
+ 	info.si_code = BUS_ADRERR;
+ 	info.si_addr = (void __user *)address;
+ 	force_sig_info(SIGBUS, &info, tsk);
++        ltt_ev_trap_exit();
+ 	return;
+ 
+ vmalloc_fault:
+@@ -547,6 +559,9 @@ vmalloc_fault:
+ 		pte_k = pte_offset_kernel(pmd_k, address);
+ 		if (!pte_present(*pte_k))
+ 			goto no_context;
++		ltt_ev_trap_entry(14, regs->eip);
++		ltt_ev_trap_exit();
+ 		return;
+ 	}
++	ltt_ev_trap_exit();
+ }
+diff -puN arch/mips/kernel/irq.c~ltt-architecture-events arch/mips/kernel/irq.c
+--- 25/arch/mips/kernel/irq.c~ltt-architecture-events	2005-01-13 23:01:17.934470696 -0800
++++ 25-akpm/arch/mips/kernel/irq.c	2005-01-13 23:01:17.976464312 -0800
+@@ -49,8 +49,12 @@ asmlinkage unsigned int do_IRQ(unsigned 
+ {
+ 	irq_enter();
+ 
++	ltt_ev_irq_entry(irq, !(user_mode(regs)));
++
+ 	__do_IRQ(irq, regs);
+ 
++	ltt_ev_irq_exit();
++
+ 	irq_exit();
+ 
+ 	return 1;
+diff -puN arch/mips/kernel/traps.c~ltt-architecture-events arch/mips/kernel/traps.c
+--- 25/arch/mips/kernel/traps.c~ltt-architecture-events	2005-01-13 23:01:17.936470392 -0800
++++ 25-akpm/arch/mips/kernel/traps.c	2005-01-13 23:01:17.977464160 -0800
+@@ -501,6 +501,7 @@ asmlinkage void do_ov(struct pt_regs *re
+  */
+ asmlinkage void do_fpe(struct pt_regs *regs, unsigned long fcr31)
+ {
++	ltt_ev_trap_entry(CAUSE_EXCCODE(regs), CAUSE_EPC(regs));
+ 	if (fcr31 & FPU_CSR_UNI_X) {
+ 		int sig;
+ 
+@@ -640,6 +641,8 @@ asmlinkage void do_cpu(struct pt_regs *r
+ 
+ 	die_if_kernel("do_cpu invoked from kernel context!", regs);
+ 
++	ltt_ev_trap_entry(CAUSE_EXCCODE(regs), CAUSE_EPC(regs));
++
+ 	cpid = (regs->cp0_cause >> CAUSEB_CE) & 3;
+ 
+ 	switch (cpid) {
+@@ -1060,3 +1063,72 @@ void __init trap_init(void)
+ 
+ 	flush_icache_range(CAC_BASE, CAC_BASE + 0x400);
+ }
++
++#if (CONFIG_LTT)
++asmlinkage void trace_real_syscall_entry(struct pt_regs * regs)
++{
++	unsigned long       addr;
++	int                 depth = 0;
++	unsigned long       end_code;
++	unsigned long       lower_bound;
++	int                 seek_depth;
++	unsigned long       *stack;
++	unsigned long       start_code;
++	unsigned long       *start_stack;
++	ltt_syscall_entry trace_syscall_event;
++	unsigned long       upper_bound;
++	int                 use_bounds;
++	int                 use_depth;
++
++	/* syscall_id will be negative for SVR4, IRIX5, BSD43, and POSIX
++	 * syscalls -- these are not supported at this point by LTT
++	 */
++	trace_syscall_event.syscall_id = (uint8_t) (regs->regs[2] - __NR_Linux);
++
++	trace_syscall_event.address  = regs->cp0_epc;
++
++	if (!user_mode(regs))
++		goto trace_syscall_end;
++
++	if (trace_get_config(&use_depth, &use_bounds, &seek_depth,
++			(void*)&lower_bound, (void*)&upper_bound) < 0)
++		goto trace_syscall_end;
++
++	/* Heuristic that might work:
++	 * (BUT DOESN'T WORK for any of the cases I tested...) zzz
++	 * Search through stack until a value is found that is within the
++	 * range start_code .. end_code.  (This is looking for a return
++	 * pointer to where a shared library was called from.)  If a stack
++	 * variable contains a valid code address then an incorrect
++	 * result will be generated.
++	 */
++	if ((use_depth == 1) || (use_bounds == 1)) {
++		stack       = (unsigned long*) regs->regs[29];
++		end_code    = current->mm->end_code;
++		start_code  = current->mm->start_code;
++		start_stack = (unsigned long *)current->mm->start_stack;
++
++		while ((stack <= start_stack) && (!__get_user(addr, stack))) {
++			if ((addr > start_code) && (addr < end_code)) {
++				if (((use_depth  == 1) && (depth == seek_depth)) ||
++				    ((use_bounds == 1) && (addr > lower_bound) && (addr < upper_bound))) {
++					trace_syscall_event.address = addr;
++					goto trace_syscall_end;
++				} else {
++					depth++;
++				}
++			}
++		stack++;
++		}
++	}
++
++trace_syscall_end:
++	trace_event(LTT_EV_SYSCALL_ENTRY, &trace_syscall_event);
++}
++
++asmlinkage void trace_real_syscall_exit(void)
++{
++        trace_event(LTT_EV_SYSCALL_EXIT, NULL);
++}
++
++#endif /* (CONFIG_LTT) */
+diff -puN arch/mips/kernel/unaligned.c~ltt-architecture-events arch/mips/kernel/unaligned.c
+--- 25/arch/mips/kernel/unaligned.c~ltt-architecture-events	2005-01-13 23:01:17.937470240 -0800
++++ 25-akpm/arch/mips/kernel/unaligned.c	2005-01-13 23:01:17.978464008 -0800
+@@ -78,6 +78,7 @@
+ #include <linux/signal.h>
+ #include <linux/smp.h>
+ #include <linux/smp_lock.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/asm.h>
+ #include <asm/branch.h>
+@@ -497,14 +498,18 @@ asmlinkage void do_ade(struct pt_regs *r
+ 	mm_segment_t seg;
+ 	unsigned long pc;
+ 
++	ltt_ev_trap_entry(CAUSE_EXCCODE(regs), CAUSE_EPC(regs));
++
+ 	/*
+ 	 * Address errors may be deliberately induced by the FPU emulator to
+ 	 * retake control of the CPU after executing the instruction in the
+ 	 * delay slot of an emulated branch.
+ 	 */
+ 	/* Terminate if exception was recognized as a delay slot return */
+-	if (do_dsemulret(regs))
++	if (do_dsemulret(regs)) {
++		ltt_ev_trap_exit();
+ 		return;
++	}
+ 
+ 	/* Otherwise handle as normal */
+ 
+@@ -538,6 +543,8 @@ asmlinkage void do_ade(struct pt_regs *r
+ 	}
+ 	set_fs(seg);
+ 
++	ltt_ev_trap_exit();
++
+ 	return;
+ 
+ sigbus:
+@@ -547,4 +554,6 @@ sigbus:
+ 	/*
+ 	 * XXX On return from the signal handler we should advance the epc
+ 	 */
++
++	ltt_ev_trap_exit();
+ }
+diff -puN arch/mips/mm/fault.c~ltt-architecture-events arch/mips/mm/fault.c
+--- 25/arch/mips/mm/fault.c~ltt-architecture-events	2005-01-13 23:01:17.938470088 -0800
++++ 25-akpm/arch/mips/mm/fault.c	2005-01-13 23:01:17.978464008 -0800
+@@ -60,6 +60,8 @@ asmlinkage void do_page_fault(struct pt_
+ 	if (unlikely(address >= VMALLOC_START))
+ 		goto vmalloc_fault;
+ 
++	ltt_ev_trap_entry(CAUSE_EXCCODE(regs), CAUSE_EPC(regs));
++
+ 	/*
+ 	 * If we're in an interrupt or have no user
+ 	 * context, we must not take the fault..
+@@ -114,6 +116,7 @@ survive:
+ 	}
+ 
+ 	up_read(&mm->mmap_sem);
++	ltt_ev_trap_exit();
+ 	return;
+ 
+ /*
+@@ -142,6 +145,7 @@ bad_area_nosemaphore:
+ 		/* info.si_code has been set above */
+ 		info.si_addr = (void *) address;
+ 		force_sig_info(SIGSEGV, &info, tsk);
++		ltt_ev_trap_exit();
+ 		return;
+ 	}
+ 
+@@ -199,6 +203,7 @@ do_sigbus:
+ 	info.si_addr = (void *) address;
+ 	force_sig_info(SIGBUS, &info, tsk);
+ 
++	ltt_ev_trap_exit();
+ 	return;
+ 
+ vmalloc_fault:
+@@ -233,4 +238,5 @@ vmalloc_fault:
+ 			goto no_context;
+ 		return;
+ 	}
++	ltt_ev_trap_exit();
+ }
+diff -puN arch/ppc/kernel/entry.S~ltt-architecture-events arch/ppc/kernel/entry.S
+--- 25/arch/ppc/kernel/entry.S~ltt-architecture-events	2005-01-13 23:01:17.940469784 -0800
++++ 25-akpm/arch/ppc/kernel/entry.S	2005-01-13 23:01:17.979463856 -0800
+@@ -158,6 +158,34 @@ transfer_to_handler_cont:
+ 	SYNC
+ 	RFI				/* jump to handler, enable MMU */
+ 
++/* LTT stuff */
++#if (CONFIG_LTT)
++#define TRACE_REAL_ASM_SYSCALL_ENTRY	\
++	SAVE_NVGPRS(r1);	\
++	addi	r3,r1,STACK_FRAME_OVERHEAD;  	/* Put pointer to registers into r3 */	\
++	mflr	r29;				/* Save LR */ \
++	bl	trace_real_syscall_entry;	/* Call real trace function */ \
++	mtlr	r29;				/* Restore LR */ \
++	lwz	r0,GPR0(r1);			/* Restore original registers */ \
++	lwz	r3,GPR3(r1);	\
++	lwz	r4,GPR4(r1);	\
++	lwz	r5,GPR5(r1);	\
++	lwz	r6,GPR6(r1);	\
++	lwz	r7,GPR7(r1);	\
++	lwz	r8,GPR8(r1);	\
++	REST_NVGPRS(r1);
++#define TRACE_REAL_ASM_SYSCALL_EXIT \
++	bl	trace_real_syscall_exit;	/* Call real trace function */ \
++	lwz	r0,GPR0(r1);			/* Restore original registers */ \
++	lwz	r3,RESULT(r1); \
++	lwz	r4,GPR4(r1); \
++	lwz	r5,GPR5(r1); \
++	lwz	r6,GPR6(r1); \
++	lwz	r7,GPR7(r1); \
++	lwz	r8,GPR8(r1); \
++	addi	r9,r1,STACK_FRAME_OVERHEAD;
++#endif
++
+ /*
+  * On kernel stack overflow, load up an initial stack pointer
+  * and call StackOverflow(regs), which should not return.
+@@ -215,6 +243,9 @@ syscall_dotrace_cont:
+ 	bge-	66f
+ 	lwzx	r10,r10,r0	/* Fetch system call handler [ptr] */
+ 	mtlr	r10
++#if (CONFIG_LTT)
++ 	TRACE_REAL_ASM_SYSCALL_ENTRY ;
++#endif
+ 	addi	r9,r1,STACK_FRAME_OVERHEAD
+ 	blrl			/* Call handler */
+ 	.globl	ret_from_syscall
+@@ -222,6 +253,10 @@ ret_from_syscall:
+ #ifdef SHOW_SYSCALLS
+ 	bl	do_show_syscall_exit
+ #endif
++#if (CONFIG_LTT)
++	stw	r3,RESULT(r1)	/* Save result */
++ 	TRACE_REAL_ASM_SYSCALL_EXIT ;
++#endif
+ 	mr	r6,r3
+ 	li	r11,-_LAST_ERRNO
+ 	cmplw	0,r3,r11
+diff -puN arch/ppc/kernel/misc.S~ltt-architecture-events arch/ppc/kernel/misc.S
+--- 25/arch/ppc/kernel/misc.S~ltt-architecture-events	2005-01-13 23:01:17.941469632 -0800
++++ 25-akpm/arch/ppc/kernel/misc.S	2005-01-13 23:01:17.980463704 -0800
+@@ -1130,7 +1130,11 @@ _GLOBAL(cvt_df)
+  * Create a kernel thread
+  *   kernel_thread(fn, arg, flags)
+  */
++#if (CONFIG_LTT)
++_GLOBAL(original_kernel_thread)
++#else
+ _GLOBAL(kernel_thread)
++#endif /* (CONFIG_LTT) */
+ 	stwu	r1,-16(r1)
+ 	stw	r30,8(r1)
+ 	stw	r31,12(r1)
+diff -puN arch/ppc/kernel/process.c~ltt-architecture-events arch/ppc/kernel/process.c
+--- 25/arch/ppc/kernel/process.c~ltt-architecture-events	2005-01-13 23:01:17.943469328 -0800
++++ 25-akpm/arch/ppc/kernel/process.c	2005-01-13 23:01:17.981463552 -0800
+@@ -37,6 +37,7 @@
+ #include <linux/kallsyms.h>
+ #include <linux/mqueue.h>
+ #include <linux/hardirq.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/pgtable.h>
+ #include <asm/uaccess.h>
+@@ -364,6 +365,19 @@ void show_regs(struct pt_regs * regs)
+ 	show_stack(current, (unsigned long *) regs->gpr[1]);
+ }
+ 
++#if (CONFIG_LTT)
++long original_kernel_thread(int (*fn) (void *), void* arg, unsigned long flags);
++long kernel_thread(int (*fn) (void *), void* arg, unsigned long flags)
++{
++        long   retval;
++
++	retval = original_kernel_thread(fn, arg, flags);
++	if (retval > 0)
++		ltt_ev_process(LTT_EV_PROCESS_KTHREAD, retval, (int) fn);
++	return retval;
++}
++#endif /* (CONFIG_LTT) */
++
+ void exit_thread(void)
+ {
+ 	if (last_task_used_math == current)
+diff -puN arch/ppc/kernel/syscalls.c~ltt-architecture-events arch/ppc/kernel/syscalls.c
+--- 25/arch/ppc/kernel/syscalls.c~ltt-architecture-events	2005-01-13 23:01:17.944469176 -0800
++++ 25-akpm/arch/ppc/kernel/syscalls.c	2005-01-13 23:01:17.981463552 -0800
+@@ -36,6 +36,7 @@
+ #include <linux/utsname.h>
+ #include <linux/file.h>
+ #include <linux/unistd.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/ipc.h>
+@@ -59,6 +60,8 @@ sys_ipc (uint call, int first, int secon
+ 	version = call >> 16; /* hack for backward compatibility */
+ 	call &= 0xffff;
+ 
++	ltt_ev_ipc(LTT_EV_IPC_CALL, call, first);
++
+ 	ret = -ENOSYS;
+ 	switch (call) {
+ 	case SEMOP:
+diff -puN arch/ppc/kernel/time.c~ltt-architecture-events arch/ppc/kernel/time.c
+--- 25/arch/ppc/kernel/time.c~ltt-architecture-events	2005-01-13 23:01:17.945469024 -0800
++++ 25-akpm/arch/ppc/kernel/time.c	2005-01-13 23:01:17.982463400 -0800
+@@ -57,6 +57,7 @@
+ #include <linux/time.h>
+ #include <linux/init.h>
+ #include <linux/profile.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/segment.h>
+ #include <asm/io.h>
+@@ -136,6 +137,8 @@ void timer_interrupt(struct pt_regs * re
+ 	if (atomic_read(&ppc_n_lost_interrupts) != 0)
+ 		do_IRQ(regs);
+ 
++ 	ltt_ev_trap_entry(regs->trap, instruction_pointer(regs));
++
+ 	irq_enter();
+ 
+ 	while ((next_dec = tb_ticks_per_jiffy - tb_delta(&jiffy_stamp)) <= 0) {
+@@ -194,6 +197,8 @@ void timer_interrupt(struct pt_regs * re
+ 		ppc_md.heartbeat();
+ 
+ 	irq_exit();
++
++ 	ltt_ev_trap_exit();
+ }
+ 
+ /*
+diff -puN arch/ppc/kernel/traps.c~ltt-architecture-events arch/ppc/kernel/traps.c
+--- 25/arch/ppc/kernel/traps.c~ltt-architecture-events	2005-01-13 23:01:17.947468720 -0800
++++ 25-akpm/arch/ppc/kernel/traps.c	2005-01-13 23:01:17.983463248 -0800
+@@ -31,6 +31,7 @@
+ #include <linux/init.h>
+ #include <linux/module.h>
+ #include <linux/prctl.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/pgtable.h>
+ #include <asm/uaccess.h>
+@@ -601,6 +602,81 @@ void StackOverflow(struct pt_regs *regs)
+ 	panic("kernel stack overflow");
+ }
+ 
++/* Trace related code */
++#if (CONFIG_LTT)
++asmlinkage void trace_real_syscall_entry(struct pt_regs *regs)
++{
++	int use_depth;
++	int use_bounds;
++	int depth = 0;
++	int seek_depth;
++	unsigned long lower_bound;
++	unsigned long upper_bound;
++	unsigned long addr;
++	unsigned long *stack;
++	ltt_syscall_entry trace_syscall_event;
++
++	/* Set the syscall ID */
++	trace_syscall_event.syscall_id = (uint8_t) regs->gpr[0];
++
++	/* Set the address in any case */
++	trace_syscall_event.address = instruction_pointer(regs);
++
++	/* Are we in the kernel (This is a kernel thread)? */
++	if (!user_mode(regs))
++		/* Don't go digining anywhere */
++		goto trace_syscall_end;
++
++	/* Get the trace configuration */
++	if (ltt_get_trace_config(&use_depth, &use_bounds, &seek_depth,
++				(void *) &lower_bound, (void *) &upper_bound) < 0)
++		goto trace_syscall_end;
++
++	/* Do we have to search for an eip address range */
++	if ((use_depth == 1) || (use_bounds == 1)) {
++		/* Start at the top of the stack (bottom address since stacks grow downward) */
++		stack = (unsigned long *) regs->gpr[1];
++
++		/* Skip over first stack frame as the return address isn't valid */
++		if (get_user(addr, stack))
++			goto trace_syscall_end;
++		stack = (unsigned long *) addr;
++
++		/* Keep on going until we reach the end of the process' stack limit (wherever it may be) */
++		while (!get_user(addr, stack + 1)) {	/* "stack + 1", since this is where the IP is */
++			/* Does this LOOK LIKE an address in the program */
++			if ((addr > current->mm->start_code)
++			    && (addr < current->mm->end_code)) {
++				/* Does this address fit the description */
++				if (((use_depth == 1) && (depth == seek_depth))
++				    || ((use_bounds == 1) && (addr > lower_bound) && (addr < upper_bound))) {
++					/* Set the address */
++					trace_syscall_event.address = addr;
++
++					/* We're done */
++					goto trace_syscall_end;
++				} else
++					/* We're one depth more */
++					depth++;
++			}
++			/* Go on to the next address */
++			if (get_user(addr, stack))
++				goto trace_syscall_end;
++			stack = (unsigned long *) addr;
++		}
++	}
++trace_syscall_end:
++	/* Trace the event */
++	ltt_log_event(LTT_EV_SYSCALL_ENTRY, &trace_syscall_event);
++}
++
++asmlinkage void trace_real_syscall_exit(void)
++{
++	ltt_log_event(LTT_EV_SYSCALL_EXIT, NULL);
++}
++
++#endif				/* (CONFIG_LTT) */
++
+ void nonrecoverable_exception(struct pt_regs *regs)
+ {
+ 	printk(KERN_ERR "Non-recoverable exception at PC=%lx MSR=%lx\n",
+diff -puN arch/ppc/mm/fault.c~ltt-architecture-events arch/ppc/mm/fault.c
+--- 25/arch/ppc/mm/fault.c~ltt-architecture-events	2005-01-13 23:01:17.949468416 -0800
++++ 25-akpm/arch/ppc/mm/fault.c	2005-01-13 23:01:17.984463096 -0800
+@@ -28,6 +28,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/highmem.h>
+ #include <linux/module.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/page.h>
+ #include <asm/pgtable.h>
+@@ -116,22 +117,29 @@ int do_page_fault(struct pt_regs *regs, 
+ 		is_write = error_code & 0x02000000;
+ #endif /* CONFIG_4xx || CONFIG_BOOKE */
+ 
++	ltt_ev_trap_entry(regs->trap, instruction_pointer(regs));
++
+ #if defined(CONFIG_XMON) || defined(CONFIG_KGDB)
+ 	if (debugger_fault_handler && TRAP(regs) == 0x300) {
+ 		debugger_fault_handler(regs);
++		ltt_ev_trap_exit();
+ 		return 0;
+ 	}
+ #if !(defined(CONFIG_4xx) || defined(CONFIG_BOOKE))
+ 	if (error_code & 0x00400000) {
+ 		/* DABR match */
+-		if (debugger_dabr_match(regs))
++		if (debugger_dabr_match(regs)) {
++			ltt_ev_trap_exit();;
+ 			return 0;
++		}
+ 	}
+ #endif /* !(CONFIG_4xx || CONFIG_BOOKE)*/
+ #endif /* CONFIG_XMON || CONFIG_KGDB */
+ 
+-	if (in_atomic() || mm == NULL)
++	if (in_atomic() || mm == NULL) {
++		ltt_ev_trap_exit();
+ 		return SIGSEGV;
++	}
+ 
+ 	down_read(&mm->mmap_sem);
+ 	vma = find_vma(mm, address);
+@@ -228,6 +236,7 @@ good_area:
+ 			_tlbie(address);
+ 			pte_unmap(ptep);
+ 			up_read(&mm->mmap_sem);
++			ltt_ev_trap_exit();
+ 			return 0;
+ 		}
+ 		if (ptep != NULL)
+@@ -283,6 +292,7 @@ bad_area:
+ 		info.si_code = code;
+ 		info.si_addr = (void __user *) address;
+ 		force_sig_info(SIGSEGV, &info, current);
++		ltt_ev_trap_exit();
+ 		return 0;
+ 	}
+ 
+@@ -302,6 +312,7 @@ out_of_memory:
+ 	printk("VM: killing process %s\n", current->comm);
+ 	if (user_mode(regs))
+ 		do_exit(SIGKILL);
++	ltt_ev_trap_exit();
+ 	return SIGKILL;
+ 
+ do_sigbus:
+@@ -311,6 +322,7 @@ do_sigbus:
+ 	info.si_code = BUS_ADRERR;
+ 	info.si_addr = (void __user *)address;
+ 	force_sig_info (SIGBUS, &info, current);
++	ltt_ev_trap_exit();
+ 	if (!user_mode(regs))
+ 		return SIGBUS;
+ 	return 0;
+diff -puN arch/s390/kernel/entry.S~ltt-architecture-events arch/s390/kernel/entry.S
+--- 25/arch/s390/kernel/entry.S~ltt-architecture-events	2005-01-13 23:01:17.950468264 -0800
++++ 25-akpm/arch/s390/kernel/entry.S	2005-01-13 23:01:17.985462944 -0800
+@@ -7,6 +7,7 @@
+  *    Author(s): Martin Schwidefsky (schwidefsky@de.ibm.com),
+  *               Hartmut Penner (hp@de.ibm.com),
+  *               Denis Joseph Barrow (djbarrow@de.ibm.com,barrow_dj@yahoo.com),
++ *  Portions added by T. Halloran: (C) Copyright 2002 IBM Poughkeepsie, IBM Corporation
+  */
+ 
+ #include <linux/sys.h>
+@@ -216,6 +217,13 @@ sysc_do_restart:
+                                   # ATTENTION: check sys_execve_glue before
+                                   # changing anything here !!
+ 
++#if (CONFIG_LTT) /* tjh - ltt port */
++        /* add call to trace_real_syscall_exit */
++        la      %r2,SP_PTREGS(%r15)   # load pt_regs as first parameter
++        l       %r1,BASED(.Ltracesysext)
++        basr    %r14,%r1
++        lm      %r0,%r6,SP_R0(%r15) /* restore call clobbered regs */
++#endif
+ sysc_return:
+ 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
+ 	bno	BASED(sysc_leave)
+diff -puN arch/s390/kernel/sys_s390.c~ltt-architecture-events arch/s390/kernel/sys_s390.c
+--- 25/arch/s390/kernel/sys_s390.c~ltt-architecture-events	2005-01-13 23:01:17.951468112 -0800
++++ 25-akpm/arch/s390/kernel/sys_s390.c	2005-01-13 23:01:17.985462944 -0800
+@@ -151,6 +151,8 @@ asmlinkage long sys_ipc(uint call, int f
+         struct ipc_kludge tmp;
+ 	int ret;
+ 
++        ltt_ev_ipc(LTT_EV_IPC_CALL, call, first);
++
+         switch (call) {
+         case SEMOP:
+ 		return sys_semtimedop (first, (struct sembuf __user *) ptr, second,
+diff -puN arch/s390/kernel/traps.c~ltt-architecture-events arch/s390/kernel/traps.c
+--- 25/arch/s390/kernel/traps.c~ltt-architecture-events	2005-01-13 23:01:17.953467808 -0800
++++ 25-akpm/arch/s390/kernel/traps.c	2005-01-13 23:01:17.987462640 -0800
+@@ -5,6 +5,7 @@
+  *    Copyright (C) 1999,2000 IBM Deutschland Entwicklung GmbH, IBM Corporation
+  *    Author(s): Martin Schwidefsky (schwidefsky@de.ibm.com),
+  *               Denis Joseph Barrow (djbarrow@de.ibm.com,barrow_dj@yahoo.com),
++ *  Portions added by T. Halloran: (C) Copyright 2002 IBM Poughkeepsie, IBM Corporation
+  *
+  *  Derived from "arch/i386/kernel/traps.c"
+  *    Copyright (C) 1991, 1992 Linus Torvalds
+@@ -29,6 +30,7 @@
+ #include <linux/delay.h>
+ #include <linux/module.h>
+ #include <linux/kallsyms.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/system.h>
+ #include <asm/uaccess.h>
+@@ -311,6 +313,9 @@ report_user_fault(long interruption_code
+ static void inline do_trap(long interruption_code, int signr, char *str,
+                            struct pt_regs *regs, siginfo_t *info)
+ {
++         trapid_t ltt_interruption_code;
++         char * ic_ptr = (char *) &ltt_interruption_code;
++
+ 	/*
+ 	 * We got all needed information from the lowcore and can
+ 	 * now safely switch on interrupts.
+@@ -318,6 +323,10 @@ static void inline do_trap(long interrup
+         if (regs->psw.mask & PSW_MASK_PSTATE)
+ 		local_irq_enable();
+ 
++	memset(&ltt_interruption_code,0,sizeof(ltt_interruption_code));
++	memcpy(ic_ptr+4,&interruption_code,sizeof(interruption_code));
++	ltt_ev_trap_entry(ltt_interruption_code, (regs->psw.addr & PSW_ADDR_INSN));
++
+         if (regs->psw.mask & PSW_MASK_PSTATE) {
+                 struct task_struct *tsk = current;
+ 
+@@ -332,6 +341,7 @@ static void inline do_trap(long interrup
+                 else
+                         die(str, regs, interruption_code);
+         }
++	ltt_ev_trap_exit();
+ }
+ 
+ static inline void *get_check_address(struct pt_regs *regs)
+@@ -428,6 +438,8 @@ asmlinkage void illegal_op(struct pt_reg
+ 	siginfo_t info;
+         __u8 opcode[6];
+ 	__u16 *location;
++        trapid_t ltt_interruption_code;
++        char * ic_ptr = (char *) &ltt_interruption_code;
+ 	int signal = 0;
+ 
+ 	location = (__u16 *) get_check_address(regs);
+@@ -490,6 +502,7 @@ asmlinkage void illegal_op(struct pt_reg
+ 		do_trap(interruption_code, signal,
+ 			"illegal operation", regs, &info);
+ 	}
++	ltt_ev_trap_exit();
+ }
+ 
+ 
+@@ -499,6 +512,8 @@ specification_exception(struct pt_regs *
+ {
+         __u8 opcode[6];
+ 	__u16 *location = NULL;
++        trapid_t ltt_interruption_code;
++        char * ic_ptr = (char *) &ltt_interruption_code;
+ 	int signal = 0;
+ 
+ 	location = (__u16 *) get_check_address(regs);
+@@ -554,6 +569,7 @@ specification_exception(struct pt_regs *
+ 		do_trap(interruption_code, signal, 
+ 			"specification exception", regs, &info);
+ 	}
++	ltt_ev_trap_exit();
+ }
+ #else
+ DO_ERROR_INFO(SIGILL, "specification exception", specification_exception,
+@@ -563,6 +579,8 @@ DO_ERROR_INFO(SIGILL, "specification exc
+ asmlinkage void data_exception(struct pt_regs * regs, long interruption_code)
+ {
+ 	__u16 *location;
++        trapid_t ltt_interruption_code;
++        char * ic_ptr = (char *) &ltt_interruption_code;
+ 	int signal = 0;
+ 
+ 	location = (__u16 *) get_check_address(regs);
+@@ -574,6 +592,10 @@ asmlinkage void data_exception(struct pt
+ 	if (regs->psw.mask & PSW_MASK_PSTATE)
+ 		local_irq_enable();
+ 
++	memset(&ltt_interruption_code,0,sizeof(ltt_interruption_code));
++	memcpy(ic_ptr+4,&interruption_code,sizeof(interruption_code));
++	ltt_ev_trap_entry(ltt_interruption_code, (regs->psw.addr & PSW_ADDR_INSN));
++
+ 	if (MACHINE_HAS_IEEE)
+ 		__asm__ volatile ("stfpc %0\n\t" 
+ 				  : "=m" (current->thread.fp_regs.fpc));
+@@ -649,6 +671,7 @@ asmlinkage void data_exception(struct pt
+ 		do_trap(interruption_code, signal, 
+ 			"data exception", regs, &info);
+ 	}
++	ltt_ev_trap_exit();
+ }
+ 
+ asmlinkage void space_switch_exception(struct pt_regs * regs, long int_code)
+diff -puN arch/s390/mm/fault.c~ltt-architecture-events arch/s390/mm/fault.c
+--- 25/arch/s390/mm/fault.c~ltt-architecture-events	2005-01-13 23:01:17.954467656 -0800
++++ 25-akpm/arch/s390/mm/fault.c	2005-01-13 23:01:17.988462488 -0800
+@@ -5,6 +5,7 @@
+  *    Copyright (C) 1999 IBM Deutschland Entwicklung GmbH, IBM Corporation
+  *    Author(s): Hartmut Penner (hp@de.ibm.com)
+  *               Ulrich Weigand (uweigand@de.ibm.com)
++ *  Portions added by T. Halloran: (C) Copyright 2002 IBM Poughkeepsie, IBM Corporation
+  *
+  *  Derived from "arch/i386/mm/fault.c"
+  *    Copyright (C) 1995  Linus Torvalds
+@@ -169,6 +170,8 @@ do_exception(struct pt_regs *regs, unsig
+ 	int user_address;
+ 	const struct exception_table_entry *fixup;
+ 	int si_code = SEGV_MAPERR;
++	trapid_t ltt_interruption_code;
++	char * ic_ptr = (char *) &ltt_interruption_code;
+ 
+         tsk = current;
+         mm = tsk->mm;
+@@ -216,6 +219,9 @@ do_exception(struct pt_regs *regs, unsig
+ 	 */
+ 	local_irq_enable();
+ 
++        memset(&ltt_interruption_code,0,sizeof(ltt_interruption_code));
++        memcpy(ic_ptr+4,&error_code,sizeof(error_code));
++        ltt_ev_trap_entry(ltt_interruption_code,(regs->psw.addr & PSW_ADDR_INSN));
+         down_read(&mm->mmap_sem);
+ 
+         vma = find_vma(mm, address);
+@@ -283,6 +289,7 @@ bad_area:
+                 tsk->thread.prot_addr = address;
+                 tsk->thread.trap_no = error_code;
+ 		do_sigsegv(regs, error_code, si_code, address);
++                ltt_ev_trap_exit();
+                 return;
+ 	}
+ 
+@@ -338,6 +345,8 @@ do_sigbus:
+ 	/* Kernel mode? Handle exceptions or die */
+ 	if (!(regs->psw.mask & PSW_MASK_PSTATE))
+ 		goto no_context;
++
++	ltt_ev_trap_exit();
+ }
+ 
+ void do_protection_exception(struct pt_regs *regs, unsigned long error_code)
+diff -puN arch/sh/kernel/irq.c~ltt-architecture-events arch/sh/kernel/irq.c
+--- 25/arch/sh/kernel/irq.c~ltt-architecture-events	2005-01-13 23:01:17.956467352 -0800
++++ 25-akpm/arch/sh/kernel/irq.c	2005-01-13 23:01:17.988462488 -0800
+@@ -32,6 +32,7 @@
+ #include <linux/seq_file.h>
+ #include <linux/kallsyms.h>
+ #include <linux/bitops.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/system.h>
+ #include <asm/io.h>
+diff -puN arch/sh/kernel/process.c~ltt-architecture-events arch/sh/kernel/process.c
+--- 25/arch/sh/kernel/process.c~ltt-architecture-events	2005-01-13 23:01:17.957467200 -0800
++++ 25-akpm/arch/sh/kernel/process.c	2005-01-13 23:01:17.989462336 -0800
+@@ -20,6 +20,7 @@
+ #include <linux/ptrace.h>
+ #include <linux/platform.h>
+ #include <linux/kallsyms.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/io.h>
+ #include <asm/uaccess.h>
+diff -puN arch/sh/kernel/sys_sh.c~ltt-architecture-events arch/sh/kernel/sys_sh.c
+--- 25/arch/sh/kernel/sys_sh.c~ltt-architecture-events	2005-01-13 23:01:17.958467048 -0800
++++ 25-akpm/arch/sh/kernel/sys_sh.c	2005-01-13 23:01:17.989462336 -0800
+@@ -21,6 +21,7 @@
+ #include <linux/mman.h>
+ #include <linux/file.h>
+ #include <linux/utsname.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/ipc.h>
+@@ -166,6 +167,8 @@ asmlinkage int sys_ipc(uint call, int fi
+ 	version = call >> 16; /* hack for backward compatibility */
+ 	call &= 0xffff;
+ 
++	ltt_ev_ipc(LTT_EV_IPC_CALL, call, first);
++
+ 	if (call <= SEMCTL)
+ 		switch (call) {
+ 		case SEMOP:
+diff -puN arch/sh/kernel/traps.c~ltt-architecture-events arch/sh/kernel/traps.c
+--- 25/arch/sh/kernel/traps.c~ltt-architecture-events	2005-01-13 23:01:17.960466744 -0800
++++ 25-akpm/arch/sh/kernel/traps.c	2005-01-13 23:01:17.990462184 -0800
+@@ -27,6 +27,7 @@
+ #include <linux/spinlock.h>
+ #include <linux/module.h>
+ #include <linux/kallsyms.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/system.h>
+ #include <asm/uaccess.h>
+@@ -500,6 +501,8 @@ asmlinkage void do_address_error(struct 
+ 
+ 	asm volatile("stc       r2_bank,%0": "=r" (error_code));
+ 
++	ltt_ev_trap_entry(error_code >> 5, regs->pc);
++
+ 	oldfs = get_fs();
+ 
+ 	if (user_mode(regs)) {
+@@ -523,8 +526,10 @@ asmlinkage void do_address_error(struct 
+ 		tmp = handle_unaligned_access(instruction, regs);
+ 		set_fs(oldfs);
+ 
+-		if (tmp==0)
+-			return; /* sorted */
++		if (tmp==0) {
++			ltt_ev_trap_exit();
++ 			return; /* sorted */
++		}
+ 
+ 	uspace_segv:
+ 		printk(KERN_NOTICE "Killing process \"%s\" due to unaligned access\n", current->comm);
+@@ -545,6 +550,7 @@ asmlinkage void do_address_error(struct 
+ 		handle_unaligned_access(instruction, regs);
+ 		set_fs(oldfs);
+ 	}
++	ltt_ev_trap_exit();
+ }
+ 
+ #ifdef CONFIG_SH_DSP
+@@ -704,6 +710,74 @@ void show_task(unsigned long *sp)
+ {
+ 	show_stack(NULL, sp);
+ }
++/* Trace related code */
++#if (CONFIG_LTT)
++asmlinkage void trace_real_syscall_entry(struct pt_regs *regs)
++{
++	int use_depth;
++	int use_bounds;
++	int depth = 0;
++	int seek_depth;
++	unsigned long lower_bound;
++	unsigned long upper_bound;
++	unsigned long addr;
++	unsigned long *stack;
++	ltt_syscall_entry trace_syscall_event;
++
++	/* Set the syscall ID */
++	trace_syscall_event.syscall_id = (uint8_t) regs->regs[REG_REG0 + 3];
++
++	/* Set the address in any case */
++	trace_syscall_event.address = regs->pc;
++
++	/* Are we in the kernel (This is a kernel thread)? */
++	if (!user_mode(regs))
++		/* Don't go digining anywhere */
++		goto trace_syscall_end;
++
++	/* Get the trace configuration */
++	if (ltt_get_trace_config(&use_depth, &use_bounds, &seek_depth,
++				(void *) &lower_bound, (void *) &upper_bound) < 0)
++		goto trace_syscall_end;
++
++	/* Do we have to search for an eip address range */
++	if ((use_depth == 1) || (use_bounds == 1)) {
++		/* Start at the top of the stack (bottom address since stacks grow downward) */
++		stack = (unsigned long *) regs->regs[REG_REG15];
++
++		/* Keep on going until we reach the end of the process' stack limit (wherever it may be) */
++		while (!get_user(addr, stack)) {
++			/* Does this LOOK LIKE an address in the program */
++			/* TODO: does this work with shared libraries?? - Greg Banks */
++			if ((addr > current->mm->start_code) && (addr < current->mm->end_code)) {
++				/* Does this address fit the description */
++				if (((use_depth == 1) && (depth == seek_depth))
++				    || ((use_bounds == 1) && (addr > lower_bound)
++					&& (addr < upper_bound))) {
++					/* Set the address */
++					trace_syscall_event.address = addr;
++
++					/* We're done */
++					goto trace_syscall_end;
++				} else
++					/* We're one depth more */
++					depth++;
++			}
++			/* Go on to the next address */
++			stack++;
++		}
++	}
++trace_syscall_end:
++	/* Trace the event */
++	ltt_log_event(LTT_EV_SYSCALL_ENTRY, &trace_syscall_event);
++}
++
++asmlinkage void trace_real_syscall_exit(void)
++{
++	ltt_log_event(LTT_EV_SYSCALL_EXIT, NULL);
++}
++
++#endif				/* (CONFIG_LTT) */
+ 
+ void dump_stack(void)
+ {
+diff -puN arch/sh/mm/fault.c~ltt-architecture-events arch/sh/mm/fault.c
+--- 25/arch/sh/mm/fault.c~ltt-architecture-events	2005-01-13 23:01:17.961466592 -0800
++++ 25-akpm/arch/sh/mm/fault.c	2005-01-13 23:01:17.991462032 -0800
+@@ -21,6 +21,7 @@
+ #include <linux/smp_lock.h>
+ #include <linux/interrupt.h>
+ #include <linux/module.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/system.h>
+ #include <asm/io.h>
+@@ -53,6 +54,14 @@ asmlinkage void do_page_fault(struct pt_
+ 	tsk = current;
+ 	mm = tsk->mm;
+ 
++#if (CONFIG_LTT)
++	{
++		unsigned long trapnr;
++		asm volatile("stc       r2_bank,%0": "=r" (trapnr));
++		ltt_ev_trap_entry(trapnr >> 5, regs->pc);  /* trap 4,5 or 6 */
++	}
++#endif
++
+ 	/*
+ 	 * If we're in an interrupt or have no user
+ 	 * context, we must not take the fault..
+@@ -106,6 +115,7 @@ survive:
+ 	}
+ 
+ 	up_read(&mm->mmap_sem);
++	ltt_ev_trap_exit();
+ 	return;
+ 
+ /*
+@@ -119,6 +129,7 @@ bad_area:
+ 		tsk->thread.address = address;
+ 		tsk->thread.error_code = writeaccess;
+ 		force_sig(SIGSEGV, tsk);
++		ltt_ev_trap_exit();
+ 		return;
+ 	}
+ 
+@@ -185,6 +196,8 @@ do_sigbus:
+ 	/* Kernel mode? Handle exceptions or die */
+ 	if (!user_mode(regs))
+ 		goto no_context;
++
++	ltt_ev_trap_exit();
+ }
+ 
+ /*
+diff -puN /dev/null include/asm-arm/ltt.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-arm/ltt.h	2005-01-13 23:01:17.991462032 -0800
+@@ -0,0 +1,15 @@
++/*
++ * linux/include/asm-arm/ltt.h
++ *
++ * Copyright (C) 2002, Karim Yaghmour
++ *
++ * ARM definitions for tracing system
++ */
++
++#include <linux/ltt-events.h>
++
++/* Current arch type */
++#define LTT_ARCH_TYPE LTT_ARCH_TYPE_ARM
++
++/* Current variant type */
++#define LTT_ARCH_VARIANT LTT_ARCH_VARIANT_NONE
+diff -puN /dev/null include/asm-i386/ltt.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-i386/ltt.h	2005-01-13 23:01:17.992461880 -0800
+@@ -0,0 +1,15 @@
++/*
++ * linux/include/asm-i386/ltt.h
++ *
++ * Copyright (C) 2002, Karim Yaghmour
++ *
++ * i386 definitions for tracing system
++ */
++
++#include <linux/ltt-events.h>
++
++/* Current arch type */
++#define LTT_ARCH_TYPE LTT_ARCH_TYPE_I386
++
++/* Current variant type */
++#define LTT_ARCH_VARIANT LTT_ARCH_VARIANT_NONE
+diff -puN /dev/null include/asm-mips/ltt.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-mips/ltt.h	2005-01-13 23:01:17.992461880 -0800
+@@ -0,0 +1,15 @@
++/*
++ * linux/include/asm-mips/ltt.h
++ *
++ * Copyright (C) 2002, Karim Yaghmour
++ *
++ * MIPS definitions for tracing system
++ */
++
++#include <linux/ltt-events.h>
++
++/* Current arch type */
++#define LTT_ARCH_TYPE LTT_ARCH_TYPE_MIPS
++
++/* Current variant type */
++#define LTT_ARCH_VARIANT LTT_ARCH_VARIANT_NONE
+diff -puN /dev/null include/asm-ppc/ltt.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-ppc/ltt.h	2005-01-13 23:01:17.992461880 -0800
+@@ -0,0 +1,30 @@
++/*
++ * linux/include/asm-ppc/ltt.h
++ *
++ * Copyright (C) 2002, Karim Yaghmour
++ *
++ * PowerPC definitions for tracing system
++ */
++
++#include <linux/config.h>
++#include <linux/ltt-events.h>
++
++/* Current arch type */
++#define LTT_ARCH_TYPE LTT_ARCH_TYPE_PPC
++
++/* PowerPC variants */
++#define LTT_ARCH_VARIANT_PPC_4xx          1   /* 4xx systems (IBM embedded series) */
++#define LTT_ARCH_VARIANT_PPC_6xx          2   /* 6xx/7xx/74xx/8260/POWER3 systems (desktop flavor) */
++#define LTT_ARCH_VARIANT_PPC_8xx          3   /* 8xx system (Motoral embedded series) */
++#define LTT_ARCH_VARIANT_PPC_ISERIES      4   /* 8xx system (iSeries) */
++
++/* Current variant type */
++#if defined(CONFIG_4xx)
++#define LTT_ARCH_VARIANT LTT_ARCH_VARIANT_PPC_4xx
++#elif defined(CONFIG_6xx)
++#define LTT_ARCH_VARIANT LTT_ARCH_VARIANT_PPC_6xx
++#elif defined(CONFIG_8xx)
++#define LTT_ARCH_VARIANT LTT_ARCH_VARIANT_PPC_8xx
++#elif defined(CONFIG_PPC_ISERIES)
++#define LTT_ARCH_VARIANT LTT_ARCH_VARIANT_PPC_ISERIES
++#endif
+diff -puN /dev/null include/asm-s390/ltt.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-s390/ltt.h	2005-01-13 23:01:17.992461880 -0800
+@@ -0,0 +1,15 @@
++/*
++ * linux/include/asm-s390/ltt.h
++ *
++ * Copyright (C) 2002, Karim Yaghmour
++ *
++ * S/390 definitions for tracing system
++ */
++
++#include <linux/ltt-events.h>
++
++/* Current arch type */
++#define LTT_ARCH_TYPE LTT_ARCH_TYPE_S390
++
++/* Current variant type */
++#define LTT_ARCH_VARIANT LTT_ARCH_VARIANT_NONE
+diff -puN /dev/null include/asm-sh/ltt.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/ltt.h	2005-01-13 23:01:17.993461728 -0800
+@@ -0,0 +1,15 @@
++/*
++ * linux/include/asm-sh/ltt.h
++ *
++ * Copyright (C) 2002, Karim Yaghmour
++ *
++ * SuperH definitions for tracing system
++ */
++
++#include <linux/ltt-events.h>
++
++/* Current arch type */
++#define LTT_ARCH_TYPE LTT_ARCH_TYPE_SH
++
++/* Current variant type */
++#define LTT_ARCH_VARIANT LTT_ARCH_VARIANT_NONE
+_

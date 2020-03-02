@@ -1,0 +1,47 @@
+
+From: Andy Whitcroft <apw@shadowen.org>
+
+(Comment changes only)
+
+The bootmem allocator is initialised before the kernel virtual address
+space has been fully established.  As a result, any allocations which are
+made before paging_init() has completed may point to invalid kernel
+addresses.  This patch notes this limitation and indicates where the
+allocator is fully available.
+
+Signed-off-by: Andy Whitcroft <apw@shadowen.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/setup.c |   11 ++++++++++-
+ 1 files changed, 10 insertions(+), 1 deletion(-)
+
+diff -puN arch/i386/kernel/setup.c~i386-bootmem-restrictions arch/i386/kernel/setup.c
+--- 25/arch/i386/kernel/setup.c~i386-bootmem-restrictions	2004-08-30 00:51:38.353812352 -0700
++++ 25-akpm/arch/i386/kernel/setup.c	2004-08-30 00:51:38.357811744 -0700
+@@ -1355,7 +1355,12 @@ void __init setup_arch(char **cmdline_p)
+ 
+ 	/*
+ 	 * NOTE: before this point _nobody_ is allowed to allocate
+-	 * any memory using the bootmem allocator.
++	 * any memory using the bootmem allocator.  Although the
++	 * alloctor is now initialised only the first 8Mb of the kernel
++	 * virtual address space has been mapped.  All allocations before
++	 * paging_init() has completed must use the alloc_bootmem_low_pages()
++	 * variant (which allocates DMA'able memory) and care must be taken
++	 * not to exceed the 8Mb limit.
+ 	 */
+ 
+ #ifdef CONFIG_SMP
+@@ -1363,6 +1368,10 @@ void __init setup_arch(char **cmdline_p)
+ #endif
+ 	paging_init();
+ 
++	/*
++	 * NOTE: at this point the bootmem allocator is fully available.
++	 */
++
+ #ifdef CONFIG_EARLY_PRINTK
+ 	{
+ 		char *s = strstr(*cmdline_p, "earlyprintk=");
+_

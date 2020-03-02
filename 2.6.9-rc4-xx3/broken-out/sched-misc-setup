@@ -1,0 +1,476 @@
+Index: xx-sources/include/linux/sched.h
+===================================================================
+--- xx-sources.orig/include/linux/sched.h	2004-10-02 15:53:22.235823032 -0400
++++ xx-sources/include/linux/sched.h	2004-10-02 16:10:51.106370472 -0400
+@@ -165,6 +165,7 @@
+ extern void null_sched_init(void);
+ extern void sched_init(void);
+ extern void sched_init_smp(void);
++extern void sched_misc_init(void);
+ extern void init_idle(task_t *idle, int cpu);
+ 
+ extern cpumask_t nohz_cpu_mask;
+Index: xx-sources/include/linux/scheduler.h
+===================================================================
+--- xx-sources.orig/include/linux/scheduler.h	2004-10-02 15:53:22.235823032 -0400
++++ xx-sources/include/linux/scheduler.h	2004-10-02 15:58:51.293798616 -0400
+@@ -63,6 +63,9 @@
+ #if defined(CONFIG_PREEMPT)
+ typedef asmlinkage void (preempt_schedule_fn) (void);
+ #endif
++#if defined(CONFIG_SYSCTL)
++typedef void (sysctl_register_fn)(void);
++#endif
+ 
+ struct scheduler_s
+ {
+@@ -128,6 +131,9 @@
+ #if defined(CONFIG_PREEMPT)
+ 	preempt_schedule_fn *preempt_schedule_fn;
+ #endif
++#if defined(CONFIG_SYSCTL)
++	sysctl_register_fn *sysctl_register_fn;
++#endif
+ 
+ 	const char *name;
+ 	const char *version;
+Index: xx-sources/init/main.c
+===================================================================
+--- xx-sources.orig/init/main.c	2004-10-02 15:53:22.240822272 -0400
++++ xx-sources/init/main.c	2004-10-02 16:11:14.807767312 -0400
+@@ -660,6 +660,8 @@
+ 	sysctl_init();
+ #endif
+ 
++	sched_misc_init();
++
+ 	/* Networking initialization needs a process context */ 
+ 	sock_init();
+ 
+Index: xx-sources/kernel/default-sched.c
+===================================================================
+--- xx-sources.orig/kernel/default-sched.c	2004-10-02 15:53:22.245821512 -0400
++++ xx-sources/kernel/default-sched.c	2004-10-02 16:11:48.918581680 -0400
+@@ -4431,8 +4431,6 @@
+ 		}
+ 	}
+ 
+-	printk("Using %s scheduler\n", DEFAULT_SCHEDULER_NAME);
+-
+ 	/*
+ 	 * The boot idle thread does lazy MMU switching as well:
+ 	 */
+Index: xx-sources/kernel/nicksched-sched.c
+===================================================================
+--- xx-sources.orig/kernel/nicksched-sched.c	2004-10-02 15:54:06.192140656 -0400
++++ xx-sources/kernel/nicksched-sched.c	2004-10-02 16:12:03.193411576 -0400
+@@ -4240,42 +4240,6 @@
+ }
+ #endif /* CONFIG_SMP */
+ 
+-#if defined(CONFIG_SYSCTL)
+-static struct ctl_table_header *nicksched_table_header;
+-
+-enum
+-{
+-	NICKSCHED_CPU_SCHED_END_OF_LIST=0,
+-	NICKSCHED_CPU_BASE_TIMESLICE=1,
+-};
+-
+-static ctl_table nicksched_cpu_sched_table[] = {
+-	{
+-		.ctl_name	= NICKSCHED_CPU_BASE_TIMESLICE,
+-		.procname	= "base_timeslice",
+-		.data		= &nicksched_sched_base_timeslice,
+-		.maxlen		= sizeof (int),
+-		.mode		= 0644,
+-		.proc_handler	= &proc_dointvec_minmax,
+-		.strategy	= &sysctl_intvec,
+-		.extra1		= &nicksched_sched_min_base,
+-		.extra2		= &nicksched_sched_max_base,
+-	},
+-	{ .ctl_name = NICKSCHED_CPU_SCHED_END_OF_LIST }
+-};
+-
+-static ctl_table nicksched_root_table[] = {
+-	{
+-		.ctl_name	= CTL_SCHED,
+-		.procname	= "sched",
+-		.maxlen		= 0,
+-		.mode		= 0555,
+-		.child		= nicksched_cpu_sched_table,
+-	},
+-	{ .ctl_name = 0 }
+-};
+-#endif
+-
+ void __init nicksched_sched_init(void)
+ {
+ 	runqueue_t *rq;
+@@ -4311,11 +4275,6 @@
+ 		}
+ 	}
+ 
+-	printk("Using %s version %s\n", NICKSCHED_SCHEDULER_NAME, NICKSCHED_SCHEDULER_VERSION);
+-#if defined(CONFIG_SYSCTL)
+-	nicksched_table_header = register_sysctl_table(nicksched_root_table, 1);
+-#endif
+-
+ 	/*
+ 	 * The boot idle thread does lazy MMU switching as well:
+ 	 */
+@@ -4331,6 +4290,47 @@
+ 	nicksched_init_idle(current, smp_processor_id());
+ }
+ 
++#if defined(CONFIG_SYSCTL)
++static struct ctl_table_header *nicksched_table_header;
++
++enum
++{
++	NICKSCHED_CPU_SCHED_END_OF_LIST=0,
++	NICKSCHED_CPU_BASE_TIMESLICE=1,
++};
++
++static ctl_table nicksched_cpu_sched_table[] = {
++	{
++		.ctl_name	= NICKSCHED_CPU_BASE_TIMESLICE,
++		.procname	= "base_timeslice",
++		.data		= &nicksched_sched_base_timeslice,
++		.maxlen		= sizeof (int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec_minmax,
++		.strategy	= &sysctl_intvec,
++		.extra1		= &nicksched_sched_min_base,
++		.extra2		= &nicksched_sched_max_base,
++	},
++	{ .ctl_name = NICKSCHED_CPU_SCHED_END_OF_LIST }
++};
++
++static ctl_table nicksched_root_table[] = {
++	{
++		.ctl_name	= CTL_SCHED,
++		.procname	= "sched",
++		.maxlen		= 0,
++		.mode		= 0555,
++		.child		= nicksched_cpu_sched_table,
++	},
++	{ .ctl_name = 0 }
++};
++
++void __init nicksched_sysctl_register(void)
++{
++	nicksched_table_header = register_sysctl_table(nicksched_root_table, 1);
++}
++#endif
++
+ #ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
+ void __might_sleep(char *file, int line)
+ {
+@@ -4415,6 +4415,9 @@
+ #if defined(CONFIG_PREEMPT)
+ 	.preempt_schedule_fn = 			nicksched_preempt_schedule,
+ #endif
++#if defined(CONFIG_SYSCTL)
++	.sysctl_register_fn = 			nicksched_sysctl_register,
++#endif
+ 	
+ 	.name = 				NICKSCHED_SCHEDULER_NAME,
+ 	.version = 				NICKSCHED_SCHEDULER_VERSION,
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-10-02 15:53:22.483785336 -0400
++++ xx-sources/kernel/sched.c	2004-10-02 16:09:51.043501416 -0400
+@@ -461,6 +461,19 @@
+ 		current_scheduler->sched_init_smp_fn();
+ }
+ 
++void __init sched_misc_init(void)
++{
++#if defined(CONFIG_SYSCTL)
++	if (current_scheduler->sysctl_register_fn)
++		current_scheduler->sysctl_register_fn();
++#endif
++
++	printk("Using %s scheduler", current_scheduler->name);
++	if (current_scheduler->type != SCHED_DEFAULT)
++		printk(" version %s", current_scheduler->version);
++	printk("\n");
++}
++
+ 
+ #if defined(CONFIG_PREEMPT) && defined(__smp_processor_id)
+ /*
+Index: xx-sources/kernel/staircase-sched.c
+===================================================================
+--- xx-sources.orig/kernel/staircase-sched.c	2004-10-02 15:54:06.193140504 -0400
++++ xx-sources/kernel/staircase-sched.c	2004-10-02 16:12:11.705117600 -0400
+@@ -4084,48 +4084,6 @@
+ }
+ #endif /* CONFIG_SMP */
+ 
+-#if defined(CONFIG_SYSCTL)
+-static struct ctl_table_header *staircase_table_header;
+-
+-enum
+-{
+-	STAIRCASE_CPU_SCHED_END_OF_LIST=0,
+-	STAIRCASE_CPU_SCHED_INTERACTIVE=1,
+-	STAIRCASE_CPU_SCHED_COMPUTE,
+-};
+-
+-static ctl_table staircase_cpu_sched_table[] = {
+-	{
+-		.ctl_name	= STAIRCASE_CPU_SCHED_INTERACTIVE,
+-		.procname	= "interactive",
+-		.data		= &staircase_sched_interactive,
+-		.maxlen		= sizeof (int),
+-		.mode		= 0644,
+-		.proc_handler	= &proc_dointvec,
+-	},
+-	{
+-		.ctl_name	= STAIRCASE_CPU_SCHED_COMPUTE,
+-		.procname	= "compute",
+-		.data		= &staircase_sched_compute,
+-		.maxlen		= sizeof (int),
+-		.mode		= 0644,
+-		.proc_handler	= &proc_dointvec,
+-	},
+-	{ .ctl_name = STAIRCASE_CPU_SCHED_END_OF_LIST }
+-};
+-
+-static ctl_table staircase_root_table[] = {
+-	{
+-		.ctl_name	= CTL_SCHED,
+-		.procname	= "sched",
+-		.maxlen		= 0,
+-		.mode		= 0555,
+-		.child		= staircase_cpu_sched_table,
+-	},
+-	{ .ctl_name = 0 }
+-};
+-#endif
+-
+ void __init staircase_sched_init(void)
+ {
+ 	runqueue_t *rq;
+@@ -4160,11 +4118,6 @@
+ 		__set_bit(MAX_PRIO, rq->bitmap);
+ 	}
+ 
+-	printk("Using %s version %s\n", STAIRCASE_SCHEDULER_NAME, STAIRCASE_SCHEDULER_VERSION);
+-
+-#if defined(CONFIG_SYSCTL)
+-	staircase_table_header = register_sysctl_table(staircase_root_table, 1);
+-#endif
+ 	/*
+ 	 * The boot idle thread does lazy MMU switching as well:
+ 	 */
+@@ -4180,6 +4133,53 @@
+ 	staircase_init_idle(current, smp_processor_id());
+ }
+ 
++#if defined(CONFIG_SYSCTL)
++static struct ctl_table_header *staircase_table_header;
++
++enum
++{
++	STAIRCASE_CPU_SCHED_END_OF_LIST=0,
++	STAIRCASE_CPU_SCHED_INTERACTIVE=1,
++	STAIRCASE_CPU_SCHED_COMPUTE,
++};
++
++static ctl_table staircase_cpu_sched_table[] = {
++	{
++		.ctl_name	= STAIRCASE_CPU_SCHED_INTERACTIVE,
++		.procname	= "interactive",
++		.data		= &staircase_sched_interactive,
++		.maxlen		= sizeof (int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
++		.ctl_name	= STAIRCASE_CPU_SCHED_COMPUTE,
++		.procname	= "compute",
++		.data		= &staircase_sched_compute,
++		.maxlen		= sizeof (int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{ .ctl_name = STAIRCASE_CPU_SCHED_END_OF_LIST }
++};
++
++static ctl_table staircase_root_table[] = {
++	{
++		.ctl_name	= CTL_SCHED,
++		.procname	= "sched",
++		.maxlen		= 0,
++		.mode		= 0555,
++		.child		= staircase_cpu_sched_table,
++	},
++	{ .ctl_name = 0 }
++};
++
++void __init staircase_sysctl_register(void)
++{
++	staircase_table_header = register_sysctl_table(staircase_root_table, 1);
++}
++#endif
++
+ #ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
+ void __might_sleep(char *file, int line)
+ {
+@@ -4263,6 +4263,9 @@
+ #if defined(CONFIG_PREEMPT)
+ 	.preempt_schedule_fn = 			staircase_preempt_schedule,
+ #endif
++#if defined(CONFIG_SYSCTL)
++	.sysctl_register_fn = 			staircase_sysctl_register,
++#endif
+ 	
+ 	.name = 				STAIRCASE_SCHEDULER_NAME,
+ 	.version = 				STAIRCASE_SCHEDULER_VERSION,
+Index: xx-sources/kernel/xsched-sched.c
+===================================================================
+--- xx-sources.orig/kernel/xsched-sched.c	2004-10-02 15:54:06.147147496 -0400
++++ xx-sources/kernel/xsched-sched.c	2004-10-02 16:12:19.027004504 -0400
+@@ -4341,6 +4341,60 @@
+ }
+ #endif /* CONFIG_SMP */
+ 
++void __init xsched_sched_init(void)
++{
++	runqueue_t *rq;
++	int i, j;
++
++	for (i = 0; i < NR_CPUS; i++) {
++		rq = cpu_rq(i);
++		spin_lock_init(&rq->lock);
++
++		rq->cache_ticks = 0;
++		rq->preempted = 0;
++
++#ifdef CONFIG_SMP
++		rq->sd = &sched_domain_dummy;
++		rq->cpu_load = 0;
++		rq->active_balance = 0;
++		rq->push_cpu = 0;
++		rq->migration_thread = NULL;
++		INIT_LIST_HEAD(&rq->migration_queue);
++#endif
++		atomic_set(&rq->nr_iowait, 0);
++
++		rq->min_prio = NICK_MAX_PRIO;
++		rq->min_nice = NICK_MAX_PRIO;
++		for (j = 0; j <= NICK_MAX_PRIO; j++) {
++			rq->queues[j].prio = j;
++			INIT_LIST_HEAD(&rq->queues[j].queue);
++		}
++		bitmap_zero(rq->bitmap, NUM_PRIO_SLOTS);
++		/*
++		 * delimiter for bitsearch
++		 */
++		__set_bit(NICK_MAX_PRIO, rq->bitmap);
++		rq->current_prio_slot = rq->queues + (NICK_MAX_PRIO - 29);
++#ifdef CONFIG_SMP
++		rq->timestamp_last_tick = clock_us();
++#endif
++	}
++
++	/*
++	 * The boot idle thread does lazy MMU switching as well:
++	 */
++	atomic_inc(&init_mm.mm_count);
++	enter_lazy_tlb(&init_mm, current);
++
++	/*
++	 * Make us the idle thread. Technically, schedule() should not be
++	 * called from this thread, however somewhere below it might be,
++	 * but because we are the idle thread, we just pick up running again
++	 * when this runqueue becomes "idle".
++	 */
++	xsched_init_idle(current, smp_processor_id());
++}
++
+ #if defined(CONFIG_SYSCTL)
+ static struct ctl_table_header *xsched_table_header;
+ 
+@@ -4542,66 +4596,12 @@
+ 	},
+ 	{ .ctl_name = 0 }
+ };
+-#endif
+ 
+-void __init xsched_sched_init(void)
++void __init xsched_sysctl_register(void)
+ {
+-	runqueue_t *rq;
+-	int i, j;
+-
+-	for (i = 0; i < NR_CPUS; i++) {
+-		rq = cpu_rq(i);
+-		spin_lock_init(&rq->lock);
+-
+-		rq->cache_ticks = 0;
+-		rq->preempted = 0;
+-
+-#ifdef CONFIG_SMP
+-		rq->sd = &sched_domain_dummy;
+-		rq->cpu_load = 0;
+-		rq->active_balance = 0;
+-		rq->push_cpu = 0;
+-		rq->migration_thread = NULL;
+-		INIT_LIST_HEAD(&rq->migration_queue);
+-#endif
+-		atomic_set(&rq->nr_iowait, 0);
+-
+-		rq->min_prio = NICK_MAX_PRIO;
+-		rq->min_nice = NICK_MAX_PRIO;
+-		for (j = 0; j <= NICK_MAX_PRIO; j++) {
+-			rq->queues[j].prio = j;
+-			INIT_LIST_HEAD(&rq->queues[j].queue);
+-		}
+-		bitmap_zero(rq->bitmap, NUM_PRIO_SLOTS);
+-		/*
+-		 * delimiter for bitsearch
+-		 */
+-		__set_bit(NICK_MAX_PRIO, rq->bitmap);
+-		rq->current_prio_slot = rq->queues + (NICK_MAX_PRIO - 29);
+-#ifdef CONFIG_SMP
+-		rq->timestamp_last_tick = clock_us();
+-#endif
+-	}
+-
+-	printk("Using %s version %s\n", XSCHED_SCHEDULER_NAME, XSCHED_SCHEDULER_VERSION);
+-
+-#if defined(CONFIG_SYSCTL)
+ 	xsched_table_header = register_sysctl_table(xsched_root_table, 1);
+-#endif
+-	/*
+-	 * The boot idle thread does lazy MMU switching as well:
+-	 */
+-	atomic_inc(&init_mm.mm_count);
+-	enter_lazy_tlb(&init_mm, current);
+-
+-	/*
+-	 * Make us the idle thread. Technically, schedule() should not be
+-	 * called from this thread, however somewhere below it might be,
+-	 * but because we are the idle thread, we just pick up running again
+-	 * when this runqueue becomes "idle".
+-	 */
+-	xsched_init_idle(current, smp_processor_id());
+ }
++#endif
+ 
+ #ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
+ void __might_sleep(char *file, int line)
+@@ -4687,6 +4687,9 @@
+ #if defined(CONFIG_PREEMPT)
+ 	.preempt_schedule_fn = 			xsched_preempt_schedule,
+ #endif
++#if defined(CONFIG_SYSCTL)
++	.sysctl_register_fn = 			xsched_sysctl_register,
++#endif
+ 	
+ 	.name = 				XSCHED_SCHEDULER_NAME,
+ 	.version = 				XSCHED_SCHEDULER_VERSION,

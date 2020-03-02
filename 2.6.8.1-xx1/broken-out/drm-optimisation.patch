@@ -1,0 +1,62 @@
+
+From: Arjan van de Ven <arjanv@redhat.com>
+
+The patch below optimises the drm code to not do put_user() on memory the
+kernel allocated and then mmap-installed to userspace, but instead makes it
+use the kernel virtual address directly instead.  
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/drm/i810_dma.c |    7 ++-----
+ 25-akpm/drivers/char/drm/i830_dma.c |   10 +++++-----
+ 2 files changed, 7 insertions(+), 10 deletions(-)
+
+diff -puN drivers/char/drm/i810_dma.c~drm-optimisation drivers/char/drm/i810_dma.c
+--- 25/drivers/char/drm/i810_dma.c~drm-optimisation	Thu Jul 29 14:16:14 2004
++++ 25-akpm/drivers/char/drm/i810_dma.c	Thu Jul 29 14:16:14 2004
+@@ -844,13 +844,10 @@ static void i810_dma_dispatch_vertex(drm
+ 	if (buf_priv->currently_mapped == I810_BUF_MAPPED) {
+ 		unsigned int prim = (sarea_priv->vertex_prim & PR_MASK);
+ 
+-		put_user((GFX_OP_PRIMITIVE | prim |
+-					     ((used/4)-2)),
+-		(u32 __user *)buf_priv->virtual);
++		*(u32 *)buf_priv->kernel_virtual = ((GFX_OP_PRIMITIVE | prim | ((used/4)-2)));
+ 
+ 		if (used & 4) {
+-			put_user(0,
+-			(u32 __user *)((u32)buf_priv->virtual + used));
++			*(u32 *)((u32)buf_priv->kernel_virtual + used) = 0;
+ 			used += 4;
+ 		}
+ 
+diff -puN drivers/char/drm/i830_dma.c~drm-optimisation drivers/char/drm/i830_dma.c
+--- 25/drivers/char/drm/i830_dma.c~drm-optimisation	Thu Jul 29 14:16:14 2004
++++ 25-akpm/drivers/char/drm/i830_dma.c	Thu Jul 29 14:16:14 2004
+@@ -1166,19 +1166,19 @@ static void i830_dma_dispatch_vertex(drm
+    	DRM_DEBUG(  "start + used - 4 : %ld\n", start + used - 4);
+ 
+ 	if (buf_priv->currently_mapped == I830_BUF_MAPPED) {
+-		u32  __user *vp = buf_priv->virtual;
++		u32  *vp = buf_priv->kernel_virtual;
+ 
+-		put_user( (GFX_OP_PRIMITIVE |
++		vp[0] =  (GFX_OP_PRIMITIVE |
+ 			 sarea_priv->vertex_prim |
+-			  ((used/4)-2)), &vp[0]);
++			  ((used/4)-2));
+ 
+ 		if (dev_priv->use_mi_batchbuffer_start) {
+-			put_user(MI_BATCH_BUFFER_END, &vp[used/4]);
++			vp[used/4] = MI_BATCH_BUFFER_END;
+ 			used += 4; 
+ 		}
+ 		
+ 		if (used & 4) {
+-			put_user(0, &vp[used/4]);
++			vp[used/4] = 0;
+ 			used += 4;
+ 		}
+ 
+_

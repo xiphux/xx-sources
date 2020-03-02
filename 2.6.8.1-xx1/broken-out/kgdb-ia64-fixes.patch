@@ -1,0 +1,138 @@
+
+From: Xavier Bru <xavier.bru@bull.net>
+
+We have been working on using your kgdb ia64 patch provided in Andrew's
+tree on a 2.6.7 kernel on Bull Novascale platform (Based on Intel
+architecture).  We could use it successfully with minor changes:
+
+.  we added support for UART on I/O ports: (mainly a fix in parameter
+  order + the configuration).
+
+.  we fixed a problem that prevented to use interrupts when kgdb is
+  called early.
+
+
+		    Bull kgdb patch for 2.6.7 ia64
+		    ------------------------------
+
+Adds support for i/o port interface on IA 64 platforms:
+
+	. add choice for i/o port/iomem support in kernel configuration.
+
+	. fix parameter order for calling outb().
+
+Fixes IRQ not working with KGDB_EARLY
+
+This patch applies on top of:
+	kgdb-ga.patch
+	kgdboe-netpoll.patch
+	kgdb-ia64-support.patch
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ /dev/null                           |    0 
+ 25-akpm/arch/ia64/Kconfig           |   30 ++++++++++++++++++++++++++++--
+ 25-akpm/arch/ia64/lib/kgdb_serial.c |    3 ++-
+ 25-akpm/drivers/serial/8250.c       |    5 ++++-
+ 4 files changed, 34 insertions(+), 4 deletions(-)
+
+diff -puN arch/ia64/Kconfig~kgdb-ia64-fixes arch/ia64/Kconfig
+--- 25/arch/ia64/Kconfig~kgdb-ia64-fixes	Tue Jul  6 14:18:12 2004
++++ 25-akpm/arch/ia64/Kconfig	Tue Jul  6 14:18:12 2004
+@@ -231,9 +231,25 @@ config KGDB_115200BAUD
+ 	bool "115200"
+ endchoice
+ 
++choice
++	depends on KGDB
++    	prompt "I/O port address"
++	default KGDB_USE_IOMEM
++
++config KGDB_USE_IOMEM
++	bool "use I/O port IOMEM address"
++	help
++	  Say yes if your system uses IOMEM address for the port (e.g. rx2600).
++
++config KGDB_USE_PORT
++	bool "use I/O port address"
++	help
++	  Say yes if your systems uses I/O ports (e.g. Novascale).
++endchoice
++
+ config KGDB_IOMEM
+ 	hex "hex I/O port IOMEM address"
+-	depends on KGDB
++	depends on KGDB_USE_IOMEM
+ 	default	0xc0000000ff5e0000
+ 	help
+ 	  Some systems use IOMEM address for the port.  This value is from
+@@ -241,11 +257,21 @@ config KGDB_IOMEM
+ 
+ config KGDB_IOMEM_REG_SHIFT
+ 	hex "hex I/O port IOMEM reg shift"
+-	depends on KGDB
++	depends on KGDB_USE_IOMEM
+ 	default 0x0
+ 	help
+ 	  This is the memory shift for IOMEM.
+ 
++config KGDB_PORT
++	hex "hex I/O port address"
++	default	0x3f8
++	depends on KGDB
++	depends on KGDB_USE_PORT
++	help
++	  Some systems use I/O port.
++	  On Novascale use 0x3f8 for serial port 1
++	  or 0x2f8 for serial port 2.
++
+ config KGDB_IRQ
+ 	int "IRQ of the debug serial port"
+ 	depends on KGDB
+diff -puN arch/ia64/lib/kgdb_serial.c~kgdb-ia64-fixes arch/ia64/lib/kgdb_serial.c
+--- 25/arch/ia64/lib/kgdb_serial.c~kgdb-ia64-fixes	Tue Jul  6 14:18:12 2004
++++ 25-akpm/arch/ia64/lib/kgdb_serial.c	Tue Jul  6 14:18:12 2004
+@@ -80,7 +80,8 @@ kgdb_serial_out(struct async_struct *ser
+ 		writeb(ch, serial->iomem_base + offset);
+ 		break;
+ 	default:
+-		outb(serial->port + offset, ch);
++	  /* fix parameter order */
++	  outb( ch, serial->port + offset);
+ 		break;
+ 	}
+ 	return;
+diff -puN drivers/serial/8250.c~kgdb-ia64-fixes drivers/serial/8250.c
+--- 25/drivers/serial/8250.c~kgdb-ia64-fixes	Tue Jul  6 14:18:12 2004
++++ 25-akpm/drivers/serial/8250.c	Tue Jul  6 14:18:12 2004
+@@ -1195,6 +1195,7 @@ static void serial8250_break_ctl(struct 
+ 
+ #ifdef CONFIG_KGDB
+ static int kgdb_irq = -1;
++static int kgdb_port = -1;
+ #endif
+ 
+ static int serial8250_startup(struct uart_port *port)
+@@ -1889,7 +1890,8 @@ static void __init serial8250_register_p
+ 		struct uart_8250_port *up = &serial8250_ports[i];
+ 
+ #ifdef CONFIG_KGDB
+-		if (up->port.irq == kgdb_irq)
++		/* at this point irq could be 0 for the port (KGDB_EARLY) */
++		if (up->port.irq == kgdb_irq || up->port.iobase == kgdb_port)
+ 			up->port.kgdb = 1;
+ #endif
+ 		up->port.line = i;
+@@ -2187,6 +2189,7 @@ void shutdown_for_kgdb(struct async_stru
+ 	int ttyS;
+ 
+ 	kgdb_irq = irq;			/* save for later init */
++	kgdb_port = info->port;
+ 	for (ttyS = 0; ttyS < UART_NR; ttyS++){
+ 		up =  &serial8250_ports[ttyS];
+ 		if (up->port.irq == irq && (irq_lists + irq)->head) {
+diff -L tmp/linux-2.6.7-kgdb/arch/ia64/Kconfig -puN /dev/null /dev/null
+diff -L tmp/linux-2.6.7-kgdb/drivers/serial/8250.c -puN /dev/null /dev/null
+_

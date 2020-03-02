@@ -1,0 +1,121 @@
+printk-times-04.09.02.patch: 
+
+This patch adds support for printk to output a timestamp.
+
+Signed-off-by: Geoff Levand <geoffrey.levand@am.sony.com> for CELF
+Index: xx-sources/arch/i386/Kconfig.debug
+===================================================================
+--- xx-sources.orig/arch/i386/Kconfig.debug	2004-09-23 18:07:47.000000000 -0400
++++ xx-sources/arch/i386/Kconfig.debug	2004-09-23 18:28:35.552173096 -0400
+@@ -2,6 +2,15 @@
+ 
+ source "lib/Kconfig.debug"
+ 
++config PRINTK_TIME
++	bool "Show timing information on printks"
++	help
++	  Selecting this option causes timing information to be
++	  included in printk output.  This allows you to measure
++	  the interval between kernel operations, including bootup
++	  operations.  This is useful for identifying long delays
++	  in kernel startup.
++
+ config EARLY_PRINTK
+ 	bool "Early printk" if EMBEDDED
+ 	default y
+Index: xx-sources/arch/ppc/Kconfig.debug
+===================================================================
+--- xx-sources.orig/arch/ppc/Kconfig.debug	2004-09-23 18:07:47.000000000 -0400
++++ xx-sources/arch/ppc/Kconfig.debug	2004-09-23 18:28:56.209032776 -0400
+@@ -2,6 +2,15 @@
+ 
+ source "lib/Kconfig.debug"
+ 
++config PRINTK_TIME
++	bool "Show timing information on printks"
++	help
++	  Selecting this option causes timing information to be
++	  included in printk output.  This allows you to measure
++	  the interval between kernel operations, including bootup
++	  operations.  This is useful for identifying long delays
++	  in kernel startup.
++
+ config KGDB
+ 	bool "Include kgdb kernel debugger"
+ 	depends on DEBUG_KERNEL && (BROKEN || PPC_GEN550 || 4xx)
+Index: xx-sources/kernel/printk.c
+===================================================================
+--- xx-sources.orig/kernel/printk.c	2004-09-23 18:07:44.000000000 -0400
++++ xx-sources/kernel/printk.c	2004-09-23 18:28:09.492134824 -0400
+@@ -498,6 +498,22 @@
+ 	init_MUTEX(&console_sem);
+ }
+ 
++#if defined(CONFIG_PRINTK_TIME)
++static int printk_time = 1;
++#else
++static int printk_time = 0;
++#endif
++
++static int __init printk_time_setup(char *str)
++{
++	if (*str)
++		return 0;
++	printk_time = 1;
++	return 1;
++}
++
++__setup("time", printk_time_setup);
++
+ /*
+  * This is printk.  It can be called from any context.  We want it to work.
+  * 
+@@ -546,10 +562,44 @@
+ 	 */
+ 	for (p = printk_buf; *p; p++) {
+ 		if (log_level_unknown) {
+-			if (p[0] != '<' || p[1] < '0' || p[1] > '7' || p[2] != '>') {
+-				emit_log_char('<');
+-				emit_log_char(default_message_loglevel + '0');
+-				emit_log_char('>');
++                        /* log_level_unknown signals the start of a new line */
++			if (printk_time) {
++				int loglev_char;
++				char tbuf[50], *tp;
++				unsigned tlen;
++				unsigned long long t;
++				unsigned long nanosec_rem;
++				
++				/*
++				 * force the log level token to be
++				 * before the time output.
++				 */
++				if (p[0] == '<' && p[1] >='0' &&
++				   p[1] <= '7' && p[2] == '>') {
++					loglev_char = p[1];
++					p += 3;
++				} else {
++					loglev_char = default_message_loglevel
++						+ '0';
++				}
++				t = sched_clock();
++				nanosec_rem = do_div(t, 1000000000);
++				tlen = sprintf(tbuf,
++						"<%c>[%5lu.%06lu] ",
++						loglev_char,
++						(unsigned long)t,
++						nanosec_rem/1000);
++
++				for (tp = tbuf; tp< tbuf + tlen; tp++)
++					emit_log_char (*tp);
++			} else {
++				if (p[0] != '<' || p[1] < '0' ||
++				   p[1] > '7' || p[2] != '>') {
++					emit_log_char('<');
++					emit_log_char(default_message_loglevel
++						+ '0');
++					emit_log_char('>');
++				}
+ 			}
+ 			log_level_unknown = 0;
+ 		}

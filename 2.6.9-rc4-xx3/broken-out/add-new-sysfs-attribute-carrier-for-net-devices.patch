@@ -1,0 +1,47 @@
+
+From: Jesper Juhl <juhl-lkml@dif.dk>
+
+The patch adds a new sysfs attribute called carrier for net devices that
+exposes the result of netif_carrier_ok().  This allows a user to quickly
+and easily determine if a given netdevice has carrier or not.  Reading
+/sys/class/net/<interface>/carrier yields a '1' when there is a carrier and
+a '0' when there is not.
+
+Signed-off-by: Jesper Juhl <juhl-lkml@dif.dk>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/net/core/net-sysfs.c |   11 +++++++++++
+ 1 files changed, 11 insertions(+)
+
+diff -puN net/core/net-sysfs.c~add-new-sysfs-attribute-carrier-for-net-devices net/core/net-sysfs.c
+--- 25/net/core/net-sysfs.c~add-new-sysfs-attribute-carrier-for-net-devices	2004-10-05 02:11:16.106139056 -0700
++++ 25-akpm/net/core/net-sysfs.c	2004-10-05 02:11:16.110138448 -0700
+@@ -126,8 +126,18 @@ static ssize_t show_broadcast(struct cla
+ 	return -EINVAL;
+ }
+ 
++static ssize_t show_carrier(struct class_device *dev, char *buf)
++{
++	struct net_device *netdev = to_net_dev(dev);
++	if (netif_running(netdev)) {
++		return sprintf(buf, fmt_dec, !!netif_carrier_ok(netdev));
++	}
++	return -EINVAL;
++}
++
+ static CLASS_DEVICE_ATTR(address, S_IRUGO, show_address, NULL);
+ static CLASS_DEVICE_ATTR(broadcast, S_IRUGO, show_broadcast, NULL);
++static CLASS_DEVICE_ATTR(carrier, S_IRUGO, show_carrier, NULL);
+ 
+ /* read-write attributes */
+ NETDEVICE_SHOW(mtu, fmt_dec);
+@@ -186,6 +196,7 @@ static struct class_device_attribute *ne
+ 	&class_device_attr_type,
+ 	&class_device_attr_address,
+ 	&class_device_attr_broadcast,
++	&class_device_attr_carrier,
+ 	NULL
+ };
+ 
+_

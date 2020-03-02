@@ -1,0 +1,238 @@
+
+From: Paul Mundt <lethal@Linux-SH.ORG>
+
+This adds fixmap support for sh.
+
+Signed-off-by: Paul Mundt <lethal@linux-sh.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/sh/mm/init.c        |   62 +++++++++++++++++++++
+ 25-akpm/include/asm-sh/fixmap.h  |  111 +++++++++++++++++++++++++++++++++++++++
+ 25-akpm/include/asm-sh/pgtable.h |    5 +
+ 3 files changed, 175 insertions(+), 3 deletions(-)
+
+diff -puN arch/sh/mm/init.c~sh-fixmap-support arch/sh/mm/init.c
+--- 25/arch/sh/mm/init.c~sh-fixmap-support	2004-06-23 20:00:15.845281176 -0700
++++ 25-akpm/arch/sh/mm/init.c	2004-06-23 20:00:15.851280264 -0700
+@@ -3,7 +3,7 @@
+  *  linux/arch/sh/mm/init.c
+  *
+  *  Copyright (C) 1999  Niibe Yutaka
+- *  Copyright (C) 2002  Paul Mundt
++ *  Copyright (C) 2002, 2004  Paul Mundt
+  *
+  *  Based on linux/arch/i386/mm/init.c:
+  *   Copyright (C) 1995  Linus Torvalds
+@@ -83,6 +83,66 @@ void show_mem(void)
+ 	printk("%d pages swap cached\n",cached);
+ }
+ 
++static void set_pte_phys(unsigned long addr, unsigned long phys, pgprot_t prot)
++{
++	pgd_t *pgd;
++	pmd_t *pmd;
++	pte_t *pte;
++
++	pgd = swapper_pg_dir + pgd_index(addr);
++	if (pgd_none(*pgd)) {
++		pgd_ERROR(*pgd);
++		return;
++	}
++
++	pmd = pmd_offset(pgd, addr);
++	if (pmd_none(*pmd)) {
++		pte = (pte_t *)get_zeroed_page(GFP_ATOMIC);
++		set_pmd(pmd, __pmd(__pa(pte) | _KERNPG_TABLE | _PAGE_USER));
++		if (pte != pte_offset_kernel(pmd, 0)) {
++			pmd_ERROR(*pmd);
++			return;
++		}
++	}
++
++	pte = pte_offset_kernel(pmd, addr);
++	if (!pte_none(*pte)) {
++		pte_ERROR(*pte);
++		return;
++	}
++
++	set_pte(pte, pfn_pte(phys >> PAGE_SHIFT, prot));
++
++	__flush_tlb_page(get_asid(), addr);
++}
++
++/*
++ * As a performance optimization, other platforms preserve the fixmap mapping
++ * across a context switch, we don't presently do this, but this could be done
++ * in a similar fashion as to the wired TLB interface that sh64 uses (by way
++ * of the memorry mapped UTLB configuration) -- this unfortunately forces us to
++ * give up a TLB entry for each mapping we want to preserve. While this may be
++ * viable for a small number of fixmaps, it's not particularly useful for
++ * everything and needs to be carefully evaluated. (ie, we may want this for
++ * the vsyscall page).
++ *
++ * XXX: Perhaps add a _PAGE_WIRED flag or something similar that we can pass
++ * in at __set_fixmap() time to determine the appropriate behavior to follow.
++ *
++ *					 -- PFM.
++ */
++void __set_fixmap(enum fixed_addresses idx, unsigned long phys, pgprot_t prot)
++{
++	unsigned long address = __fix_to_virt(idx);
++
++	if (idx >= __end_of_fixed_addresses) {
++		BUG();
++		return;
++	}
++
++	set_pte_phys(address, phys, prot);
++}
++
+ /* References to section boundaries */
+ 
+ extern char _text, _etext, _edata, __bss_start, _end;
+diff -puN /dev/null include/asm-sh/fixmap.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/fixmap.h	2004-06-23 20:00:15.852280112 -0700
+@@ -0,0 +1,111 @@
++/*
++ * fixmap.h: compile-time virtual memory allocation
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * Copyright (C) 1998 Ingo Molnar
++ *
++ * Support of BIGMEM added by Gerhard Wichert, Siemens AG, July 1999
++ */
++
++#ifndef _ASM_FIXMAP_H
++#define _ASM_FIXMAP_H
++
++#include <linux/config.h>
++#include <linux/kernel.h>
++#include <asm/page.h>
++#ifdef CONFIG_HIGHMEM
++#include <linux/threads.h>
++#include <asm/kmap_types.h>
++#endif
++
++/*
++ * Here we define all the compile-time 'special' virtual
++ * addresses. The point is to have a constant address at
++ * compile time, but to set the physical address only
++ * in the boot process. We allocate these special  addresses
++ * from the end of virtual memory (0xfffff000) backwards.
++ * Also this lets us do fail-safe vmalloc(), we
++ * can guarantee that these special addresses and
++ * vmalloc()-ed addresses never overlap.
++ *
++ * these 'compile-time allocated' memory buffers are
++ * fixed-size 4k pages. (or larger if used with an increment
++ * highger than 1) use fixmap_set(idx,phys) to associate
++ * physical memory with fixmap indices.
++ *
++ * TLB entries of such buffers will not be flushed across
++ * task switches.
++ */
++
++/*
++ * on UP currently we will have no trace of the fixmap mechanizm,
++ * no page table allocations, etc. This might change in the
++ * future, say framebuffers for the console driver(s) could be
++ * fix-mapped?
++ */
++enum fixed_addresses {
++#ifdef CONFIG_HIGHMEM
++	FIX_KMAP_BEGIN,	/* reserved pte's for temporary kernel mappings */
++	FIX_KMAP_END = FIX_KMAP_BEGIN+(KM_TYPE_NR*NR_CPUS)-1,
++#endif
++	__end_of_fixed_addresses
++};
++
++extern void __set_fixmap (enum fixed_addresses idx,
++					unsigned long phys, pgprot_t flags);
++
++#define set_fixmap(idx, phys) \
++		__set_fixmap(idx, phys, PAGE_KERNEL)
++/*
++ * Some hardware wants to get fixmapped without caching.
++ */
++#define set_fixmap_nocache(idx, phys) \
++		__set_fixmap(idx, phys, PAGE_KERNEL_NOCACHE)
++/*
++ * used by vmalloc.c.
++ *
++ * Leave one empty page between vmalloc'ed areas and
++ * the start of the fixmap, and leave one page empty
++ * at the top of mem..
++ */
++#define FIXADDR_TOP	(P4SEG - PAGE_SIZE)
++#define FIXADDR_SIZE	(__end_of_fixed_addresses << PAGE_SHIFT)
++#define FIXADDR_START	(FIXADDR_TOP - FIXADDR_SIZE)
++
++#define __fix_to_virt(x)	(FIXADDR_TOP - ((x) << PAGE_SHIFT))
++#define __virt_to_fix(x)	((FIXADDR_TOP - ((x)&PAGE_MASK)) >> PAGE_SHIFT)
++
++extern void __this_fixmap_does_not_exist(void);
++
++/*
++ * 'index to address' translation. If anyone tries to use the idx
++ * directly without tranlation, we catch the bug with a NULL-deference
++ * kernel oops. Illegal ranges of incoming indices are caught too.
++ */
++static inline unsigned long fix_to_virt(const unsigned int idx)
++{
++	/*
++	 * this branch gets completely eliminated after inlining,
++	 * except when someone tries to use fixaddr indices in an
++	 * illegal way. (such as mixing up address types or using
++	 * out-of-range indices).
++	 *
++	 * If it doesn't get removed, the linker will complain
++	 * loudly with a reasonably clear error message..
++	 */
++	if (idx >= __end_of_fixed_addresses)
++		__this_fixmap_does_not_exist();
++
++        return __fix_to_virt(idx);
++}
++
++static inline unsigned long virt_to_fix(const unsigned long vaddr)
++{
++	BUG_ON(vaddr >= FIXADDR_TOP || vaddr < FIXADDR_START);
++	return __virt_to_fix(vaddr);
++}
++
++#endif
+diff -puN include/asm-sh/pgtable.h~sh-fixmap-support include/asm-sh/pgtable.h
+--- 25/include/asm-sh/pgtable.h~sh-fixmap-support	2004-06-23 20:00:15.847280872 -0700
++++ 25-akpm/include/asm-sh/pgtable.h	2004-06-23 20:00:15.853279960 -0700
+@@ -3,7 +3,7 @@
+ 
+ /*
+  * Copyright (C) 1999 Niibe Yutaka
+- * Copyright (C) 2002, 2003 Paul Mundt
++ * Copyright (C) 2002, 2003, 2004 Paul Mundt
+  */
+ 
+ #include <linux/config.h>
+@@ -16,6 +16,7 @@
+ #ifndef __ASSEMBLY__
+ #include <asm/processor.h>
+ #include <asm/addrspace.h>
++#include <asm/fixmap.h>
+ #include <linux/threads.h>
+ 
+ extern pgd_t swapper_pg_dir[PTRS_PER_PGD];
+@@ -51,7 +52,7 @@ extern unsigned long empty_zero_page[102
+  * Currently only 4-enty (16kB) is used (see arch/sh/mm/cache.c)
+  */
+ #define VMALLOC_START	(P3SEG+0x00100000)
+-#define VMALLOC_END	P4SEG
++#define VMALLOC_END	(FIXADDR_START-2*PAGE_SIZE)
+ 
+ #define	_PAGE_WT	0x001  /* WT-bit on SH-4, 0 on SH-3 */
+ #define _PAGE_HW_SHARED	0x002  /* SH-bit  : page is shared among processes */
+_

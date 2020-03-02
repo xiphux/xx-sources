@@ -1,0 +1,45 @@
+
+From: James Bottomley <James.Bottomley@SteelEye.com>
+
+Matthew Wilcox just converted parisc over to doing the generic irq code and
+we ran across the symbol probe_irq_mask being undefined (and thus
+preventing yenta_socket from loading).
+
+It looks like the EXPORT_SYMBOL() was accidentally missed from
+kernel/irq/autoprobe.c and no-one noticed on x86 because it's still in
+i386_ksyms.c
+
+This patch corrects the problem so that the generic irq code now works
+completely on parisc.
+
+Signed-off-by: James Bottomley <James.Bottomley@SteelEye.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/i386_ksyms.c |    1 -
+ 25-akpm/kernel/irq/autoprobe.c        |    1 +
+ 2 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN arch/i386/kernel/i386_ksyms.c~generic-irq-code-missing-export-of-probe_irq_mask arch/i386/kernel/i386_ksyms.c
+--- 25/arch/i386/kernel/i386_ksyms.c~generic-irq-code-missing-export-of-probe_irq_mask	Thu Jan 13 16:13:25 2005
++++ 25-akpm/arch/i386/kernel/i386_ksyms.c	Thu Jan 13 16:13:25 2005
+@@ -74,7 +74,6 @@ EXPORT_SYMBOL_GPL(kernel_fpu_begin);
+ EXPORT_SYMBOL(__ioremap);
+ EXPORT_SYMBOL(ioremap_nocache);
+ EXPORT_SYMBOL(iounmap);
+-EXPORT_SYMBOL(probe_irq_mask);
+ EXPORT_SYMBOL(kernel_thread);
+ EXPORT_SYMBOL(pm_idle);
+ EXPORT_SYMBOL(pm_power_off);
+diff -puN kernel/irq/autoprobe.c~generic-irq-code-missing-export-of-probe_irq_mask kernel/irq/autoprobe.c
+--- 25/kernel/irq/autoprobe.c~generic-irq-code-missing-export-of-probe_irq_mask	Thu Jan 13 16:13:25 2005
++++ 25-akpm/kernel/irq/autoprobe.c	Thu Jan 13 16:13:25 2005
+@@ -137,6 +137,7 @@ unsigned int probe_irq_mask(unsigned lon
+ 
+ 	return mask & val;
+ }
++EXPORT_SYMBOL(probe_irq_mask);
+ 
+ /**
+  *	probe_irq_off	- end an interrupt autodetect
+_

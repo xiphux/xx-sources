@@ -1,0 +1,61 @@
+---
+
+ linux-2.6.7-rc3-xx2-xiphux/fs/proc/proc_misc.c |   13 +++++++++++++
+ linux-2.6.7-rc3-xx2-xiphux/kernel/sched.c      |   13 +++++++++++++
+ 2 files changed, 26 insertions(+)
+
+diff -puN fs/proc/proc_misc.c~proc-scheduler-entry fs/proc/proc_misc.c
+--- linux-2.6.7-rc3-xx2/fs/proc/proc_misc.c~proc-scheduler-entry	2004-06-11 08:22:21.000000000 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/fs/proc/proc_misc.c	2004-06-11 08:26:51.942788648 -0400
+@@ -152,6 +152,18 @@ static int uptime_read_proc(char *page, 
+ 	return proc_calc_metrics(page, start, off, count, eof, len);
+ }
+ 
++static int scheduler_read_proc(char *page, char **start, off_t off,
++				int count, int *eof, void *data)
++{
++	extern char *scheduler_name;
++	int len;
++
++	strcpy(page, scheduler_name);
++	len = strlen(page);
++	return proc_calc_metrics(page, start, off, count, eof, len);
++}
++
++
+ static int meminfo_read_proc(char *page, char **start, off_t off,
+ 				 int count, int *eof, void *data)
+ {
+@@ -698,6 +710,7 @@ void __init proc_misc_init(void)
+ 		{"loadavg",     loadavg_read_proc},
+ 		{"uptime",	uptime_read_proc},
+ 		{"meminfo",	meminfo_read_proc},
++		{"scheduler",	scheduler_read_proc},
+ 		{"version",	version_read_proc},
+ #ifdef CONFIG_PROC_HARDWARE
+ 		{"hardware",	hardware_read_proc},
+diff -puN kernel/sched.c~proc-scheduler-entry kernel/sched.c
+--- linux-2.6.7-rc3-xx2/kernel/sched.c~proc-scheduler-entry	2004-06-11 08:27:05.433737712 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/kernel/sched.c	2004-06-11 08:28:08.254187552 -0400
+@@ -63,6 +63,19 @@
+ 
+ #include <asm/unistd.h>
+ 
++/* Stuff for scheduler proc entry */
++const char *scheduler_name =
++#ifdef CONFIG_EBS
++	"Entitlement Based Scheduler (EBS) 1.1 full\n"
++#elif defined(CONFIG_NICKSCHED)
++	"Nicksched v30g\n"
++#elif defined(CONFIG_SPA_STAIRCASE)
++	"Single Priority Array (SPA) / Staircase hybrid 0.1\n"
++#else
++	"Default scheduler\n"
++#endif
++;
++
+ #ifndef CONFIG_SPA_STAIRCASE
+ #ifdef CONFIG_NUMA
+ #define cpu_to_node_mask(cpu) node_to_cpumask(cpu_to_node(cpu))
+
+_

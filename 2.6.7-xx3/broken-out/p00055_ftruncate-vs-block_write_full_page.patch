@@ -1,0 +1,50 @@
+
+
+Fix a possible race between expanding ftruncate() and
+block_write_full_page()'s clearing of the page outside i_size.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/memory.c |   20 +++++++++++++++++++-
+ 1 files changed, 19 insertions(+), 1 deletion(-)
+
+diff -puN mm/memory.c~ftruncate-vs-block_write_full_page mm/memory.c
+--- 25/mm/memory.c~ftruncate-vs-block_write_full_page	Fri Jun 18 15:40:33 2004
++++ 25-akpm/mm/memory.c	Fri Jun 18 15:40:33 2004
+@@ -1217,6 +1217,8 @@ int vmtruncate(struct inode * inode, lof
+ {
+ 	struct address_space *mapping = inode->i_mapping;
+ 	unsigned long limit;
++	loff_t i_size;
++	struct page *page;
+ 
+ 	if (inode->i_size < offset)
+ 		goto do_expand;
+@@ -1231,8 +1233,24 @@ do_expand:
+ 		goto out_sig;
+ 	if (offset > inode->i_sb->s_maxbytes)
+ 		goto out;
+-	i_size_write(inode, offset);
+ 
++	/*
++	 * Put a pagecache page at the current i_size and lock it while
++	 * modifying i_size to synchronise against block_write_full_page()'s
++	 * sampling of i_size.  Otherwise block_write_full_page() may decide to
++	 * memset part of this page after the application extended the file
++	 * size.
++	 */
++	i_size = inode->i_size;	/* don't need i_size_read() due to i_sem */
++	page = NULL;
++	if (i_size & (PAGE_CACHE_SIZE - 1))
++		page = grab_cache_page(inode->i_mapping,
++					i_size >> PAGE_CACHE_SHIFT);
++	i_size_write(inode, offset);
++	if (page) {
++		unlock_page(page);
++		page_cache_release(page);
++	}
+ out_truncate:
+ 	if (inode->i_op && inode->i_op->truncate)
+ 		inode->i_op->truncate(inode);
+_

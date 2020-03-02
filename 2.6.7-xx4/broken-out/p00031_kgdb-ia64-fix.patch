@@ -1,0 +1,67 @@
+
+From: Robert Picco <Robert.Picco@hp.com>
+
+This fixes the broken kgdb patch.
+
+Signed-off-by: Bob Picco <Robert.Picco@hp.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/firmware/pcdp.c |   19 +++++++++++++++++++
+ 1 files changed, 19 insertions(+)
+
+diff -puN drivers/firmware/pcdp.c~kgdb-ia64-fix drivers/firmware/pcdp.c
+--- 25/drivers/firmware/pcdp.c~kgdb-ia64-fix	2004-06-28 13:28:46.555969032 -0700
++++ 25-akpm/drivers/firmware/pcdp.c	2004-06-28 13:28:46.559968424 -0700
+@@ -51,13 +51,20 @@ uart_edge_level(int rev, struct pcdp_uar
+ }
+ 
+ static void __init
++#ifndef	CONFIG_KGDB_EARLY
+ setup_serial_console(int rev, struct pcdp_uart *uart)
++#else
++setup_serial_console(int rev, struct pcdp_uart *uart, int line)
++#endif
+ {
+ #ifdef CONFIG_SERIAL_8250_CONSOLE
+ 	struct uart_port port;
+ 	static char options[16];
+ 
+ 	memset(&port, 0, sizeof(port));
++#ifdef	CONFIG_KGDB_EARLY
++	port.line = line;
++#endif
+ 	port.uartclk = uart->clock_rate;
+ 	if (!port.uartclk)	/* some FW doesn't supply this */
+ 		port.uartclk = BASE_BAUD * 16;
+@@ -99,6 +106,9 @@ setup_serial_console(int rev, struct pcd
+ 
+ 	snprintf(options, sizeof(options), "%lun%d", uart->baud,
+ 		uart->bits ? uart->bits : 8);
++#ifdef	CONFIG_KGDB_EARLY
++	if (!line)
++#endif
+ 	add_preferred_console("ttyS", port.line, options);
+ 
+ 	printk(KERN_INFO "PCDP: serial console at %s 0x%lx (ttyS%d, options %s)\n",
+@@ -145,10 +155,19 @@ efi_setup_pcdp_console(char *cmdline)
+ 	for (i = 0, uart = pcdp->uart; i < pcdp->num_uarts; i++, uart++) {
+ 		if (uart->flags & PCDP_UART_PRIMARY_CONSOLE || serial) {
+ 			if (uart->type == PCDP_CONSOLE_UART) {
++#ifndef	CONFIG_KGDB_EARLY
+ 				setup_serial_console(pcdp->rev, uart);
+ 				return;
++#else
++				setup_serial_console(pcdp->rev, uart, 0);
++				serial = 0;
++#endif
+ 			}
+ 		}
++#ifdef	CONFIG_KGDB_EARLY
++		else if (uart->type == PCDP_DEBUG_UART)
++				setup_serial_console(pcdp->rev, uart, 1);
++#endif
+ 	}
+ 
+ 	end = (struct pcdp_device *) ((u8 *) pcdp + pcdp->length);
+_

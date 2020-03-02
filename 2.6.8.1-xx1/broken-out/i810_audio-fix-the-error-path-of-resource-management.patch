@@ -1,0 +1,44 @@
+
+From: Takashi Iwai <tiwai@suse.de>
+
+The patch adds the check of return value from resquest_region() to avoid
+the confliction of resource management with ALSA intel8x0 driver.
+
+Signed-off-by: Takashi Iwai <tiwai@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/sound/oss/i810_audio.c |   12 ++++++++++--
+ 1 files changed, 10 insertions(+), 2 deletions(-)
+
+diff -puN sound/oss/i810_audio.c~i810_audio-fix-the-error-path-of-resource-management sound/oss/i810_audio.c
+--- 25/sound/oss/i810_audio.c~i810_audio-fix-the-error-path-of-resource-management	2004-08-09 22:01:17.784046848 -0700
++++ 25-akpm/sound/oss/i810_audio.c	2004-08-09 22:01:17.790045936 -0700
+@@ -3216,8 +3216,14 @@ static int __devinit i810_probe(struct p
+ 	}
+ 
+ 	/* claim our iospace and irq */
+-	request_region(card->iobase, 64, card_names[pci_id->driver_data]);
+-	request_region(card->ac97base, 256, card_names[pci_id->driver_data]);
++	if (!request_region(card->iobase, 64, card_names[pci_id->driver_data])) {
++		printk(KERN_ERR "i810_audio: unable to allocate region %lx\n", card->iobase);
++		goto out_region1;
++	}
++	if (!request_region(card->ac97base, 256, card_names[pci_id->driver_data])) {
++		printk(KERN_ERR "i810_audio: unable to allocate region %lx\n", card->ac97base);
++		goto out_region2;
++	}
+ 
+ 	if (request_irq(card->irq, &i810_interrupt, SA_SHIRQ,
+ 			card_names[pci_id->driver_data], card)) {
+@@ -3291,7 +3297,9 @@ out_iospace:
+ 	}
+ out_pio:	
+ 	release_region(card->iobase, 64);
++out_region2:
+ 	release_region(card->ac97base, 256);
++out_region1:
+ 	pci_free_consistent(pci_dev, sizeof(struct i810_channel)*NR_HW_CH,
+ 	    card->channel, card->chandma);
+ out_mem:
+_

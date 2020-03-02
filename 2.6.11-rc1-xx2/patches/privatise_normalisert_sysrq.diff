@@ -1,0 +1,50 @@
+Index: linux-2.6.10-rc2-mm1/include/linux/scheduler.h
+===================================================================
+--- linux-2.6.10-rc2-mm1.orig/include/linux/scheduler.h	2004-11-17 23:23:00.083644548 +1100
++++ linux-2.6.10-rc2-mm1/include/linux/scheduler.h	2004-11-17 23:23:04.067033028 +1100
+@@ -56,6 +56,9 @@ struct sched_drv
+ 	void (*show_schedstat_sd)(struct seq_file *, int);
+ #endif
+ #endif
++#ifdef CONFIG_MAGIC_SYSRQ
++	void (*normalize_rt_tasks)(void);
++#endif
+ };
+ 
+ /*
+Index: linux-2.6.10-rc2-mm1/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc2-mm1.orig/kernel/sched.c	2004-11-17 23:23:00.085644241 +1100
++++ linux-2.6.10-rc2-mm1/kernel/sched.c	2004-11-17 23:23:04.069032721 +1100
+@@ -3768,7 +3768,7 @@ static int ingo_is_idle_task(const task_
+ }
+ 
+ #ifdef CONFIG_MAGIC_SYSRQ
+-void normalize_rt_tasks(void)
++void ingo_normalize_rt_tasks(void)
+ {
+ 	struct task_struct *p;
+ 	prio_array_t *array;
+@@ -3844,4 +3844,7 @@ struct sched_drv ingo_sched_drv = {
+ 	.show_schedstat_sd	= ingo_show_schedstat_sd,
+ #endif
+ #endif
++#ifdef CONFIG_MAGIC_SYSRQ
++	.normalize_rt_tasks	= ingo_normalize_rt_tasks,
++#endif
+ };
+Index: linux-2.6.10-rc2-mm1/kernel/scheduler.c
+===================================================================
+--- linux-2.6.10-rc2-mm1.orig/kernel/scheduler.c	2004-11-17 23:23:00.086644087 +1100
++++ linux-2.6.10-rc2-mm1/kernel/scheduler.c	2004-11-17 23:23:04.070032568 +1100
+@@ -1484,3 +1484,10 @@ static void show_schedstat_sd(struct seq
+ }
+ #endif
+ #endif
++
++#ifdef CONFIG_MAGIC_SYSRQ
++void normalize_rt_tasks(void)
++{
++	scheduler->normalize_rt_tasks();
++}
++#endif /* CONFIG_MAGIC_SYSRQ */

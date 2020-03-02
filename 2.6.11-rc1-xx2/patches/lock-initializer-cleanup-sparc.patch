@@ -1,0 +1,167 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/sparc/kernel/auxio.c     |    2 +-
+ 25-akpm/arch/sparc/kernel/irq.c       |    2 +-
+ 25-akpm/arch/sparc/kernel/process.c   |    2 +-
+ 25-akpm/arch/sparc/kernel/semaphore.c |    2 +-
+ 25-akpm/arch/sparc/kernel/smp.c       |    2 +-
+ 25-akpm/arch/sparc/kernel/sun4d_irq.c |    2 +-
+ 25-akpm/arch/sparc/kernel/sun4d_smp.c |    4 ++--
+ 25-akpm/arch/sparc/kernel/sun4m_smp.c |    2 +-
+ 25-akpm/arch/sparc/kernel/time.c      |    4 ++--
+ 25-akpm/arch/sparc/mm/srmmu.c         |    2 +-
+ 25-akpm/arch/sparc/prom/misc.c        |    2 +-
+ 11 files changed, 13 insertions(+), 13 deletions(-)
+
+diff -puN arch/sparc/kernel/auxio.c~lock-initializer-cleanup-sparc arch/sparc/kernel/auxio.c
+--- 25/arch/sparc/kernel/auxio.c~lock-initializer-cleanup-sparc	Wed Jan 12 16:54:44 2005
++++ 25-akpm/arch/sparc/kernel/auxio.c	Wed Jan 12 16:54:44 2005
+@@ -18,7 +18,7 @@
+  * in entry.S::floppy_tdone
+  */
+ void __iomem *auxio_register = NULL;
+-static spinlock_t auxio_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(auxio_lock);
+ 
+ void __init auxio_probe(void)
+ {
+diff -puN arch/sparc/kernel/irq.c~lock-initializer-cleanup-sparc arch/sparc/kernel/irq.c
+--- 25/arch/sparc/kernel/irq.c~lock-initializer-cleanup-sparc	Wed Jan 12 16:54:44 2005
++++ 25-akpm/arch/sparc/kernel/irq.c	Wed Jan 12 16:54:44 2005
+@@ -159,7 +159,7 @@ struct irqaction *irq_action[NR_IRQS] = 
+ };
+ 
+ /* Used to protect the IRQ action lists */
+-spinlock_t irq_action_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(irq_action_lock);
+ 
+ int show_interrupts(struct seq_file *p, void *v)
+ {
+diff -puN arch/sparc/kernel/process.c~lock-initializer-cleanup-sparc arch/sparc/kernel/process.c
+--- 25/arch/sparc/kernel/process.c~lock-initializer-cleanup-sparc	Wed Jan 12 16:54:44 2005
++++ 25-akpm/arch/sparc/kernel/process.c	Wed Jan 12 16:54:44 2005
+@@ -198,7 +198,7 @@ void machine_power_off(void)
+ 
+ EXPORT_SYMBOL(machine_power_off);
+ 
+-static spinlock_t sparc_backtrace_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(sparc_backtrace_lock);
+ 
+ void __show_backtrace(unsigned long fp)
+ {
+diff -puN arch/sparc/kernel/semaphore.c~lock-initializer-cleanup-sparc arch/sparc/kernel/semaphore.c
+--- 25/arch/sparc/kernel/semaphore.c~lock-initializer-cleanup-sparc	Wed Jan 12 16:54:44 2005
++++ 25-akpm/arch/sparc/kernel/semaphore.c	Wed Jan 12 16:54:44 2005
+@@ -44,7 +44,7 @@ void __up(struct semaphore *sem)
+ 	wake_up(&sem->wait);
+ }
+ 
+-static spinlock_t semaphore_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(semaphore_lock);
+ 
+ void __sched __down(struct semaphore * sem)
+ {
+diff -puN arch/sparc/kernel/smp.c~lock-initializer-cleanup-sparc arch/sparc/kernel/smp.c
+--- 25/arch/sparc/kernel/smp.c~lock-initializer-cleanup-sparc	Wed Jan 12 16:54:44 2005
++++ 25-akpm/arch/sparc/kernel/smp.c	Wed Jan 12 16:54:44 2005
+@@ -234,7 +234,7 @@ void smp_flush_sig_insns(struct mm_struc
+ extern unsigned int lvl14_resolution;
+ 
+ /* /proc/profile writes can call this, don't __init it please. */
+-static spinlock_t prof_setup_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(prof_setup_lock);
+ 
+ int setup_profiling_timer(unsigned int multiplier)
+ {
+diff -puN arch/sparc/kernel/sun4d_irq.c~lock-initializer-cleanup-sparc arch/sparc/kernel/sun4d_irq.c
+--- 25/arch/sparc/kernel/sun4d_irq.c~lock-initializer-cleanup-sparc	Wed Jan 12 16:54:44 2005
++++ 25-akpm/arch/sparc/kernel/sun4d_irq.c	Wed Jan 12 16:54:44 2005
+@@ -72,7 +72,7 @@ static int sbus_to_pil[] = {
+ 
+ static int nsbi;
+ #ifdef CONFIG_SMP
+-spinlock_t sun4d_imsk_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(sun4d_imsk_lock);
+ #endif
+ 
+ int show_sun4d_interrupts(struct seq_file *p, void *v)
+diff -puN arch/sparc/kernel/sun4d_smp.c~lock-initializer-cleanup-sparc arch/sparc/kernel/sun4d_smp.c
+--- 25/arch/sparc/kernel/sun4d_smp.c~lock-initializer-cleanup-sparc	Wed Jan 12 16:54:44 2005
++++ 25-akpm/arch/sparc/kernel/sun4d_smp.c	Wed Jan 12 16:54:44 2005
+@@ -300,7 +300,7 @@ static struct smp_funcall {
+ 	unsigned char processors_out[NR_CPUS]; /* Set when ipi exited. */
+ } ccall_info __attribute__((aligned(8)));
+ 
+-static spinlock_t cross_call_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(cross_call_lock);
+ 
+ /* Cross calls must be serialized, at least currently. */
+ void smp4d_cross_call(smpfunc_t func, unsigned long arg1, unsigned long arg2,
+@@ -397,7 +397,7 @@ void smp4d_message_pass(int target, int 
+ 	SMP_PRINTK(("smp4d_message_pass %d %d %08lx %d\n", target, msg, data, wait));
+ 	if (msg == MSG_STOP_CPU && target == MSG_ALL_BUT_SELF) {
+ 		unsigned long flags;
+-		static spinlock_t stop_cpu_lock = SPIN_LOCK_UNLOCKED;
++		static DEFINE_SPINLOCK(stop_cpu_lock);
+ 		spin_lock_irqsave(&stop_cpu_lock, flags);
+ 		smp4d_stop_cpu_sender = me;
+ 		smp4d_cross_call((smpfunc_t)smp4d_stop_cpu, 0, 0, 0, 0, 0);
+diff -puN arch/sparc/kernel/sun4m_smp.c~lock-initializer-cleanup-sparc arch/sparc/kernel/sun4m_smp.c
+--- 25/arch/sparc/kernel/sun4m_smp.c~lock-initializer-cleanup-sparc	Wed Jan 12 16:54:44 2005
++++ 25-akpm/arch/sparc/kernel/sun4m_smp.c	Wed Jan 12 16:54:44 2005
+@@ -321,7 +321,7 @@ static struct smp_funcall {
+ 	unsigned long processors_out[NR_CPUS]; /* Set when ipi exited. */
+ } ccall_info;
+ 
+-static spinlock_t cross_call_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(cross_call_lock);
+ 
+ /* Cross calls must be serialized, at least currently. */
+ void smp4m_cross_call(smpfunc_t func, unsigned long arg1, unsigned long arg2,
+diff -puN arch/sparc/kernel/time.c~lock-initializer-cleanup-sparc arch/sparc/kernel/time.c
+--- 25/arch/sparc/kernel/time.c~lock-initializer-cleanup-sparc	Wed Jan 12 16:54:44 2005
++++ 25-akpm/arch/sparc/kernel/time.c	Wed Jan 12 16:54:44 2005
+@@ -50,9 +50,9 @@ u64 jiffies_64 = INITIAL_JIFFIES;
+ 
+ EXPORT_SYMBOL(jiffies_64);
+ 
+-spinlock_t rtc_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(rtc_lock);
+ enum sparc_clock_type sp_clock_typ;
+-spinlock_t mostek_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(mostek_lock);
+ void __iomem *mstk48t02_regs = NULL;
+ static struct mostek48t08 *mstk48t08_regs = NULL;
+ static int set_rtc_mmss(unsigned long);
+diff -puN arch/sparc/mm/srmmu.c~lock-initializer-cleanup-sparc arch/sparc/mm/srmmu.c
+--- 25/arch/sparc/mm/srmmu.c~lock-initializer-cleanup-sparc	Wed Jan 12 16:54:44 2005
++++ 25-akpm/arch/sparc/mm/srmmu.c	Wed Jan 12 16:54:44 2005
+@@ -88,7 +88,7 @@ ctxd_t *srmmu_ctx_table_phys;
+ ctxd_t *srmmu_context_table;
+ 
+ int viking_mxcc_present;
+-static spinlock_t srmmu_context_spinlock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(srmmu_context_spinlock);
+ 
+ int is_hypersparc;
+ 
+diff -puN arch/sparc/prom/misc.c~lock-initializer-cleanup-sparc arch/sparc/prom/misc.c
+--- 25/arch/sparc/prom/misc.c~lock-initializer-cleanup-sparc	Wed Jan 12 16:54:44 2005
++++ 25-akpm/arch/sparc/prom/misc.c	Wed Jan 12 16:54:44 2005
+@@ -16,7 +16,7 @@
+ 
+ extern void restore_current(void);
+ 
+-spinlock_t prom_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(prom_lock);
+ 
+ /* Reset and reboot the machine with the command 'bcommand'. */
+ void
+_

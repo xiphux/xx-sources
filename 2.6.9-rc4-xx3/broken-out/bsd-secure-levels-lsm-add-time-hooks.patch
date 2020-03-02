@@ -1,0 +1,277 @@
+
+From: Michael Halcrow <mahalcro@us.ibm.com>
+
+I have received positive feedback from various individuals who have
+applied my BSD Secure Levels LSM patch, and so at this point I am
+submitting it to you with a request to merge it in.  Nothing has
+changed in this patch since when I last posted it to the LKML, so I am
+not re-sending it there.
+
+
+
+This first patch adds hooks to catch attempts to set the system clock back.
+
+Signed-off-by: Michael A. Halcrow <mahalcro@us.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/mips/kernel/sysirix.c |   10 ++++++++--
+ 25-akpm/arch/ppc64/kernel/time.c   |   16 ++++++++++------
+ 25-akpm/include/linux/security.h   |   19 +++++++++++++++++++
+ 25-akpm/kernel/time.c              |   18 +++++++++++++-----
+ 25-akpm/security/capability.c      |    1 +
+ 25-akpm/security/commoncap.c       |   16 +++++++++++-----
+ 25-akpm/security/dummy.c           |    8 ++++++++
+ 7 files changed, 70 insertions(+), 18 deletions(-)
+
+diff -puN arch/mips/kernel/sysirix.c~bsd-secure-levels-lsm-add-time-hooks arch/mips/kernel/sysirix.c
+--- 25/arch/mips/kernel/sysirix.c~bsd-secure-levels-lsm-add-time-hooks	Thu Sep 30 16:37:38 2004
++++ 25-akpm/arch/mips/kernel/sysirix.c	Thu Sep 30 16:37:38 2004
+@@ -619,8 +619,14 @@ asmlinkage int irix_getgid(struct pt_reg
+ 
+ asmlinkage int irix_stime(int value)
+ {
+-	if (!capable(CAP_SYS_TIME))
+-		return -EPERM;
++	int err;
++	struct timespec tv;
++
++	tv.tv_sec = value;
++	tv.tv_nsec = 0;
++	err = security_settime(&tv, NULL);
++	if (err)
++		return err;
+ 
+ 	write_seqlock_irq(&xtime_lock);
+ 	xtime.tv_sec = value;
+diff -puN arch/ppc64/kernel/time.c~bsd-secure-levels-lsm-add-time-hooks arch/ppc64/kernel/time.c
+--- 25/arch/ppc64/kernel/time.c~bsd-secure-levels-lsm-add-time-hooks	Thu Sep 30 16:37:38 2004
++++ 25-akpm/arch/ppc64/kernel/time.c	Thu Sep 30 16:37:38 2004
+@@ -434,9 +434,7 @@ long ppc64_sys32_stime(int __user * tptr
+ {
+ 	int value;
+ 	struct timespec myTimeval;
+-
+-	if (!capable(CAP_SYS_TIME))
+-		return -EPERM;
++	int err;
+ 
+ 	if (get_user(value, tptr))
+ 		return -EFAULT;
+@@ -444,6 +442,10 @@ long ppc64_sys32_stime(int __user * tptr
+ 	myTimeval.tv_sec = value;
+ 	myTimeval.tv_nsec = 0;
+ 
++	err = security_settime(&myTimeval, NULL);
++	if (err)
++		return err;
++
+ 	do_settimeofday(&myTimeval);
+ 
+ 	return 0;
+@@ -459,9 +461,7 @@ long ppc64_sys_stime(long __user * tptr)
+ {
+ 	long value;
+ 	struct timespec myTimeval;
+-
+-	if (!capable(CAP_SYS_TIME))
+-		return -EPERM;
++	int err;
+ 
+ 	if (get_user(value, tptr))
+ 		return -EFAULT;
+@@ -469,6 +469,10 @@ long ppc64_sys_stime(long __user * tptr)
+ 	myTimeval.tv_sec = value;
+ 	myTimeval.tv_nsec = 0;
+ 
++	err = security_settime(&myTimeval, NULL);
++	if (err)
++		return err;
++
+ 	do_settimeofday(&myTimeval);
+ 
+ 	return 0;
+diff -puN include/linux/security.h~bsd-secure-levels-lsm-add-time-hooks include/linux/security.h
+--- 25/include/linux/security.h~bsd-secure-levels-lsm-add-time-hooks	Thu Sep 30 16:37:38 2004
++++ 25-akpm/include/linux/security.h	Thu Sep 30 16:37:38 2004
+@@ -40,6 +40,7 @@ struct ctl_table;
+  * as the default capabilities functions
+  */
+ extern int cap_capable (struct task_struct *tsk, int cap);
++extern int cap_settime (struct timespec *ts, struct timezone *tz);
+ extern int cap_ptrace (struct task_struct *parent, struct task_struct *child);
+ extern int cap_capget (struct task_struct *target, kernel_cap_t *effective, kernel_cap_t *inheritable, kernel_cap_t *permitted);
+ extern int cap_capset_check (struct task_struct *target, kernel_cap_t *effective, kernel_cap_t *inheritable, kernel_cap_t *permitted);
+@@ -1001,6 +1002,12 @@ struct swap_info_struct;
+  *	See the syslog(2) manual page for an explanation of the @type values.  
+  *	@type contains the type of action.
+  *	Return 0 if permission is granted.
++ * @settime:
++ *	Check permission to change the system time.
++ *	struct timespec and timezone are defined in include/linux/time.h
++ *	@ts contains new time
++ *	@tz contains new timezone
++ *	Return 0 if permission is granted.
+  * @vm_enough_memory:
+  *	Check permissions for allocating a new virtual mapping.
+  *      @pages contains the number of pages.
+@@ -1036,6 +1043,7 @@ struct security_operations {
+ 	int (*quotactl) (int cmds, int type, int id, struct super_block * sb);
+ 	int (*quota_on) (struct file * f);
+ 	int (*syslog) (int type);
++	int (*settime) (struct timespec *ts, struct timezone *tz);
+ 	int (*vm_enough_memory) (long pages);
+ 
+ 	int (*bprm_alloc_security) (struct linux_binprm * bprm);
+@@ -1291,6 +1299,12 @@ static inline int security_syslog(int ty
+ 	return security_ops->syslog(type);
+ }
+ 
++static inline int security_settime(struct timespec *ts, struct timezone *tz)
++{
++	return security_ops->settime(ts, tz);
++}
++
++
+ static inline int security_vm_enough_memory(long pages)
+ {
+ 	return security_ops->vm_enough_memory(pages);
+@@ -1963,6 +1977,11 @@ static inline int security_syslog(int ty
+ 	return cap_syslog(type);
+ }
+ 
++static inline int security_settime(struct timespec *ts, struct timezone *tz)
++{
++	return cap_settime(ts, tz);
++}
++
+ static inline int security_vm_enough_memory(long pages)
+ {
+ 	return cap_vm_enough_memory(pages);
+diff -puN kernel/time.c~bsd-secure-levels-lsm-add-time-hooks kernel/time.c
+--- 25/kernel/time.c~bsd-secure-levels-lsm-add-time-hooks	Thu Sep 30 16:37:38 2004
++++ 25-akpm/kernel/time.c	Thu Sep 30 16:37:38 2004
+@@ -32,6 +32,8 @@
+ #include <linux/errno.h>
+ #include <linux/smp_lock.h>
+ #include <linux/syscalls.h>
++#include <linux/security.h>
++
+ #include <asm/uaccess.h>
+ #include <asm/unistd.h>
+ 
+@@ -78,13 +80,17 @@ asmlinkage long sys_time(int __user * tl
+ asmlinkage long sys_stime(time_t __user *tptr)
+ {
+ 	struct timespec tv;
++	int err;
+ 
+-	if (!capable(CAP_SYS_TIME))
+-		return -EPERM;
+ 	if (get_user(tv.tv_sec, tptr))
+ 		return -EFAULT;
+ 
+ 	tv.tv_nsec = 0;
++
++	err = security_settime(&tv, NULL);
++	if (err)
++		return err;
++
+ 	do_settimeofday(&tv);
+ 	return 0;
+ }
+@@ -146,10 +152,12 @@ inline static void warp_clock(void)
+ int do_sys_settimeofday(struct timespec *tv, struct timezone *tz)
+ {
+ 	static int firsttime = 1;
++	int error = 0;
++
++	error = security_settime(tv, tz);
++	if (error)
++		return error;
+ 
+-	if (!capable(CAP_SYS_TIME))
+-		return -EPERM;
+-		
+ 	if (tz) {
+ 		/* SMP safe, global irq locking makes it work. */
+ 		sys_tz = *tz;
+diff -puN security/capability.c~bsd-secure-levels-lsm-add-time-hooks security/capability.c
+--- 25/security/capability.c~bsd-secure-levels-lsm-add-time-hooks	Thu Sep 30 16:37:38 2004
++++ 25-akpm/security/capability.c	Thu Sep 30 16:37:38 2004
+@@ -30,6 +30,7 @@ static struct security_operations capabi
+ 	.capset_check =			cap_capset_check,
+ 	.capset_set =			cap_capset_set,
+ 	.capable =			cap_capable,
++	.settime =			cap_settime,
+ 	.netlink_send =			cap_netlink_send,
+ 	.netlink_recv =			cap_netlink_recv,
+ 
+diff -puN security/commoncap.c~bsd-secure-levels-lsm-add-time-hooks security/commoncap.c
+--- 25/security/commoncap.c~bsd-secure-levels-lsm-add-time-hooks	Thu Sep 30 16:37:38 2004
++++ 25-akpm/security/commoncap.c	Thu Sep 30 16:37:38 2004
+@@ -27,20 +27,25 @@
+ int cap_capable (struct task_struct *tsk, int cap)
+ {
+ 	/* Derived from include/linux/sched.h:capable. */
+-	if (cap_raised (tsk->cap_effective, cap))
++	if (cap_raised(tsk->cap_effective, cap))
+ 		return 0;
+-	else
++	return -EPERM;
++}
++
++int cap_settime(struct timespec *ts, struct timezone *tz)
++{
++	if (!capable(CAP_SYS_TIME))
+ 		return -EPERM;
++	return 0;
+ }
+ 
+ int cap_ptrace (struct task_struct *parent, struct task_struct *child)
+ {
+ 	/* Derived from arch/i386/kernel/ptrace.c:sys_ptrace. */
+ 	if (!cap_issubset (child->cap_permitted, current->cap_permitted) &&
+-	    !capable (CAP_SYS_PTRACE))
++	    !capable(CAP_SYS_PTRACE))
+ 		return -EPERM;
+-	else
+-		return 0;
++	return 0;
+ }
+ 
+ int cap_capget (struct task_struct *target, kernel_cap_t *effective,
+@@ -373,6 +378,7 @@ int cap_vm_enough_memory(long pages)
+ }
+ 
+ EXPORT_SYMBOL(cap_capable);
++EXPORT_SYMBOL(cap_settime);
+ EXPORT_SYMBOL(cap_ptrace);
+ EXPORT_SYMBOL(cap_capget);
+ EXPORT_SYMBOL(cap_capset_check);
+diff -puN security/dummy.c~bsd-secure-levels-lsm-add-time-hooks security/dummy.c
+--- 25/security/dummy.c~bsd-secure-levels-lsm-add-time-hooks	Thu Sep 30 16:37:38 2004
++++ 25-akpm/security/dummy.c	Thu Sep 30 16:37:38 2004
+@@ -104,6 +104,13 @@ static int dummy_syslog (int type)
+ 	return 0;
+ }
+ 
++static int dummy_settime (struct timeval *tv, struct timezone *tz)
++{
++	if (!capable(CAP_SYS_TIME))
++		return -EPERM;
++	return 0;
++}
++
+ /*
+  * Check that a process has enough memory to allocate a new virtual
+  * mapping. 0 means there is enough memory for the allocation to
+@@ -897,6 +904,7 @@ void security_fixup_ops (struct security
+ 	set_to_dummy_if_null(ops, quota_on);
+ 	set_to_dummy_if_null(ops, sysctl);
+ 	set_to_dummy_if_null(ops, syslog);
++	set_to_dummy_if_null(ops, settime);
+ 	set_to_dummy_if_null(ops, vm_enough_memory);
+ 	set_to_dummy_if_null(ops, bprm_alloc_security);
+ 	set_to_dummy_if_null(ops, bprm_free_security);
+_

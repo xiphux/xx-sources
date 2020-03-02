@@ -1,0 +1,32 @@
+
+From: Mikael Pettersson <mikpe@csd.uu.se>
+
+2.6.7-rc3-mm1 changed CPU_MASK_NONE into something that isn't a valid
+rvalue (it only works inside struct initializers).  This caused
+compile-time errors in perfctr in UP x86 builds.
+
+Fix below.
+
+Signed-off-by: Mikael Pettersson <mikpe@csd.uu.se>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/cpumask.h |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN include/linux/cpumask.h~cpumask-5-10-rewrite-cpumaskh-single-bitmap-based-cpu_mask_none-fix include/linux/cpumask.h
+--- 25/include/linux/cpumask.h~cpumask-5-10-rewrite-cpumaskh-single-bitmap-based-cpu_mask_none-fix	Wed Jun  9 14:49:13 2004
++++ 25-akpm/include/linux/cpumask.h	Wed Jun  9 14:49:13 2004
+@@ -244,9 +244,9 @@ static inline int __next_cpu(int n, cpum
+ #endif
+ 
+ #define CPU_MASK_NONE							\
+-{ {									\
++((cpumask_t) { {							\
+ 	[0 ... BITS_TO_LONGS(NR_CPUS)-1] =  0UL				\
+-} }
++} })
+ 
+ #define cpus_addr(src) ((src).bits)
+ 
+_

@@ -1,0 +1,53 @@
+
+From: "Randy.Dunlap" <rddunlap@osdl.org>
+
+http://bugme.osdl.org/show_bug.cgi?id=2701
+
+Current script has problems with some shells and utilities.  Remove use of
+'echo' in the script.
+
+From: Roman Zippel <zippel@linux-m68k.org>
+Signed-off-by: Randy Dunlap <rddunlap@osdl.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/scripts/mkconfigs |   22 +++++++++++-----------
+ 1 files changed, 11 insertions(+), 11 deletions(-)
+
+diff -puN scripts/mkconfigs~update-ikconfig-generator-script scripts/mkconfigs
+--- 25/scripts/mkconfigs~update-ikconfig-generator-script	Tue Jun 22 14:51:34 2004
++++ 25-akpm/scripts/mkconfigs	Tue Jun 22 14:51:34 2004
+@@ -34,10 +34,10 @@ fi
+ config=$1
+ makefile=$2
+ 
+-echo "#ifndef _IKCONFIG_H"
+-echo "#define _IKCONFIG_H"
+-echo \
+-"/*
++cat << EOF
++#ifndef _IKCONFIG_H
++#define _IKCONFIG_H
++/*
+  * 
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -58,10 +58,10 @@ echo \
+  * 
+  * This file is generated automatically by scripts/mkconfigs. Do not edit.
+  *
+- */"
+-
+-echo "static char const ikconfig_config[] __attribute__((unused)) = "
+-echo "\"CONFIG_BEGIN=n\\n\\"
+-echo "`cat $config | sed 's/\"/\\\\\"/g' | grep "^#\? \?CONFIG_" | awk '{ print $0 "\\\\n\\\\" }' `"
+-echo "CONFIG_END=n\\n\";"
+-echo "#endif /* _IKCONFIG_H */"
++ */
++static char const ikconfig_config[] __attribute__((unused)) =
++"CONFIG_BEGIN=n\\n\\
++$(sed < $config -n 's/"/\\"/g;/^#\? \?CONFIG_/s/.*/&\\n\\/p')
++CONFIG_END=n\\n";
++#endif /* _IKCONFIG_H */
++EOF
+_

@@ -1,0 +1,112 @@
+
+From: Andi Kleen <ak@muc.de>
+
+Initialize HPET char driver
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/x86_64/Kconfig       |    3 +-
+ 25-akpm/arch/x86_64/kernel/time.c |   48 ++++++++++++++++++++++++++++++++++++++
+ 25-akpm/include/asm-x86_64/hpet.h |    3 ++
+ 3 files changed, 53 insertions(+), 1 deletion(-)
+
+diff -puN arch/x86_64/Kconfig~intialize-hpet-char-driver-on-x86-64 arch/x86_64/Kconfig
+--- 25/arch/x86_64/Kconfig~intialize-hpet-char-driver-on-x86-64	Tue Oct  5 14:36:36 2004
++++ 25-akpm/arch/x86_64/Kconfig	Tue Oct  5 14:36:36 2004
+@@ -72,7 +72,8 @@ config HPET_TIMER
+ 	  If unsure, say Y.
+ 
+ config HPET_EMULATE_RTC
+-	def_bool HPET_TIMER && RTC=y
++	bool "Provide RTC interrupt"
++	depends on HPET_TIMER && RTC=y
+ 
+ config GENERIC_ISA_DMA
+ 	bool
+diff -puN arch/x86_64/kernel/time.c~intialize-hpet-char-driver-on-x86-64 arch/x86_64/kernel/time.c
+--- 25/arch/x86_64/kernel/time.c~intialize-hpet-char-driver-on-x86-64	Tue Oct  5 14:36:36 2004
++++ 25-akpm/arch/x86_64/kernel/time.c	Tue Oct  5 14:36:36 2004
+@@ -34,6 +34,7 @@
+ #include <asm/hpet.h>
+ #include <asm/sections.h>
+ #include <linux/cpufreq.h>
++#include <linux/hpet.h>
+ #ifdef CONFIG_X86_LOCAL_APIC
+ #include <asm/apic.h>
+ #endif
+@@ -723,6 +724,53 @@ static unsigned int __init pit_calibrate
+ 	return (end - start) / 50;
+ }
+ 
++static __init int late_hpet_init(void)
++{
++	struct hpet_data	hd;
++	unsigned int 		ntimer;
++
++	if (!vxtime.hpet_address)
++          return -1;
++
++	memset(&hd, 0, sizeof (hd));
++
++	ntimer = hpet_readl(HPET_ID);
++	ntimer = (ntimer & HPET_ID_NUMBER) >> HPET_ID_NUMBER_SHIFT;
++	ntimer++;
++
++	/*
++	 * Register with driver.
++	 * Timer0 and Timer1 is used by platform.
++	 */
++	hd.hd_address = (void *)fix_to_virt(FIX_HPET_BASE);
++	hd.hd_nirqs = ntimer;
++	hd.hd_flags = HPET_DATA_PLATFORM;
++	hpet_reserve_timer(&hd, 0);
++#ifdef	CONFIG_HPET_EMULATE_RTC
++	hpet_reserve_timer(&hd, 1);
++#endif
++	hd.hd_irq[0] = HPET_LEGACY_8254;
++	hd.hd_irq[1] = HPET_LEGACY_RTC;
++	if (ntimer > 2) {
++		struct hpet		*hpet;
++		struct hpet_timer	*timer;
++		int			i;
++
++		hpet = (struct hpet *) fix_to_virt(FIX_HPET_BASE);
++
++		for (i = 2, timer = &hpet->hpet_timers[2]; i < ntimer;
++		     timer++, i++)
++			hd.hd_irq[i] = (timer->hpet_config &
++					Tn_INT_ROUTE_CNF_MASK) >>
++				Tn_INT_ROUTE_CNF_SHIFT;
++
++	}
++
++	hpet_alloc(&hd);
++	return 0;
++}
++fs_initcall(late_hpet_init);
++
+ static int hpet_init(void)
+ {
+ 	unsigned int cfg, id;
+diff -puN include/asm-x86_64/hpet.h~intialize-hpet-char-driver-on-x86-64 include/asm-x86_64/hpet.h
+--- 25/include/asm-x86_64/hpet.h~intialize-hpet-char-driver-on-x86-64	Tue Oct  5 14:36:36 2004
++++ 25-akpm/include/asm-x86_64/hpet.h	Tue Oct  5 14:36:36 2004
+@@ -28,12 +28,15 @@
+ #define HPET_ID_LEGSUP	0x00008000
+ #define HPET_ID_NUMBER	0x00001f00
+ #define HPET_ID_REV	0x000000ff
++#define	HPET_ID_NUMBER_SHIFT	8
+ 
+ #define HPET_ID_VENDOR_SHIFT	16
+ #define HPET_ID_VENDOR_8086	0x8086
+ 
+ #define HPET_CFG_ENABLE	0x001
+ #define HPET_CFG_LEGACY	0x002
++#define	HPET_LEGACY_8254	2
++#define	HPET_LEGACY_RTC		8
+ 
+ #define HPET_TN_ENABLE		0x004
+ #define HPET_TN_PERIODIC	0x008
+_

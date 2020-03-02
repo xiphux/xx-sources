@@ -1,0 +1,35 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+Relatively minor add-on (not necessarily tied to it or required to be taken
+or a fix for any bug).  Since cond_resched() is using PREEMPT_ACTIVE now,
+it may be useful to update the open-coded instance of cond_resched() to use
+the generic call.  Also, it should probably be __sched so the caller shows
+up in wchan.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/printk.c |    8 +++-----
+ 1 files changed, 3 insertions(+), 5 deletions(-)
+
+diff -puN kernel/printk.c~make-console_conditional_schedule-__sched-and-use-cond_resched kernel/printk.c
+--- 25/kernel/printk.c~make-console_conditional_schedule-__sched-and-use-cond_resched	2004-09-26 17:20:47.683166736 -0700
++++ 25-akpm/kernel/printk.c	2004-09-26 17:20:47.687166128 -0700
+@@ -665,12 +665,10 @@ EXPORT_SYMBOL(release_console_sem);
+  *
+  * Must be called within acquire_console_sem().
+  */
+-void console_conditional_schedule(void)
++void __sched console_conditional_schedule(void)
+ {
+-	if (console_may_schedule && need_resched()) {
+-		set_current_state(TASK_RUNNING);
+-		schedule();
+-	}
++	if (console_may_schedule)
++		cond_resched();
+ }
+ EXPORT_SYMBOL(console_conditional_schedule);
+ 
+_

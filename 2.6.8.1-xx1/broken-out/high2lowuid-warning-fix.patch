@@ -1,0 +1,63 @@
+
+From: Paul Jackson <pj@sgi.com>
+
+fs/smbfs/inode.c: In function `smb_fill_super':
+fs/smbfs/inode.c:563: warning: comparison is always false due to limited 
+range of data type
+
+Unfortunately, this patch uses the notorious "gcc warning suppression by
+obfuscation" technique.
+
+What seems to be going on is that the uid and gid convert macros in
+include/linux/highuid.h:
+
+#define __convert_uid(size, uid) \
+        (size >= sizeof(uid) ? (uid) : high2lowuid(uid))
+
+only call high2lowuid in the case of trying to put a bigger (32 bit, say)
+uid/gid in a smaller (16 bit, in this case) word.  Gcc is smart enough to see
+that the comparison in high2lowuid() macro is silly if called with a 16 bit
+source uid, but not smart enough to understand from the __convert_uid() logic
+that this is exactly the case that high2lowuid() won't be called.
+
+So replace the logical "<" operator with the bit op "&~".  This obfuscates
+things enough to shut gcc up.
+
+Only build the half-dozen files that use SET_UID/SET_GID, on arch i386 and
+ia64.  Only the file fs/smbfs/inode.c showed the warning, both arch's, and
+this patch fixed both.  Untested further, past staring at the code long enough
+to convince myself the change has no actual affect on the code's results.
+
+Signed-off-by: Paul Jackson <pj@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/highuid.h |    8 ++++----
+ 1 files changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN include/linux/highuid.h~high2lowuid-warning-fix include/linux/highuid.h
+--- 25/include/linux/highuid.h~high2lowuid-warning-fix	Mon Aug  9 15:01:19 2004
++++ 25-akpm/include/linux/highuid.h	Mon Aug  9 15:01:19 2004
+@@ -44,8 +44,8 @@ extern void __bad_gid(void);
+ #ifdef CONFIG_UID16
+ 
+ /* prevent uid mod 65536 effect by returning a default value for high UIDs */
+-#define high2lowuid(uid) ((uid) > 65535 ? (old_uid_t)overflowuid : (old_uid_t)(uid))
+-#define high2lowgid(gid) ((gid) > 65535 ? (old_gid_t)overflowgid : (old_gid_t)(gid))
++#define high2lowuid(uid) ((uid) & ~0xFFFF ? (old_uid_t)overflowuid : (old_uid_t)(uid))
++#define high2lowgid(gid) ((gid) & ~0xFFFF ? (old_gid_t)overflowgid : (old_gid_t)(gid))
+ /*
+  * -1 is different in 16 bits than it is in 32 bits
+  * these macros are used by chown(), setreuid(), ...,
+@@ -89,8 +89,8 @@ extern int fs_overflowgid;
+  * Since these macros are used in architectures that only need limited
+  * 16-bit UID back compatibility, we won't use old_uid_t and old_gid_t
+  */
+-#define fs_high2lowuid(uid) ((uid) > 65535 ? (uid16_t)fs_overflowuid : (uid16_t)(uid))
+-#define fs_high2lowgid(gid) ((gid) > 65535 ? (gid16_t)fs_overflowgid : (gid16_t)(gid))
++#define fs_high2lowuid(uid) ((uid) & ~0xFFFF ? (uid16_t)fs_overflowuid : (uid16_t)(uid))
++#define fs_high2lowgid(gid) ((gid) & ~0xFFFF ? (gid16_t)fs_overflowgid : (gid16_t)(gid))
+ 
+ #define low_16_bits(x)	((x) & 0xFFFF)
+ #define high_16_bits(x)	(((x) & 0xFFFF0000) >> 16)
+_

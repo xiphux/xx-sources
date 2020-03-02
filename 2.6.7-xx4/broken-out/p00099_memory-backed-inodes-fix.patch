@@ -1,0 +1,38 @@
+
+
+If an inode is backed by a memory-backed backing_dev, and it is not a blockdev
+inode, we can skip the entire superblock duwing writeback scanning.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/fs-writeback.c |   10 ++++++++--
+ 1 files changed, 8 insertions(+), 2 deletions(-)
+
+diff -puN fs/fs-writeback.c~memory-backed-inodes-fix fs/fs-writeback.c
+--- 25/fs/fs-writeback.c~memory-backed-inodes-fix	2004-06-27 17:24:08.043665608 -0700
++++ 25-akpm/fs/fs-writeback.c	2004-06-27 17:24:08.047665000 -0700
+@@ -303,14 +303,20 @@ sync_sb_inodes(struct super_block *sb, s
+ 		long pages_skipped;
+ 
+ 		if (bdi->memory_backed) {
++			list_move(&inode->i_list, &sb->s_dirty);
+ 			if (sb == blockdev_superblock) {
+ 				/*
+ 				 * Dirty memory-backed blockdev: the ramdisk
+-				 * driver does this.
++				 * driver does this.  Skip just this inode
+ 				 */
+-				list_move(&inode->i_list, &sb->s_dirty);
+ 				continue;
+ 			}
++			/*
++			 * Dirty memory-backed inode against a filesystem other
++			 * than the kernel-internal bdev filesystem.  Skip the
++			 * entire superblock.
++			 */
++			break;
+ 		}
+ 
+ 		if (wbc->nonblocking && bdi_write_congested(bdi)) {
+_

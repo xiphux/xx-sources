@@ -1,0 +1,32 @@
+
+From: Stephen Smalley <sds@epoch.ncsc.mil>
+
+This fixes a bug in SELinux to retain the ptracer SID (if any) across fork.
+Otherwise, SELinux will always deny attempts by traced children to exec
+domain-changing programs even if the policy would have allowed the tracer
+to trace the new domains as well.
+
+Signed-off-by: Stephen Smalley <sds@epoch.ncsc.mil>
+Signed-off-by: James Morris <jmorris@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/security/selinux/hooks.c |    5 +++++
+ 1 files changed, 5 insertions(+)
+
+diff -puN security/selinux/hooks.c~selinux-retain-ptracer-sid-across-fork security/selinux/hooks.c
+--- 25/security/selinux/hooks.c~selinux-retain-ptracer-sid-across-fork	Fri Oct  8 14:45:49 2004
++++ 25-akpm/security/selinux/hooks.c	Fri Oct  8 14:45:49 2004
+@@ -2617,6 +2617,11 @@ static int selinux_task_alloc_security(s
+ 	tsec2->exec_sid = tsec1->exec_sid;
+ 	tsec2->create_sid = tsec1->create_sid;
+ 
++	/* Retain ptracer SID across fork, if any.
++	   This will be reset by the ptrace hook upon any
++	   subsequent ptrace_attach operations. */
++	tsec2->ptrace_sid = tsec1->ptrace_sid;
++
+ 	return 0;
+ }
+ 
+_

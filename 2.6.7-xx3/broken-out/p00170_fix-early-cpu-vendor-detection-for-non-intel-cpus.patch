@@ -1,0 +1,37 @@
+
+From: Andi Kleen <ak@suse.de>
+
+Early CPU detect can only work after the various sub CPU drivers have
+registered their devices.
+
+Currently the vendor would be always 0, which is Intel.
+
+This prevents Athlons from being recognized as buggy PPros and fixes some
+other workarounds for non Intel CPUs too.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/cpu/common.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN arch/i386/kernel/cpu/common.c~fix-early-cpu-vendor-detection-for-non-intel-cpus arch/i386/kernel/cpu/common.c
+--- 25/arch/i386/kernel/cpu/common.c~fix-early-cpu-vendor-detection-for-non-intel-cpus	2004-06-21 23:13:19.540884752 -0700
++++ 25-akpm/arch/i386/kernel/cpu/common.c	2004-06-21 23:13:19.544884144 -0700
+@@ -473,7 +473,6 @@ void early_cpu_detect(void);
+ 
+ void __init early_cpu_init(void)
+ {
+-	early_cpu_detect();
+ 	intel_cpu_init();
+ 	cyrix_init_cpu();
+ 	nsc_init_cpu();
+@@ -483,6 +482,7 @@ void __init early_cpu_init(void)
+ 	rise_init_cpu();
+ 	nexgen_init_cpu();
+ 	umc_init_cpu();
++	early_cpu_detect();
+ 
+ #ifdef CONFIG_DEBUG_PAGEALLOC
+ 	/* pse is not compatible with on-the-fly unmapping,
+_

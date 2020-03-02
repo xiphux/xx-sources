@@ -1,0 +1,35 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+Not all binfmts page align ->end_code and ->start_code, so the task_mmu
+statistics calculations need to perform this alignment themselves.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/proc/task_mmu.c |    5 +++--
+ 1 files changed, 3 insertions(+), 2 deletions(-)
+
+diff -puN fs/proc/task_mmu.c~fix-task_mmuc-text-size-reporting fs/proc/task_mmu.c
+--- 25/fs/proc/task_mmu.c~fix-task_mmuc-text-size-reporting	Tue Sep 14 16:44:33 2004
++++ 25-akpm/fs/proc/task_mmu.c	Tue Sep 14 16:44:33 2004
+@@ -9,7 +9,7 @@ char *task_mem(struct mm_struct *mm, cha
+ 	unsigned long data, text, lib;
+ 
+ 	data = mm->total_vm - mm->shared_vm - mm->stack_vm;
+-	text = (mm->end_code - mm->start_code) >> 10;
++	text = (PAGE_ALIGN(mm->end_code) - (mm->start_code & PAGE_MASK)) >> 10;
+ 	lib = (mm->exec_vm << (PAGE_SHIFT-10)) - text;
+ 	buffer += sprintf(buffer,
+ 		"VmSize:\t%8lu kB\n"
+@@ -36,7 +36,8 @@ int task_statm(struct mm_struct *mm, int
+ 	       int *data, int *resident)
+ {
+ 	*shared = mm->shared_vm;
+-	*text = (mm->end_code - mm->start_code) >> PAGE_SHIFT;
++	*text = (PAGE_ALIGN(mm->end_code) - (mm->start_code & PAGE_MASK))
++								>> PAGE_SHIFT;
+ 	*data = mm->total_vm - mm->shared_vm - *text;
+ 	*resident = mm->rss;
+ 	return mm->total_vm;
+_

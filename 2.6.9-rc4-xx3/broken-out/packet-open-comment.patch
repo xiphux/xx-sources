@@ -1,0 +1,49 @@
+
+From: Peter Osterlund <petero2@telia.com>
+
+Here is a patch that removes the obsolete comment and the useless search.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/pktcdvd.c |   18 ------------------
+ 1 files changed, 18 deletions(-)
+
+diff -puN drivers/block/pktcdvd.c~packet-open-comment drivers/block/pktcdvd.c
+--- 25/drivers/block/pktcdvd.c~packet-open-comment	2004-09-26 17:06:26.731051352 -0700
++++ 25-akpm/drivers/block/pktcdvd.c	2004-09-26 17:06:26.736050592 -0700
+@@ -1929,8 +1929,6 @@ static int pkt_open_dev(struct pktcdvd_d
+ 	int ret;
+ 	long lba;
+ 	request_queue_t *q;
+-	int i;
+-	char b[BDEVNAME_SIZE];
+ 
+ 	/*
+ 	 * We need to re-open the cdrom device without O_NONBLOCK to be able
+@@ -1950,23 +1948,7 @@ static int pkt_open_dev(struct pktcdvd_d
+ 	set_capacity(pd->bdev->bd_disk, lba << 2);
+ 	bd_set_size(pd->bdev, (loff_t)lba << 11);
+ 
+-	/*
+-	 * The underlying block device needs to have its merge logic
+-	 * modified, so that it doesn't try to merge write requests.
+-	 * First make sure the queue isn't already in use by another
+-	 * pktcdvd_device.
+-	 */
+ 	q = bdev_get_queue(pd->bdev);
+-	for (i = 0; i < MAX_WRITERS; i++) {
+-		if (pd == pkt_devs[i])
+-			continue;
+-		if (pkt_devs[i] && bdev_get_queue(pkt_devs[i]->bdev) == q) {
+-			printk("pktcdvd: %s request queue busy\n", bdevname(pd->bdev, b));
+-			ret = -EBUSY;
+-			goto out_putdev;
+-		}
+-	}
+-
+ 	if (write) {
+ 		if ((ret = pkt_open_write(pd)))
+ 			goto out_putdev;
+_

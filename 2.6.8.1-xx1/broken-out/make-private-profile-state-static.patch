@@ -1,0 +1,84 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+Make the various bits of state no longer used anywhere else static to
+kernel/profile.c
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/profile.h |   10 ----------
+ 25-akpm/init/main.c             |    2 --
+ 25-akpm/kernel/profile.c        |   12 ++++++------
+ 3 files changed, 6 insertions(+), 18 deletions(-)
+
+diff -puN include/linux/profile.h~make-private-profile-state-static include/linux/profile.h
+--- 25/include/linux/profile.h~make-private-profile-state-static	Fri Aug  6 15:19:41 2004
++++ 25-akpm/include/linux/profile.h	Fri Aug  6 15:19:41 2004
+@@ -15,9 +15,6 @@
+ struct proc_dir_entry;
+ struct pt_regs;
+ 
+-/* parse command line */
+-int __init profile_setup(char * str);
+-
+ /* init basic kernel profiler */
+ void __init profile_init(void);
+ void profile_tick(int, struct pt_regs *);
+@@ -28,13 +25,6 @@ void create_prof_cpu_mask(struct proc_di
+ #define create_prof_cpu_mask(x)			do { (void)(x); } while (0)
+ #endif
+ 
+-extern unsigned int * prof_buffer;
+-extern unsigned long prof_len;
+-extern unsigned long prof_shift;
+-extern int prof_on;
+-extern cpumask_t prof_cpu_mask;
+-
+-
+ enum profile_type {
+ 	EXIT_TASK,
+ 	EXIT_MMAP,
+diff -puN init/main.c~make-private-profile-state-static init/main.c
+--- 25/init/main.c~make-private-profile-state-static	Fri Aug  6 15:19:41 2004
++++ 25-akpm/init/main.c	Fri Aug  6 15:19:41 2004
+@@ -151,8 +151,6 @@ static char * argv_init[MAX_INIT_ARGS+2]
+ char * envp_init[MAX_INIT_ENVS+2] = { "HOME=/", "TERM=linux", NULL, };
+ static const char *panic_later, *panic_param;
+ 
+-__setup("profile=", profile_setup);
+-
+ static int __init obsolete_checksetup(char *line)
+ {
+ 	struct obs_kernel_param *p;
+diff -puN kernel/profile.c~make-private-profile-state-static kernel/profile.c
+--- 25/kernel/profile.c~make-private-profile-state-static	Fri Aug  6 15:19:41 2004
++++ 25-akpm/kernel/profile.c	Fri Aug  6 15:19:41 2004
+@@ -12,13 +12,12 @@
+ #include <linux/profile.h>
+ #include <asm/sections.h>
+ 
+-unsigned int * prof_buffer;
+-unsigned long prof_len;
+-unsigned long prof_shift;
+-int prof_on;
+-cpumask_t prof_cpu_mask = CPU_MASK_ALL;
++static unsigned int *prof_buffer;
++static unsigned long prof_len, prof_shift;
++static int prof_on;
++static cpumask_t prof_cpu_mask = CPU_MASK_ALL;
+ 
+-int __init profile_setup(char * str)
++static int __init profile_setup(char * str)
+ {
+ 	int par;
+ 
+@@ -36,6 +35,7 @@ int __init profile_setup(char * str)
+ 	}
+ 	return 1;
+ }
++__setup("profile=", profile_setup);
+ 
+ 
+ void __init profile_init(void)
+_

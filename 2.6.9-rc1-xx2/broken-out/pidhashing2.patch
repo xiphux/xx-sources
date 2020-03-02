@@ -1,0 +1,645 @@
+--- test2/drivers/char/tty_io.c.pid	2004-09-02 11:39:28.000000000 +0400
++++ test2/drivers/char/tty_io.c	2004-09-02 13:48:03.000000000 +0400
+@@ -424,7 +424,6 @@ void do_tty_hangup(void *data)
+ 	struct file * cons_filp = NULL;
+ 	struct file *filp, *f = NULL;
+ 	struct task_struct *p;
+-	struct pid *pid;
+ 	int    closecount = 0, n;
+ 
+ 	if (!tty)
+@@ -495,8 +494,7 @@ void do_tty_hangup(void *data)
+ 	
+ 	read_lock(&tasklist_lock);
+ 	if (tty->session > 0) {
+-		struct list_head *l;
+-		for_each_task_pid(tty->session, PIDTYPE_SID, p, l, pid) {
++		do_each_task_pid(tty->session, PIDTYPE_SID, p) {
+ 			if (p->signal->tty == tty)
+ 				p->signal->tty = NULL;
+ 			if (!p->signal->leader)
+@@ -505,7 +503,7 @@ void do_tty_hangup(void *data)
+ 			send_group_sig_info(SIGCONT, SEND_SIG_PRIV, p);
+ 			if (tty->pgrp > 0)
+ 				p->signal->tty_old_pgrp = tty->pgrp;
+-		}
++		} while_each_task_pid(tty->session, PIDTYPE_SID, p);
+ 	}
+ 	read_unlock(&tasklist_lock);
+ 
+@@ -577,8 +575,6 @@ void disassociate_ctty(int on_exit)
+ {
+ 	struct tty_struct *tty;
+ 	struct task_struct *p;
+-	struct list_head *l;
+-	struct pid *pid;
+ 	int tty_pgrp = -1;
+ 
+ 	lock_kernel();
+@@ -607,8 +603,9 @@ void disassociate_ctty(int on_exit)
+ 	tty->pgrp = -1;
+ 
+ 	read_lock(&tasklist_lock);
+-	for_each_task_pid(current->signal->session, PIDTYPE_SID, p, l, pid)
++	do_each_task_pid(current->signal->session, PIDTYPE_SID, p) {
+ 		p->signal->tty = NULL;
++	} while_each_task_pid(current->signal->session, PIDTYPE_SID, p);
+ 	read_unlock(&tasklist_lock);
+ 	unlock_kernel();
+ }
+@@ -1260,15 +1257,15 @@ static void release_dev(struct file * fi
+ 	 */
+ 	if (tty_closing || o_tty_closing) {
+ 		struct task_struct *p;
+-		struct list_head *l;
+-		struct pid *pid;
+ 
+ 		read_lock(&tasklist_lock);
+-		for_each_task_pid(tty->session, PIDTYPE_SID, p, l, pid)
++		do_each_task_pid(tty->session, PIDTYPE_SID, p) {
+ 			p->signal->tty = NULL;
++		} while_each_task_pid(tty->session, PIDTYPE_SID, p);
+ 		if (o_tty)
+-			for_each_task_pid(o_tty->session, PIDTYPE_SID, p,l, pid)
++			do_each_task_pid(o_tty->session, PIDTYPE_SID, p) {
+ 				p->signal->tty = NULL;
++			} while_each_task_pid(o_tty->session, PIDTYPE_SID, p);
+ 		read_unlock(&tasklist_lock);
+ 	}
+ 
+@@ -1638,8 +1635,6 @@ static int fionbio(struct file *file, in
+ 
+ static int tiocsctty(struct tty_struct *tty, int arg)
+ {
+-	struct list_head *l;
+-	struct pid *pid;
+ 	task_t *p;
+ 
+ 	if (current->signal->leader &&
+@@ -1662,8 +1657,9 @@ static int tiocsctty(struct tty_struct *
+ 			 */
+ 
+ 			read_lock(&tasklist_lock);
+-			for_each_task_pid(tty->session, PIDTYPE_SID, p, l, pid)
++			do_each_task_pid(tty->session, PIDTYPE_SID, p) {
+ 				p->signal->tty = NULL;
++			} while_each_task_pid(tty->session, PIDTYPE_SID, p);
+ 			read_unlock(&tasklist_lock);
+ 		} else
+ 			return -EPERM;
+@@ -1970,8 +1966,6 @@ static void __do_SAK(void *arg)
+ #else
+ 	struct tty_struct *tty = arg;
+ 	struct task_struct *p;
+-	struct list_head *l;
+-	struct pid *pid;
+ 	int session;
+ 	int		i;
+ 	struct file	*filp;
+@@ -1984,7 +1978,7 @@ static void __do_SAK(void *arg)
+ 	if (tty->driver->flush_buffer)
+ 		tty->driver->flush_buffer(tty);
+ 	read_lock(&tasklist_lock);
+-	for_each_task_pid(session, PIDTYPE_SID, p, l, pid) {
++	do_each_task_pid(session, PIDTYPE_SID, p) {
+ 		if (p->signal->tty == tty || session > 0) {
+ 			printk(KERN_NOTICE "SAK: killed process %d"
+ 			    " (%s): p->signal->session==tty->session\n",
+@@ -2011,7 +2005,7 @@ static void __do_SAK(void *arg)
+ 			spin_unlock(&p->files->file_lock);
+ 		}
+ 		task_unlock(p);
+-	}
++	} while_each_task_pid(session, PIDTYPE_SID, p);
+ 	read_unlock(&tasklist_lock);
+ #endif
+ }
+--- test2/fs/proc/base.c.pid	2004-09-02 11:40:03.000000000 +0400
++++ test2/fs/proc/base.c	2004-09-02 13:48:03.000000000 +0400
+@@ -778,10 +778,9 @@ static struct inode_operations proc_pid_
+ 	.follow_link	= proc_pid_follow_link
+ };
+ 
+-static int pid_alive(struct task_struct *p)
++static inline int pid_alive(struct task_struct *p)
+ {
+-	BUG_ON(p->pids[PIDTYPE_PID].pidptr != &p->pids[PIDTYPE_PID].pid);
+-	return atomic_read(&p->pids[PIDTYPE_PID].pid.count);
++	return p->pids[PIDTYPE_PID].nr != 0;
+ }
+ 
+ #define NUMBUF 10
+--- test2/fs/fcntl.c.pid	2004-09-02 11:39:57.000000000 +0400
++++ test2/fs/fcntl.c	2004-09-02 13:48:03.000000000 +0400
+@@ -497,11 +497,9 @@ void send_sigio(struct fown_struct *fown
+ 			send_sigio_to_task(p, fown, fd, band);
+ 		}
+ 	} else {
+-		struct list_head *l;
+-		struct pid *pidptr;
+-		for_each_task_pid(-pid, PIDTYPE_PGID, p, l, pidptr) {
++		do_each_task_pid(-pid, PIDTYPE_PGID, p) {
+ 			send_sigio_to_task(p, fown, fd, band);
+-		}
++		} while_each_task_pid(-pid, PIDTYPE_PGID, p);
+ 	}
+ 	read_unlock(&tasklist_lock);
+  out_unlock_fown:
+@@ -534,11 +532,9 @@ int send_sigurg(struct fown_struct *fown
+ 			send_sigurg_to_task(p, fown);
+ 		}
+ 	} else {
+-		struct list_head *l;
+-		struct pid *pidptr;
+-		for_each_task_pid(-pid, PIDTYPE_PGID, p, l, pidptr) {
++		do_each_task_pid(-pid, PIDTYPE_PGID, p) {
+ 			send_sigurg_to_task(p, fown);
+-		}
++		} while_each_task_pid(-pid, PIDTYPE_PGID, p);
+ 	}
+ 	read_unlock(&tasklist_lock);
+  out_unlock_fown:
+--- test2/include/linux/pid.h.pid	2004-09-02 11:40:19.000000000 +0400
++++ test2/include/linux/pid.h	2004-09-02 14:43:53.000000000 +0400
+@@ -12,35 +12,22 @@ enum pid_type
+ 
+ struct pid
+ {
+-	/* Try to keep hash_chain in the same cacheline as nr for find_pid */
+-	struct hlist_node hash_chain;
++	/* Try to keep pid_chain in the same cacheline as nr for find_pid */
+ 	int nr;
+-	atomic_t count;
+-	struct task_struct *task;
+-	struct list_head task_list;
+-};
+-
+-struct pid_link
+-{
+-	struct list_head pid_chain;
+-	struct pid *pidptr;
+-	struct pid pid;
++	struct hlist_node pid_chain;
++	/* list of pids with the same nr, only one of them is in the hash */
++	struct list_head pid_list;
+ };
+ 
+ #define pid_task(elem, type) \
+-	list_entry(elem, struct task_struct, pids[type].pid_chain)
++	list_entry(elem, struct task_struct, pids[type].pid_list)
+ 
+ /*
+- * attach_pid() and link_pid() must be called with the tasklist_lock
++ * attach_pid() and detach_pid() must be called with the tasklist_lock
+  * write-held.
+  */
+ extern int FASTCALL(attach_pid(struct task_struct *task, enum pid_type type, int nr));
+ 
+-extern void FASTCALL(link_pid(struct task_struct *task, struct pid_link *link, struct pid *pid));
+-
+-/*
+- * detach_pid() must be called with the tasklist_lock write-held.
+- */
+ extern void FASTCALL(detach_pid(struct task_struct *task, enum pid_type));
+ 
+ /*
+@@ -53,13 +40,16 @@ extern int alloc_pidmap(void);
+ extern void FASTCALL(free_pidmap(int));
+ extern void switch_exec_pids(struct task_struct *leader, struct task_struct *thread);
+ 
+-#define for_each_task_pid(who, type, task, elem, pid)		\
+-	if ((pid = find_pid(type, who)))			\
+-	        for (elem = pid->task_list.next,			\
+-			prefetch(elem->next),				\
+-			task = pid_task(elem, type);			\
+-			elem != &pid->task_list;			\
+-			elem = elem->next, prefetch(elem->next), 	\
+-			task = pid_task(elem, type))
++#define do_each_task_pid(who, type, task)				\
++	if ((task = find_task_by_pid_type(type, who))) {		\
++		prefetch((task)->pids[type].pid_list.next);		\
++		do {
++
++#define while_each_task_pid(who, type, task)				\
++			task = pid_task((task)->pids[type].pid_list.next,\
++						type);			\
++			prefetch((task)->pids[type].pid_list.next);	\
++		} while (hlist_unhashed(&(task)->pids[type].pid_chain));\
++	}								\
+ 
+ #endif /* _LINUX_PID_H */
+--- test2/include/linux/sched.h.pid	2004-09-02 11:40:19.000000000 +0400
++++ test2/include/linux/sched.h	2004-09-02 13:48:04.000000000 +0400
+@@ -494,7 +494,7 @@ struct task_struct {
+ 	struct task_struct *group_leader;	/* threadgroup leader */
+ 
+ 	/* PID/PID hash table linkage. */
+-	struct pid_link pids[PIDTYPE_MAX];
++	struct pid pids[PIDTYPE_MAX];
+ 
+ 	wait_queue_head_t wait_chldexit;	/* for wait4() */
+ 	struct completion *vfork_done;		/* for vfork() */
+@@ -673,7 +673,8 @@ extern struct task_struct init_task;
+ 
+ extern struct   mm_struct init_mm;
+ 
+-extern struct task_struct *find_task_by_pid(int pid);
++#define find_task_by_pid(nr)	find_task_by_pid_type(PIDTYPE_PID, nr)
++extern struct task_struct *find_task_by_pid_type(int type, int pid);
+ extern void set_special_pids(pid_t session, pid_t pgrp);
+ extern void __set_special_pids(pid_t session, pid_t pgrp);
+ 
+@@ -876,9 +877,7 @@ extern task_t * FASTCALL(next_thread(con
+ 
+ static inline int thread_group_empty(task_t *p)
+ {
+-	struct pid *pid = p->pids[PIDTYPE_TGID].pidptr;
+-
+-	return pid->task_list.next->next == &pid->task_list;
++	return list_empty(&p->pids[PIDTYPE_TGID].pid_list);
+ }
+ 
+ #define delay_group_leader(p) \
+--- test2/kernel/capability.c.pid	2004-09-02 11:40:22.000000000 +0400
++++ test2/kernel/capability.c	2004-09-02 13:48:04.000000000 +0400
+@@ -89,14 +89,12 @@ static inline void cap_set_pg(int pgrp, 
+ 			      kernel_cap_t *permitted)
+ {
+ 	task_t *g, *target;
+-	struct list_head *l;
+-	struct pid *pid;
+ 
+-	for_each_task_pid(pgrp, PIDTYPE_PGID, g, l, pid) {
++	do_each_task_pid(pgrp, PIDTYPE_PGID, g) {
+ 		target = g;
+ 		while_each_thread(g, target)
+ 			security_capset_set(target, effective, inheritable, permitted);
+-	}
++	} while_each_task_pid(pgrp, PIDTYPE_PGID, g);
+ }
+ 
+ /*
+--- test2/kernel/exit.c.pid	2004-09-02 11:40:22.000000000 +0400
++++ test2/kernel/exit.c	2004-09-02 14:30:52.000000000 +0400
+@@ -124,16 +124,15 @@ void unhash_process(struct task_struct *
+ int session_of_pgrp(int pgrp)
+ {
+ 	struct task_struct *p;
+-	struct list_head *l;
+-	struct pid *pid;
+ 	int sid = -1;
+ 
+ 	read_lock(&tasklist_lock);
+-	for_each_task_pid(pgrp, PIDTYPE_PGID, p, l, pid)
++	do_each_task_pid(pgrp, PIDTYPE_PGID, p) {
+ 		if (p->signal->session > 0) {
+ 			sid = p->signal->session;
+ 			goto out;
+ 		}
++	} while_each_task_pid(pgrp, PIDTYPE_PGID, p);
+ 	p = find_task_by_pid(pgrp);
+ 	if (p)
+ 		sid = p->signal->session;
+@@ -154,11 +153,9 @@ out:
+ static int will_become_orphaned_pgrp(int pgrp, task_t *ignored_task)
+ {
+ 	struct task_struct *p;
+-	struct list_head *l;
+-	struct pid *pid;
+ 	int ret = 1;
+ 
+-	for_each_task_pid(pgrp, PIDTYPE_PGID, p, l, pid) {
++	do_each_task_pid(pgrp, PIDTYPE_PGID, p) {
+ 		if (p == ignored_task
+ 				|| p->state >= TASK_ZOMBIE 
+ 				|| p->real_parent->pid == 1)
+@@ -168,7 +165,7 @@ static int will_become_orphaned_pgrp(int
+ 			ret = 0;
+ 			break;
+ 		}
+-	}
++	} while_each_task_pid(pgrp, PIDTYPE_PGID, p);
+ 	return ret;	/* (sighing) "Often!" */
+ }
+ 
+@@ -187,10 +184,8 @@ static inline int has_stopped_jobs(int p
+ {
+ 	int retval = 0;
+ 	struct task_struct *p;
+-	struct list_head *l;
+-	struct pid *pid;
+ 
+-	for_each_task_pid(pgrp, PIDTYPE_PGID, p, l, pid) {
++	do_each_task_pid(pgrp, PIDTYPE_PGID, p) {
+ 		if (p->state != TASK_STOPPED)
+ 			continue;
+ 
+@@ -206,7 +201,7 @@ static inline int has_stopped_jobs(int p
+ 
+ 		retval = 1;
+ 		break;
+-	}
++	} while_each_task_pid(pgrp, PIDTYPE_PGID, p);
+ 	return retval;
+ }
+ 
+@@ -849,9 +844,6 @@ asmlinkage long sys_exit(int error_code)
+ 
+ task_t fastcall *next_thread(const task_t *p)
+ {
+-	const struct pid_link *link = p->pids + PIDTYPE_TGID;
+-	const struct list_head *tmp, *head = &link->pidptr->task_list;
+-
+ #ifdef CONFIG_SMP
+ 	if (!p->sighand)
+ 		BUG();
+@@ -859,11 +851,7 @@ task_t fastcall *next_thread(const task_
+ 				!rwlock_is_locked(&tasklist_lock))
+ 		BUG();
+ #endif
+-	tmp = link->pid_chain.next;
+-	if (tmp == head)
+-		tmp = head->next;
+-
+-	return pid_task(tmp, PIDTYPE_TGID);
++	return pid_task(p->pids[PIDTYPE_TGID].pid_list.next, PIDTYPE_TGID);
+ }
+ 
+ EXPORT_SYMBOL(next_thread);
+--- test2/kernel/fork.c.pid	2004-09-02 11:40:22.000000000 +0400
++++ test2/kernel/fork.c	2004-09-02 13:48:04.000000000 +0400
+@@ -1124,14 +1124,13 @@ static task_t *copy_process(unsigned lon
+ 		__ptrace_link(p, current->parent);
+ 
+ 	attach_pid(p, PIDTYPE_PID, p->pid);
++	attach_pid(p, PIDTYPE_TGID, p->tgid);
+ 	if (thread_group_leader(p)) {
+-		attach_pid(p, PIDTYPE_TGID, p->tgid);
+ 		attach_pid(p, PIDTYPE_PGID, process_group(p));
+ 		attach_pid(p, PIDTYPE_SID, p->signal->session);
+ 		if (p->pid)
+ 			__get_cpu_var(process_counts)++;
+-	} else
+-		link_pid(p, p->pids + PIDTYPE_TGID, &p->group_leader->pids[PIDTYPE_TGID].pid);
++	}
+ 
+ 	nr_threads++;
+ 	write_unlock_irq(&tasklist_lock);
+--- test2/kernel/pid.c.pid	2004-09-02 11:40:22.000000000 +0400
++++ test2/kernel/pid.c	2004-09-02 14:49:41.205893136 +0400
+@@ -146,74 +146,66 @@ failure:
+ 	return -1;
+ }
+ 
+-fastcall struct pid *find_pid(enum pid_type type, int nr)
++struct pid * fastcall find_pid(enum pid_type type, int nr)
+ {
+ 	struct hlist_node *elem;
+ 	struct pid *pid;
+ 
+ 	hlist_for_each_entry(pid, elem,
+-			&pid_hash[type][pid_hashfn(nr)], hash_chain) {
++			&pid_hash[type][pid_hashfn(nr)], pid_chain) {
+ 		if (pid->nr == nr)
+ 			return pid;
+ 	}
+ 	return NULL;
+ }
+ 
+-void fastcall link_pid(task_t *task, struct pid_link *link, struct pid *pid)
+-{
+-	atomic_inc(&pid->count);
+-	list_add_tail(&link->pid_chain, &pid->task_list);
+-	link->pidptr = pid;
+-}
+-
+ int fastcall attach_pid(task_t *task, enum pid_type type, int nr)
+ {
+-	struct pid *pid = find_pid(type, nr);
++	struct pid *pid, *task_pid;
+ 
+-	if (pid)
+-		atomic_inc(&pid->count);
+-	else {
+-		pid = &task->pids[type].pid;
+-		pid->nr = nr;
+-		atomic_set(&pid->count, 1);
+-		INIT_LIST_HEAD(&pid->task_list);
+-		pid->task = task;
+-		get_task_struct(task);
+-		hlist_add_head(&pid->hash_chain,
++	task_pid = &task->pids[type];
++	pid = find_pid(type, nr);
++	if (pid == NULL) {
++		hlist_add_head(&task_pid->pid_chain,
+ 				&pid_hash[type][pid_hashfn(nr)]);
++		INIT_LIST_HEAD(&task_pid->pid_list);
++	} else {
++		INIT_HLIST_NODE(&task_pid->pid_chain);
++		list_add_tail(&task_pid->pid_list, &pid->pid_list);
+ 	}
+-	list_add_tail(&task->pids[type].pid_chain, &pid->task_list);
+-	task->pids[type].pidptr = pid;
++	task_pid->nr = nr;
+ 
+ 	return 0;
+ }
+ 
+ static inline int __detach_pid(task_t *task, enum pid_type type)
+ {
+-	struct pid_link *link = task->pids + type;
+-	struct pid *pid = link->pidptr;
++	struct pid *pid, *pid_next;
+ 	int nr;
+ 
+-	list_del(&link->pid_chain);
+-	if (!atomic_dec_and_test(&pid->count))
+-		return 0;
+-
++	pid = &task->pids[type];
++	if (!hlist_unhashed(&pid->pid_chain)) {
++		hlist_del(&pid->pid_chain);
++		if (!list_empty(&pid->pid_list)) {
++			pid_next = list_entry(pid->pid_list.next,
++						struct pid, pid_list);
++			/* insert next pid from pid_list to hash */
++			hlist_add_head(&pid_next->pid_chain,
++				&pid_hash[type][pid_hashfn(pid_next->nr)]);
++		}
++	}
++	list_del(&pid->pid_list);
+ 	nr = pid->nr;
+-	hlist_del(&pid->hash_chain);
+-	put_task_struct(pid->task);
++	pid->nr = 0;
+ 
+ 	return nr;
+ }
+ 
+-static void _detach_pid(task_t *task, enum pid_type type)
+-{
+-	__detach_pid(task, type);
+-}
+-
+ void fastcall detach_pid(task_t *task, enum pid_type type)
+ {
+-	int nr = __detach_pid(task, type);
++	int nr;
+ 
++	nr = __detach_pid(task, type);
+ 	if (!nr)
+ 		return;
+ 
+@@ -223,16 +215,18 @@ void fastcall detach_pid(task_t *task, e
+ 	free_pidmap(nr);
+ }
+ 
+-task_t *find_task_by_pid(int nr)
++task_t *find_task_by_pid_type(int type, int nr)
+ {
+-	struct pid *pid = find_pid(PIDTYPE_PID, nr);
++	struct pid *pid;
+ 
++	pid = find_pid(type, nr);
+ 	if (!pid)
+ 		return NULL;
+-	return pid_task(pid->task_list.next, PIDTYPE_PID);
++
++	return pid_task(&pid->pid_list, type);
+ }
+ 
+-EXPORT_SYMBOL(find_task_by_pid);
++EXPORT_SYMBOL(find_task_by_pid_type);
+ 
+ /*
+  * This function switches the PIDs if a non-leader thread calls
+@@ -241,13 +235,13 @@ EXPORT_SYMBOL(find_task_by_pid);
+  */
+ void switch_exec_pids(task_t *leader, task_t *thread)
+ {
+-	_detach_pid(leader, PIDTYPE_PID);
+-	_detach_pid(leader, PIDTYPE_TGID);
+-	_detach_pid(leader, PIDTYPE_PGID);
+-	_detach_pid(leader, PIDTYPE_SID);
++	__detach_pid(leader, PIDTYPE_PID);
++	__detach_pid(leader, PIDTYPE_TGID);
++	__detach_pid(leader, PIDTYPE_PGID);
++	__detach_pid(leader, PIDTYPE_SID);
+ 
+-	_detach_pid(thread, PIDTYPE_PID);
+-	_detach_pid(thread, PIDTYPE_TGID);
++	__detach_pid(thread, PIDTYPE_PID);
++	__detach_pid(thread, PIDTYPE_TGID);
+ 
+ 	leader->pid = leader->tgid = thread->pid;
+ 	thread->pid = thread->tgid;
+--- test2/kernel/signal.c.pid	2004-09-02 11:40:22.000000000 +0400
++++ test2/kernel/signal.c	2004-09-02 13:48:04.000000000 +0400
+@@ -1110,8 +1110,6 @@ int group_send_sig_info(int sig, struct 
+ int __kill_pg_info(int sig, struct siginfo *info, pid_t pgrp)
+ {
+ 	struct task_struct *p;
+-	struct list_head *l;
+-	struct pid *pid;
+ 	int retval, success;
+ 
+ 	if (pgrp <= 0)
+@@ -1119,11 +1117,11 @@ int __kill_pg_info(int sig, struct sigin
+ 
+ 	success = 0;
+ 	retval = -ESRCH;
+-	for_each_task_pid(pgrp, PIDTYPE_PGID, p, l, pid) {
++	do_each_task_pid(pgrp, PIDTYPE_PGID, p) {
+ 		int err = group_send_sig_info(sig, info, p);
+ 		success |= !err;
+ 		retval = err;
+-	}
++	} while_each_task_pid(pgrp, PIDTYPE_PGID, p);
+ 	return success ? 0 : retval;
+ }
+ 
+@@ -1150,8 +1148,6 @@ int
+ kill_sl_info(int sig, struct siginfo *info, pid_t sid)
+ {
+ 	int err, retval = -EINVAL;
+-	struct pid *pid;
+-	struct list_head *l;
+ 	struct task_struct *p;
+ 
+ 	if (sid <= 0)
+@@ -1159,13 +1155,13 @@ kill_sl_info(int sig, struct siginfo *in
+ 
+ 	retval = -ESRCH;
+ 	read_lock(&tasklist_lock);
+-	for_each_task_pid(sid, PIDTYPE_SID, p, l, pid) {
++	do_each_task_pid(sid, PIDTYPE_SID, p) {
+ 		if (!p->signal->leader)
+ 			continue;
+ 		err = group_send_sig_info(sig, info, p);
+ 		if (retval)
+ 			retval = err;
+-	}
++	} while_each_task_pid(sid, PIDTYPE_SID, p);
+ 	read_unlock(&tasklist_lock);
+ out:
+ 	return retval;
+--- test2/kernel/sys.c.pid	2004-09-02 11:40:22.000000000 +0400
++++ test2/kernel/sys.c	2004-09-02 13:48:04.000000000 +0400
+@@ -310,8 +310,6 @@ asmlinkage long sys_setpriority(int whic
+ {
+ 	struct task_struct *g, *p;
+ 	struct user_struct *user;
+-	struct pid *pid;
+-	struct list_head *l;
+ 	int error = -EINVAL;
+ 
+ 	if (which > 2 || which < 0)
+@@ -336,8 +334,9 @@ asmlinkage long sys_setpriority(int whic
+ 		case PRIO_PGRP:
+ 			if (!who)
+ 				who = process_group(current);
+-			for_each_task_pid(who, PIDTYPE_PGID, p, l, pid)
++			do_each_task_pid(who, PIDTYPE_PGID, p) {
+ 				error = set_one_prio(p, niceval, error);
++			} while_each_task_pid(who, PIDTYPE_PGID, p);
+ 			break;
+ 		case PRIO_USER:
+ 			if (!who)
+@@ -371,8 +370,6 @@ out:
+ asmlinkage long sys_getpriority(int which, int who)
+ {
+ 	struct task_struct *g, *p;
+-	struct list_head *l;
+-	struct pid *pid;
+ 	struct user_struct *user;
+ 	long niceval, retval = -ESRCH;
+ 
+@@ -394,11 +391,11 @@ asmlinkage long sys_getpriority(int whic
+ 		case PRIO_PGRP:
+ 			if (!who)
+ 				who = process_group(current);
+-			for_each_task_pid(who, PIDTYPE_PGID, p, l, pid) {
++			do_each_task_pid(who, PIDTYPE_PGID, p) {
+ 				niceval = 20 - task_nice(p);
+ 				if (niceval > retval)
+ 					retval = niceval;
+-			}
++			} while_each_task_pid(who, PIDTYPE_PGID, p);
+ 			break;
+ 		case PRIO_USER:
+ 			if (!who)
+@@ -1044,12 +1041,11 @@ asmlinkage long sys_setpgid(pid_t pid, p
+ 
+ 	if (pgid != pid) {
+ 		struct task_struct *p;
+-		struct pid *pid;
+-		struct list_head *l;
+ 
+-		for_each_task_pid(pgid, PIDTYPE_PGID, p, l, pid)
++		do_each_task_pid(pgid, PIDTYPE_PGID, p) {
+ 			if (p->signal->session == current->signal->session)
+ 				goto ok_pgid;
++		} while_each_task_pid(pgid, PIDTYPE_PGID, p);
+ 		goto out;
+ 	}
+ 

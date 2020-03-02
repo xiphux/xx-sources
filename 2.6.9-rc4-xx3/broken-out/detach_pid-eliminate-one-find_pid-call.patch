@@ -1,0 +1,37 @@
+
+From: Oleg Nesterov <oleg@tv-sign.ru>
+
+Now there is no point in calling costly find_pid(type) if
+__detach_pid(type) returned non zero value.
+
+Signed-off-by: Oleg Nesterov <oleg@tv-sign.ru>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/pid.c |    7 ++++---
+ 1 files changed, 4 insertions(+), 3 deletions(-)
+
+diff -puN kernel/pid.c~detach_pid-eliminate-one-find_pid-call kernel/pid.c
+--- 25/kernel/pid.c~detach_pid-eliminate-one-find_pid-call	Fri Oct  1 15:09:16 2004
++++ 25-akpm/kernel/pid.c	Fri Oct  1 15:09:16 2004
+@@ -191,15 +191,16 @@ static fastcall int __detach_pid(task_t 
+ 
+ void fastcall detach_pid(task_t *task, enum pid_type type)
+ {
+-	int nr;
++	int tmp, nr;
+ 
+ 	nr = __detach_pid(task, type);
+ 	if (!nr)
+ 		return;
+ 
+-	for (type = 0; type < PIDTYPE_MAX; ++type)
+-		if (find_pid(type, nr))
++	for (tmp = PIDTYPE_MAX; --tmp >= 0; )
++		if (tmp != type && find_pid(tmp, nr))
+ 			return;
++
+ 	free_pidmap(nr);
+ }
+ 
+_

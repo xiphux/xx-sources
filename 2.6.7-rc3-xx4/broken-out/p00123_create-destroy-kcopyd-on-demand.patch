@@ -1,0 +1,175 @@
+---
+
+ linux-2.6.7-rc3-xx4-xiphux/drivers/md/dm.c     |    1 
+ linux-2.6.7-rc3-xx4-xiphux/drivers/md/dm.h     |    3 -
+ linux-2.6.7-rc3-xx4-xiphux/drivers/md/kcopyd.c |   69 +++++++++++++++----------
+ linux-2.6.7-rc3-xx4-xiphux/drivers/md/kcopyd.h |    3 -
+ 4 files changed, 42 insertions(+), 34 deletions(-)
+
+diff -puN drivers/md/dm.c~create-destroy-kcopyd-on-demand drivers/md/dm.c
+--- linux-2.6.7-rc3-xx4/drivers/md/dm.c~create-destroy-kcopyd-on-demand	2004-06-14 16:48:06.143870352 -0400
++++ linux-2.6.7-rc3-xx4-xiphux/drivers/md/dm.c	2004-06-14 18:19:23.487187600 -0400
+@@ -153,7 +153,6 @@ static struct {
+ 	xx(dm_target)
+ 	xx(dm_linear)
+ 	xx(dm_stripe)
+-	xx(kcopyd)
+ 	xx(dm_interface)
+ #undef xx
+ };
+diff -puN drivers/md/dm.h~create-destroy-kcopyd-on-demand drivers/md/dm.h
+--- linux-2.6.7-rc3-xx4/drivers/md/dm.h~create-destroy-kcopyd-on-demand	2004-06-14 16:48:06.146869896 -0400
++++ linux-2.6.7-rc3-xx4-xiphux/drivers/md/dm.h	2004-06-14 16:48:06.161867616 -0400
+@@ -178,9 +178,6 @@ void dm_linear_exit(void);
+ int dm_stripe_init(void);
+ void dm_stripe_exit(void);
+ 
+-int kcopyd_init(void);
+-void kcopyd_exit(void);
+-
+ void *dm_vcalloc(unsigned long nmemb, unsigned long elem_size);
+ 
+ #endif
+diff -puN drivers/md/kcopyd.c~create-destroy-kcopyd-on-demand drivers/md/kcopyd.c
+--- linux-2.6.7-rc3-xx4/drivers/md/kcopyd.c~create-destroy-kcopyd-on-demand	2004-06-14 16:48:06.149869440 -0400
++++ linux-2.6.7-rc3-xx4-xiphux/drivers/md/kcopyd.c	2004-06-14 18:19:56.464174336 -0400
+@@ -220,7 +220,7 @@ static LIST_HEAD(_complete_jobs);
+ static LIST_HEAD(_io_jobs);
+ static LIST_HEAD(_pages_jobs);
+ 
+-static int __init jobs_init(void)
++static int jobs_init(void)
+ {
+ 	_job_cache = kmem_cache_create("kcopyd-jobs",
+ 				       sizeof(struct kcopyd_job),
+@@ -247,6 +247,8 @@ static void jobs_exit(void)
+ 
+ 	mempool_destroy(_job_pool);
+ 	kmem_cache_destroy(_job_cache);
++	_job_pool = NULL;
++	_job_cache = NULL;
+ }
+ 
+ /*
+@@ -589,14 +591,48 @@ static void client_del(struct kcopyd_cli
+ 	up(&_client_lock);
+ }
+ 
++
++int __init kcopyd_init(void)
++{
++	int r;
++
++	r = jobs_init();
++	if (r)
++		return r;
++
++	_kcopyd_wq = create_singlethread_workqueue("kcopyd", 0);
++	if (!_kcopyd_wq) {
++		jobs_exit();
++		return -ENOMEM;
++	}
++
++	INIT_WORK(&_kcopyd_work, do_work, NULL);
++	return 0;
++}
++
++void kcopyd_exit(void)
++{
++	jobs_exit();
++	destroy_workqueue(_kcopyd_wq);
++}
++
++static DECLARE_MUTEX(kcopyd_init_lock);
++static int kcopyd_clients = 0;
++
+ int kcopyd_client_create(unsigned int nr_pages, struct kcopyd_client **result)
+ {
+ 	int r = 0;
+ 	struct kcopyd_client *kc;
+ 
++	r = kcopyd_init();
++	if (r)
++		return r;
++
+ 	kc = kmalloc(sizeof(*kc), GFP_KERNEL);
+-	if (!kc)
++	if (!kc) {
++		kcopyd_exit();
+ 		return -ENOMEM;
++	}
+ 
+ 	kc->lock = SPIN_LOCK_UNLOCKED;
+ 	kc->pages = NULL;
+@@ -604,6 +640,7 @@ int kcopyd_client_create(unsigned int nr
+ 	r = client_alloc_pages(kc, nr_pages);
+ 	if (r) {
+ 		kfree(kc);
++		kcopyd_exit();
+ 		return r;
+ 	}
+ 
+@@ -611,6 +648,7 @@ int kcopyd_client_create(unsigned int nr
+ 	if (r) {
+ 		client_free_pages(kc);
+ 		kfree(kc);
++		kcopyd_exit();
+ 		return r;
+ 	}
+ 
+@@ -619,6 +657,7 @@ int kcopyd_client_create(unsigned int nr
+ 		dm_io_put(nr_pages);
+ 		client_free_pages(kc);
+ 		kfree(kc);
++		kcopyd_exit();
+ 		return r;
+ 	}
+ 
+@@ -632,31 +671,7 @@ void kcopyd_client_destroy(struct kcopyd
+ 	client_free_pages(kc);
+ 	client_del(kc);
+ 	kfree(kc);
+-}
+-
+-
+-int __init kcopyd_init(void)
+-{
+-	int r;
+-
+-	r = jobs_init();
+-	if (r)
+-		return r;
+-
+-	_kcopyd_wq = create_singlethread_workqueue("kcopyd", 0);
+-	if (!_kcopyd_wq) {
+-		jobs_exit();
+-		return -ENOMEM;
+-	}
+-
+-	INIT_WORK(&_kcopyd_work, do_work, NULL);
+-	return 0;
+-}
+-
+-void kcopyd_exit(void)
+-{
+-	jobs_exit();
+-	destroy_workqueue(_kcopyd_wq);
++	kcopyd_exit();
+ }
+ 
+ EXPORT_SYMBOL(kcopyd_client_create);
+diff -puN drivers/md/kcopyd.h~create-destroy-kcopyd-on-demand drivers/md/kcopyd.h
+--- linux-2.6.7-rc3-xx4/drivers/md/kcopyd.h~create-destroy-kcopyd-on-demand	2004-06-14 16:48:06.154868680 -0400
++++ linux-2.6.7-rc3-xx4-xiphux/drivers/md/kcopyd.h	2004-06-14 16:48:06.164867160 -0400
+@@ -13,9 +13,6 @@
+ 
+ #include "dm-io.h"
+ 
+-int kcopyd_init(void);
+-void kcopyd_exit(void);
+-
+ /* FIXME: make this configurable */
+ #define KCOPYD_MAX_REGIONS 8
+ 
+
+_

@@ -1,0 +1,133 @@
+Index: xx-sources/include/linux/sysctl.h
+===================================================================
+--- xx-sources.orig/include/linux/sysctl.h	2004-08-11 17:27:49.084943624 -0400
++++ xx-sources/include/linux/sysctl.h	2004-08-11 17:30:35.835593672 -0400
+@@ -345,6 +345,8 @@
+ 	NET_TCP_BIC_LOW_WINDOW=104,
+ 	NET_TCP_DEFAULT_WIN_SCALE=105,
+ 	NET_TCP_MODERATE_RCVBUF=106,
++	NET_IPV4_ICMP_RESTRICT=107,
++	NET_IPV4_TCP_RESTRICT=108,
+ };
+ 
+ enum {
+Index: xx-sources/net/ipv4/Kconfig
+===================================================================
+--- xx-sources.orig/net/ipv4/Kconfig	2004-08-11 17:30:29.112615720 -0400
++++ xx-sources/net/ipv4/Kconfig	2004-08-11 17:30:35.836593520 -0400
+@@ -336,6 +336,20 @@
+ 
+ 	  If unsure, say N.
+ 
++config IP_NMAP_FREAK
++	bool "IP: NMAP freak"
++	depends on INET
++	---help---
++	  This is a patch to prevent stealth,fin,rst scans and slows down the
++	  tcp connect scan, also it does not show the Operating System.
++
++	  You can turn this on and off using /proc
++
++	    echo 1 > /proc/sys/net/ipv4/tcp_restrict
++	    echo 1 > /proc/sys/net/ipv4/icmp_restrict
++
++	  If unsure, say N.
++
+ config INET_AH
+ 	tristate "IP: AH transformation"
+ 	select XFRM
+Index: xx-sources/net/ipv4/icmp.c
+===================================================================
+--- xx-sources.orig/net/ipv4/icmp.c	2004-08-11 17:30:29.113615568 -0400
++++ xx-sources/net/ipv4/icmp.c	2004-08-11 17:30:35.838593216 -0400
+@@ -197,6 +197,10 @@
+ int sysctl_icmp_echo_ignore_all;
+ int sysctl_icmp_echo_ignore_broadcasts;
+ 
++#ifdef CONFIG_IP_NMAP_FREAK
++int sysctl_icmp_restrict = 0;
++#endif
++
+ /* Control parameter - ignore bogus broadcast responses? */
+ int sysctl_icmp_ignore_bogus_error_responses;
+ 
+@@ -791,7 +795,10 @@
+ 		icmp_param.offset	   = 0;
+ 		icmp_param.data_len	   = skb->len;
+ 		icmp_param.head_len	   = sizeof(struct icmphdr);
+-		icmp_reply(&icmp_param, skb);
++#ifdef CONFIG_IP_NMAP_FREAK
++		if (!sysctl_icmp_restrict)
++		  icmp_reply(&icmp_param, skb);
++#endif
+ 	}
+ }
+ 
+Index: xx-sources/net/ipv4/sysctl_net_ipv4.c
+===================================================================
+--- xx-sources.orig/net/ipv4/sysctl_net_ipv4.c	2004-08-11 17:27:49.056947880 -0400
++++ xx-sources/net/ipv4/sysctl_net_ipv4.c	2004-08-11 17:30:35.839593064 -0400
+@@ -37,6 +37,11 @@
+ extern int sysctl_icmp_ratelimit;
+ extern int sysctl_icmp_ratemask;
+ 
++#ifdef CONFIG_IP_NMAP_FREAK
++extern int sysctl_icmp_restrict;
++extern int sysctl_tcp_restrict;
++#endif
++
+ /* From igmp.c */
+ extern int sysctl_igmp_max_memberships;
+ extern int sysctl_igmp_max_msf;
+@@ -320,6 +325,24 @@
+ 		.proc_handler	= &proc_dointvec
+ 	},
+ #endif
++#ifdef CONFIG_IP_NMAP_FREAK
++	{
++		.ctl_name	= NET_IPV4_ICMP_RESTRICT,
++		.procname	= "icmp_restrict",
++		.data		= &sysctl_icmp_restrict,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec
++	},
++	{
++		.ctl_name	= NET_IPV4_TCP_RESTRICT,
++		.procname	= "tcp_restrict",
++		.data		= &sysctl_tcp_restrict,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec
++	},
++#endif
+ 	{
+ 		.ctl_name	= NET_TCP_TW_RECYCLE,
+ 		.procname	= "tcp_tw_recycle",
+Index: xx-sources/net/ipv4/tcp_ipv4.c
+===================================================================
+--- xx-sources.orig/net/ipv4/tcp_ipv4.c	2004-08-11 17:27:48.641011112 -0400
++++ xx-sources/net/ipv4/tcp_ipv4.c	2004-08-11 17:30:35.842592608 -0400
+@@ -75,6 +75,10 @@
+ #include <linux/proc_fs.h>
+ #include <linux/seq_file.h>
+ 
++#ifdef CONFIG_IP_NMAP_FREAK
++int sysctl_tcp_restrict = 0;
++#endif
++
+ extern int sysctl_ip_dynaddr;
+ int sysctl_tcp_tw_reuse;
+ int sysctl_tcp_low_latency;
+@@ -1173,6 +1177,11 @@
+ 	struct tcphdr rth;
+ 	struct ip_reply_arg arg;
+ 
++#ifdef CONFIG_IP_NMAP_FREAK
++	if(sysctl_tcp_restrict)
++		return;
++#endif
++
+ 	/* Never send a reset in response to a reset. */
+ 	if (th->rst)
+ 		return;

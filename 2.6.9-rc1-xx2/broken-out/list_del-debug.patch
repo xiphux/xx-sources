@@ -1,0 +1,32 @@
+
+From Manfred Spraul
+
+A list_del debugging check.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/list.h |    3 +++
+ 1 files changed, 3 insertions(+)
+
+diff -puN include/linux/list.h~list_del-debug include/linux/list.h
+--- 25/include/linux/list.h~list_del-debug	Mon Jun 14 16:44:07 2004
++++ 25-akpm/include/linux/list.h	Mon Jun 14 16:51:27 2004
+@@ -6,6 +6,7 @@
+ #include <linux/stddef.h>
+ #include <linux/prefetch.h>
+ #include <asm/system.h>
++#include <asm/bug.h>
+ 
+ /*
+  * These are non-NULL pointers that will result in page faults
+@@ -160,6 +161,8 @@ static inline void __list_del(struct lis
+  */
+ static inline void list_del(struct list_head *entry)
+ {
++	BUG_ON(entry->prev->next != entry);
++	BUG_ON(entry->next->prev != entry);
+ 	__list_del(entry->prev, entry->next);
+ 	entry->next = LIST_POISON1;
+ 	entry->prev = LIST_POISON2;
+_

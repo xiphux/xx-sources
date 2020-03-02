@@ -1,0 +1,244 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/appletalk/ltpc.c        |    4 ++--
+ 25-akpm/drivers/net/arcnet/arcnet.c         |    2 +-
+ 25-akpm/drivers/net/de600.c                 |    2 +-
+ 25-akpm/drivers/net/fec_8xx/fec_mii.c       |    2 +-
+ 25-akpm/drivers/net/hamradio/6pack.c        |    2 +-
+ 25-akpm/drivers/net/hamradio/scc.c          |    2 +-
+ 25-akpm/drivers/net/ibm_emac/ibm_emac_mal.c |    2 +-
+ 25-akpm/drivers/net/irda/au1k_ir.c          |    2 +-
+ 25-akpm/drivers/net/ppp_async.c             |    2 +-
+ 25-akpm/drivers/net/ppp_generic.c           |    4 ++--
+ 25-akpm/drivers/net/ppp_synctty.c           |    2 +-
+ 25-akpm/drivers/net/pppoe.c                 |    2 +-
+ 25-akpm/drivers/net/sk_g16.c                |    2 +-
+ 25-akpm/drivers/net/via-velocity.c          |    2 +-
+ 25-akpm/drivers/net/wan/sdla.c              |    2 +-
+ 25-akpm/drivers/net/wan/syncppp.c           |    2 +-
+ 25-akpm/drivers/net/wireless/strip.c        |    2 +-
+ 17 files changed, 19 insertions(+), 19 deletions(-)
+
+diff -puN drivers/net/appletalk/ltpc.c~lock-initializer-cleanup-network-drivers drivers/net/appletalk/ltpc.c
+--- 25/drivers/net/appletalk/ltpc.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/appletalk/ltpc.c	Wed Jan 12 16:54:51 2005
+@@ -236,8 +236,8 @@ static int dma;
+ /* our stuff */
+ #include "ltpc.h"
+ 
+-static spinlock_t txqueue_lock = SPIN_LOCK_UNLOCKED;
+-static spinlock_t mbox_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(txqueue_lock);
++static DEFINE_SPINLOCK(mbox_lock);
+ 
+ /* function prototypes */
+ static int do_read(struct net_device *dev, void *cbuf, int cbuflen,
+diff -puN drivers/net/arcnet/arcnet.c~lock-initializer-cleanup-network-drivers drivers/net/arcnet/arcnet.c
+--- 25/drivers/net/arcnet/arcnet.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/arcnet/arcnet.c	Wed Jan 12 16:54:51 2005
+@@ -351,7 +351,7 @@ struct net_device *alloc_arcdev(char *na
+ 			   name && *name ? name : "arc%d", arcdev_setup);
+ 	if(dev) {
+ 		struct arcnet_local *lp = (struct arcnet_local *) dev->priv;
+-		lp->lock = SPIN_LOCK_UNLOCKED;
++		spin_lock_init(&lp->lock);
+ 	}
+ 
+ 	return dev;
+diff -puN drivers/net/de600.c~lock-initializer-cleanup-network-drivers drivers/net/de600.c
+--- 25/drivers/net/de600.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/de600.c	Wed Jan 12 16:54:51 2005
+@@ -99,7 +99,7 @@ static volatile int		tx_fifo_in;
+ static volatile int		tx_fifo_out;
+ static volatile int		free_tx_pages = TX_PAGES;
+ static int			was_down;
+-static spinlock_t		de600_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(de600_lock);
+ 
+ static inline u8 de600_read_status(struct net_device *dev)
+ {
+diff -puN drivers/net/fec_8xx/fec_mii.c~lock-initializer-cleanup-network-drivers drivers/net/fec_8xx/fec_mii.c
+--- 25/drivers/net/fec_8xx/fec_mii.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/fec_8xx/fec_mii.c	Wed Jan 12 16:54:51 2005
+@@ -54,7 +54,7 @@
+ /*************************************************/
+ 
+ /* XXX both FECs use the MII interface of FEC1 */
+-static spinlock_t fec_mii_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(fec_mii_lock);
+ 
+ #define FEC_MII_LOOPS	10000
+ 
+diff -puN drivers/net/hamradio/6pack.c~lock-initializer-cleanup-network-drivers drivers/net/hamradio/6pack.c
+--- 25/drivers/net/hamradio/6pack.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/hamradio/6pack.c	Wed Jan 12 16:54:51 2005
+@@ -422,7 +422,7 @@ out_mem:
+  * best way to fix this is to use a rwlock in the tty struct, but for now we
+  * use a single global rwlock for all ttys in ppp line discipline.
+  */
+-static rwlock_t disc_data_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(disc_data_lock);
+                                                                                 
+ static struct sixpack *sp_get(struct tty_struct *tty)
+ {
+diff -puN drivers/net/hamradio/scc.c~lock-initializer-cleanup-network-drivers drivers/net/hamradio/scc.c
+--- 25/drivers/net/hamradio/scc.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/hamradio/scc.c	Wed Jan 12 16:54:51 2005
+@@ -237,7 +237,7 @@ static io_port Vector_Latch;
+ 
+ /* These provide interrupt save 2-step access to the Z8530 registers */
+ 
+-static spinlock_t iolock = SPIN_LOCK_UNLOCKED;	/* Guards paired accesses */
++static DEFINE_SPINLOCK(iolock);	/* Guards paired accesses */
+ 
+ static inline unsigned char InReg(io_port port, unsigned char reg)
+ {
+diff -puN drivers/net/ibm_emac/ibm_emac_mal.c~lock-initializer-cleanup-network-drivers drivers/net/ibm_emac/ibm_emac_mal.c
+--- 25/drivers/net/ibm_emac/ibm_emac_mal.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/ibm_emac/ibm_emac_mal.c	Wed Jan 12 16:54:51 2005
+@@ -33,7 +33,7 @@
+ /* This lock protects the commac list. On today UP implementations, it's
+  * really only used as IRQ protection in mal_{register,unregister}_commac()
+  */
+-static rwlock_t mal_list_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(mal_list_lock);
+ 
+ int mal_register_commac(struct ibm_ocp_mal *mal, struct mal_commac *commac)
+ {
+diff -puN drivers/net/irda/au1k_ir.c~lock-initializer-cleanup-network-drivers drivers/net/irda/au1k_ir.c
+--- 25/drivers/net/irda/au1k_ir.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/irda/au1k_ir.c	Wed Jan 12 16:54:51 2005
+@@ -72,7 +72,7 @@ static char version[] __devinitdata =
+ static BCSR * const bcsr = (BCSR *)0xAE000000;
+ #endif
+ 
+-static spinlock_t ir_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(ir_lock);
+ 
+ /*
+  * IrDA peripheral bug. You have to read the register
+diff -puN drivers/net/ppp_async.c~lock-initializer-cleanup-network-drivers drivers/net/ppp_async.c
+--- 25/drivers/net/ppp_async.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/ppp_async.c	Wed Jan 12 16:54:51 2005
+@@ -126,7 +126,7 @@ static struct ppp_channel_ops async_ops 
+  * FIXME: this is no longer true. The _close path for the ldisc is 
+  * now guaranteed to be sane. 
+  */
+-static rwlock_t disc_data_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(disc_data_lock);
+ 
+ static struct asyncppp *ap_get(struct tty_struct *tty)
+ {
+diff -puN drivers/net/ppp_generic.c~lock-initializer-cleanup-network-drivers drivers/net/ppp_generic.c
+--- 25/drivers/net/ppp_generic.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/ppp_generic.c	Wed Jan 12 16:54:51 2005
+@@ -210,7 +210,7 @@ static atomic_t ppp_unit_count = ATOMIC_
+  * and the atomicity of find a channel and updating its file.refcnt
+  * field.
+  */
+-static spinlock_t all_channels_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(all_channels_lock);
+ static LIST_HEAD(all_channels);
+ static LIST_HEAD(new_channels);
+ static int last_channel_index;
+@@ -2218,7 +2218,7 @@ ppp_ccp_closed(struct ppp *ppp)
+ 
+ /* List of compressors. */
+ static LIST_HEAD(compressor_list);
+-static spinlock_t compressor_list_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(compressor_list_lock);
+ 
+ struct compressor_entry {
+ 	struct list_head list;
+diff -puN drivers/net/pppoe.c~lock-initializer-cleanup-network-drivers drivers/net/pppoe.c
+--- 25/drivers/net/pppoe.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/pppoe.c	Wed Jan 12 16:54:51 2005
+@@ -86,7 +86,7 @@ static int pppoe_xmit(struct ppp_channel
+ static int __pppoe_xmit(struct sock *sk, struct sk_buff *skb);
+ 
+ static struct proto_ops pppoe_ops;
+-static rwlock_t pppoe_hash_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(pppoe_hash_lock);
+ 
+ static struct ppp_channel_ops pppoe_chan_ops;
+ 
+diff -puN drivers/net/ppp_synctty.c~lock-initializer-cleanup-network-drivers drivers/net/ppp_synctty.c
+--- 25/drivers/net/ppp_synctty.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/ppp_synctty.c	Wed Jan 12 16:54:51 2005
+@@ -178,7 +178,7 @@ ppp_print_buffer (const char *name, cons
+  *
+  * FIXME: Fixed in tty_io nowdays.
+  */
+-static rwlock_t disc_data_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(disc_data_lock);
+ 
+ static struct syncppp *sp_get(struct tty_struct *tty)
+ {
+diff -puN drivers/net/sk_g16.c~lock-initializer-cleanup-network-drivers drivers/net/sk_g16.c
+--- 25/drivers/net/sk_g16.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/sk_g16.c	Wed Jan 12 16:54:51 2005
+@@ -457,7 +457,7 @@ struct priv
+ /* static variables */
+ 
+ static SK_RAM *board;  /* pointer to our memory mapped board components */
+-static spinlock_t SK_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(SK_lock);
+ 
+ /* Macros */
+ 
+diff -puN drivers/net/via-velocity.c~lock-initializer-cleanup-network-drivers drivers/net/via-velocity.c
+--- 25/drivers/net/via-velocity.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/via-velocity.c	Wed Jan 12 16:54:51 2005
+@@ -272,7 +272,7 @@ static struct notifier_block velocity_in
+       .notifier_call	= velocity_netdev_event,
+ };
+ 
+-static spinlock_t velocity_dev_list_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(velocity_dev_list_lock);
+ static LIST_HEAD(velocity_dev_list);
+ 
+ static void velocity_register_notifier(void)
+diff -puN drivers/net/wan/sdla.c~lock-initializer-cleanup-network-drivers drivers/net/wan/sdla.c
+--- 25/drivers/net/wan/sdla.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/wan/sdla.c	Wed Jan 12 16:54:51 2005
+@@ -69,7 +69,7 @@ static unsigned int valid_mem[]  __initd
+                                     0xD0000, 0xD2000, 0xD4000, 0xD6000, 0xD8000, 0xDA000, 0xDC000, 0xDE000,
+                                     0xE0000, 0xE2000, 0xE4000, 0xE6000, 0xE8000, 0xEA000, 0xEC000, 0xEE000}; 
+ 
+-static spinlock_t sdla_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(sdla_lock);
+ 
+ /*********************************************************
+  *
+diff -puN drivers/net/wan/syncppp.c~lock-initializer-cleanup-network-drivers drivers/net/wan/syncppp.c
+--- 25/drivers/net/wan/syncppp.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/wan/syncppp.c	Wed Jan 12 16:54:51 2005
+@@ -131,7 +131,7 @@ struct cisco_packet {
+ 
+ static struct sppp *spppq;
+ static struct timer_list sppp_keepalive_timer;
+-static spinlock_t spppq_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(spppq_lock);
+ 
+ /* global xmit queue for sending packets while spinlock is held */
+ static struct sk_buff_head tx_queue;
+diff -puN drivers/net/wireless/strip.c~lock-initializer-cleanup-network-drivers drivers/net/wireless/strip.c
+--- 25/drivers/net/wireless/strip.c~lock-initializer-cleanup-network-drivers	Wed Jan 12 16:54:51 2005
++++ 25-akpm/drivers/net/wireless/strip.c	Wed Jan 12 16:54:51 2005
+@@ -437,7 +437,7 @@ static const long LongTime = 0x7FFFFFFF;
+ /* Global variables							*/
+ 
+ static LIST_HEAD(strip_list);
+-static spinlock_t strip_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(strip_lock);
+ 
+ /************************************************************************/
+ /* Macros								*/
+_

@@ -1,0 +1,96 @@
+
+
+Change Big-Kernel-Lock to be locallock_t rather than spinlock_t
+
+
+
+
+Index: xx-sources/include/linux/smp_lock.h
+===================================================================
+--- xx-sources.orig/include/linux/smp_lock.h	2004-08-14 06:55:59.000000000 -0400
++++ xx-sources/include/linux/smp_lock.h	2004-08-27 01:24:14.863378552 -0400
+@@ -3,16 +3,16 @@
+ 
+ #include <linux/config.h>
+ #include <linux/sched.h>
+-#include <linux/spinlock.h>
++#include <linux/locallock.h>
+ 
+ #if defined(CONFIG_SMP) || defined(CONFIG_PREEMPT)
+ 
+-extern spinlock_t kernel_flag;
++extern locallock_t kernel_flag;
+ 
+ #define kernel_locked()		(current->lock_depth >= 0)
+ 
+-#define get_kernel_lock()	spin_lock(&kernel_flag)
+-#define put_kernel_lock()	spin_unlock(&kernel_flag)
++#define get_kernel_lock()	local_lock(&kernel_flag)
++#define put_kernel_lock()	local_unlock(&kernel_flag)
+ 
+ /*
+  * Release global kernel lock.
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-08-27 01:23:14.232595832 -0400
++++ xx-sources/kernel/sched.c	2004-08-27 01:24:32.292728888 -0400
+@@ -45,6 +45,7 @@
+ #include <linux/kthread.h>
+ #include <linux/seq_file.h>
+ #include <linux/times.h>
++#include <linux/locallock.h>
+ #include <asm/tlb.h>
+ 
+ #include <asm/unistd.h>
+Index: xx-sources/kernel/sched/default.h
+===================================================================
+--- xx-sources.orig/kernel/sched/default.h	2004-08-27 01:21:31.105273568 -0400
++++ xx-sources/kernel/sched/default.h	2004-08-27 01:24:14.868377792 -0400
+@@ -4101,7 +4101,7 @@
+  *
+  * Note: spinlock debugging needs this even on !CONFIG_SMP.
+  */
+-spinlock_t kernel_flag __cacheline_aligned_in_smp = SPIN_LOCK_UNLOCKED;
++locallock_t kernel_flag __cacheline_aligned_in_smp = LOCAL_LOCK_UNLOCKED;
+ EXPORT_SYMBOL(kernel_flag);
+ 
+ #ifdef CONFIG_SMP
+Index: xx-sources/kernel/sched/nicksched.h
+===================================================================
+--- xx-sources.orig/kernel/sched/nicksched.h	2004-08-27 01:22:44.439125128 -0400
++++ xx-sources/kernel/sched/nicksched.h	2004-08-27 01:24:14.872377184 -0400
+@@ -3909,7 +3909,7 @@
+  *
+  * Note: spinlock debugging needs this even on !CONFIG_SMP.
+  */
+-spinlock_t kernel_flag __cacheline_aligned_in_smp = SPIN_LOCK_UNLOCKED;
++locallock_t kernel_flag __cacheline_aligned_in_smp = LOCAL_LOCK_UNLOCKED;
+ EXPORT_SYMBOL(kernel_flag);
+ 
+ #ifdef CONFIG_SMP
+Index: xx-sources/kernel/sched/staircase.h
+===================================================================
+--- xx-sources.orig/kernel/sched/staircase.h	2004-08-27 01:23:07.646597056 -0400
++++ xx-sources/kernel/sched/staircase.h	2004-08-27 01:24:14.877376424 -0400
+@@ -3743,7 +3743,7 @@
+  *
+  * Note: spinlock debugging needs this even on !CONFIG_SMP.
+  */
+-spinlock_t kernel_flag __cacheline_aligned_in_smp = SPIN_LOCK_UNLOCKED;
++locallock_t kernel_flag __cacheline_aligned_in_smp = LOCAL_LOCK_UNLOCKED;
+ EXPORT_SYMBOL(kernel_flag);
+ 
+ #ifdef CONFIG_SMP
+Index: xx-sources/kernel/sched/xsched.h
+===================================================================
+--- xx-sources.orig/kernel/sched/xsched.h	2004-08-27 01:23:32.020891600 -0400
++++ xx-sources/kernel/sched/xsched.h	2004-08-27 01:24:14.881375816 -0400
+@@ -4043,7 +4043,7 @@
+  *
+  * Note: spinlock debugging needs this even on !CONFIG_SMP.
+  */
+-spinlock_t kernel_flag __cacheline_aligned_in_smp = SPIN_LOCK_UNLOCKED;
++locallock_t kernel_flag __cacheline_aligned_in_smp = LOCAL_LOCK_UNLOCKED;
+ EXPORT_SYMBOL(kernel_flag);
+ 
+ #ifdef CONFIG_SMP

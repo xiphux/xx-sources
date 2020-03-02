@@ -1,0 +1,62 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+The attached patch, written by Andrew Morton, fixes long scheduling
+latencies in filemap_sync().
+
+Has been tested as part of the -VP patchset.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/msync.c |   29 +++++++++++++++++++++++++++--
+ 1 files changed, 27 insertions(+), 2 deletions(-)
+
+diff -puN mm/msync.c~sched-mm-fix-scheduling-latencies-in-filemap_sync mm/msync.c
+--- 25/mm/msync.c~sched-mm-fix-scheduling-latencies-in-filemap_sync	2004-09-21 01:53:31.262170792 -0700
++++ 25-akpm/mm/msync.c	2004-09-21 01:53:31.265170336 -0700
+@@ -93,8 +93,8 @@ static inline int filemap_sync_pmd_range
+ 	return error;
+ }
+ 
+-static int filemap_sync(struct vm_area_struct * vma, unsigned long address,
+-	size_t size, unsigned int flags)
++static int __filemap_sync(struct vm_area_struct *vma, unsigned long address,
++			size_t size, unsigned int flags)
+ {
+ 	pgd_t * dir;
+ 	unsigned long end = address + size;
+@@ -132,6 +132,31 @@ static int filemap_sync(struct vm_area_s
+ 	return error;
+ }
+ 
++#ifdef CONFIG_PREEMPT
++static int filemap_sync(struct vm_area_struct *vma, unsigned long address,
++			size_t size, unsigned int flags)
++{
++	const size_t chunk = 64 * 1024;	/* bytes */
++	int error = 0;
++
++	while (size) {
++		size_t sz = min(size, chunk);
++
++		error |= __filemap_sync(vma, address, sz, flags);
++		cond_resched();
++		address += sz;
++		size -= sz;
++	}
++	return error;
++}
++#else
++static int filemap_sync(struct vm_area_struct *vma, unsigned long address,
++			size_t size, unsigned int flags)
++{
++	return __filemap_sync(vma, address, size, flags);
++}
++#endif
++
+ /*
+  * MS_SYNC syncs the entire file - including mappings.
+  *
+_

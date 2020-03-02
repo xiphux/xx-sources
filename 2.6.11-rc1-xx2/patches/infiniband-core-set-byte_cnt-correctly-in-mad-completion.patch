@@ -1,0 +1,32 @@
+
+From: Roland Dreier <roland@topspin.com>
+
+Integrate Michael Tsirkin's patch to local_completion to set the WC byte_cnt
+according to the IBA 1.1 spec (include the GRH size regardless of whether it
+is present or not).
+
+Signed-off-by: Hal Rosenstock <halr@voltaire.com>
+Signed-off-by: Roland Dreier <roland@topspin.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/infiniband/core/mad.c |    5 +++--
+ 1 files changed, 3 insertions(+), 2 deletions(-)
+
+diff -puN drivers/infiniband/core/mad.c~infiniband-core-set-byte_cnt-correctly-in-mad-completion drivers/infiniband/core/mad.c
+--- 25/drivers/infiniband/core/mad.c~infiniband-core-set-byte_cnt-correctly-in-mad-completion	Wed Jan 12 16:31:46 2005
++++ 25-akpm/drivers/infiniband/core/mad.c	Wed Jan 12 16:31:46 2005
+@@ -2017,9 +2017,10 @@ static void local_completions(void *data
+ 			wc.status = IB_WC_SUCCESS;
+ 			wc.opcode = IB_WC_RECV;
+ 			wc.vendor_err = 0;
+-			wc.byte_len = sizeof(struct ib_mad);
++			wc.byte_len = sizeof(struct ib_mad) +
++				      sizeof(struct ib_grh);
+ 			wc.src_qp = IB_QP0;
+-			wc.wc_flags = 0;
++			wc.wc_flags = 0;	/* No GRH */
+ 			wc.pkey_index = 0;
+ 			wc.slid = IB_LID_PERMISSIVE;
+ 			wc.sl = 0;
+_

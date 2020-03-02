@@ -1,0 +1,1889 @@
+---
+
+ linux-2.6.7-rc3-xx1-xiphux/MAINTAINERS                  |    6 
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/hrtime.h       |  255 ++++++++++
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/posix-timers.h |   44 +
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/sc_math.h      |  339 ++++++++++++++
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/sched.h        |    3 
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/thread_info.h  |    2 
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/time.h         |    6 
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/timer.h        |    3 
+ linux-2.6.7-rc3-xx1-xiphux/kernel/posix-timers.c        |  375 ++++++++++++----
+ linux-2.6.7-rc3-xx1-xiphux/kernel/timer.c               |  354 +++++++++------
+ 10 files changed, 1154 insertions(+), 233 deletions(-)
+
+diff -puN MAINTAINERS~posix-hrt-core-04.06.09 MAINTAINERS
+--- linux-2.6.7-rc3-xx1/MAINTAINERS~posix-hrt-core-04.06.09	2004-06-09 22:14:57.607859328 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/MAINTAINERS	2004-06-09 22:14:57.661851120 -0400
+@@ -886,6 +886,12 @@ L:	linux-nvidia@lists.surfsouth.com
+ W:	http://drama.obuda.kando.hu/~fero/cgi-bin/hgafb.shtml
+ S:	Maintained
+ 
++High-Res-Timers (HRT) extension to Posix Clocks & Timers
++P:	George Anzinger
++M:	george@mvista.com
++L:	linux-net@vger.kernel.org
++S:	Supported
++
+ HIGH-SPEED SCC DRIVER FOR AX.25
+ P:	Klaus Kudielka
+ M:	klaus.kudielka@ieee.org
+diff -puN /dev/null include/linux/hrtime.h
+--- /dev/null	2004-05-31 17:36:38.000000000 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/hrtime.h	2004-06-09 22:14:57.635855072 -0400
+@@ -0,0 +1,255 @@
++#ifndef _HRTIME_H
++#define _HRTIME_H
++
++/*
++ * include/linux/hrtime.h
++ *
++ *
++ * 2003-7-7  Posix Clocks & timers
++ *                           by George Anzinger george@mvista.com
++ *
++ *			     Copyright (C) 2003 by MontaVista Software.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or (at
++ * your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * General Public License for more details.
++
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ *
++ * MontaVista Software | 1237 East Arques Avenue | Sunnyvale | CA 94085 | USA
++ */
++#include <linux/config.h>
++#include <linux/types.h>
++
++/*
++ * ALWAYS inclued this file and never the asm/hrtime.h
++ *
++ * This file is the glue to bring in the platform stuff.
++ * We make it all depend on the CONFIG option so all archs
++ * will work as long as the CONFIG is not set.  Once an
++ * arch defines the CONFIG, it had better have the
++ * asm/hrtime.h file in place.
++ */
++
++/*
++ * Function to call when ever the clock is set
++ */
++extern void clock_was_set(void);
++
++#ifdef CONFIG_HIGH_RES_TIMERS
++
++#define IF_HIGH_RES(a) a
++
++
++/*
++ * callback routine when hr time interrupt happens.
++ * On a high-res-timer interrupt the interrupt routine should call
++ * do_hr_timer_int()
++ */
++/* extern void do_hr_timer_int(void); */
++
++#define do_hr_timer_int() run_local_timers()
++
++#include <asm/hrtime.h>
++
++/* asm/hrtime must provide the following functions/variables/macros.
++ *
++ * Note that declaration here is for illustration purpose only. Arches
++ * are free to implement them either as macros or as functions/variables.
++ *
++ * int schedule_hr_timer_int(unsigned long ref_jiffies, int hr_clock_cycles);
++ *
++ * 	Schedule next hr clock interrupt at the time specified by
++ * 	ref_jiffies and hr_clock_cycles.
++ *
++ * 	Return non-zero if the specified time is already passed.
++ *
++ * 	If a previously scheduled interrupt has not happened yet, it is
++ * 	discarded and replaced by the new one.  (In practice, this will
++ * 	happen when a new timer is entered prior to the one last asked
++ * 	for.)
++ *
++ * 	Arch can assume that
++ * 		0 <= hr_clock_cycles <= arch_cycles_per_jiffy
++ * 		-10 <= (jiffies - ref_jiffies) <= 10 jiffies
++ *
++ *      Locking: This function is called under the spin_lock_irq for the
++ *      timer list, thus interrupts are off.
++ *
++ *
++ * int get_arch_cycles(unsigned long ref_jiffies);
++ *
++ * 	return time elapsed from the reference jiffies to present in the
++ * 	units of hr_clock_cycles.
++ *
++ * 	Arch code can assume
++ * 		0 <= (jiffies - ref_jiffies) <= 10 jiffies
++ *              ref_jiffies may not increase monotonically.
++ *
++ *      Locking: The caller will provide locking equivalent to read_lock
++ *      on the xtime_lock.  The callee need only lock hardware if needed.
++ *
++ * extern int arch_cycle_to_nsec(long hr_clock_cycles);
++ * extern int nsec_to_arch_cycle(long nsec);
++ *
++ * 	Conversion back and forth between hr_clock_cycles and
++ * 	nanoseconds.  hr_clock_cycles may be negative.
++ *
++ *
++ * extern int arch_cycles_per_jiffy;
++ *
++ * 	How many  hr_clock_cycles in a jiffy.
++ *
++ * 	NOTE:
++ * 		if arch defines this as a macro to an unsigned integer,
++ * 		don't forget to add (long) modifier, i.e.,
++ *
++ * 		#define	arch_cycles_per_jiffy ((long)arch_private_unsigned_int)
++ *
++ * These values/ functions must be available to modules for use in setting
++ * up hr timers:
++ *
++ * arch_cycles_per_jiffy
++ * arch_cycle_to_nsec(long hr_clock_cycles)
++ * nsec_to_arch_cycle(long nsec)
++ *
++ * If they are macros or inline functions that use variables to do the
++ * conversions, the variables must be EXPORTED.  If they are simple
++ * functions, the functions must be EXPORTED.
++ *
++ * extern int hr_time_resolution;
++ *
++ * 	Resolution of the timer in nanoseconds.  This should be a value
++ * 	the makes sense on the given arch taking into account interrupt
++ * 	latency and so forth.  This value is used to define the
++ * 	granularity of the timer requests and it is the resolution the
++ * 	standard talks about.  It is used to define the resolution of
++ * 	CLOCK_REALTIME_HR and CLOCK_MONOTONIC_HR.
++ *
++ * Global locking issues:
++ *
++ *      Time is locked with the xtime_lock using read/write locks.
++ *      Note: It is assumed that the do_timer() call is  protected by
++ *      write_lock(&xtime_lock).
++ *
++ *      Using code must not change, but only read, the protected
++ *      variables (xtime, jiffies, any temps tha need protection in the
++ *      arch_get_cycles() code).  Usage is as follows:
++ *
++ *      read_lock_irq(&xtime_lock);
++ *          do the reads
++ *      read_unlock_irq(&xtime);
++ *
++ *      If you KNOW irq is already off, you can leave off the "_irq".
++ *
++ *
++ * Optional for those archs that need it:
++ *
++ * int schedule_jiffies_int((unsigned long ref_jiffies)
++ *
++ *      This function is called when ever the run_timer_list code has
++ *      caught up to the current time and determines that the next
++ *      interrupt should be for the next jiffy.  The code will never
++ *      call both schedule_hr_timer_int() and schedule_jiffies_int() in
++ *      the same pass.  It should return true (!0) if ref_jiffies + 1 is
++ *      in the past.
++ *
++ * 	Arch code can assume
++ * 		-10 <= (jiffies - ref_jiffies) <= 10 jiffies
++ *
++ *      Archs that don't need this function should #define it as:
++ *      #define schedule_jiffies_int(jiffies_f) \
++ *                   (get_arch_cycles(jiffies_f) >= arch_cycles_per_jiffy)
++ *
++ *
++ * void final_clock_init()
++ *
++ *      The posix-timers init code checks for existance of this macro
++ *      and calls it after the final initialization of the timers
++ *      package.  Archs that need to do late initialization "stuff"
++ *      should define this macro to do that "stuff".  It is called in an
++ *      "__init" function so any inline code it produces will be
++ *      released at the end of boot.
++ *
++ *      Archs that need this function MUST define it as a macro in
++ *      asm/hrtimer.h for that arch.  Those that don't need do nothing.
++
++ *  Timer discipline:
++
++ *      Some archs have timers (interrupt generation hardware) that is
++ *      not synced to the clock (an example is the x86, PIT (timer) and
++ *      TSC (clock)).  Depending on which is considered more accurate,
++ *      the clock or the timer one or the other of these needs to be
++ *      kept in line with the other.  For those cases where the clock is
++ *      considered more accurate, the timer must be disciplined.  By
++ *      disciplined, we mean that the 1/HZ interrupt should occur in the
++ *      interval (0 < interrupt < a few) units of the correct value as
++ *      returned by the clock.  For high res timers to work correctly it
++ *      is important that these two not be allowed to drift.  For an
++ *      example of how to do this, please look at the discipline_timer()
++ *      and the final_clock_init() functions in asm-i386/hrtime.h.
++ *
++ *      Another possiblility is that the clock needs to by synced to the
++ *      1/HZ ticker, which would, in this case, be considered more
++ *      accurate than the clock.  For this use we defined
++ *      reset_fillin_timer() which is a function called first thing in
++ *      the 1/HZ tick interrupt handler.  It determins if the clock
++ *      reference needs to be adjusted to keep the clock in line with
++ *      the 1/HZ tick.  We define a dummy here to take care of the case
++ *      of NO HIGH_RES_TIMERS.
++ *
++ *      Depending on the hardware options available in the x86 one or
++ *      the other or none of these are used.  If the IO-APIC timer is
++ *      available, it is used for the sub-jiffie interrupt, thus making
++ *      the PIT a stable time reference.  In this case, the TSC is
++ *      synced to the PIT interrupt using the reset_fillin_timer().  In
++ *      the case of no IO-APIC, the TSC is more stable because we must
++ *      reprogram the PIT for each sub-jiffie timer, so the
++ *      discipline_timer() code is used.  In the case of an IO-APIC and
++ *      the pm-timer, neither of these is needed because the PIT is not
++ *      reprogrammed and the pm-timer is driven by the same clock as the
++ *      PIT and so stays in sync (care in starting the PIT is needed
++ *      however to make sure they are synced at start up).
++ */
++
++/*
++ * The set of statments "s" is to be protected by the xtime_seq lock
++ * Usage:
++ * do_atomic_on_xtime_seq( jiff = jiffies;
++ *                         cycles = quick_get_cpuctr());
++ */
++#define do_atomic_on_xtime_seq(s) 			\
++{							\
++	unsigned long seq;				\
++        do {						\
++		seq = read_seqbegin(&xtime_lock);	\
++		s;					\
++	}while ( read_seqretry(&xtime_lock, seq));	\
++}
++#else   /*  CONFIG_HIGH_RES_TIMERS */
++
++#define IF_HIGH_RES(a)
++#define nsec_to_arch_cycles(a) 0
++#define schedule_jiffies_int(a) 0
++#define reset_fillin_timer()
++
++#endif   /*  CONFIG_HIGH_RES_TIMERS */
++
++/*
++ * Here is an SMP helping macro...
++ */
++#ifdef CONFIG_SMP
++#define IF_SMP(a) a
++#else
++#define IF_SMP(a)
++#endif
++
++#endif				/* _HRTIME_H  */
+diff -puN include/linux/posix-timers.h~posix-hrt-core-04.06.09 include/linux/posix-timers.h
+--- linux-2.6.7-rc3-xx1/include/linux/posix-timers.h~posix-hrt-core-04.06.09	2004-06-09 22:14:57.610858872 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/posix-timers.h	2004-06-09 22:14:57.636854920 -0400
+@@ -15,6 +15,49 @@ struct k_clock {
+ 	void (*timer_get) (struct k_itimer * timr,
+ 			   struct itimerspec * cur_setting);
+ };
++
++#ifdef CONFIG_HIGH_RES_TIMERS
++struct now_struct {
++	unsigned long jiffies;
++	long sub_jiffie;
++};
++
++/*
++ * The following locking assumes that irq off.
++ */
++static inline void
++posix_get_now(struct now_struct *now)
++{
++	unsigned long seq;
++
++	(now)->jiffies = jiffies;
++	do {
++		seq = read_seqbegin(&xtime_lock);
++		(now)->sub_jiffie = get_arch_cycles((now)->jiffies);
++	} while (read_seqretry(&xtime_lock, seq));
++
++	while (unlikely(((now)->sub_jiffie - arch_cycles_per_jiffy) > 0)) {
++		(now)->sub_jiffie = (now)->sub_jiffie - arch_cycles_per_jiffy;
++		(now)->jiffies++;
++	}
++}
++
++#define posix_time_before(timer, now) \
++         ( {long diff = (long)(timer)->expires - (long)(now)->jiffies;  \
++           (diff < 0) ||                                      \
++	   ((diff == 0) && ((timer)->sub_expires < (now)->sub_jiffie)); })
++
++#define posix_bump_timer(timr) do { \
++          (timr)->it_timer.expires += (timr)->it_incr; \
++          (timr)->it_timer.sub_expires += (timr)->it_sub_incr; \
++          if (((timr)->it_timer.sub_expires - arch_cycles_per_jiffy) >= 0){ \
++		  (timr)->it_timer.sub_expires -= arch_cycles_per_jiffy; \
++		  (timr)->it_timer.expires++; \
++	  }                                 \
++          (timr)->it_overrun++;               \
++        }while (0)
++
++#else
+ struct now_struct {
+ 	unsigned long jiffies;
+ };
+@@ -27,4 +70,5 @@ struct now_struct {
+                         (timr)->it_timer.expires += (timr)->it_incr; \
+                         (timr)->it_overrun++;               \
+                        }while (0)
++#endif				/* CONFIG_HIGH_RES_TIMERS */
+ #endif
+diff -puN /dev/null include/linux/sc_math.h
+--- /dev/null	2004-05-31 17:36:38.000000000 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/sc_math.h	2004-06-09 22:14:57.643853856 -0400
+@@ -0,0 +1,339 @@
++#ifndef SC_MATH_GENERIC
++#define SC_MATH_GENERIC
++/*
++ * Copyright 2003 MontaVista Software.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++/*
++ * More information on scaled math, the why and how of it can be found
++ * in .../Documentation/scaled_math.txt
++ *
++ * These are generic scaling functions for all machines.
++ * With the exception of the u32=u64/u32, u32=u64%u32 operations
++ * all of this is standard C.  Gcc produces quite reasonable code for
++ * these.
++ * For the "/" and '%" operations we depend on  <asm/div64.h>  which
++ * defines u32 = do_div(u64, u32) where the u64 is overwritten
++ * with the u64 result of the div.  The function return is the remainder.
++ * We recommend that archs also provide a simple u64/u32 returning both the
++ * result and the remainder.  This should be defined as follows:
++
++ *  #define div_long_long_rem(a,b,c) div_ll_X_l_rem(a,b,c)
++
++ * extern inline long
++ * div_ll_X_l_rem(long long divs, long div, long *rem)
++ * {
++ * 	long dum2;
++ *       __asm__("divl %2":"=a"(dum2), "=d"(*rem)
++ *       :	"rm"(div), "A"(divs));
++ *
++ * 	return dum2;
++ * }
++ *
++ * with, of course, changes for your asm notation.  It is important to use
++ * a define for div_long_long_rem as this is used here and else where
++ * to figure out if the function exists.
++
++ */
++#define SC_32(x) ((unsigned long long)(x) << 32)
++
++#define SC_n(n,x) (((long long)(x))<<(n))
++
++#if (BITS_PER_LONG < 64)
++
++#define SCC_SHIFT 16
++#define SCC_MASK ((1 << SCC_SHIFT) -1)
++/*
++ * mpy a long by a long and return a long long
++ */
++
++static inline long long mpy_l_X_l_ll(long mpy1, long mpy2)
++{
++	return (s64)mpy1 * mpy2;
++}
++/*
++ * mpy a long long by a long and return a long long
++ * If you try this signed, it takes an additional mpy.
++ */
++
++static inline long long mpy_ll_X_l_ll(unsigned long long mpy1,
++				      unsigned long mpy2)
++{
++	/*
++	 * Actually gcc can do this, but this seems to be a few
++	 * instructions shorter.
++	 */
++	long long result = mpy_l_X_l_ll((unsigned long)mpy1, mpy2);
++	result +=  (mpy_l_X_l_ll((long)(mpy1 >> 32), mpy2) << 32);
++	return result;
++}
++/*
++ * mpy a long by a long and return the low part and a seperate hi part
++ */
++
++
++static inline long  mpy_l_X_l_h(long mpy1,
++				long mpy2,
++				long *hi)
++{
++	long long it = mpy_l_X_l_ll(mpy1, mpy2);
++	*hi = (unsigned long)(it >> 32);
++        return (unsigned long)it;
++
++}
++/*
++ * This routine preforms the following calculation:
++ *
++ * X = (a*b)>>32
++ * we could, (but don't) also get the part shifted out.
++ */
++static inline long mpy_sc32(long a, long b)
++{
++        return (long)(mpy_l_X_l_ll(a, b) >> 32);
++}
++/*
++ * X = (a*b)>>24
++ * we could, (but don't) also get the part shifted out.
++ */
++
++#define mpy_sc24(a,b) mpy_sc_n(24,(a),(b))
++
++/*
++ * The routines allow you to do x = ((a<< N)/b) and
++ * x=(a*b)>>N for values of N from 1 to 32.
++ *
++ * These are handy to have to do scaled math.
++ * Scaled math has two nice features:
++ * A.) A great deal more precision can be maintained by
++ *     keeping more signifigant bits.
++ * B.) Often an in line div can be replaced with a mpy
++ *     which is a LOT faster.
++ */
++
++/* x = (aa * bb) >> N */
++#define mpy_sc_n(N,aa,bb) ({(long)(mpy_l_X_l_ll((aa), (bb)) >> (N));})
++
++#include <asm/div64.h>
++#if 0  // maybe one day we will do signed numbers...
++/*
++ * do_div doesn't handle signed numbers, so:
++ */
++#define do_div_signed(result, div)					\
++({									\
++        long rem, flip = 0;						\
++	if (result < 0){						\
++		result = -result;					\
++		flip = 2;                 /* flip rem & result sign*/	\
++		if (div < 0){						\
++			div = -div;					\
++			flip--;          /* oops, just flip rem */	\
++		}							\
++	}								\
++	rem = do_div(result,div);					\
++	rem = flip ? -rem : rem;					\
++	if ( flip == 2)							\
++		result = -result;					\
++	rem;								\
++})
++#endif
++
++
++
++
++#ifndef div_long_long_rem
++
++/*
++ * (long)X = ((long long)divs) / (long)div
++ * (long)rem = ((long long)divs) % (long)div
++ *
++ * Warning, this will do an exception if X overflows.
++ * Well, it would if done in asm, this code just truncates..
++ */
++
++#define div_long_long_rem(a,b,c) div_ll_X_l_rem((a),(b),(c))
++/* x = divs / div; *rem = divs % div; */
++static inline unsigned long div_ll_X_l_rem(unsigned long long divs,
++					   unsigned long div,
++					   unsigned long * rem)
++{
++	unsigned long long it = divs;
++	*rem = do_div(it, div);
++	return (unsigned long)it;
++}
++/*
++ * same as above, but no remainder
++ */
++static inline unsigned long div_ll_X_l(unsigned long long divs,
++				       unsigned long div)
++{
++	unsigned long long it = divs;
++        do_div(it, div);
++        return (unsigned long)it;
++}
++#else
++#define  div_ll_X_l(divs, div) ({unsigned long d; div_ll_X_l_rem(divs, div, &d);})
++#endif
++/*
++ * X = (a/b)<<32 or more precisely x = (a<<32)/b
++ */
++static inline unsigned long div_sc32(unsigned long a, unsigned long b)
++{
++	return div_ll_X_l(SC_32(a), b);
++}
++/*
++ * X = (a/b)<<24 or more precisely x = (a<<24)/b
++ */
++#define div_sc24(a,b) div_sc_n(24,(a),(b))
++/* x = (aa << N / bb)  */
++#define div_sc_n(N,aa,bb) ({unsigned long long result = SC_n((N), (aa)); \
++                             div_ll_X_l(result, (bb));})
++/*
++ * (long)X = (((long)divh<<32) | (long)divl) / (long)div
++ * (long)rem = (((long)divh<<32) % (long)divl) / (long)div
++ *
++ * Warning, this will do an exception if X overflows.
++ * Well, it would if done in asm, this code just truncates..
++ */
++static inline unsigned long div_h_or_l_X_l_rem(unsigned long divh,
++					       unsigned long divl,
++					       unsigned long div,
++					       unsigned long* rem)
++{
++	unsigned long long result = SC_32(divh) + (divl);
++
++        return div_ll_X_l_rem(result, (div), (rem));
++
++}
++#else
++/* The 64-bit long version */
++
++/*
++ * The 64-bit long machine can do most of these in native C.  We assume that
++ * the "long long" of 32-bit machines is typedefed away so the we need only
++ * deal with longs.  This code should be tight enought that asm code is not
++ * needed.
++ */
++
++/*
++ * mpy a long by a long and return a long
++ */
++
++static inline long mpy_l_X_l_ll(long mpy1, long mpy2)
++{
++
++        return (mpy1) * (mpy2);
++
++}
++/*
++ * mpy a long by a long and return the low part and a separate hi part
++ * This code always returns 32 values... may not be what you want...
++ */
++
++
++static inline long  mpy_l_X_l_h(long mpy1,
++					 long mpy2,
++					 long *hi)
++{
++	long it = mpy1 * mpy2;
++	*hi = (it >> 32);
++        return it & 0xffffffff;
++
++}
++/*
++ * This routine preforms the following calculation:
++ *
++ * X = (a*b)>>32
++ * we could, (but don't) also get the part shifted out.
++ */
++static inline long mpy_sc32(long a, long b)
++{
++        return ((a * b) >> 32);
++}
++/*
++ * X = (a/b)<<32 or more precisely x = (a<<32)/b
++ */
++
++static inline long div_sc32(long a, long b)
++{
++	return  SC_32(a) / (b);
++}
++/*
++ * X = (a*b)>>24
++ * we could, (but don't) also get the part shifted out.
++ */
++
++#define mpy_sc24(a,b) mpy_sc_n(24,a,b)
++/*
++ * X = (a/b)<<24 or more precisely x = (a<<24)/b
++ */
++#define div_sc24(a,b) div_sc_n(24,a,b)
++
++/*
++ * The routines allow you to do x = ((a<< N)/b) and
++ * x=(a*b)>>N for values of N from 1 to 32.
++ *
++ * These are handy to have to do scaled math.
++ * Scaled math has two nice features:
++ * A.) A great deal more precision can be maintained by
++ *     keeping more signifigant bits.
++ * B.) Often an in line div can be replaced with a mpy
++ *     which is a LOT faster.
++ */
++
++/* x = (aa * bb) >> N */
++
++
++#define mpy_sc_n(N,aa,bb) (((aa) * (bb)) >> N)
++
++/* x = (aa << N / bb)  */
++#define div_sc_n(N,aa,bb) (SC_n((N), (aa)) / (bb))
++
++
++/*
++ * (long)X = ((long long)divs) / (long)div
++ * (long)rem = ((long long)divs) % (long)div
++ *
++ * Warning, this will do an exception if X overflows.
++ * Well, it would if done in asm, this code just truncates..
++ */
++#define div_long_long_rem(a,b,c) div_ll_X_l_rem(a, b, c)
++
++/* x = divs / div; *rem = divs % div; */
++static inline unsigned long div_ll_X_l_rem(unsigned long divs,
++					   unsigned long div,
++					   unsigned long * rem)
++{
++	*rem = divs % div;
++	return divs / div;
++}
++/*
++ * same as above, but no remainder
++ */
++static inline unsigned long div_ll_X_l(unsigned long divs,
++				       unsigned long div)
++{
++        return divs / div;
++}
++/*
++ * (long)X = (((long)divh<<32) | (long)divl) / (long)div
++ * (long)rem = (((long)divh<<32) % (long)divl) / (long)div
++ *
++ * Warning, this will do an exception if X overflows.
++ * Well, it would if done in asm, this code just truncates..
++ */
++static inline unsigned long div_h_or_l_X_l_rem(unsigned long divh,
++					       unsigned long divl,
++					       unsigned long div,
++					       unsigned long* rem)
++{
++	long result = SC_32(divh) + divl;
++
++        return div_ll_X_l_rem(result, div, rem);
++
++}
++#endif  /* else(BITS_PER_LONG < 64) */
++#endif
+diff -puN include/linux/sched.h~posix-hrt-core-04.06.09 include/linux/sched.h
+--- linux-2.6.7-rc3-xx1/include/linux/sched.h~posix-hrt-core-04.06.09	2004-06-09 22:14:57.613858416 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/sched.h	2004-06-09 22:14:57.640854312 -0400
+@@ -372,6 +372,9 @@ struct k_itimer {
+ 	int it_sigev_signo;		 /* signo word of sigevent struct */
+ 	sigval_t it_sigev_value;	 /* value word of sigevent struct */
+ 	unsigned long it_incr;		/* interval specified in jiffies */
++#ifdef CONFIG_HIGH_RES_TIMERS
++        int it_sub_incr;                /* sub jiffie part of interval */
++#endif
+ 	struct task_struct *it_process;	/* process to send signal to */
+ 	struct timer_list it_timer;
+ 	struct sigqueue *sigq;		/* signal queue entry. */
+diff -puN include/linux/thread_info.h~posix-hrt-core-04.06.09 include/linux/thread_info.h
+--- linux-2.6.7-rc3-xx1/include/linux/thread_info.h~posix-hrt-core-04.06.09	2004-06-09 22:14:57.615858112 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/thread_info.h	2004-06-09 22:14:57.644853704 -0400
+@@ -14,7 +14,7 @@
+  */
+ struct restart_block {
+ 	long (*fn)(struct restart_block *);
+-	unsigned long arg0, arg1, arg2, arg3;
++	unsigned long arg0, arg1, arg2, arg3, arg4;
+ };
+ 
+ /*
+diff -puN include/linux/time.h~posix-hrt-core-04.06.09 include/linux/time.h
+--- linux-2.6.7-rc3-xx1/include/linux/time.h~posix-hrt-core-04.06.09	2004-06-09 22:14:57.618857656 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/time.h	2004-06-09 22:14:57.646853400 -0400
+@@ -356,13 +356,14 @@ set_normalized_timespec (struct timespec
+ 		nsec -= NSEC_PER_SEC;
+ 		++sec;
+ 	}
+-	while (nsec < 0) {
++	while (unlikely(nsec < 0)) {
+ 		nsec += NSEC_PER_SEC;
+ 		--sec;
+ 	}
+ 	ts->tv_sec = sec;
+ 	ts->tv_nsec = nsec;
+ }
++#define timespec_norm(a) set_normalized_timespec((a), (a)->tv_sec, (a)->tv_nsec)
+ #endif
+ 
+ #define FD_SETSIZE		__FD_SETSIZE
+@@ -401,9 +402,6 @@ struct	itimerval {
+ #define CLOCK_MONOTONIC_HR	  5
+ 
+ #define MAX_CLOCKS 6
+-#define CLOCKS_MASK  (CLOCK_REALTIME | CLOCK_MONOTONIC | \
+-                     CLOCK_REALTIME_HR | CLOCK_MONOTONIC_HR)
+-#define CLOCKS_MONO (CLOCK_MONOTONIC & CLOCK_MONOTONIC_HR)
+ 
+ /*
+  * The various flags for setting POSIX.1b interval timers.
+diff -puN include/linux/timer.h~posix-hrt-core-04.06.09 include/linux/timer.h
+--- linux-2.6.7-rc3-xx1/include/linux/timer.h~posix-hrt-core-04.06.09	2004-06-09 22:14:57.622857048 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/timer.h	2004-06-09 22:14:57.648853096 -0400
+@@ -19,6 +19,7 @@ struct timer_list {
+ 	unsigned long data;
+ 
+ 	struct tvec_t_base_s *base;
++	long sub_expires;
+ };
+ 
+ #define TIMER_MAGIC	0x4b87ad6e
+@@ -30,6 +31,7 @@ struct timer_list {
+ 		.base = NULL,					\
+ 		.magic = TIMER_MAGIC,				\
+ 		.lock = SPIN_LOCK_UNLOCKED,			\
++		.sub_expires = 0,			        \
+ 	}
+ 
+ /***
+@@ -42,6 +44,7 @@ struct timer_list {
+ static inline void init_timer(struct timer_list * timer)
+ {
+ 	timer->base = NULL;
++	timer->sub_expires = 0;
+ 	timer->magic = TIMER_MAGIC;
+ 	spin_lock_init(&timer->lock);
+ }
+diff -puN kernel/posix-timers.c~posix-hrt-core-04.06.09 kernel/posix-timers.c
+--- linux-2.6.7-rc3-xx1/kernel/posix-timers.c~posix-hrt-core-04.06.09	2004-06-09 22:14:57.626856440 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/kernel/posix-timers.c	2004-06-09 22:14:57.652852488 -0400
+@@ -39,11 +39,12 @@
+ #include <linux/init.h>
+ #include <linux/compiler.h>
+ #include <linux/idr.h>
++#include <linux/hrtime.h>
+ #include <linux/posix-timers.h>
+ #include <linux/wait.h>
+-
+-#ifndef div_long_long_rem
++#include <linux/sc_math.h>
+ #include <asm/div64.h>
++#ifndef div_long_long_rem
+ 
+ #define div_long_long_rem(dividend,divisor,remainder) ({ \
+ 		       u64 result = dividend;		\
+@@ -53,10 +54,6 @@
+ #endif
+ #define CLOCK_REALTIME_RES TICK_NSEC  /* In nano seconds. */
+ 
+-static inline u64  mpy_l_X_l_ll(unsigned long mpy1,unsigned long mpy2)
+-{
+-	return (u64)mpy1 * mpy2;
+-}
+ /*
+  * Management arrays for POSIX timers.	 Timers are kept in slab memory
+  * Timer ids are allocated by an external routine that keeps track of the
+@@ -169,6 +166,7 @@ static spinlock_t idr_lock = SPIN_LOCK_U
+  */
+ 
+ static struct k_clock posix_clocks[MAX_CLOCKS];
++IF_HIGH_RES(static long arch_res_by_2;)
+ 
+ #define if_clock_do(clock_fun,alt_fun,parms) \
+ 		(!clock_fun) ? alt_fun parms : clock_fun parms
+@@ -185,7 +183,7 @@ static struct k_clock posix_clocks[MAX_C
+ void register_posix_clock(int clock_id, struct k_clock *new_clock);
+ static int do_posix_gettime(struct k_clock *clock, struct timespec *tp);
+ static u64 do_posix_clock_monotonic_gettime_parts(
+-	struct timespec *tp, struct timespec *mo);
++	struct timespec *tp, struct timespec *mo, long *sub_jiff);
+ int do_posix_clock_monotonic_gettime(struct timespec *tp);
+ int do_posix_clock_monotonic_settime(struct timespec *tp);
+ static struct k_itimer *lock_timer(timer_t timer_id, unsigned long *flags);
+@@ -212,21 +210,34 @@ static __init int init_posix_timers(void
+ 	posix_timers_cache = kmem_cache_create("posix_timers_cache",
+ 					sizeof (struct k_itimer), 0, 0, 0, 0);
+ 	idr_init(&posix_timers_id);
++#ifdef CONFIG_HIGH_RES_TIMERS
++	/*
++	 * Possibly switched out at boot time
++	 */
++	if (hrtimer_use) {
++		clock_realtime.res = hr_time_resolution;
++		register_posix_clock(CLOCK_REALTIME_HR, &clock_realtime);
++		clock_monotonic.res = hr_time_resolution;
++		register_posix_clock(CLOCK_MONOTONIC_HR, &clock_monotonic);
++	}
++	arch_res_by_2 = nsec_to_arch_cycle(hr_time_resolution >> 1);
++#endif
++
++#ifdef	final_clock_init
++	final_clock_init();	/* defined as needed by arch header file */
++#endif
+ 
+ 	return 0;
+ }
+ 
+ __initcall(init_posix_timers);
+-
++#ifndef CONFIG_HIGH_RES_TIMERS
+ static void tstojiffie(struct timespec *tp, int res, u64 *jiff)
+ {
+-	long sec = tp->tv_sec;
+-	long nsec = tp->tv_nsec + res - 1;
++	struct timespec tv = *tp;
++	tv.tv_nsec += res - 1;
+ 
+-	if (nsec > NSEC_PER_SEC) {
+-		sec++;
+-		nsec -= NSEC_PER_SEC;
+-	}
++	timespec_norm(&tv);
+ 
+ 	/*
+ 	 * The scaling constants are defined in <linux/time.h>
+@@ -234,19 +245,69 @@ static void tstojiffie(struct timespec *
+ 	 * res rounding and compute a 64-bit result (well so does that
+ 	 * but it then throws away the high bits).
+   	 */
+-	*jiff =  (mpy_l_X_l_ll(sec, SEC_CONVERSION) +
+-		  (mpy_l_X_l_ll(nsec, NSEC_CONVERSION) >> 
++	*jiff =  (((u64)tv.tv_sec * SEC_CONVERSION) +
++		  (((u64)tv.tv_nsec * NSEC_CONVERSION) >>
+ 		   (NSEC_JIFFIE_SC - SEC_JIFFIE_SC))) >> SEC_JIFFIE_SC;
+ }
++#else
++static long tstojiffie(struct timespec *tp, int res, u64 *jiff)
++{
++	struct timespec tv = *tp;
++	u64 raw_jiff;
++	unsigned long mask_jiff;
++	long rtn;
++
++	tv.tv_nsec += res - 1;
++
++	timespec_norm(&tv);
++
++	/*
++	 * This much like the above, except, well you know that bit
++	 * we shift off the right end to get jiffies.  Well that is
++	 * the sub_jiffie part and here we pick that up and convert
++	 * it to arch_cycles.
++	 *
++	 * Also, we need to be a bit more rigorous about resolution,
++	 * See the next line...
++	 */
++	tv.tv_nsec -= tv.tv_nsec % res;
++
++	raw_jiff =  (((u64)tv.tv_sec * SEC_CONVERSION) +
++		     (((u64)tv.tv_nsec * NSEC_CONVERSION) >>
++		(NSEC_JIFFIE_SC - SEC_JIFFIE_SC)));
++	*jiff = raw_jiff >> SEC_JIFFIE_SC;
++
++	mask_jiff = raw_jiff & ((1 << SEC_JIFFIE_SC) -1);
++
++	rtn = ((u64)mask_jiff * arch_cycles_per_jiffy) >> SEC_JIFFIE_SC;
++
++	/*
++	 * Clean up any slop in the math around zero.
++	 */
++	if (rtn < arch_res_by_2)
++		return  0;
++
++	if ((rtn + arch_res_by_2) > arch_cycles_per_jiffy) {
++		(*jiff)++;
++		return  0;
++	}
++	return rtn;
++}
++#endif
++
+ 
+ static void schedule_next_timer(struct k_itimer *timr)
+ {
+ 	struct now_struct now;
+ 
+ 	/* Set up the timer for the next interval (if there is one) */
+-	if (!timr->it_incr) 
++#ifdef CONFIG_HIGH_RES_TIMERS
++	if (!(timr->it_incr | timr->it_sub_incr))
+ 		return;
+-
++#else
++	if (!(timr->it_incr))
++		return;
++#endif
+ 	posix_get_now(&now);
+ 	do {
+ 		posix_bump_timer(timr);
+@@ -318,7 +379,7 @@ static void timer_notify_task(struct k_i
+ 	timr->sigq->info.si_code = SI_TIMER;
+ 	timr->sigq->info.si_tid = timr->it_id;
+ 	timr->sigq->info.si_value = timr->it_sigev_value;
+-	if (timr->it_incr)
++	if (timr->it_incr IF_HIGH_RES( | timr->it_sub_incr))
+ 		timr->sigq->info.si_sys_private = ++timr->it_requeue_pending;
+ 
+ 	if (timr->it_sigev_notify & SIGEV_THREAD_ID) {
+@@ -624,24 +685,33 @@ static struct k_itimer * lock_timer(time
+  * it is the same as a requeue pending timer WRT to what we should
+  * report.
+  */
++#ifndef CONFIG_HIGH_RES_TIMERS
++#define timeleft expires
++#else
++#define timeleft (expires | sub_expires)
++#endif
++
+ static void
+ do_timer_gettime(struct k_itimer *timr, struct itimerspec *cur_setting)
+ {
+-	unsigned long expires;
++	IF_HIGH_RES(long sub_expires;)
++ 	unsigned long expires;
+ 	struct now_struct now;
+ 
+-	do
++	do {
+ 		expires = timr->it_timer.expires;
+-	while ((volatile long) (timr->it_timer.expires) != expires);
++		IF_HIGH_RES(sub_expires = timr->it_timer.sub_expires;)
++	} while ((volatile long) (timr->it_timer.expires) != expires);
+ 
+ 	posix_get_now(&now);
+ 
+-	if (expires &&
++	if (timeleft &&
+ 	    ((timr->it_sigev_notify & ~SIGEV_THREAD_ID) == SIGEV_NONE) &&
+-	    !timr->it_incr &&
++	    (!timr->it_incr IF_HIGH_RES(| timr->it_sub_incr)) &&
+ 	    posix_time_before(&timr->it_timer, &now))
++		IF_HIGH_RES(timr->it_timer.sub_expires = sub_expires =)
+ 		timr->it_timer.expires = expires = 0;
+-	if (expires) {
++	if (timeleft) {
+ 		if (timr->it_requeue_pending & REQUEUE_PENDING ||
+ 		    (timr->it_sigev_notify & ~SIGEV_THREAD_ID) == SIGEV_NONE) {
+ 			while (posix_time_before(&timr->it_timer, &now))
+@@ -651,12 +721,28 @@ do_timer_gettime(struct k_itimer *timr, 
+ 		else
+ 			if (!timer_pending(&timr->it_timer))
+ 				expires = 0;
+-		if (expires)
++		if (timeleft)
+ 			expires -= now.jiffies;
++			IF_HIGH_RES(sub_expires -= now.sub_jiffie;)
+ 	}
+ 	jiffies_to_timespec(expires, &cur_setting->it_value);
+ 	jiffies_to_timespec(timr->it_incr, &cur_setting->it_interval);
+ 
++#ifdef CONFIG_HIGH_RES_TIMERS
++	cur_setting->it_value.tv_nsec +=
++		arch_cycle_to_nsec(sub_expires);
++	if (cur_setting->it_value.tv_nsec < 0) {
++		cur_setting->it_value.tv_nsec += NSEC_PER_SEC;
++		cur_setting->it_value.tv_sec--;}
++	if ((cur_setting->it_value.tv_nsec - NSEC_PER_SEC) >= 0) {
++		cur_setting->it_value.tv_nsec -= NSEC_PER_SEC;
++		cur_setting->it_value.tv_sec++;}
++	cur_setting->it_interval.tv_nsec +=
++		arch_cycle_to_nsec(timr->it_sub_incr);
++	if ((cur_setting->it_interval.tv_nsec - NSEC_PER_SEC) >= 0) {
++		cur_setting->it_interval.tv_nsec -= NSEC_PER_SEC;
++		cur_setting->it_interval.tv_sec++;}
++#endif
+ 	if (cur_setting->it_value.tv_sec < 0) {
+ 		cur_setting->it_value.tv_nsec = 1;
+ 		cur_setting->it_value.tv_sec = 0;
+@@ -719,27 +805,33 @@ sys_timer_getoverrun(timer_t timer_id)
+  *
+  * If it is relative time, we need to add the current (CLOCK_MONOTONIC)
+  * time to it to get the proper time for the timer.
++ *
++ * err will be set to -EINVAL if offset is larger than MAX_JIFFY_OFFSET.
++ * Caller should set err otherwise prior to call if he desires to test
++ * this value.
+  */
+ static int adjust_abs_time(struct k_clock *clock, struct timespec *tp, 
+-			   int abs, u64 *exp)
++			   int abs, u64 *exp, int *err)
+ {
+ 	struct timespec now;
+ 	struct timespec oc = *tp;
+ 	struct timespec wall_to_mono;
+ 	u64 jiffies_64_f;
++	long sub_jiff;
+ 	int rtn =0;
+ 
+ 	if (abs) {
+ 		/*
+-		 * The mask pick up the 4 basic clocks 
++		 * The mask picks up the 4 basic clocks
+ 		 */
+-		if (!(clock - &posix_clocks[0]) & ~CLOCKS_MASK) {
++		if ((clock - &posix_clocks[0]) <= CLOCK_MONOTONIC_HR) {
+ 			jiffies_64_f = do_posix_clock_monotonic_gettime_parts(
+-				&now,  &wall_to_mono);
++				&now,  &wall_to_mono, &sub_jiff);
+ 			/*
+ 			 * If we are doing a MONOTONIC clock
+ 			 */
+-			if((clock - &posix_clocks[0]) & CLOCKS_MONO){
++			if(clock->clock_get ==
++			    posix_clocks[CLOCK_MONOTONIC].clock_get){
+ 				now.tv_sec += wall_to_mono.tv_sec;
+ 				now.tv_nsec += wall_to_mono.tv_nsec;
+ 			}
+@@ -758,41 +850,43 @@ static int adjust_abs_time(struct k_cloc
+ 		/*
+ 		 * Normalize...
+ 		 */
+-		while ((oc.tv_nsec - NSEC_PER_SEC) >= 0) {
+-			oc.tv_nsec -= NSEC_PER_SEC;
+-			oc.tv_sec++;
+-		}
+-		while ((oc.tv_nsec) < 0) {
+-			oc.tv_nsec += NSEC_PER_SEC;
+-			oc.tv_sec--;
+-		}
++		timespec_norm(&oc);
+ 	}else{
++#ifdef CONFIG_HIGH_RES_TIMERS
++		do_atomic_on_xtime_seq(
++			jiffies_64_f = jiffies_64;
++			sub_jiff = get_arch_cycles((u32) jiffies_64_f);
++			);
++#else
+ 		jiffies_64_f = get_jiffies_64();
++#endif
+ 	}
+ 	/*
+ 	 * Check if the requested time is prior to now (if so set now)
+ 	 */
+ 	if (oc.tv_sec < 0)
+ 		oc.tv_sec = oc.tv_nsec = 0;
+-	tstojiffie(&oc, clock->res, exp);
+ 
+-	/*
+-	 * Check if the requested time is more than the timer code
+-	 * can handle (if so we error out but return the value too).
+-	 */
+-	if (*exp > ((u64)MAX_JIFFY_OFFSET))
+-			/*
+-			 * This is a considered response, not exactly in
+-			 * line with the standard (in fact it is silent on
+-			 * possible overflows).  We assume such a large 
+-			 * value is ALMOST always a programming error and
+-			 * try not to compound it by setting a really dumb
+-			 * value.
+-			 */
+-			rtn = -EINVAL;
++	if (oc.tv_sec | oc.tv_nsec) {
++		oc.tv_nsec += clock->res;
++		timespec_norm(&oc);
++	}
++
++	IF_HIGH_RES(rtn = sub_jiff + )
++		tstojiffie(&oc, clock->res, exp);
++
+ 	/*
+ 	 * return the actual jiffies expire time, full 64 bits
+ 	 */
++#ifdef CONFIG_HIGH_RES_TIMERS
++	while (rtn >= arch_cycles_per_jiffy) {
++		rtn -= arch_cycles_per_jiffy;
++		jiffies_64_f++;
++	}
++#endif
++	if (*exp > ((u64)MAX_JIFFY_OFFSET))
++		*err = -EINVAL;
++
+ 	*exp += jiffies_64_f;
+ 	return rtn;
+ }
+@@ -805,12 +899,15 @@ do_timer_settime(struct k_itimer *timr, 
+ {
+ 	struct k_clock *clock = &posix_clocks[timr->it_clock];
+ 	u64 expire_64;
++	int rtn = 0;
++	IF_HIGH_RES(long sub_expire;)
+ 
+ 	if (old_setting)
+ 		do_timer_gettime(timr, old_setting);
+ 
+ 	/* disable the timer */
+ 	timr->it_incr = 0;
++	IF_HIGH_RES(timr->it_sub_incr = 0;)
+ 	/*
+ 	 * careful here.  If smp we could be in the "fire" routine which will
+ 	 * be spinning as we hold the lock.  But this is ONLY an SMP issue.
+@@ -840,16 +937,33 @@ do_timer_settime(struct k_itimer *timr, 
+ 	 */
+ 	if (!new_setting->it_value.tv_sec && !new_setting->it_value.tv_nsec) {
+ 		timr->it_timer.expires = 0;
++		IF_HIGH_RES(timr->it_timer.sub_expires = 0;)
+ 		return 0;
+ 	}
+ 
+-	if (adjust_abs_time(clock,
+-			    &new_setting->it_value, flags & TIMER_ABSTIME, 
+-			    &expire_64)) {
+-		return -EINVAL;
+-	}
++	IF_HIGH_RES(sub_expire = )
++		adjust_abs_time(clock, &new_setting->it_value,
++				flags & TIMER_ABSTIME, &expire_64, &rtn);
++	/*
++	 * Check if the requested time is more than the timer code
++	 * can handle (if so we error out).
++	 */
++	if (rtn)
++			/*
++			 * This is a considered response, not exactly in
++			 * line with the standard (in fact it is silent on
++			 * possible overflows).  We assume such a large
++			 * value is ALMOST always a programming error and
++			 * try not to compound it by setting a really dumb
++			 * value.
++			 */
++		return rtn;
++
+ 	timr->it_timer.expires = (unsigned long)expire_64;	
+-	tstojiffie(&new_setting->it_interval, clock->res, &expire_64);
++	IF_HIGH_RES(timr->it_timer.sub_expires = sub_expire;)
++	IF_HIGH_RES(timr->it_sub_incr =)
++		tstojiffie(&new_setting->it_interval, clock->res, &expire_64);
++
+ 	timr->it_incr = (unsigned long)expire_64;
+ 
+ 
+@@ -859,9 +973,11 @@ do_timer_settime(struct k_itimer *timr, 
+ 	 * We do not even queue SIGEV_NONE timers!
+ 	 */
+ 	if (((timr->it_sigev_notify & ~SIGEV_THREAD_ID) != SIGEV_NONE)) {
++#ifndef CONFIG_HIGH_RES_TIMERS
+ 		if (timr->it_timer.expires == jiffies)
+ 			timer_notify_task(timr);
+ 		else
++#endif
+ 			add_timer(&timr->it_timer);
+ 	}
+ 	return 0;
+@@ -901,7 +1017,7 @@ retry:
+ 							       &new_spec, rtn);
+ 	unlock_timer(timr, flag);
+ 	if (error == TIMER_RETRY) {
+-		rtn = NULL;	// We already got the old time...
++		rtn = NULL;	/* We already got the old time... */
+ 		goto retry;
+ 	}
+ 
+@@ -915,6 +1031,7 @@ retry:
+ static inline int do_timer_delete(struct k_itimer *timer)
+ {
+ 	timer->it_incr = 0;
++	IF_HIGH_RES(timer->it_sub_incr = 0;)
+ #ifdef CONFIG_SMP
+ 	if (timer_active(timer) && !del_timer(&timer->it_timer))
+ 		/*
+@@ -1031,16 +1148,42 @@ void exit_itimers(struct signal_struct *
+  * spin_lock_irq() held and from clock calls with no locking.	They must
+  * use the save flags versions of locks.
+  */
++extern volatile unsigned long wall_jiffies;
++
++static void get_wall_time(struct timespec *tp)
++  {
++
++#ifdef CONFIG_HIGH_RES_TIMERS
++	*tp = xtime;
++	tp->tv_nsec += arch_cycle_to_nsec(get_arch_cycles(wall_jiffies));
++#else
++	struct timeval tv;
++	do_gettimeofday(&tv);
++	tp->tv_nsec = tv.tv_usec * NSEC_PER_USEC;
++	tp->tv_sec = tv.tv_sec;
++#endif
++}
++/*
++ * The sequence lock below does not need the irq part with real
++ * sequence locks (i.e. in 2.6).  We do need them in 2.4 where
++ * we emulate the sequence lock... shame really.
++ */
+ static int do_posix_gettime(struct k_clock *clock, struct timespec *tp)
+ {
+-	struct timeval tv;
+ 
+ 	if (clock->clock_get)
+ 		return clock->clock_get(tp);
+ 
+-	do_gettimeofday(&tv);
+-	tp->tv_sec = tv.tv_sec;
+-	tp->tv_nsec = tv.tv_usec * NSEC_PER_USEC;
++	{
++
++		unsigned int seq;
++		do {
++			seq = read_seqbegin(&xtime_lock);
++			get_wall_time(tp);
++		} while(read_seqretry(&xtime_lock, seq));
++
++		timespec_norm(tp);
++	}
+ 
+ 	return 0;
+ }
+@@ -1054,43 +1197,39 @@ static int do_posix_gettime(struct k_clo
+  */
+ 
+ static u64 do_posix_clock_monotonic_gettime_parts(
+-	struct timespec *tp, struct timespec *mo)
++	struct timespec *tp, struct timespec *mo, long *sub_jiff)
+ {
+ 	u64 jiff;
+-	struct timeval tpv;
++
+ 	unsigned int seq;
+ 
+ 	do {
+ 		seq = read_seqbegin(&xtime_lock);
+-		do_gettimeofday(&tpv);
++		get_wall_time(tp);
+ 		*mo = wall_to_monotonic;
+ 		jiff = jiffies_64;
+-
++		IF_HIGH_RES(*sub_jiff = get_arch_cycles((u32)jiff);)
+ 	} while(read_seqretry(&xtime_lock, seq));
+-
+-	/*
+-	 * Love to get this before it is converted to usec.
+-	 * It would save a div AND a mpy.
+-	 */
+-	tp->tv_sec = tpv.tv_sec;
+-	tp->tv_nsec = tpv.tv_usec * NSEC_PER_USEC;
+-
++#ifdef CONFIG_HIGH_RES_TIMERS
++        while(*sub_jiff >= arch_cycles_per_jiffy) {
++                *sub_jiff -= arch_cycles_per_jiffy;
++                jiff++;
++        }
++#endif
+ 	return jiff;
+ }
+ 
+ int do_posix_clock_monotonic_gettime(struct timespec *tp)
+ {
+ 	struct timespec wall_to_mono;
++	long sub_jiff;
+ 
+-	do_posix_clock_monotonic_gettime_parts(tp, &wall_to_mono);
++	do_posix_clock_monotonic_gettime_parts(tp, &wall_to_mono, &sub_jiff);
+ 
+ 	tp->tv_sec += wall_to_mono.tv_sec;
+ 	tp->tv_nsec += wall_to_mono.tv_nsec;
+ 
+-	if ((tp->tv_nsec - NSEC_PER_SEC) > 0) {
+-		tp->tv_nsec -= NSEC_PER_SEC;
+-		tp->tv_sec++;
+-	}
++	timespec_norm(tp);
+ 	return 0;
+ }
+ 
+@@ -1155,7 +1294,6 @@ sys_clock_getres(clockid_t which_clock, 
+ static void nanosleep_wake_up(unsigned long __data)
+ {
+ 	struct task_struct *p = (struct task_struct *) __data;
+-
+ 	wake_up_process(p);
+ }
+ 
+@@ -1216,6 +1354,27 @@ sys_clock_nanosleep(clockid_t which_cloc
+ 		return -EFAULT;
+ 	return ret;
+ }
++#ifdef CONFIG_HIGH_RES_TIMERS
++#define get_jiffies_time(result)				\
++({								\
++	unsigned int seq;					\
++	u64 jiff;						\
++	do {							\
++		seq = read_seqbegin(&xtime_lock);		\
++		jiff = jiffies_64;				\
++		*result = get_arch_cycles((unsigned long)jiff);	\
++	} while(read_seqretry(&xtime_lock, seq));		\
++        while(*result >= arch_cycles_per_jiffy) {		\
++                *result -= arch_cycles_per_jiffy;		\
++                jiff++;						\
++        }							\
++	jiff;							\
++})
++
++#else
++#define get_jiffies_time(result) get_jiffies_64()
++
++#endif
+ 
+ long
+ do_clock_nanosleep(clockid_t which_clock, int flags, struct timespec *tsave)
+@@ -1225,9 +1384,10 @@ do_clock_nanosleep(clockid_t which_clock
+ 	DECLARE_WAITQUEUE(abs_wqueue, current);
+ 	u64 rq_time = (u64)0;
+ 	s64 left;
++	IF_HIGH_RES(long sub_left;)
+ 	int abs;
+ 	struct restart_block *restart_block =
+-	    &current_thread_info()->restart_block;
++	    &(current_thread_info()->restart_block);
+ 
+ 	abs_wqueue.flags = 0;
+ 	init_timer(&new_timer);
+@@ -1247,9 +1407,18 @@ do_clock_nanosleep(clockid_t which_clock
+ 		rq_time = (rq_time << 32) + restart_block->arg2;
+ 		if (!rq_time)
+ 			return -EINTR;
+-		left = rq_time - get_jiffies_64();
++		IF_HIGH_RES(new_timer.sub_expires = restart_block->arg4;)
++		left = rq_time - get_jiffies_time(&sub_left);
++
++
++#ifndef CONFIG_HIGH_RES_TIMERS
+ 		if (left <= (s64)0)
+ 			return 0;	/* Already passed */
++#else
++		if ((left < (s64)0) ||
++		    ((left == (s64)0) && (new_timer.sub_expires <= sub_left)))
++			return 0;
++#endif
+ 	}
+ 
+ 	if (abs && (posix_clocks[which_clock].clock_get !=
+@@ -1258,17 +1427,24 @@ do_clock_nanosleep(clockid_t which_clock
+ 
+ 	do {
+ 		t = *tsave;
+-		if (abs || !rq_time) {
++		if (abs || !(rq_time IF_HIGH_RES(| new_timer.sub_expires))) {
++			int dum;
++			IF_HIGH_RES(new_timer.sub_expires =)
+ 			adjust_abs_time(&posix_clocks[which_clock], &t, abs,
+-					&rq_time);
+-			rq_time += (t.tv_sec || t.tv_nsec);
++					&rq_time, &dum);
+ 		}
+ 
+-		left = rq_time - get_jiffies_64();
++		left = rq_time - get_jiffies_time(&sub_left);
+ 		if (left >= (s64)MAX_JIFFY_OFFSET)
+ 			left = (s64)MAX_JIFFY_OFFSET;
++#ifndef CONFIG_HIGH_RES_TIMERS
+ 		if (left < (s64)0)
+ 			break;
++#else
++		if ((left < (s64)0) ||
++		    ((left == (s64)0) && (new_timer.sub_expires <= sub_left)))
++			break;
++#endif
+ 
+ 		new_timer.expires = jiffies + left;
+ 		__set_current_state(TASK_INTERRUPTIBLE);
+@@ -1277,14 +1453,24 @@ do_clock_nanosleep(clockid_t which_clock
+ 		schedule();
+ 
+ 		del_timer_sync(&new_timer);
+-		left = rq_time - get_jiffies_64();
+-	} while (left > (s64)0 && !test_thread_flag(TIF_SIGPENDING));
++		left = rq_time - get_jiffies_time(&sub_left);
++	} while ((left > (s64)0
++#ifdef CONFIG_HIGH_RES_TIMERS
++		  || (left == (s64)0 && (new_timer.sub_expires > sub_left))
++#endif
++			 ) &&  !test_thread_flag(TIF_SIGPENDING));
+ 
+ 	if (abs_wqueue.task_list.next)
+ 		finish_wait(&nanosleep_abs_wqueue, &abs_wqueue);
+ 
+-	if (left > (s64)0) {
+ 
++#ifdef CONFIG_HIGH_RES_TIMERS
++	if (left > (s64)0 ||
++	    (left == (s64)0 && (new_timer.sub_expires > sub_left)))
++#else
++	if (left > (s64)0 )
++#endif
++	{
+ 		/*
+ 		 * Always restart abs calls from scratch to pick up any
+ 		 * clock shifting that happened while we are away.
+@@ -1293,6 +1479,9 @@ do_clock_nanosleep(clockid_t which_clock
+ 			return -ERESTARTNOHAND;
+ 
+ 		left *= TICK_NSEC;
++#ifdef CONFIG_HIGH_RES_TIMERS
++		left += arch_cycle_to_nsec(new_timer.sub_expires - sub_left);
++#endif
+ 		tsave->tv_sec = div_long_long_rem(left, 
+ 						  NSEC_PER_SEC, 
+ 						  &tsave->tv_nsec);
+@@ -1312,10 +1501,10 @@ do_clock_nanosleep(clockid_t which_clock
+ 		 */
+ 		restart_block->arg2 = rq_time & 0xffffffffLL;
+ 		restart_block->arg3 = rq_time >> 32;
++		IF_HIGH_RES(restart_block->arg4 = new_timer.sub_expires;)
+ 
+ 		return -ERESTART_RESTARTBLOCK;
+ 	}
+-
+ 	return 0;
+ }
+ /*
+diff -puN kernel/timer.c~posix-hrt-core-04.06.09 kernel/timer.c
+--- linux-2.6.7-rc3-xx1/kernel/timer.c~posix-hrt-core-04.06.09	2004-06-09 22:14:57.629855984 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/kernel/timer.c	2004-06-09 22:15:59.093512088 -0400
+@@ -17,6 +17,8 @@
+  *  2000-10-05  Implemented scalable SMP per-CPU timer handling.
+  *                              Copyright (C) 2000, 2001, 2002  Ingo Molnar
+  *              Designed by David S. Miller, Alexey Kuznetsov and Ingo Molnar
++ *  2002-10-01	High res timers code by George Anzinger
++ *		    Copyright (C)2002 by MontaVista Software.
+  */
+ 
+ #include <linux/kernel_stat.h>
+@@ -33,38 +35,26 @@
+ #include <linux/cpu.h>
+ #include <linux/perfctr.h>
+ 
++#include <linux/hrtime.h>
+ #include <asm/uaccess.h>
+ #include <asm/unistd.h>
+ #include <asm/div64.h>
+ #include <asm/timex.h>
+ 
++#ifndef CONFIG_NEW_TIMER_LISTSIZE
++#define CONFIG_NEW_TIMER_LISTSIZE 512
++#endif
++#define NEW_TVEC_SIZE CONFIG_NEW_TIMER_LISTSIZE
++#define NEW_TVEC_MASK (NEW_TVEC_SIZE - 1)
+ /*
+  * per-CPU timer vector definitions:
+  */
+-#define TVN_BITS 6
+-#define TVR_BITS 8
+-#define TVN_SIZE (1 << TVN_BITS)
+-#define TVR_SIZE (1 << TVR_BITS)
+-#define TVN_MASK (TVN_SIZE - 1)
+-#define TVR_MASK (TVR_SIZE - 1)
+-
+-typedef struct tvec_s {
+-	struct list_head vec[TVN_SIZE];
+-} tvec_t;
+-
+-typedef struct tvec_root_s {
+-	struct list_head vec[TVR_SIZE];
+-} tvec_root_t;
+ 
+ struct tvec_t_base_s {
+ 	spinlock_t lock;
+ 	unsigned long timer_jiffies;
+-	struct timer_list *running_timer;
+-	tvec_root_t tv1;
+-	tvec_t tv2;
+-	tvec_t tv3;
+-	tvec_t tv4;
+-	tvec_t tv5;
++ 	volatile struct timer_list * volatile running_timer;
++ 	struct list_head tv[NEW_TVEC_SIZE];
+ } ____cacheline_aligned_in_smp;
+ 
+ typedef struct tvec_t_base_s tvec_base_t;
+@@ -104,47 +94,99 @@ static inline void check_timer(struct ti
+ 		check_timer_failed(timer);
+ }
+ 
+-
+-static void internal_add_timer(tvec_base_t *base, struct timer_list *timer)
++/*
++ * must be cli-ed when calling this
++ */
++static inline void internal_add_timer(tvec_base_t *base, struct timer_list *timer)
+ {
+-	unsigned long expires = timer->expires;
+-	unsigned long idx = expires - base->timer_jiffies;
+-	struct list_head *vec;
+-
+-	if (idx < TVR_SIZE) {
+-		int i = expires & TVR_MASK;
+-		vec = base->tv1.vec + i;
+-	} else if (idx < 1 << (TVR_BITS + TVN_BITS)) {
+-		int i = (expires >> TVR_BITS) & TVN_MASK;
+-		vec = base->tv2.vec + i;
+-	} else if (idx < 1 << (TVR_BITS + 2 * TVN_BITS)) {
+-		int i = (expires >> (TVR_BITS + TVN_BITS)) & TVN_MASK;
+-		vec = base->tv3.vec + i;
+-	} else if (idx < 1 << (TVR_BITS + 3 * TVN_BITS)) {
+-		int i = (expires >> (TVR_BITS + 2 * TVN_BITS)) & TVN_MASK;
+-		vec = base->tv4.vec + i;
+-	} else if ((signed long) idx < 0) {
+-		/*
+-		 * Can happen if you add a timer with expires == jiffies,
+-		 * or you set a timer to go off in the past
+-		 */
+-		vec = base->tv1.vec + (base->timer_jiffies & TVR_MASK);
++  	unsigned long expires = timer->expires;
++ 	IF_HIGH_RES(long sub_expires = timer->sub_expires;)
++ 	struct list_head *pos, *list_start;
++ 	int indx;
++
++ 	if (time_before(expires, base->timer_jiffies)) {
++ 		/*
++ 		 * already expired, schedule for next tick
++ 		 * would like to do better here
++ 		 * Actually this now works just fine with the
++ 		 * back up of timer_jiffies in "run_timer_list".
++ 		 * Note that this puts the timer on a list other
++ 		 * than the one it idexes to.  We don't want to
++ 		 * change the expires value in the timer as it is
++ 		 * used by the repeat code in setitimer and the
++ 		 * POSIX timers code.
++ 		 */
++ 		expires = base->timer_jiffies;
++ 		IF_HIGH_RES(sub_expires = 0);
++ 	}
++
++ 	indx = expires & NEW_TVEC_MASK;
++ 	if ((expires - base->timer_jiffies) < NEW_TVEC_SIZE) {
++#ifdef CONFIG_HIGH_RES_TIMERS
++ 		unsigned long jiffies_f;
++  		/*
++ 		 * The high diff bits are the same, goes to the head of
++ 		 * the list, sort on sub_expire.
++  		 */
++ 		for (pos = (list_start = &base->tv[indx])->next;
++ 		     pos != list_start;
++ 		     pos = pos->next){
++ 			struct timer_list *tmr =
++ 				list_entry(pos,
++ 					   struct timer_list,
++ 					   entry);
++ 			if ((tmr->sub_expires >= sub_expires) ||
++ 			    (tmr->expires != expires)){
++ 				break;
++ 			}
++ 		}
++ 		list_add_tail(&timer->entry, pos);
++ 		/*
++ 		 * Notes to me.	 Use jiffies here instead of
++ 		 * timer_jiffies to prevent adding unneeded interrupts.
++ 		 * Running_timer is NULL if we are NOT currently
++ 		 * activly dispatching timers.	Since we are under
++ 		 * the same spin lock, it being false means that
++ 		 * it has dropped the spinlock to call the timer
++ 		 * function, which could well be who called us.
++ 		 * In any case, we don't need a new interrupt as
++ 		 * the timer dispach code (run_timer_list) will
++ 		 * pick this up when the function it is calling
++ 		 * returns.
++ 		 */
++ 		if ( expires == (jiffies_f = base->timer_jiffies) &&
++ 		     list_start->next == &timer->entry &&
++ 		     (base->running_timer == NULL)) {
++ 			if (schedule_hr_timer_int(jiffies_f, sub_expires))
++				run_local_timers();
++ 		}
++#else
++ 		pos = (&base->tv[indx])->next;
++ 		list_add_tail(&timer->entry, pos);
++#endif
+ 	} else {
+-		int i;
+-		/* If the timeout is larger than 0xffffffff on 64-bit
+-		 * architectures then we use the maximum timeout:
++		/*
++		 * The high diff bits differ, search from the tail
++		 * The for will pick up an empty list.
+ 		 */
+-		if (idx > 0xffffffffUL) {
+-			idx = 0xffffffffUL;
+-			expires = idx + base->timer_jiffies;
++		for (pos = (list_start = &base->tv[indx])->prev;
++		     pos != list_start;
++		     pos = pos->prev) {
++			struct timer_list *tmr =
++				list_entry(pos,
++					   struct timer_list,
++					   entry);
++			if (time_after(tmr->expires, expires))
++				continue;
++
++#ifdef CONFIG_HIGH_RES_TIMERS
++			if ((tmr->expires != expires) ||
++			    (tmr->sub_expires < sub_expires))
++#endif
++				break;
+ 		}
+-		i = (expires >> (TVR_BITS + 3 * TVN_BITS)) & TVN_MASK;
+-		vec = base->tv5.vec + i;
+-	}
+-	/*
+-	 * Timers are FIFO:
+-	 */
+-	list_add_tail(&timer->entry, vec);
++		list_add(&timer->entry, pos);
++	}
+ }
+ 
+ int __mod_timer(struct timer_list *timer, unsigned long expires)
+@@ -388,82 +430,141 @@ int del_singleshot_timer_sync(struct tim
+ EXPORT_SYMBOL(del_singleshot_timer_sync);
+ #endif
+ 
+-static int cascade(tvec_base_t *base, tvec_t *tv, int index)
+-{
+-	/* cascade all the timers from tv up one level */
+-	struct list_head *head, *curr;
+-
+-	head = tv->vec + index;
+-	curr = head->next;
+-	/*
+-	 * We are removing _all_ timers from the list, so we don't  have to
+-	 * detach them individually, just clear the list afterwards.
+-	 */
+-	while (curr != head) {
+-		struct timer_list *tmp;
+-
+-		tmp = list_entry(curr, struct timer_list, entry);
+-		BUG_ON(tmp->base != base);
+-		curr = curr->next;
+-		internal_add_timer(base, tmp);
+-	}
+-	INIT_LIST_HEAD(head);
++/*
++ * This read-write spinlock protects us from races in SMP while
++ * playing with xtime and avenrun.
++ */
++#ifndef ARCH_HAVE_XTIME_LOCK
++seqlock_t xtime_lock __cacheline_aligned_in_smp = SEQLOCK_UNLOCKED;
+ 
+-	return index;
+-}
++EXPORT_SYMBOL(xtime_lock);
++#endif
+ 
+-/***
+- * __run_timers - run all expired timers (if any) on this CPU.
+- * @base: the timer vector to be processed.
+- *
+- * This function cascades all vectors and executes all expired timer
+- * vectors.
++/*
++ * run_timer_list is ALWAYS called from softirq which calls with irq enabled.
++ * We may assume this and not save the flags.
+  */
+-#define INDEX(N) (base->timer_jiffies >> (TVR_BITS + N * TVN_BITS)) & TVN_MASK
+-
+-static inline void __run_timers(tvec_base_t *base)
++static void __run_timers(tvec_base_t *base)
+ {
+-	struct timer_list *timer;
+-
++	IF_HIGH_RES( unsigned long jiffies_f;
++		     long sub_jiff;
++		     long sub_jiffie_f;
++		     unsigned long seq);
+ 	spin_lock_irq(&base->lock);
+-	while (time_after_eq(jiffies, base->timer_jiffies)) {
+-		struct list_head work_list = LIST_HEAD_INIT(work_list);
+-		struct list_head *head = &work_list;
+- 		int index = base->timer_jiffies & TVR_MASK;
+- 
++#ifdef CONFIG_HIGH_RES_TIMERS
++run_timer_list_again:
++	do {
++		seq = read_seqbegin(&xtime_lock);
++		jiffies_f = jiffies;
++		sub_jiffie_f = get_arch_cycles(jiffies_f);
++	} while (read_seqretry(&xtime_lock, seq));
++	sub_jiff = 0;
++/*
++ * Lets not go beyond the current jiffies.  It tends to confuse some
++ * folks using short timers causing then to loop forever...
++ * If sub_jiffie_f > cycles_per_jiffies we will just clean out all
++ * timers at jiffies_f and quit.  We get the rest on the next go round.
++	while ( unlikely(sub_jiffie_f >= arch_cycles_per_jiffy)){
++		sub_jiffie_f -= arch_cycles_per_jiffy;
++		jiffies_f++;
++	}
++ */
++	while ((long)(jiffies_f - base->timer_jiffies) >= 0) {
++#else
++	while ((long)(jiffies - base->timer_jiffies) >= 0) {
++#endif
++		struct list_head *head;
++		head = base->tv + (base->timer_jiffies & NEW_TVEC_MASK);
+ 		/*
+-		 * Cascade timers:
++		 * Note that we never move "head" but continue to
++		 * pick the first entry from it.  This allows new
++		 * entries to be inserted while we unlock for the
++		 * function call below.
+ 		 */
+-		if (!index &&
+-			(!cascade(base, &base->tv2, INDEX(0))) &&
+-				(!cascade(base, &base->tv3, INDEX(1))) &&
+-					!cascade(base, &base->tv4, INDEX(2)))
+-			cascade(base, &base->tv5, INDEX(3));
+-		++base->timer_jiffies; 
+-		list_splice_init(base->tv1.vec + index, &work_list);
+ repeat:
+ 		if (!list_empty(head)) {
+ 			void (*fn)(unsigned long);
+ 			unsigned long data;
++			struct timer_list *timer;
+ 
+-			timer = list_entry(head->next,struct timer_list,entry);
+- 			fn = timer->function;
+- 			data = timer->data;
+-
+-			list_del(&timer->entry);
+-			set_running_timer(base, timer);
+-			smp_wmb();
+-			timer->base = NULL;
+-			spin_unlock_irq(&base->lock);
+-			fn(data);
+-			spin_lock_irq(&base->lock);
+-			goto repeat;
++			timer = list_entry(head->next, struct timer_list, entry);
++#ifdef CONFIG_HIGH_RES_TIMERS
++			/*
++			 * This would be simpler if we never got behind
++			 * i.e. if timer_jiffies == jiffies, we could
++			 * drop one of the tests.  Since we may get
++			 * behind, (in fact we don't up date until
++			 * we are behind to allow sub_jiffie entries)
++			 * we need a way to negate the sub_jiffie
++			 * test in that case...
++			 */
++			if (time_before(timer->expires, jiffies_f)||
++			    ((timer->expires == jiffies_f) &&
++			     timer->sub_expires <= sub_jiffie_f)) {
++#else
++			if (time_before_eq(timer->expires, jiffies)) {
++#endif
++				fn = timer->function;
++				data = timer->data;
++				list_del(&timer->entry);
++				timer->entry.next = timer->entry.prev = NULL;
++				set_running_timer(base, timer);
++				smp_wmb();
++				timer->base = NULL;
++				spin_unlock_irq(&base->lock);
++				fn(data);
++				spin_lock_irq(&base->lock);
++				goto repeat;
++			}
++#ifdef CONFIG_HIGH_RES_TIMERS
++			else {
++				/*
++				 * The new timer list is not always emptied
++				 * here as it contains:
++				 * a.) entries (list size)*N jiffies out and
++				 * b.) entries that match in jiffies, but have
++				 *     sub_expire times further out than now.
++				 */
++				if (timer->expires == jiffies_f ) {
++					sub_jiff = timer->sub_expires;
++					/*
++					 * If schedule_hr_timer_int says the
++					 * time has passed we go round again
++					 */
++					if (schedule_hr_timer_int(jiffies_f,
++								  sub_jiff))
++						goto run_timer_list_again;
++				}
++				 /* Otherwise, we need a jiffies interrupt next... */
++			}
++#endif
+ 		}
++		++base->timer_jiffies;
+ 	}
++	/*
++	 * It is faster to back out the last bump, than to prevent it.
++	 * This allows zero time inserts as well as sub_jiffie values in
++	 * the current jiffie.
++	 */
++#ifdef CONFIG_HIGH_RES_TIMERS
++	--base->timer_jiffies;
++	if (!sub_jiff && schedule_jiffies_int(jiffies_f)) {
++		spin_unlock_irq(&base->lock);
++		/*
++		 * If we are here, jiffies time has passed.  We should be
++		 * safe waiting for jiffies to change.
++		 */
++		while ((volatile unsigned long)jiffies == jiffies_f) {
++			cpu_relax();
++		}
++		spin_lock_irq(&base->lock);
++		goto run_timer_list_again;
++	}
++#endif
+ 	set_running_timer(base, NULL);
++
+ 	spin_unlock_irq(&base->lock);
+ }
+-
+ #ifdef CONFIG_NO_IDLE_HZ
+ /*
+  * Find out when the next timer event is due to happen. This
+@@ -898,16 +999,6 @@ static inline void calc_load(unsigned lo
+ unsigned long wall_jiffies = INITIAL_JIFFIES;
+ 
+ /*
+- * This read-write spinlock protects us from races in SMP while
+- * playing with xtime and avenrun.
+- */
+-#ifndef ARCH_HAVE_XTIME_LOCK
+-seqlock_t xtime_lock __cacheline_aligned_in_smp = SEQLOCK_UNLOCKED;
+-
+-EXPORT_SYMBOL(xtime_lock);
+-#endif
+-
+-/*
+  * This function runs timers and the timer-tq in bottom half context.
+  */
+ static void run_timer_softirq(struct softirq_action *h)
+@@ -1321,15 +1412,8 @@ static void __devinit init_timers_cpu(in
+        
+ 	base = &per_cpu(tvec_bases, cpu);
+ 	spin_lock_init(&base->lock);
+-	for (j = 0; j < TVN_SIZE; j++) {
+-		INIT_LIST_HEAD(base->tv5.vec + j);
+-		INIT_LIST_HEAD(base->tv4.vec + j);
+-		INIT_LIST_HEAD(base->tv3.vec + j);
+-		INIT_LIST_HEAD(base->tv2.vec + j);
+-	}
+-	for (j = 0; j < TVR_SIZE; j++)
+-		INIT_LIST_HEAD(base->tv1.vec + j);
+-
++	for (j = 0; j < NEW_TVEC_SIZE; j++)
++		INIT_LIST_HEAD(base->tv + j);
+ 	base->timer_jiffies = jiffies;
+ }
+ 
+
+_

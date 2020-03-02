@@ -1,0 +1,36 @@
+
+From: Olaf Hering <olh@suse.de>
+
+decode_winbond and decode_smsc return now 1 if the region is available, or
+0 if request_region fails.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/parport/parport_pc.c |    6 ++++--
+ 1 files changed, 4 insertions(+), 2 deletions(-)
+
+diff -puN drivers/parport/parport_pc.c~request_region-for-winbond-and-smsc-parport-drivers-fix drivers/parport/parport_pc.c
+--- 25/drivers/parport/parport_pc.c~request_region-for-winbond-and-smsc-parport-drivers-fix	2004-08-27 02:14:04.076337712 -0700
++++ 25-akpm/drivers/parport/parport_pc.c	2004-08-27 02:14:04.081336952 -0700
+@@ -1482,7 +1482,8 @@ static void __devinit winbond_check2(int
+ 	if ((x_devid == devid) && (x_devrev == devrev) && (x_oldid == oldid))
+ 		goto out; /* protection against false positives */
+ 
+-        decode_winbond(io,key,devid,devrev,oldid);
++        if (decode_winbond(io,key,devid,devrev,oldid))
++		return;
+ out:
+ 	release_region(io, 3);
+ }
+@@ -1521,7 +1522,8 @@ static void __devinit smsc_check(int io,
+ 	    (x_oldid == oldid) && (x_rev == rev))
+ 		goto out; /* protection against false positives */
+ 
+-        decode_smsc(io,key,oldid,oldrev);
++        if (decode_smsc(io,key,oldid,oldrev))
++		return;
+ out:
+ 	release_region(io, 3);
+ }
+_

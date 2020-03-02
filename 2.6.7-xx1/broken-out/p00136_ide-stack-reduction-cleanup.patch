@@ -1,0 +1,35 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/ide/legacy/ide-cs.c |    9 ++++-----
+ 1 files changed, 4 insertions(+), 5 deletions(-)
+
+diff -puN drivers/ide/legacy/ide-cs.c~ide-stack-reduction-cleanup drivers/ide/legacy/ide-cs.c
+--- 25/drivers/ide/legacy/ide-cs.c~ide-stack-reduction-cleanup	Wed Jun 16 16:18:19 2004
++++ 25-akpm/drivers/ide/legacy/ide-cs.c	Wed Jun 16 16:19:02 2004
+@@ -238,7 +238,10 @@ void ide_config(dev_link_t *link)
+     DEBUG(0, "ide_config(0x%p)\n", link);
+ 
+     stk = kmalloc(sizeof(*stk), GFP_KERNEL);
+-    if (!stk) goto err_mem;
++    if (!stk) {
++	    printk(KERN_NOTICE "ide-cs: ide_config failed memory allocation\n");
++	    goto failed;
++    }
+     memset(stk, 0, sizeof(*stk));
+     cfg = &stk->parse.cftable_entry;
+ 
+@@ -387,10 +390,6 @@ void ide_config(dev_link_t *link)
+     kfree(stk);
+     return;
+ 
+-err_mem:
+-    printk(KERN_NOTICE "ide-cs: ide_config failed memory allocation\n");
+-    goto failed;
+-
+ cs_failed:
+     cs_error(link->handle, last_fn, last_ret);
+ failed:
+_

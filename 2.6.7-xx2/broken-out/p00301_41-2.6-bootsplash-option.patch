@@ -1,0 +1,67 @@
+---
+
+ linux-2.6.7-rc1-xx1-xiphux/drivers/video/bootsplash/bootsplash.c |   15 ++++++----
+ 1 files changed, 10 insertions(+), 5 deletions(-)
+
+diff -puN drivers/video/bootsplash/bootsplash.c~41-2.6-bootsplash-option drivers/video/bootsplash/bootsplash.c
+--- linux-2.6.7-rc1-xx1/drivers/video/bootsplash/bootsplash.c~41-2.6-bootsplash-option	2004-06-02 20:21:26.417720488 -0400
++++ linux-2.6.7-rc1-xx1-xiphux/drivers/video/bootsplash/bootsplash.c	2004-06-02 20:21:44.787927792 -0400
+@@ -20,6 +20,7 @@
+ #include <linux/vmalloc.h>
+ #include <linux/unistd.h>
+ #include <linux/syscalls.h>
++#include <linux/suspend.h>
+ 
+ #include <asm/irq.h>
+ #include <asm/system.h>
+@@ -62,7 +63,8 @@ static int splash_check_jpeg(unsigned ch
+ static int __init splash_setup(char *options)
+ {
+ 	if(!strncmp("silent", options, 6)) {
+-		printk(KERN_INFO "bootsplash: silent mode.\n");
++ 		if (!suspend_task)
++			printk(KERN_INFO "bootsplash: silent mode.\n");
+ 		splash_usesilent = 1;
+ 		/* skip "silent," */
+ 		if (strlen(options) == 6)
+@@ -70,7 +72,8 @@ static int __init splash_setup(char *opt
+ 		options += 7;
+ 	}
+ 	if(!strncmp("verbose", options, 7)) {
+-		printk(KERN_INFO "bootsplash: verbose mode.\n");
++ 		if (!suspend_task)
++			printk(KERN_INFO "bootsplash: verbose mode.\n");
+ 		splash_usesilent = 0;
+ 		return 0;
+ 	}
+@@ -410,7 +413,8 @@ static int splash_getraw(unsigned char *
+ 	version = ndata[7] - '0';
+ 	offsets = splash_offsets[version - 1];
+ 	len = SPLASH_OFF_LEN;
+-	unit = splash_getb(ndata, SPLASH_OFF_UNIT);
++	//unit = splash_getb(ndata, SPLASH_OFF_UNIT);
++	unit = fg_console;
+ 	if (unit >= MAX_NR_CONSOLES)
+ 	    continue;
+ 	if (unit) {
+@@ -695,7 +699,8 @@ static int splash_recolor(struct vc_data
+ static int splash_status(struct vc_data *vc)
+ {
+ 	struct fb_info *info;
+-	printk(KERN_INFO "bootsplash: status on console %d changed to %s\n", vc->vc_num, vc->vc_splash_data && vc->vc_splash_data->splash_state ? "on" : "off");
++ 	if (!suspend_task)
++		printk(KERN_INFO "bootsplash: status on console %d changed to %s\n", vc->vc_num, vc->vc_splash_data && vc->vc_splash_data->splash_state ? "on" : "off");
+ 
+ 	info = registered_fb[(int) con2fb_map[vc->vc_num]];
+ 	if (fg_console == vc->vc_num)
+@@ -775,7 +780,7 @@ static int splash_write_proc(struct file
+ 
+ 			oldpe = vc->vc_splash_data->splash_percent;
+ 			vc->vc_splash_data->splash_percent = pe;
+-			if (fg_console != 0 || !vc->vc_splash_data->splash_state)
++			if (!vc->vc_splash_data->splash_state)
+ 			    return count;
+ 			info = registered_fb[(int) con2fb_map[vc->vc_num]];
+ 			if (!vc->vc_splash_data->splash_overpaintok || pe == 65536 || pe < oldpe) {
+
+_

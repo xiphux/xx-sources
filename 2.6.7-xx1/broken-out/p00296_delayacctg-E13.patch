@@ -1,0 +1,322 @@
+---
+
+ linux-2.6.7-rc3-xx5-xiphux/fs/proc/array.c            |   17 +++++
+ linux-2.6.7-rc3-xx5-xiphux/fs/proc/base.c             |   18 +++++
+ linux-2.6.7-rc3-xx5-xiphux/include/linux/sched.h      |   59 ++++++++++++++++++
+ linux-2.6.7-rc3-xx5-xiphux/include/linux/taskdelays.h |   20 ++++++
+ linux-2.6.7-rc3-xx5-xiphux/init/Kconfig               |    9 ++
+ linux-2.6.7-rc3-xx5-xiphux/kernel/sched.c             |   20 ++++++
+ linux-2.6.7-rc3-xx5-xiphux/mm/memory.c                |    9 ++
+ 7 files changed, 150 insertions(+), 2 deletions(-)
+
+diff -puN fs/proc/array.c~delayacctg-E13 fs/proc/array.c
+--- linux-2.6.7-rc3-xx5/fs/proc/array.c~delayacctg-E13	2004-06-16 20:15:42.826580808 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/fs/proc/array.c	2004-06-16 20:16:21.318729112 -0400
+@@ -445,6 +445,23 @@ int proc_pid_statm(struct task_struct *t
+ 	return sprintf(buffer,"%d %d %d %d %d %d %d\n",
+ 		       size, resident, shared, text, lib, data, 0);
+ }
++
++int proc_pid_delay(struct task_struct *task, char * buffer)
++{
++	int res;
++
++	res  = sprintf(buffer,"%lu %lu %lu %lu %lu %lu %lu\n",
++		       get_delay(task,runs),
++		       get_delay(task,runcpu_total),
++		       get_delay(task,waitcpu_total),
++		       get_delay(task,iowait_total),
++		       get_delay(task,num_iowaits),
++		       get_delay(task,mem_iowait_total),
++		       get_delay(task,num_memwaits)
++
++ 		);
++	return res;
++}
+ #ifdef CONFIG_SPA
+ int task_cpu_sched_stats(struct task_struct *p, char *buffer)
+ {
+diff -puN fs/proc/base.c~delayacctg-E13 fs/proc/base.c
+--- linux-2.6.7-rc3-xx5/fs/proc/base.c~delayacctg-E13	2004-06-16 20:15:42.828580504 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/fs/proc/base.c	2004-06-16 20:15:42.937563936 -0400
+@@ -107,6 +107,10 @@ enum pid_directory_inos {
+ 	PROC_TID_CPU_RATE_CAP,
+ 	PROC_TID_CPU_SHARES,
+ #endif
++#ifdef CONFIG_DELAY_ACCT
++        PROC_TID_DELAY_ACCT,
++        PROC_TGID_DELAY_ACCT,
++#endif
+ 	PROC_TID_FD_DIR = 0x8000,	/* 0x8000-0xffff */
+ };
+ 
+@@ -137,6 +141,9 @@ static struct pid_entry tgid_base_stuff[
+ #ifdef CONFIG_SECURITY
+ 	E(PROC_TGID_ATTR,      "attr",    S_IFDIR|S_IRUGO|S_IXUGO),
+ #endif
++#ifdef CONFIG_DELAY_ACCT
++	E(PROC_TGID_DELAY_ACCT,"delay",   S_IFREG|S_IRUGO),
++#endif
+ #ifdef CONFIG_KALLSYMS
+ 	E(PROC_TGID_WCHAN,     "wchan",   S_IFREG|S_IRUGO),
+ #endif
+@@ -166,6 +173,9 @@ static struct pid_entry tid_base_stuff[]
+ #ifdef CONFIG_SECURITY
+ 	E(PROC_TID_ATTR,       "attr",    S_IFDIR|S_IRUGO|S_IXUGO),
+ #endif
++#ifdef CONFIG_DELAY_ACCT
++	E(PROC_TGID_DELAY_ACCT,"delay",   S_IFREG|S_IRUGO),
++#endif
+ #ifdef CONFIG_KALLSYMS
+ 	E(PROC_TID_WCHAN,      "wchan",   S_IFREG|S_IRUGO),
+ #endif
+@@ -220,6 +230,7 @@ int proc_pid_cpu(struct task_struct*,cha
+ #ifdef CONFIG_SPA
+ extern int task_cpu_sched_stats(struct task_struct *p, char *buffer);
+ #endif
++int proc_pid_delay(struct task_struct*,char*);
+ 
+ static int proc_fd_link(struct inode *inode, struct dentry **dentry, struct vfsmount **mnt)
+ {
+@@ -1558,6 +1569,13 @@ static struct dentry *proc_pident_lookup
+ 			ei->op.proc_read = proc_pid_cpu;
+ 			break;
+ #endif
++#ifdef CONFIG_DELAY_ACCT
++		case PROC_TID_DELAY_ACCT:
++		case PROC_TGID_DELAY_ACCT:
++			inode->i_fop = &proc_info_file_operations;
++			ei->op.proc_read = proc_pid_delay;
++			break;
++#endif
+ 		default:
+ 			printk("procfs: impossible type (%d)",p->type);
+ 			iput(inode);
+diff -puN include/linux/sched.h~delayacctg-E13 include/linux/sched.h
+--- linux-2.6.7-rc3-xx5/include/linux/sched.h~delayacctg-E13	2004-06-16 20:15:42.833579744 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/include/linux/sched.h	2004-06-16 20:15:42.956561048 -0400
+@@ -148,6 +148,7 @@ struct sched_param {
+ 
+ #ifdef __KERNEL__
+ 
++#include <linux/taskdelays.h>
+ #include <linux/spinlock.h>
+ 
+ /*
+@@ -639,6 +640,7 @@ endif
+ #ifdef CONFIG_SYSTRACE
+ 	void *systrace;
+ #endif
++ 	struct task_delay_info  delays;
+ };
+ 
+ static inline pid_t process_group(struct task_struct *tsk)
+@@ -753,6 +755,9 @@ do { if (atomic_dec_and_test(&(tsk)->usa
+ #define EBS_FLAGS_DEFAULT 0
+ #endif
+ 
++#define PF_MEMIO   	0x00400000      /* I am  potentially doing I/O for mem */
++#define PF_IOWAIT       0x00800000      /* I am waiting on disk I/O */
++
+ #ifdef CONFIG_SMP
+ #define SCHED_LOAD_SCALE	128UL	/* increase resolution of load */
+ 
+@@ -1354,6 +1359,60 @@ static inline void set_task_cpu(struct t
+ 
+ #endif /* CONFIG_SMP */
+ 
++
++/* API for registering delay info */
++#ifdef CONFIG_DELAY_ACCT
++
++#define test_delay_flag(tsk,flg)                ((tsk)->flags & (flg))
++#define set_delay_flag(tsk,flg)                 ((tsk)->flags |= (flg))
++#define clear_delay_flag(tsk,flg)               ((tsk)->flags &= ~(flg))
++
++#define def_delay_var(var)		        unsigned long long var
++#define get_delay(tsk,field)                    ((tsk)->delays.field)
++#define delay_value(x)				(((unsigned long)(x))/1000)
++
++#define start_delay(var)                        ((var) = sched_clock())
++#define start_delay_set(var,flg)                (set_delay_flag(current,flg),(var) = sched_clock())
++
++#define inc_delay(tsk,field) (((tsk)->delays.field)++)
++#define add_delay_ts(tsk,field,start_ts,end_ts) ((tsk)->delays.field += delay_value((end_ts)-(start_ts)))
++#define add_delay_clear(tsk,field,start_ts,flg) (add_delay_ts(tsk,field,start_ts,sched_clock()),clear_delay_flag(tsk,flg))
++
++static inline void add_io_delay(unsigned long dstart)
++{
++	struct task_struct * tsk = current;
++	unsigned long val = delay_value(sched_clock()-dstart);
++	if (test_delay_flag(tsk,PF_MEMIO)) {
++		tsk->delays.mem_iowait_total += val;
++		tsk->delays.num_memwaits++;
++	} else {
++		tsk->delays.iowait_total += val;
++		tsk->delays.num_iowaits++;
++	}
++	clear_delay_flag(tsk,PF_IOWAIT);
++}
++
++
++#else
++
++#define test_delay_flag(tsk,flg)                (0)
++#define set_delay_flag(tsk,flg)                 do { } while (0)
++#define clear_delay_flag(tsk,flg)               do { } while (0)
++
++#define def_delay_var(var)
++#define get_delay(tsk,field)                    (0)
++
++#define start_delay(var)                        do { } while (0)
++#define start_delay_set(var,flg)                do { } while (0)
++
++#define inc_delay(tsk,field)                    do { } while (0)
++#define add_delay_ts(tsk,field,start_ts,now)    do { } while (0)
++#define add_delay_clear(tsk,field,start_ts,flg) do { } while (0)
++#define add_io_delay(dstart)			do { } while (0)
++#endif
++
++
++
+ #endif /* __KERNEL__ */
+ 
+ #ifdef CONFIG_EBS
+diff -puN /dev/null include/linux/taskdelays.h
+--- /dev/null	2004-05-31 17:36:38.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/include/linux/taskdelays.h	2004-06-16 20:15:42.957560896 -0400
+@@ -0,0 +1,20 @@
++#ifndef _LINUX_TASKDELAYS_H
++#define _LINUX_TASKDELAYS_H
++
++#include <linux/config.h>
++
++struct task_delay_info {
++#ifdef CONFIG_DELAY_ACCT
++        /* delay statistics in usecs */
++	unsigned long runs;
++	unsigned long waitcpu_total;
++	unsigned long runcpu_total;
++	unsigned long iowait_total;
++	unsigned long mem_iowait_total;
++	unsigned long num_iowaits;
++	unsigned long num_memwaits;
++#endif
++};
++
++#endif // _LINUX_TASKDELAYS_H
++
+diff -puN init/Kconfig~delayacctg-E13 init/Kconfig
+--- linux-2.6.7-rc3-xx5/init/Kconfig~delayacctg-E13	2004-06-16 20:15:42.841578528 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/init/Kconfig	2004-06-16 20:15:42.960560440 -0400
+@@ -263,6 +263,15 @@ menuconfig EMBEDDED
+           environments which can tolerate a "non-standard" kernel.
+           Only use this if you really know what you are doing.
+ 
++config DELAY_ACCT
++	bool "Enable delay accounting (EXPERIMENTAL)"
++	help
++	  In addition to counting frequency the total delay in ns is also
++	  recorded. CPU delays are specified as cpu-wait and cpu-run. Memory
++	  delay is recorded for minor and major faults. Information is
++	  accessible through /proc/<pid>/delay.
++
++
+ config KALLSYMS
+ 	 bool "Load all symbols for debugging/kksymoops" if EMBEDDED
+ 	 default y
+diff -puN kernel/sched.c~delayacctg-E13 kernel/sched.c
+--- linux-2.6.7-rc3-xx5/kernel/sched.c~delayacctg-E13	2004-06-16 20:15:42.851577008 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/kernel/sched.c	2004-06-16 20:16:50.261329168 -0400
+@@ -4699,6 +4699,9 @@ switch_tasks:
+ 	prefetch(next);
+ 	clear_tsk_need_resched(prev);
+ 	RCU_qsctr(task_cpu(prev))++;
++#ifdef CONFIG_NICKSCHED
++	add_delay_ts(prev,runcpu_total,prev->timestamp,now);
++#endif
+ 
+ #ifdef CONFIG_SPA
+ 	/*
+@@ -4717,10 +4720,13 @@ switch_tasks:
+ 			prev->interactive_credit--;
+ 	}
+ #endif
++ 	add_delay_ts(prev,runcpu_total,prev->timestamp,now);
+ 	prev->timestamp = now;
+ #endif
+ 
+ 	if (likely(prev != next)) {
++  		add_delay_ts(next,waitcpu_total,next->timestamp,now);
++  		inc_delay(next,runs);
+ #ifdef CONFIG_NICKSCHED
+ 		add_task_time(next, now - next->timestamp, STIME_WAIT);
+ #elif defined(CONFIG_STAIRCASE)
+@@ -6022,10 +6028,13 @@ EXPORT_SYMBOL(yield);
+ void __sched io_schedule(void)
+ {
+ 	struct runqueue *rq = this_rq();
++	def_delay_var(dstart);
+ 
++	start_delay_set(dstart,PF_IOWAIT);
+ 	atomic_inc(&rq->nr_iowait);
+ 	schedule();
+ 	atomic_dec(&rq->nr_iowait);
++	add_io_delay(dstart);
+ }
+ 
+ EXPORT_SYMBOL(io_schedule);
+@@ -6034,10 +6043,13 @@ long __sched io_schedule_timeout(long ti
+ {
+ 	struct runqueue *rq = this_rq();
+ 	long ret;
++	def_delay_var(dstart);
+ 
++	start_delay_set(dstart,PF_IOWAIT);
+ 	atomic_inc(&rq->nr_iowait);
+ 	ret = schedule_timeout(timeout);
+ 	atomic_dec(&rq->nr_iowait);
++	add_io_delay(dstart);
+ 	return ret;
+ }
+ 
+@@ -7485,3 +7497,11 @@ int cpustats_read_proc(char *page, char 
+ 	return len;
+ }
+ #endif
++
++#ifdef CONFIG_DELAY_ACCT
++int task_running_sys(struct task_struct *p)
++{
++       return task_running(task_rq(p),p);
++}
++EXPORT_SYMBOL(task_running_sys);
++#endif
+diff -puN mm/memory.c~delayacctg-E13 mm/memory.c
+--- linux-2.6.7-rc3-xx5/mm/memory.c~delayacctg-E13	2004-06-16 20:15:42.856576248 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/mm/memory.c	2004-06-16 20:15:43.041548128 -0400
+@@ -1699,15 +1699,20 @@ int handle_mm_fault(struct mm_struct *mm
+ 	 * We need the page table lock to synchronize with kswapd
+ 	 * and the SMP-safe atomic PTE updates.
+ 	 */
++	set_delay_flag(current,PF_MEMIO);
+ 	spin_lock(&mm->page_table_lock);
+ 	pmd = pmd_alloc(mm, pgd, address);
+ 
+ 	if (pmd) {
+ 		pte_t * pte = pte_alloc_map(mm, pmd, address);
+-		if (pte)
+-			return handle_pte_fault(mm, vma, address, write_access, pte, pmd);
++		if (pte) {
++			int result = handle_pte_fault(mm, vma, address, write_access, pte, pmd);
++			clear_delay_flag(current,PF_MEMIO);
++			return result;
++		}
+ 	}
+ 	spin_unlock(&mm->page_table_lock);
++	clear_delay_flag(current,PF_MEMIO);
+ 	return VM_FAULT_OOM;
+ }
+ 
+
+_

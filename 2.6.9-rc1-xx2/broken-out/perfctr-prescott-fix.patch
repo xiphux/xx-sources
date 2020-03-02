@@ -1,0 +1,36 @@
+
+From: Mikael Pettersson <mikpe@user.it.uu.se>
+
+This eliminates a potential oops in perfctr's x86 initialisation code when
+running on a P4 Model 3 Prescott processor.  The P4M3 removed two control
+registers.  I knew that and handled it in the control setup validation
+code, but I forgot to also modify the initialisation code to avoid clearing
+them.
+
+Perfctr hasn't been hit by this problem on the P4M3 Noconas, but people are
+reporting that oprofile and the NMI watchdog oops due to this on P4M3
+Prescotts.
+
+Signed-off-by: Mikael Pettersson <mikpe@csd.uu.se>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/perfctr/x86.c |    5 ++++-
+ 1 files changed, 4 insertions(+), 1 deletion(-)
+
+diff -puN drivers/perfctr/x86.c~perfctr-prescott-fix drivers/perfctr/x86.c
+--- 25/drivers/perfctr/x86.c~perfctr-prescott-fix	Thu Aug 26 16:26:12 2004
++++ 25-akpm/drivers/perfctr/x86.c	Thu Aug 26 16:26:12 2004
+@@ -865,7 +865,10 @@ static void p4_clear_counters(void)
+ 	/* clear PEBS_ENABLE and PEBS_MATRIX_VERT; they handle both PEBS
+ 	   and ReplayTagging, and should exist even if PEBS is disabled */
+ 	clear_msr_range(0x3F1, 2);
+-	clear_msr_range(0x3A0, 31);
++	clear_msr_range(0x3A0, 26);
++	if (p4_IQ_ESCR_ok)
++		clear_msr_range(0x3BA, 2);
++	clear_msr_range(0x3BC, 3);
+ 	clear_msr_range(0x3C0, 6);
+ 	clear_msr_range(0x3C8, 6);
+ 	clear_msr_range(0x3E0, 2);
+_

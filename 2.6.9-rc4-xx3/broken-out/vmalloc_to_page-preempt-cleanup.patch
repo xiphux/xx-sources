@@ -1,0 +1,30 @@
+
+
+remove unneeded preempt_disable/enable.  pte_offset_map/unmap already does
+that.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/memory.c |    2 --
+ 1 files changed, 2 deletions(-)
+
+diff -puN mm/memory.c~vmalloc_to_page-preempt-cleanup mm/memory.c
+--- 25/mm/memory.c~vmalloc_to_page-preempt-cleanup	2004-10-06 00:48:35.889454072 -0700
++++ 25-akpm/mm/memory.c	2004-10-06 00:48:35.901452248 -0700
+@@ -1997,13 +1997,11 @@ struct page * vmalloc_to_page(void * vma
+ 	if (!pgd_none(*pgd)) {
+ 		pmd = pmd_offset(pgd, addr);
+ 		if (!pmd_none(*pmd)) {
+-			preempt_disable();
+ 			ptep = pte_offset_map(pmd, addr);
+ 			pte = *ptep;
+ 			if (pte_present(pte))
+ 				page = pte_page(pte);
+ 			pte_unmap(ptep);
+-			preempt_enable();
+ 		}
+ 	}
+ 	return page;
+_

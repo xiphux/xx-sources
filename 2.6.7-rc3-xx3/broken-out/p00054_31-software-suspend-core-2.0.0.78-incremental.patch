@@ -1,0 +1,298 @@
+---
+
+ linux-2.6.6-xx2-xiphux/include/linux/suspend-debug.h |    2 -
+ linux-2.6.6-xx2-xiphux/kernel/power/memory_pool.c    |    6 ---
+ linux-2.6.6-xx2-xiphux/kernel/power/prepare_image.c  |   31 ++++++++++++++++-
+ linux-2.6.6-xx2-xiphux/kernel/power/process.c        |    1 
+ linux-2.6.6-xx2-xiphux/kernel/power/range.c          |   18 ++--------
+ linux-2.6.6-xx2-xiphux/kernel/power/suspend2.c       |   34 ++++++++++++++++++-
+ 6 files changed, 70 insertions(+), 22 deletions(-)
+
+diff -puN include/linux/suspend-debug.h~31-software-suspend-core-2.0.0.78-incremental include/linux/suspend-debug.h
+--- linux-2.6.6-xx2/include/linux/suspend-debug.h~31-software-suspend-core-2.0.0.78-incremental	2004-05-28 04:31:35.398114064 -0400
++++ linux-2.6.6-xx2-xiphux/include/linux/suspend-debug.h	2004-05-28 04:31:35.414111632 -0400
+@@ -5,7 +5,7 @@
+ /* Solely for comparison with the version specific patch revision */
+ #define SWSUSP_CORE_REVISION 0x201
+ 
+-#define SWSUSP_CORE_VERSION "2.0.0.77"
++#define SWSUSP_CORE_VERSION "2.0.0.78"
+ #define name_suspend "Software Suspend " SWSUSP_CORE_VERSION ": "
+ 
+ /* Same length to ensure one overwrites the other */
+diff -puN kernel/power/memory_pool.c~31-software-suspend-core-2.0.0.78-incremental kernel/power/memory_pool.c
+--- linux-2.6.6-xx2/kernel/power/memory_pool.c~31-software-suspend-core-2.0.0.78-incremental	2004-05-28 04:31:35.400113760 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/memory_pool.c	2004-05-28 04:31:35.415111480 -0400
+@@ -107,11 +107,7 @@ int fill_suspend_memory_pool(int sizesou
+ 	for (order = MAX_POOL_ORDER; order >= 0; order--) {
+ 		for (i = suspend_pool_level[order];
+ 				i < suspend_pool_level_limit[order]; i++) {
+-			this = (unsigned long *)
+-				__get_free_pages(GFP_ATOMIC, order);
+-			if (!this)
+-				this = (unsigned long *)
+-					get_grabbed_pages(order);
++			this = (unsigned long *) get_grabbed_pages(order);
+ 			if (!this) {
+ 				printk(name_suspend "Error. %d pages wanted of"
+ 					" order %d for suspend memory pool,"
+diff -puN kernel/power/prepare_image.c~31-software-suspend-core-2.0.0.78-incremental kernel/power/prepare_image.c
+--- linux-2.6.6-xx2/kernel/power/prepare_image.c~31-software-suspend-core-2.0.0.78-incremental	2004-05-28 04:31:35.403113304 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/prepare_image.c	2004-05-28 04:31:35.417111176 -0400
+@@ -555,6 +555,7 @@ unsigned long get_grabbed_pages(int orde
+ 	/* Get grabbed lowmem pages for suspend's use */
+ 	spin_lock_irqsave(&suspend_grabbed_memory_lock, flags);
+ 
++try_again:
+ 	if (this) {
+ 		struct page * page = virt_to_page(this);
+ 		eaten_memory[order] = eaten_memory[order]->next;
+@@ -574,7 +575,7 @@ unsigned long get_grabbed_pages(int orde
+ 
+ 	/* Maybe we didn't eat any memory - try normal get */
+ 	if (alternative == MAX_ORDER) {
+-		this = __get_free_pages(GFP_ATOMIC, order);
++		this = __get_free_pages(EAT_MEMORY_FLAGS, order);
+ 		if (this)
+ 			for (j=0; j < (1 << order); j++)
+ 				clear_page((char *) this + j * PAGE_SIZE);
+@@ -595,8 +596,12 @@ unsigned long get_grabbed_pages(int orde
+ 		amount_eaten -= (1 << alternative);
+ 	}
+ 
+-	/* Get the chunk we want to return */
++	/* Get the chunk we want to return. May fail if something grabs
++	 * the memory before us. */
+ 	this = __get_free_pages(EAT_MEMORY_FLAGS, order);
++	if (!this)
++		goto try_again;
++
+ 	for (j=0; j < (1 << order); j++)
+ 		clear_page(this);
+ 
+@@ -734,12 +739,24 @@ int prepare_image(void)
+ 
+ 	sizesought = 100 + memory_for_plugins();
+ 
++	PRINTFREEMEM("prior to filling the memory pool");
++
+ 	if (fill_suspend_memory_pool(sizesought))
+ 		return 1;
+ 
++	PRINTFREEMEM("after filling the memory pool");
++
+ 	if (attempt_to_freeze())
+ 		return 1;
+ 
++	PRINTFREEMEM("after freezing processes");
++
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,5,0)
++	drain_local_pages();
++
++	PRINTFREEMEM("after draining local pages");
++#endif
++
+ 	if (!active_writer->ops.writer.storage_available()) {
+ 		printk(KERN_ERR "You need some storage available to be able to suspend.\n");
+ 		SET_RESULT_STATE(SUSPEND_ABORTED);
+@@ -751,14 +768,22 @@ int prepare_image(void)
+ 		if (eat_memory() || TEST_RESULT_STATE(SUSPEND_ABORTED))
+ 			break;
+ 
++		PRINTFREEMEM("after eating memory");
++
+ 		/* Top up */
+ 		if (fill_suspend_memory_pool(sizesought))
+ 			continue;
+ 
++		PRINTFREEMEM("after refilling memory pool");
++
+ 		do_suspend_sync();
+ 
++		PRINTFREEMEM("after syncing");
++
+ 		result = update_image();
+ 
++		PRINTFREEMEM("after updating the image");
++
+ 	} while ((result) && (!TEST_RESULT_STATE(SUSPEND_ABORTED)) &&
+ 		(!TEST_RESULT_STATE(SUSPEND_UNABLE_TO_FREE_ENOUGH_MEMORY)));
+ 
+@@ -767,6 +792,8 @@ int prepare_image(void)
+ 	/* Release memory that has been eaten */
+ 	free_grabbed_memory();
+ 
++	PRINTFREEMEM("after freeing grabbed memory");
++
+ 	if (!TEST_RESULT_STATE(SUSPEND_ABORTED))
+ 		software_suspend_state |= SOFTWARE_SUSPEND_USE_MEMORY_POOL;
+ 
+diff -puN kernel/power/process.c~31-software-suspend-core-2.0.0.78-incremental kernel/power/process.c
+--- linux-2.6.6-xx2/kernel/power/process.c~31-software-suspend-core-2.0.0.78-incremental	2004-05-28 04:31:35.405113000 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/process.c	2004-05-28 04:31:35.418111024 -0400
+@@ -322,6 +322,7 @@ int freeze_processes(int no_progress)
+ 		if ((TEST_RESULT_STATE(SUSPEND_ABORTED)) ||
+ 		   ((jiffies - start_time) > 3 * HZ)) {
+ 			read_lock(&tasklist_lock);
++			SET_RESULT_STATE(SUSPEND_ABORTED);
+ 			FOR_EACH_THREAD_START {
+ 				if (p->flags & PF_SYNCTHREAD)
+ 					printk("%s (%d) is still a syncthread "
+diff -puN kernel/power/range.c~31-software-suspend-core-2.0.0.78-incremental kernel/power/range.c
+--- linux-2.6.6-xx2/kernel/power/range.c~31-software-suspend-core-2.0.0.78-incremental	2004-05-28 04:31:35.408112544 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/range.c	2004-05-28 04:31:35.421110568 -0400
+@@ -92,12 +92,8 @@ static int add_range_pages(int number_re
+ 					free_page((unsigned long) f);
+ 			}
+ 			eaten_memory = NULL;
+-		} else {
+-			next = get_zeroed_page(GFP_ATOMIC);
+-			if (!next)
+-				next = get_grabbed_pages(0);
+-		}
+-
++		} else
++			next = get_grabbed_pages(0);
+ 
+ 		if (!next) {
+ 			printk("Failed to allocate a new range page.\n");
+@@ -635,14 +631,10 @@ unsigned long * get_rangepages_list(void
+ 		((num_range_pages + POINTERS_PER_PAGE -1) / POINTERS_PER_PAGE);
+ 
+ 	rangepages_list_order = get_bitmask_order(pages_needed - 1);
++
+ 	range_pages =
+-		(unsigned long *) __get_free_pages(EAT_MEMORY_FLAGS,
+-						   rangepages_list_order);
+-
+-	if (!range_pages)
+-		range_pages =
+-			(unsigned long *) get_grabbed_pages(
+-					get_bitmask_order(pages_needed - 1));
++		(unsigned long *) get_grabbed_pages(
++				get_bitmask_order(pages_needed - 1));
+ 	if (!range_pages) {
+ 		abort_suspend("Unable to allocate memory for a range pages list.");
+ 		printk("Number of range pages is %d.\n", num_range_pages);
+diff -puN kernel/power/suspend2.c~31-software-suspend-core-2.0.0.78-incremental kernel/power/suspend2.c
+--- linux-2.6.6-xx2/kernel/power/suspend2.c~31-software-suspend-core-2.0.0.78-incremental	2004-05-28 04:31:35.410112240 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/suspend2.c	2004-05-28 04:31:35.425109960 -0400
+@@ -1426,9 +1426,13 @@ void software_suspend_pending(void)
+ 	if (allocate_bitmaps())
+ 		goto out;
+ 
++	PRINTFREEMEM("after allocating bitmaps");
++
+ #ifdef CONFIG_SOFTWARE_SUSPEND_VARIATION_ANALYSIS
+ 	if (CHECKMASK(SUSPEND_INTEGRITY))
+ 		suspend_allocate_reload_data(1);
++
++	PRINTFREEMEM("after allocating reload data");
+ #endif
+ 
+ 	display_nosave_pages();
+@@ -1439,6 +1443,8 @@ void software_suspend_pending(void)
+ 	if (initialise_suspend_plugins())
+ 		goto out;
+ 
++	PRINTFREEMEM("after initialising plugins");
++
+ 	/* Free up memory if necessary */
+ 	printlog(SUSPEND_ANY_SECTION, SUSPEND_VERBOSE, "Preparing image.\n");
+ 	PRINTPREEMPTCOUNT("Before preparing image.");
+@@ -1454,6 +1460,7 @@ void software_suspend_pending(void)
+ 	/* We don't want suspend to show in the kernel statistics -
+ 	 * it should be transparent to userspace */
+ 	kstat_save();
++	PRINTFREEMEM("after saving kernel stats");
+ 
+ 	display_nosave_pages();
+ 
+@@ -1468,24 +1475,34 @@ out:
+ 
+ 	i = get_suspend_debug_info();
+ 
++	PRINTPREEMPTCOUNT("After storing debug info.");
++
+ 	software_suspend_state &= ~SOFTWARE_SUSPEND_USE_MEMORY_POOL;
+ 
+ #ifdef CONFIG_SOFTWARE_SUSPEND_VARIATION_ANALYSIS
+ 	suspend_free_checksum_pages();
++	PRINTFREEMEM("after freeing checksum pages");
+ 
+-	if (CHECKMASK(SUSPEND_INTEGRITY))
++	if (CHECKMASK(SUSPEND_INTEGRITY)) {
+ 		suspend_free_reload_data();
++		PRINTFREEMEM("after freeing reload data");
++	}
+ #endif
+ 
+ 	STORAGE_UNSUSPEND
+ 
+ 	free_pagedir(&pagedir2);
++	PRINTFREEMEM("after freeing pagedir 1");
+ 	free_pagedir(&pagedir1);
++	PRINTFREEMEM("after freeing pagedir 2");
+ 
+ #ifdef CONFIG_SOFTWARE_SUSPEND_KEEP_IMAGE
+ 	if (!TEST_ACTION_STATE(SUSPEND_KEEP_IMAGE))
+ #endif
++	{
+ 		active_writer->ops.writer.invalidate_image();
++		PRINTFREEMEM("after invalidating the image");
++	}
+ 
+ 	empty_suspend_memory_pool();
+ 	PRINTFREEMEM("after freeing memory pool");
+@@ -1519,15 +1536,22 @@ out:
+ 		free_pages((unsigned long) debug_info_buffer, 0);
+ 		debug_info_buffer = NULL;
+ 	}
++	PRINTFREEMEM("after freeing debug info buffer");
+ 
+ 	cleanup_suspend_plugins();
+ 
++	PRINTFREEMEM("after cleaning up suspend plugins");
++
+ 	kstat_restore();
+ 
++	PRINTFREEMEM("after restoring kstats");
++
+ 	display_nosave_pages();
+ 
+ 	thaw_processes();
+ 
++	PRINTFREEMEM("after thawing processes");
++
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
+ 	if (notify_resume())
+ 		printk(KERN_EMERG "Failed to notify resume chain.\n");
+@@ -1587,9 +1611,13 @@ int initialise_suspend_plugins(void)
+ 				plugin_list);
+ 		if (this_plugin->disabled)
+ 			continue;
++		printlog(SUSPEND_MEMORY, SUSPEND_MEDIUM,
++			"Initialising plugin %s.\n",
++			this_plugin->name);
+ 		if (this_plugin->initialise)
+ 			if ((result = this_plugin->initialise()))
+ 				return result;
++		PRINTFREEMEM("after initialising plugin");
+ 	}
+ 
+ 	return 0;
+@@ -1605,8 +1633,12 @@ void cleanup_suspend_plugins(void)
+ 				plugin_list);
+ 		if (this_plugin->disabled)
+ 			continue;
++		printlog(SUSPEND_MEMORY, SUSPEND_MEDIUM,
++			"Cleaning up plugin %s.\n",
++			this_plugin->name);
+ 		if (this_plugin->cleanup)
+ 			this_plugin->cleanup();
++		PRINTFREEMEM("after cleaning up plugin");
+ 	}
+ }
+ 
+
+_

@@ -1,0 +1,40 @@
+
+From: Roland Dreier <roland@topspin.com>
+
+Change routine name from handle_outgoing_smp to handle_outgoing_dr_smp.
+
+Signed-off-by: Hal Rosenstock <halr@voltaire.com>
+Signed-off-by: Roland Dreier <roland@topspin.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/infiniband/core/mad.c |    9 +++++----
+ 1 files changed, 5 insertions(+), 4 deletions(-)
+
+diff -puN drivers/infiniband/core/mad.c~infiniband-core-rename-handle_outgoing_smp drivers/infiniband/core/mad.c
+--- 25/drivers/infiniband/core/mad.c~infiniband-core-rename-handle_outgoing_smp	Wed Jan 12 16:32:05 2005
++++ 25-akpm/drivers/infiniband/core/mad.c	Wed Jan 12 16:32:05 2005
+@@ -639,9 +639,9 @@ static void build_smp_wc(u64 wr_id, u16 
+  * Return 1 if SMP was consumed locally (whether or not solicited)
+  * Return < 0 if error
+  */
+-static int handle_outgoing_smp(struct ib_mad_agent_private *mad_agent_priv,
+-			       struct ib_smp *smp,
+-			       struct ib_send_wr *send_wr)
++static int handle_outgoing_dr_smp(struct ib_mad_agent_private *mad_agent_priv,
++				  struct ib_smp *smp,
++				  struct ib_send_wr *send_wr)
+ {
+ 	int ret, alloc_flags, solicited;
+ 	unsigned long flags;
+@@ -848,7 +848,8 @@ int ib_post_send_mad(struct ib_mad_agent
+ 
+ 		smp = (struct ib_smp *)send_wr->wr.ud.mad_hdr;
+ 		if (smp->mgmt_class == IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE) {
+-			ret = handle_outgoing_smp(mad_agent_priv, smp, send_wr);
++			ret = handle_outgoing_dr_smp(mad_agent_priv, smp,
++						     send_wr);
+ 			if (ret < 0)		/* error */
+ 				goto error2;
+ 			else if (ret == 1)	/* locally consumed */
+_

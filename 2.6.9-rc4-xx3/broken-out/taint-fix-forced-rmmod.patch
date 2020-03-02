@@ -1,0 +1,37 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+This taint didn't appear to be reported.
+
+Signed-off-by: Nick Piggin <nickpiggin@yahoo.com.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/panic.c |    4 +++-
+ 1 files changed, 3 insertions(+), 1 deletion(-)
+
+diff -puN kernel/panic.c~taint-fix-forced-rmmod kernel/panic.c
+--- 25/kernel/panic.c~taint-fix-forced-rmmod	2004-09-24 23:43:04.303863360 -0700
++++ 25-akpm/kernel/panic.c	2004-09-24 23:43:04.307862752 -0700
+@@ -117,6 +117,7 @@ EXPORT_SYMBOL(panic);
+  *  'P' - Proprietary module has been loaded.
+  *  'F' - Module has been forcibly loaded.
+  *  'S' - SMP with CPUs not designed for SMP.
++ *  'R' - User forced a module unload.
+  *  'M' - Machine had a machine check experience.
+  *
+  *	The string is overwritten by the next call to print_taint().
+@@ -126,10 +127,11 @@ const char *print_tainted(void)
+ {
+ 	static char buf[20];
+ 	if (tainted) {
+-		snprintf(buf, sizeof(buf), "Tainted: %c%c%c%c",
++		snprintf(buf, sizeof(buf), "Tainted: %c%c%c%c%c",
+ 			tainted & TAINT_PROPRIETARY_MODULE ? 'P' : 'G',
+ 			tainted & TAINT_FORCED_MODULE ? 'F' : ' ',
+ 			tainted & TAINT_UNSAFE_SMP ? 'S' : ' ',
++			tainted & TAINT_FORCED_RMMOD ? 'R' : ' ',
+  			tainted & TAINT_MACHINE_CHECK ? 'M' : ' ');
+ 	}
+ 	else
+_

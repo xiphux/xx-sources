@@ -1,0 +1,132 @@
+Index: xx-sources/kernel/staircase.c
+===================================================================
+--- xx-sources.orig/kernel/staircase.c	2005-01-14 23:49:43.347215824 +0000
++++ xx-sources/kernel/staircase.c	2005-01-15 00:01:52.169418008 +0000
+@@ -354,8 +354,8 @@
+ }
+ 
+ /*
+- * slice - the duration a task runs before getting requeued at it's best
+- * priority and has it's burst decremented.
++ * slice - the duration a task runs before getting requeued at its best
++ * priority and has its burst decremented.
+  */
+ static unsigned int slice(task_t *p)
+ {
+@@ -414,11 +414,25 @@
+ 	if (used_slice < first_slice)
+ 		return prio;
+ 	prio += 1 + (used_slice - first_slice) / rr;
+-	if (prio > MAX_PRIO - 1) {
++	if (prio >= MAX_PRIO - 1)
+ 		prio = MAX_PRIO - 1;
++	return prio;
++}
++
++static void continue_slice(task_t *p)
++{
++	unsigned long total_run = NS_TO_JIFFIES(p->u.scsched.totalrun);
++
++	if (total_run >= p->u.scsched.slice) {
+ 		p->u.scsched.totalrun = 0;
++		dec_burst(p);
++	} else {
++		unsigned int remainder;
++		p->u.scsched.slice -= total_run;
++		remainder = p->u.scsched.slice % rr_interval(p);
++		if (remainder)
++			p->u.scsched.time_slice = remainder;
+ 	}
+-	return prio;
+ }
+ 
+ /*
+@@ -429,41 +443,39 @@
+ static void recalc_task_prio(task_t *p, unsigned long long now)
+ {
+ 	unsigned long sleep_time = ns_diff(now, p->u.scsched.timestamp);
+-	unsigned int rr = rr_interval(p);
+-	unsigned int best_burst = burst(p);
+-	unsigned int minrun = rr * (p->u.scsched.burst + 1) / (best_burst + 1) ? : 1;
+-	if (p->u.scsched.sflags & SF_FORKED ||
+-		(NS_TO_JIFFIES(p->u.scsched.runtime + sleep_time) < minrun || 
+-		((!sched_interactive || sched_compute) && 
+-		NS_TO_JIFFIES(p->u.scsched.runtime + sleep_time) < rr))) {
+-			unsigned long ns_totalrun = p->u.scsched.totalrun + p->u.scsched.runtime;
+-			unsigned long total_run = NS_TO_JIFFIES(ns_totalrun);
++
++	p->u.scsched.totalrun += p->u.scsched.runtime;
++	if (NS_TO_JIFFIES(p->u.scsched.totalrun) >= p->u.scsched.slice - 1 &&
++		NS_TO_JIFFIES(sleep_time) < p->u.scsched.slice) {
+ 			p->u.scsched.sflags &= ~SF_FORKED;
+-			if (p->u.scsched.slice - total_run < 1) {
+-				p->u.scsched.totalrun = 0;
+-				dec_burst(p);
+-			} else {
+-				unsigned int intervals = total_run / rr;
+-				unsigned int remainder;
+-				p->u.scsched.totalrun = ns_totalrun;
+-				p->u.scsched.slice -= intervals * rr;
+-				if (p->u.scsched.slice <= rr) {
+-					p->u.scsched.totalrun = 0;
+-					dec_burst(p);
+-				} else {
+-					remainder = p->u.scsched.slice % rr;
+-					if (remainder)
+-						p->u.scsched.time_slice = remainder;
+-				}
+-			}
+-	} else {
+-		if (NS_TO_JIFFIES(p->u.scsched.totalrun) > (best_burst - p->u.scsched.burst) * rr)
+ 			dec_burst(p);
+-		else if (!(p->u.scsched.sflags & SF_UISLEEP || p->u.scsched.totalrun))
++			goto new_slice;
++	}
++
++	if (p->u.scsched.sflags & SF_FORKED) {
++		continue_slice(p);
++		p->u.scsched.sflags &= ~SF_FORKED;
++		goto out;
++	}
++
++	if (sched_compute) {
++		continue_slice(p);
++		goto out;
++	}
++
++	if (sleep_time >= p->u.scsched.totalrun) {
++		if (!(p->u.scsched.sflags & SF_UISLEEP))
+ 			inc_burst(p);
+-		p->u.scsched.runtime = 0;
+-		p->u.scsched.totalrun = 0;
++		goto new_slice;
+ 	}
++
++	p->u.scsched.totalrun -= sleep_time;
++	continue_slice(p);
++	goto out;
++new_slice:
++	p->u.scsched.totalrun = 0;
++out:
++	return;
+ }
+ 
+ /*
+@@ -693,7 +705,8 @@
+ {
+ 	if (p->u.scsched.prio > rq->curr->u.scsched.prio)
+ 		return;
+-	if (p->u.scsched.prio == rq->curr->u.scsched.prio && (p->u.scsched.totalrun ||
++	if (p->u.scsched.prio == rq->curr->u.scsched.prio &&
++		((p->u.scsched.totalrun || p->u.scsched.slice != slice(p)) ||
+ 		rt_task(rq->curr)))
+ 			return;
+ 	if (!sched_compute || rq->cache_ticks >= cache_delay ||
+@@ -1903,6 +1916,7 @@
+ 		dec_burst(p);
+ 		p->u.scsched.slice = slice(p);
+ 		time_slice_expired(p, rq);
++		p->u.scsched.totalrun = 0;
+ 		goto out_unlock;
+ 	}
+ 	/*

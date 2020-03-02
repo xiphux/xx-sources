@@ -1,0 +1,3006 @@
+Index: xx-sources/fs/proc/array.c
+===================================================================
+--- xx-sources.orig/fs/proc/array.c	2004-08-13 21:09:41.000000000 -0400
++++ xx-sources/fs/proc/array.c	2004-08-13 21:53:41.763103840 -0400
+@@ -165,7 +165,7 @@
+ 		"sleep_avg:\t%lu\n"
+ 		"sleep_time:\t%lu\n"
+ 		"total_time:\t%lu\n"
+-#else
++#elif !defined(CONFIG_SPA)
+ 		"SleepAVG:\t%lu%%\n"
+ #endif
+ 		"Tgid:\t%d\n"
+@@ -179,7 +179,7 @@
+ 		p->burst,
+ #elif defined(CONFIG_NICKSCHED)
+ 		p->sleep_avg, p->sleep_time, p->total_time,
+-#else
++#elif !defined(CONFIG_SPA)
+ 		(p->sleep_avg/1024)*100/(1020000000/1024),
+ #endif
+ 	       	p->tgid,
+@@ -443,3 +443,28 @@
+ 	return sprintf(buffer,"%d %d %d %d %d %d %d\n",
+ 		       size, resident, shared, text, lib, data, 0);
+ }
++
++#if defined(CONFIG_SPA)
++int task_cpu_sched_stats(struct task_struct *p, char *buffer)
++{
++	struct task_sched_stats stats;
++	unsigned long nvcsw, nivcsw, cnvcsw, cnivcsw; /* context switch counts */
++
++	read_lock(&tasklist_lock);
++	get_task_sched_stats(p, &stats);
++	nvcsw = p->nvcsw;
++	nivcsw = p-> nivcsw;
++	cnvcsw = p->cnvcsw;
++	cnivcsw = p->cnivcsw;
++	read_unlock(&tasklist_lock);
++	return sprintf(buffer,
++		"%llu %llu %llu %llu %llu %lu %lu %lu %lu @ %llu\n",
++		stats.total_sleep,
++		stats.total_cpu,
++		stats.total_delay,
++		stats.cycle_count,
++		stats.intr_wake_ups,
++		nvcsw, nivcsw, cnvcsw, cnivcsw,
++		stats.timestamp);
++}
++#endif
+Index: xx-sources/fs/proc/base.c
+===================================================================
+--- xx-sources.orig/fs/proc/base.c	2004-08-13 21:09:41.000000000 -0400
++++ xx-sources/fs/proc/base.c	2004-08-13 21:53:37.265787536 -0400
+@@ -63,6 +63,9 @@
+ #ifdef CONFIG_SCHEDSTATS
+ 	PROC_TGID_SCHEDSTAT,
+ #endif
++#if defined(CONFIG_SPA)
++	PROC_TID_CPU_STATS,
++#endif
+ #ifdef CONFIG_SECURITY
+ 	PROC_TGID_ATTR,
+ 	PROC_TGID_ATTR_CURRENT,
+@@ -157,6 +160,9 @@
+ #ifdef CONFIG_SCHEDSTATS
+ 	E(PROC_TID_SCHEDSTAT, "schedstat",S_IFREG|S_IRUGO),
+ #endif
++#if defined(CONFIG_SPA)
++	E(PROC_TID_CPU_STATS,  "cpustats",   S_IFREG|S_IRUGO),
++#endif
+ 	{0,0,NULL,0}
+ };
+ 
+@@ -192,6 +198,9 @@
+ int proc_pid_stat(struct task_struct*,char*);
+ int proc_pid_status(struct task_struct*,char*);
+ int proc_pid_statm(struct task_struct*,char*);
++#if defined(CONFIG_SPA)
++extern int task_cpu_sched_stats(struct task_struct *p, char *buffer);
++#endif
+ 
+ static int proc_fd_link(struct inode *inode, struct dentry **dentry, struct vfsmount **mnt)
+ {
+@@ -1408,6 +1417,12 @@
+ 			ei->op.proc_read = proc_pid_schedstat;
+ 			break;
+ #endif
++#if defined(CONFIG_SPA)
++		case PROC_TID_CPU_STATS:
++			inode->i_fop = &proc_info_file_operations;
++			ei->op.proc_read = task_cpu_sched_stats;
++			break;
++#endif
+ 		default:
+ 			printk("procfs: impossible type (%d)",p->type);
+ 			iput(inode);
+Index: xx-sources/fs/proc/proc_misc.c
+===================================================================
+--- xx-sources.orig/fs/proc/proc_misc.c	2004-08-13 21:09:41.000000000 -0400
++++ xx-sources/fs/proc/proc_misc.c	2004-08-13 21:09:50.179165408 -0400
+@@ -304,6 +304,39 @@
+ 	.release	= seq_release,
+ };
+ 
++#if defined(CONFIG_SPA)
++static int cpustats_read_proc(char *page, char **start, off_t off,
++				 int count, int *eof, void *data)
++{
++	int i;
++	int len = 0;
++	struct cpu_sched_stats total = {0, };
++
++	for_each_online_cpu(i) {
++		struct cpu_sched_stats stats;
++
++		get_cpu_sched_stats(i, &stats);
++		len += sprintf(page + len, "cpu%02d %llu %llu %llu %llu @ %llu\n", i,
++		stats.total_idle,
++		stats.total_busy,
++		stats.total_delay,
++		stats.nr_switches,
++		stats.timestamp);
++		total.total_idle += stats.total_idle;
++		total.total_busy += stats.total_busy;
++		total.total_delay += stats.total_delay;
++		total.nr_switches += stats.nr_switches;
++	}
++	len += sprintf(page + len, "total %llu %llu %llu %llu\n",
++		total.total_idle,
++		total.total_busy,
++		total.total_delay,
++		total.nr_switches);
++
++	return proc_calc_metrics(page, start, off, count, eof, len);
++}
++#endif
++
+ extern struct seq_operations vmstat_op;
+ static int vmstat_open(struct inode *inode, struct file *file)
+ {
+@@ -660,6 +693,9 @@
+ 		{"cmdline",	cmdline_read_proc},
+ 		{"locks",	locks_read_proc},
+ 		{"execdomains",	execdomains_read_proc},
++#if defined(CONFIG_SPA)
++		{"cpustats",	cpustats_read_proc},
++#endif
+ 		{NULL,}
+ 	};
+ 	for (p = simple_ones; p->name; p++)
+Index: xx-sources/include/linux/init_task.h
+===================================================================
+--- xx-sources.orig/include/linux/init_task.h	2004-08-13 21:09:41.000000000 -0400
++++ xx-sources/include/linux/init_task.h	2004-08-13 21:53:41.771102624 -0400
+@@ -86,15 +86,36 @@
+ #define SCHED_TIME_SLICE .time_slice = HZ,
+ #endif
+ 
++#if defined(CONFIG_SPA)
++#define SCHED_RUNQUEUE .rq = NULL,
++#else
++#define SCHED_RUNQUEUE
++#endif
++
++#if defined(CONFIG_SPA)
++#define SCHED_EB_PRIORITY .eb_priority = MAX_PRIO-20,
++#else
++#define SCHED_EB_PRIORITY
++#endif
++
++#if defined(CONFIG_SPA)
++#define SCHED_EB_SHARES .eb_shares = DEFAULT_EB_SHARES,
++#else
++#define SCHED_EB_SHARES
++#endif
++
+ #define INIT_TASK(tsk)	\
+ {									\
+ 	.state		= 0,						\
+ 	.thread_info	= &init_thread_info,				\
++	SCHED_RUNQUEUE							\
+ 	.usage		= ATOMIC_INIT(2),				\
+ 	.flags		= 0,						\
+ 	.lock_depth	= -1,						\
+ 	SCHED_PRIO							\
+ 	SCHED_STATIC_PRIO						\
++	SCHED_EB_PRIORITY						\
++	SCHED_EB_SHARES							\
+ 	.policy		= SCHED_NORMAL,					\
+ 	.cpus_allowed	= CPU_MASK_ALL,					\
+ 	.mm		= NULL,						\
+Index: xx-sources/include/linux/sched.h
+===================================================================
+--- xx-sources.orig/include/linux/sched.h	2004-08-13 21:09:41.000000000 -0400
++++ xx-sources/include/linux/sched.h	2004-08-13 21:53:41.772102472 -0400
+@@ -357,7 +357,9 @@
+ extern struct user_struct root_user;
+ #define INIT_USER (&root_user)
+ 
+-#if !defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++typedef struct runqueue runqueue_t;
++#elif !defined(CONFIG_STAIRCASE)
+ typedef struct prio_array prio_array_t;
+ #endif
+ struct backing_dev_info;
+@@ -437,6 +439,13 @@
+ struct audit_context;		/* See audit.c */
+ struct mempolicy;
+ 
++/*
++ * For entitlemnet based scheduling a task's shares will be determined from
++ * their "nice"ness
++ */
++#define EB_SHARES_PER_NICE 5
++#define DEFAULT_EB_SHARES (20 * EB_SHARES_PER_NICE)
++
+ struct task_struct {
+ 	volatile long state;	/* -1 unrunnable, 0 runnable, >0 stopped */
+ 	struct thread_info *thread_info;
+@@ -446,7 +455,27 @@
+ 
+ 	int lock_depth;		/* Lock depth */
+ 
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++	int prio, static_prio;
++	struct list_head run_list;
++	runqueue_t *rq;
++
++	unsigned long long timestamp;
++
++	unsigned long long sched_timestamp;
++	unsigned long long avg_sleep_per_cycle;
++	unsigned long long avg_delay_per_cycle;
++	unsigned long long avg_cpu_per_cycle;
++	unsigned long interactive_bonus, throughput_bonus;
++	unsigned long long cycle_count, total_sleep, total_cpu, total_delay;
++	unsigned long long sleepiness, cpu_usage_rate, cpu_usage_rate_per_share;
++	unsigned int eb_priority, eb_shares;
++	unsigned long long intr_wake_ups;
++
++	unsigned long policy;
++	cpumask_t cpus_allowed;
++	unsigned int time_slice;
++#elif defined(CONFIG_STAIRCASE)
+ 	int prio, static_prio;
+ 	struct list_head run_list;
+ 	unsigned long long timestamp;
+@@ -677,6 +706,45 @@
+ 
+ extern unsigned long long sched_clock(void);
+ 
++#if defined(CONFIG_SPA)
++/*
++ * Scheduling statistics for a task/thread
++ */
++struct task_sched_stats {
++	unsigned long long timestamp;
++	unsigned long long cycle_count;
++	unsigned long long total_sleep;
++	unsigned long long total_cpu;
++	unsigned long long total_delay;
++	unsigned long long intr_wake_ups;
++};
++
++/*
++ * Get "up to date" scheduling statistics for the given task
++ * This function should be used if reliable scheduling statistitcs are required
++ * outside the scheduler itself as the relevant fields in the task structure
++ * are not "up to date" NB the possible difference between those in the task
++ * structure and the correct values could be quite large for sleeping tasks.
++ */
++extern void get_task_sched_stats(struct task_struct *tsk, struct task_sched_stats *stats);
++
++/*
++ * Scheduling statistics for a CPU
++ */
++struct cpu_sched_stats {
++	unsigned long long timestamp;
++	unsigned long long total_idle;
++	unsigned long long total_busy;
++	unsigned long long total_delay;
++	unsigned long long nr_switches;
++};
++
++/*
++ * Get scheduling statistics for the nominated CPU
++ */
++extern void get_cpu_sched_stats(unsigned int cpu, struct cpu_sched_stats *stats);
++#endif
++
+ /* sched_exec is called by processes performing an exec */
+ #ifdef CONFIG_SMP
+ extern void sched_exec(void);
+@@ -1045,10 +1113,14 @@
+ 	return p->thread_info->cpu;
+ }
+ 
++#if defined(CONFIG_SPA)
++void set_task_cpu(struct task_struct *p, unsigned int cpu);
++#else
+ static inline void set_task_cpu(struct task_struct *p, unsigned int cpu)
+ {
+ 	p->thread_info->cpu = cpu;
+ }
++#endif
+ 
+ #else
+ 
+Index: xx-sources/include/linux/sysctl.h
+===================================================================
+--- xx-sources.orig/include/linux/sysctl.h	2004-08-13 21:09:41.000000000 -0400
++++ xx-sources/include/linux/sysctl.h	2004-08-13 21:53:20.881278360 -0400
+@@ -137,6 +137,7 @@
+ 	KERN_SCHED_TIMESLICE=67, /* int: base timeslice for scheduler */
+ 	KERN_INTERACTIVE=68,	/* interactive tasks can have cpu bursts */
+ 	KERN_COMPUTE=69,	/* adjust timeslices for a compute server */
++	KERN_CPU_SCHED=70,	/* CPU scheduler stuff */
+ };
+ 
+ 
+Index: xx-sources/kernel/Kconfig-extra.xx
+===================================================================
+--- xx-sources.orig/kernel/Kconfig-extra.xx	2004-08-13 21:09:41.000000000 -0400
++++ xx-sources/kernel/Kconfig-extra.xx	2004-08-13 21:53:41.766103384 -0400
+@@ -43,6 +43,32 @@
+ 	  timeslices if there aren't higher priority processes using
+ 	  the CPU.
+ 
++config SPA
++	bool "Single Priority Array (SPA)"
++	help
++	  SPA was written by Peter Williams.
++
++	  The SPA scheduler is an effort to simplify the workings of
++	  the kernel scheduler.  In the original scheduler, tasks
++	  switched back and forth between two arrays: an active array,
++	  and an expired array.  A task that is using / will use its
++	  timeslice is in the active array, and once it does, it
++	  "expires" to the expired array.  There are many other factors
++	  involved to determine a task's effective priority - interactivity,
++ 	  credit, etc.  And there are special rules; for example, real-time
++	  tasks never expire to the expired array, they just get requeued
++	  in the active array.
++	  In the SPA scheduler, however, there is only a single priority
++	  array that all tasks remain in.  The task's position in the
++	  list is adjusted with various "bonuses" - interactivity,
++	  throughput, etc.  So, for example, a higher priority task will
++	  be put closer to the front of the priority array, and so will
++	  be run sooner.
++
++	  SPA also comes with a comprehensive scheduling statistics
++	  patch as well as a patch to allow tuning of many of the
++	  scheduler's parameters via the proc filesystem.
++
+ config STAIRCASE
+ 	bool "Staircase"
+ 	help
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-08-13 21:09:41.000000000 -0400
++++ xx-sources/kernel/sched.c	2004-08-13 21:54:20.708183288 -0400
+@@ -51,7 +51,9 @@
+ 
+ /* Stuff for scheduler proc entry */
+ const char *scheduler_name =
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++	"Single Priority Array (SPA), Zaphod edition"
++#elif defined(CONFIG_STAIRCASE)
+ 	"Staircase"
+ #elif defined(CONFIG_NICKSCHED)
+ 	"Nicksched"
+@@ -61,7 +63,9 @@
+ ;
+ 
+ const char *scheduler_version =
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++	"4.1"
++#elif defined(CONFIG_STAIRCASE)
+ 	"7.F"
+ #elif defined(CONFIG_NICKSCHED)
+ 	"v31-np2"
+@@ -70,6 +74,22 @@
+ #endif
+ ;
+ 
++#if defined(CONFIG_SPA)
++enum sched_mode_enum {
++	SCHED_MODE_PRIORITY_BASED,
++	SCHED_MODE_ENTITLEMENT_BASED
++};
++
++static enum sched_mode_enum sched_mode = SCHED_MODE_PRIORITY_BASED;
++
++#ifdef CONFIG_SYSCTL
++static const char *sched_mode_names[] = {
++	"pb",		/* SCHED_MODE_PRIORITY_BASED */
++	"eb",		/* SCHED_MODE_ENTITLEMENT_BASED */
++	NULL		/* end of list marker */
++};
++#endif
++#endif
+ 
+ #ifdef CONFIG_NUMA
+ #define cpu_to_node_mask(cpu) node_to_cpumask(cpu_to_node(cpu))
+@@ -116,7 +136,195 @@
+  * default timeslice is 100 msecs, maximum timeslice is 800 msecs.
+  * Timeslices get refilled after they expire.
+  */
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++#define IDLE_PRIO 159
++#define MAX_TOTAL_BONUS (IDLE_PRIO - MAX_PRIO)
++#define MAX_MAX_IA_BONUS ((MAX_TOTAL_BONUS + 1) / 2)
++#define MAX_MAX_TPT_BONUS (MAX_TOTAL_BONUS - MAX_MAX_IA_BONUS)
++#define DEFAULT_MAX_IA_BONUS MAX_MAX_IA_BONUS
++#define DEFAULT_MAX_TPT_BONUS ((DEFAULT_MAX_IA_BONUS) / 2)
++static unsigned int max_ia_bonus = DEFAULT_MAX_IA_BONUS;
++static unsigned int initial_ia_bonus = 1;
++static unsigned int max_tpt_bonus = DEFAULT_MAX_TPT_BONUS;
++ 
++/*
++ * Define some mini Kalman filter for estimating various averages, etc.
++ * To make it more efficient the denominator of the fixed point rational
++ * numbers used to store the averages and the response half life will
++ * be chosen so that the fixed point rational number reperesentation
++ * of (1 - alpha) * i (where i is an integer) will be i.
++ * Some of this is defined in linux/sched.h
++ */
++
++/*
++ * Fixed denominator rational numbers for use by the CPU scheduler
++ */
++#define SCHED_AVG_OFFSET 4
++/*
++ * Get the rounded integer value of a scheduling statistic average field
++ * i.e. those fields whose names begin with avg_
++ */
++#define SCHED_AVG_RND(x) \
++	(((x) + (1 << (SCHED_AVG_OFFSET - 1))) >> (SCHED_AVG_OFFSET))
++#define SCHED_AVG_ALPHA ((1 << SCHED_AVG_OFFSET) - 1)
++#define SCHED_AVG_ONE (1UL << SCHED_AVG_OFFSET)
++#define SCHED_AVG_MUL(a, b) (((a) * (b)) >> SCHED_AVG_OFFSET)
++#define SCHED_AVG_REAL(a) ((a) << SCHED_AVG_OFFSET)
++
++/*
++ * Convert nice to shares
++ * Proportional symmetry is aimed for: i.e.
++ * (nice_to_shares(0) / nice_to_shares(19)) == (nice_to_shares(-20) / nice_to_shares(0))
++ * Make sure that this function is robust for variations of EB_SHARES_PER_NICE
++ */
++static inline unsigned int nice_to_shares(int nice)
++{
++	unsigned int result = DEFAULT_EB_SHARES;
++
++	if (nice > 0)
++		result -= (nice * (20 * EB_SHARES_PER_NICE - 1)) / 19;
++	else if (nice < 0)
++		result += (nice * nice * ((20 * EB_SHARES_PER_NICE - 1) * EB_SHARES_PER_NICE)) / 20;
++
++	return result;
++}
++
++#define SCHED_IA_BONUS_OFFSET 8
++#define SCHED_IA_BONUS_ALPHA ((1 << SCHED_IA_BONUS_OFFSET) - 1)
++#define SCHED_IA_BONUS_MUL(a, b) (((a) * (b)) >> SCHED_IA_BONUS_OFFSET)
++/*
++ * Get the rounded integer value of the interactive bonus
++ */
++#define SCHED_IA_BONUS_RND(x) \
++	(((x) + (1 << (SCHED_IA_BONUS_OFFSET - 1))) >> (SCHED_IA_BONUS_OFFSET))
++
++static inline void apply_sched_avg_decay(unsigned long long *valp)
++{
++	*valp *= SCHED_AVG_ALPHA;
++	*valp >>= SCHED_AVG_OFFSET;
++}
++
++static inline unsigned long long sched_div_64(unsigned long long a, unsigned long long b)
++{
++#if BITS_PER_LONG < 64
++	/*
++	 * Assume that there's no 64 bit divide available
++	 */
++	if (a < b)
++		return 0;
++	/*
++	 * Scale down until b less than 32 bits so that we can do
++	 * a divide using do_div()
++	 */
++	while (b > ULONG_MAX) { a >>= 1; b >>= 1; }
++
++	(void)do_div(a, (unsigned long)b);
++
++	return a;
++#else
++	return a / b;
++#endif
++}
++
++#define PROPORTION_OFFSET 24
++#if PROPORTION_OFFSET > 32
++#error "PROPORTION_OFFSET must be less than or equal to 32"
++#endif
++#define PROPORTION_ONE ((unsigned long long)1 << PROPORTION_OFFSET)
++#define PROPORTION_OVERFLOW (((unsigned long long)1 << (64 - PROPORTION_OFFSET)) - 1)
++#define PROP_FM_PPT(a) (((unsigned long long)(a) * PROPORTION_ONE) / 1000)
++/*
++ * Convert a / b to a proportion in the range 0 to PROPORTION_ONE
++ * Requires a <= b or may get a divide by zero exception
++ */
++static inline unsigned long long calc_proportion(unsigned long long a, unsigned long long b)
++{
++	if (unlikely(a == b))
++		return PROPORTION_ONE;
++
++	while (a > PROPORTION_OVERFLOW) { a >>= 1; b >>= 1; }
++
++	return sched_div_64(a << PROPORTION_OFFSET, b);
++}
++
++/*
++ * Map the given proportion to an unsigned long long in the specified range
++ * Requires range < PROPORTION_ONE to avoid overflow
++ */
++static inline unsigned long long map_proportion(unsigned long long prop, unsigned long long range)
++{
++	return (prop * range) >> PROPORTION_OFFSET;
++}
++
++static inline unsigned long long map_proportion_rnd(unsigned long long prop, unsigned long long range)
++{
++	return map_proportion((prop >> 1), (range * 2 + 1));
++}
++
++/*
++ * Find the square root of a proportion
++ * Require: x <= PROPORTION_ONE
++ */
++static unsigned long long proportion_sqrt(unsigned long long x)
++{
++	unsigned long long res, b;
++	int bshift;
++
++	/*
++	 * Take shortcut AND prevent overflow
++	 */
++	if (x == PROPORTION_ONE)
++		return PROPORTION_ONE;
++
++	res = 0;
++	b = (1UL << (PROPORTION_OFFSET - 1));
++	bshift = PROPORTION_OFFSET - 1;
++	x <<= PROPORTION_OFFSET;
++
++	for (; x && b; b >>= 1, bshift--) {
++		unsigned long long temp = (((res << 1) + b) << bshift);
++
++		if (x >= temp) {
++			res += b;
++                        x -= temp;
++		}
++        }
++
++	return res;
++}
++
++/*
++ * Tasks that have a CPU usage rate greater than this threshold (in parts per
++ * thousand) are considered to be CPU bound and start to lose interactive bonus
++ * points
++ */
++#define DEFAULT_CPU_HOG_THRESHOLD 900
++static unsigned int cpu_hog_threshold_ppt = DEFAULT_CPU_HOG_THRESHOLD;
++static unsigned long long cpu_hog_threshold = PROP_FM_PPT(DEFAULT_CPU_HOG_THRESHOLD);
++
++/*
++ * Tasks that would sleep for more than 900 parts per thousand of the time if
++ * they had the CPU to themselves are considered to be interactive provided
++ * that their average sleep duration per scheduling cycle isn't too long
++ */
++#define DEFAULT_IA_THRESHOLD 900
++static unsigned int ia_threshold_ppt = DEFAULT_IA_THRESHOLD;
++static unsigned long long ia_threshold = PROP_FM_PPT(DEFAULT_IA_THRESHOLD);
++#define LOWER_MAX_IA_SLEEP SCHED_AVG_REAL(15 * 60LL * NSEC_PER_SEC)
++#define UPPER_MAX_IA_SLEEP SCHED_AVG_REAL(2 * 60 * 60LL * NSEC_PER_SEC)
++
++/*
++ * What "base time slice" for nice 0 and  "average time slice" evaluated to
++ */
++#define MSECS_TO_JIFFIES(x) (((x) * (HZ * 2 + 1)) / 2000)
++#define MSECS_TO_JIFFIES_MIN_1(x) (MSECS_TO_JIFFIES(x) ? MSECS_TO_JIFFIES(x) : 1)
++#define DEFAULT_TIME_SLICE_MSECS 100
++#define MAX_TIME_SLICE_MSECS 1000
++#define DEFAULT_TIME_SLICE_TICKS MSECS_TO_JIFFIES_MIN_1(DEFAULT_TIME_SLICE_MSECS)
++
++static unsigned int time_slice_ticks = DEFAULT_TIME_SLICE_TICKS;
++static unsigned int sched_rr_time_slice_ticks = DEFAULT_TIME_SLICE_TICKS;
++#elif defined(CONFIG_STAIRCASE)
+ int sched_compute = 0;
+ /*
+  *This is the time all tasks within the same priority round robin.
+@@ -229,7 +437,15 @@
+  * it gets during one round of execution. But even the lowest
+  * priority thread gets MIN_TIMESLICE worth of execution time.
+  */
+-#if !defined(CONFIG_NICKSCHED) && !defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++static inline unsigned int task_timeslice(const task_t *p)
++{
++	if (unlikely(p->policy == SCHED_RR))
++		return sched_rr_time_slice_ticks;
++
++	return time_slice_ticks;
++}
++#elif !defined(CONFIG_NICKSCHED) && !defined(CONFIG_STAIRCASE) && !defined(CONFIG_SPA)
+ #define SCALE_PRIO(x, prio) \
+ 	max(x * (MAX_PRIO - prio) / (MAX_USER_PRIO/2), MIN_TIMESLICE)
+ 
+@@ -241,7 +457,12 @@
+ 		return SCALE_PRIO(DEF_TIMESLICE, p->static_prio);
+ }
+ #endif
++
++#if defined(CONFIG_SPA)
++#define task_hot(p, sd) ((p)->rq->timestamp_last_tick - (p)->timestamp < (sd)->cache_hot_time)
++#else
+ #define task_hot(p, now, sd) ((now) - (p)->timestamp < (sd)->cache_hot_time)
++#endif
+ 
+ enum idle_type
+ {
+@@ -256,12 +477,36 @@
+ /*
+  * These are the runqueue data structures:
+  */
++#define NUM_PRIO_SLOTS (IDLE_PRIO + 1)
++/*
++ * Is the run queue idle?
++ */
++#define RUNQUEUE_IDLE(rq) ((rq)->curr == (rq)->idle)
++/*
++ * Control values for niceness
++ */
++#define PROSPECTIVE_BASE_PROM_INTERVAL_MSECS ((DEFAULT_TIME_SLICE_MSECS * 110) / 100)
++#if (PROSPECTIVE_BASE_PROM_INTERVAL_MSECS > 0)
++#define BASE_PROM_INTERVAL_MSECS PROSPECTIVE_BASE_PROM_INTERVAL_MSECS
++#else
++#define BASE_PROM_INTERVAL_MSECS DEFAULT_TIME_SLICE_MSECS
++#endif
++#if defined(CONFIG_SPA)
++static unsigned int base_prom_interval_ticks = MSECS_TO_JIFFIES_MIN_1(BASE_PROM_INTERVAL_MSECS);
++#endif
+ 
+ #define BITMAP_SIZE ((((MAX_PRIO+1+7)/8)+sizeof(long)-1)/sizeof(long))
+ 
++#if !defined(CONFIG_SPA)
+ typedef struct runqueue runqueue_t;
++#endif
+ 
+-#if !defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++struct prio_slot {
++	unsigned int prio;
++	struct list_head queue;
++};
++#elif !defined(CONFIG_STAIRCASE)
+ struct prio_array {
+ #if defined(CONFIG_NICKSCHED)
+ 	int min_prio;
+@@ -291,7 +536,22 @@
+ #ifdef CONFIG_SMP
+ 	unsigned long cpu_load;
+ #endif
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++	unsigned long avg_nr_running;
++	unsigned long long nr_switches;
++	unsigned long nr_uninterruptible;
++	unsigned long long timestamp_last_tick;
++	unsigned long long total_delay;
++	task_t *curr, *idle;
++	struct mm_struct *prev_mm;
++	DECLARE_BITMAP(bitmap, NUM_PRIO_SLOTS);
++	struct prio_slot queues[NUM_PRIO_SLOTS];
++	unsigned long next_prom_due;
++	unsigned long pcount;
++	atomic_t nr_iowait;
++	unsigned long long eb_yardstick;
++	unsigned long long eb_ticks_to_decay;
++#elif defined(CONFIG_STAIRCASE)
+ 	unsigned long long nr_switches;
+ 	unsigned long nr_uninterruptible;
+ 	unsigned long long timestamp_last_tick;
+@@ -538,9 +798,75 @@
+ 
+ #define cpu_rq(cpu)		(&per_cpu(runqueues, (cpu)))
+ #define this_rq()		(&__get_cpu_var(runqueues))
++
++#if defined(CONFIG_SPA)
++#define task_rq(p)		(p)->rq
++#else
+ #define task_rq(p)		cpu_rq(task_cpu(p))
++#endif
++
+ #define cpu_curr(cpu)		(cpu_rq(cpu)->curr)
+ 
++#if defined(CONFIG_SPA)
++#define is_idle_task(p) ((p) == (p)->rq->idle)
++
++#ifdef CONFIG_SMP
++void set_task_cpu(struct task_struct *p, unsigned int cpu)
++{
++	BUG_ON(!list_empty(&p->run_list));
++
++	p->thread_info->cpu = cpu;
++	p->rq = cpu_rq(cpu);
++}
++
++/*
++ * "p"'s runqueue and "oldrq" are locked when this is called
++ */
++static inline void adjust_timestamp(task_t *p, const runqueue_t *oldrq)
++{
++	p->timestamp += (p->rq->timestamp_last_tick - oldrq->timestamp_last_tick);
++}
++
++/* 
++ * adjust_sched_timestamp() is always called with p's runqueue locked but sometimes
++ * "oldrq" isn't locked and isn't "this_rq()" (e.g. in try_to_wake_up())
++ * leading to possible (very rare) problems on systems where 64 bit reads are
++ * not atomic.
++ * 
++ * We'll handle this problem by reading their "timestamp_last_tick"s until we
++ * get two the same.
++ */
++static inline void adjust_sched_timestamp(task_t *p, const runqueue_t *oldrq)
++{
++	unsigned long long oldrq_tlt = oldrq->timestamp_last_tick;
++
++	if (oldrq != this_rq())
++		while (unlikely(oldrq_tlt != oldrq->timestamp_last_tick))
++			oldrq_tlt = oldrq->timestamp_last_tick;
++
++	p->sched_timestamp += p->rq->timestamp_last_tick - oldrq_tlt;
++}
++
++/*
++ * for use when the task may be on another CPU (to compensate for drift)
++ * 
++ * This is only ever called when "p"'s runqueue is locked.
++ * Even though "this_rq()" may not be locked this should be safe as
++ * "timestamp_last_tick" is only ever changed by tasks running on the same CPU
++ * and so it won't be being changed while we read it.
++ */
++static inline unsigned long long adjusted_sched_clock(const task_t *p)
++{
++	runqueue_t *trq = this_rq();
++
++	return sched_clock() + (p->rq->timestamp_last_tick - trq->timestamp_last_tick);
++}
++
++#else
++#define adjusted_sched_clock(p) sched_clock()
++#endif
++#endif
++
+ /*
+  * Default context-switch locking:
+  */
+@@ -550,11 +876,69 @@
+ # define task_running(rq, p)		((rq)->curr == (p))
+ #endif
+ 
++#if defined(CONFIG_SPA)
++#ifndef prepare_arch_switch
++# define task_is_running(p)		((p)->rq->curr == (p))
++#else
++# define task_is_running(p) task_running((p)->rq, p)
++#endif
++#endif
++
++#if defined(CONFIG_SPA)
++static inline void restart_promotions(struct runqueue *rq)
++{
++	rq->next_prom_due = jiffies + base_prom_interval_ticks;
++	rq->pcount = 1;
++}
++
++/* make it (relatively) easy to switch to using a timer */
++static inline void stop_promotions(struct runqueue *rq)
++{
++}
++
++static inline void decay_eb_yardstick(runqueue_t *rq)
++{
++	static const unsigned long long decay_per_interval = PROP_FM_PPT(990);
++
++	rq->eb_yardstick = map_proportion(decay_per_interval, rq->eb_yardstick);
++	rq->eb_ticks_to_decay = time_slice_ticks;
++}
++
++#define EB_PAR 19
++static inline void set_eb_yardstick(task_t *p)
++{
++	p->rq->eb_yardstick = p->cpu_usage_rate_per_share;
++	p->eb_priority = MAX_RT_PRIO + EB_PAR;
++	p->rq->eb_ticks_to_decay = time_slice_ticks;
++}
++
++static inline int task_should_be_yardstick(const task_t *p)
++{
++	return (p->cpu_usage_rate_per_share > p->rq->eb_yardstick);
++}
++#endif
++
+ /*
+  * task_rq_lock - lock the runqueue a given task resides on and disable
+  * interrupts.  Note the ordering: we can safely lookup the task_rq without
+  * explicitly disabling preemption.
+  */
++#if defined(CONFIG_SPA)
++static spinlock_t *task_rq_lock(const task_t *p, unsigned long *flags)
++{
++	spinlock_t *rql;
++
++repeat_lock_task:
++	local_irq_save(*flags);
++	rql = &p->rq->lock;
++	spin_lock(rql);
++	if (unlikely(rql != &p->rq->lock)) {
++		spin_unlock_irqrestore(rql, *flags);
++		goto repeat_lock_task;
++	}
++	return rql;
++}
++#else
+ static runqueue_t *task_rq_lock(task_t *p, unsigned long *flags)
+ {
+ 	struct runqueue *rq;
+@@ -569,11 +953,19 @@
+ 	}
+ 	return rq;
+ }
++#endif
+ 
++#if defined(CONFIG_SPA)
++static inline void task_rq_unlock(spinlock_t *rql, unsigned long *flags)
++{
++	spin_unlock_irqrestore(rql, *flags);
++}
++#else
+ static inline void task_rq_unlock(runqueue_t *rq, unsigned long *flags)
+ {
+ 	spin_unlock_irqrestore(&rq->lock, *flags);
+ }
++#endif
+ 
+ #ifdef CONFIG_SCHEDSTATS
+ /*
+@@ -676,6 +1068,18 @@
+ /*
+  * rq_lock - lock a given runqueue and disable interrupts.
+  */
++#if defined(CONFIG_SPA)
++static spinlock_t *this_rq_lock(void)
++{
++	runqueue_t *rq;
++
++	local_irq_disable();
++	rq = this_rq();
++	spin_lock(&rq->lock);
++
++	return &rq->lock;
++}
++#else
+ static runqueue_t *this_rq_lock(void)
+ {
+ 	runqueue_t *rq;
+@@ -686,11 +1090,14 @@
+ 
+ 	return rq;
+ }
++#endif
+ 
++#if !defined(CONFIG_SPA)
+ static inline void rq_unlock(runqueue_t *rq)
+ {
+ 	spin_unlock_irq(&rq->lock);
+ }
++#endif
+ 
+ #ifdef CONFIG_SCHEDSTATS
+ /*
+@@ -801,7 +1208,15 @@
+ /*
+  * Adding/removing a task to/from a priority array:
+  */
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++static void dequeue_task(struct task_struct *p)
++{
++	struct list_head *slotp = p->run_list.next;
++	list_del_init(&p->run_list);
++	if (list_empty(slotp))
++		__clear_bit(list_entry(slotp, struct prio_slot, queue)->prio, p->rq->bitmap);
++}
++#elif defined(CONFIG_STAIRCASE)
+ static void dequeue_task(struct task_struct *p, runqueue_t *rq)
+ {
+ 	list_del_init(&p->run_list);
+@@ -818,7 +1233,13 @@
+ }
+ #endif
+ 
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++static void enqueue_task(struct task_struct *p)
++{
++	list_add_tail(&p->run_list, &p->rq->queues[p->prio].queue);
++	__set_bit(p->prio, p->rq->bitmap);
++}
++#elif defined(CONFIG_STAIRCASE)
+ static void enqueue_task(struct task_struct *p, runqueue_t *rq)
+ {
+ 	list_add_tail(&p->run_list, rq->queue + p->prio);
+@@ -852,7 +1273,13 @@
+  * remote queue so we want these tasks to show up at the head of the
+  * local queue:
+  */
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++static inline void enqueue_task_head(struct task_struct *p)
++{
++	list_add(&p->run_list, &p->rq->queues[p->prio].queue);
++	__set_bit(p->prio, p->rq->bitmap);
++}
++#elif defined(CONFIG_STAIRCASE)
+ static inline void enqueue_task_head(struct task_struct *p, runqueue_t *rq)
+ {
+ 	list_add(&p->run_list, rq->queue + p->prio);
+@@ -972,7 +1399,7 @@
+ 
+  	return prio;
+ }
+-#elif !defined(CONFIG_STAIRCASE)
++#elif !defined(CONFIG_STAIRCASE) && !defined(CONFIG_SPA)
+ /*
+  * effective_prio - return the priority that is based on the static
+  * priority but is modified by bonuses/penalties.
+@@ -1008,7 +1435,15 @@
+ /*
+  * __activate_task - move a task to the runqueue.
+  */
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++static inline void __activate_task(task_t *p)
++{
++	enqueue_task(p);
++	p->rq->nr_running++;
++	if (p->rq->nr_running == 2)
++		restart_promotions(p->rq);
++}
++#elif defined(CONFIG_STAIRCASE)
+ static inline void __activate_task(task_t *p, runqueue_t *rq)
+ {
+ 	enqueue_task(p, rq);
+@@ -1037,7 +1472,15 @@
+ /*
+  * __activate_idle_task - move idle task to the _front_ of runqueue.
+  */
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++static inline void __activate_task_head(task_t *p)
++{
++	enqueue_task_head(p);
++	p->rq->nr_running++;
++	if (p->rq->nr_running == 2)
++		restart_promotions(p->rq);
++}
++#elif defined(CONFIG_STAIRCASE)
+ static inline void __activate_idle_task(task_t *p, runqueue_t *rq)
+ {
+ 	enqueue_task_head(p, rq);
+@@ -1051,7 +1494,281 @@
+ }
+ #endif
+ 
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++/*
++ * Calculate CPU usage rate and sleepiness.
++ * This never gets called on real time tasks
++ */
++static void decay_avgs_and_calculate_rates(task_t *p)
++{
++	unsigned long long bl;
++
++	apply_sched_avg_decay(&p->avg_sleep_per_cycle);
++	apply_sched_avg_decay(&p->avg_delay_per_cycle);
++	apply_sched_avg_decay(&p->avg_cpu_per_cycle);
++	bl  = p->avg_sleep_per_cycle + p->avg_cpu_per_cycle;
++	/*
++	 * Take a shortcut and avoid possible divide by zero later
++	 */
++	if (unlikely(bl == 0)) {
++		p->sleepiness = PROPORTION_ONE;
++		p->cpu_usage_rate = 0;
++		p->cpu_usage_rate_per_share = 0;
++	} else {
++		p->sleepiness = calc_proportion(p->avg_sleep_per_cycle, bl);
++		bl += p->avg_delay_per_cycle;
++		p->cpu_usage_rate = calc_proportion(p->avg_cpu_per_cycle, bl);
++		p->cpu_usage_rate_per_share = sched_div_64(p->cpu_usage_rate, p->eb_shares);
++	}
++}
++
++/*
++ * Calculate entitlement based priority.
++ * This never gets called on real time tasks
++ */
++static void calculate_eb_priority(task_t *p)
++{
++	/*
++	 * Prevent possible divide by zero and take shortcut
++	 */
++	if (unlikely(p->cpu_usage_rate_per_share == 0)) {
++		p->eb_priority = MAX_RT_PRIO;
++	} else if (unlikely(p->cpu_usage_rate_per_share > p->rq->eb_yardstick)) {
++		unsigned long long prop = calc_proportion(p->rq->eb_yardstick, p->cpu_usage_rate_per_share);
++
++		p->eb_priority = MAX_PRIO - map_proportion_rnd(prop, EB_PAR + 1);
++	} else {
++		unsigned long long prop = calc_proportion(p->cpu_usage_rate_per_share, p->rq->eb_yardstick);
++
++		p->eb_priority = MAX_RT_PRIO + map_proportion_rnd(prop, EB_PAR);
++	}
++}
++
++/*
++ * Initialize the scheduling statistics counters
++ */
++static inline void initialize_stats(task_t *p)
++{
++	p->avg_sleep_per_cycle = 0;
++	p->avg_delay_per_cycle = 0;
++	p->avg_cpu_per_cycle = 0;
++	p->total_sleep = 0;
++	p->total_delay = 0;
++	p->total_cpu = 0;
++	p->cycle_count = 0;
++	p->intr_wake_ups = 0;
++	p->sched_timestamp = sched_clock();
++}
++
++/*
++ * sched_clock() is not necessarily monotonic and this can lead to negative
++ * values when very small time intervals are measured using successive calls
++ * to sched_clock().  The "delay" statistic is the most vulnerable to this BUT
++ * we'll take precautions for all interval measurements.  Where a time interval
++ * would be negative we'll treat it as zero and NOT update the timestamp either
++ * as this would lead to the next interval measured being to big.
++ */
++static inline void delta_sleep_stats(task_t *p, unsigned long long now)
++{
++	unsigned long long delta;
++
++	/* sched_clock() is not guaranteed monotonic */
++	if (now <= p->sched_timestamp)
++		return;
++
++	delta = now - p->sched_timestamp;
++	p->sched_timestamp = now;
++	p->avg_sleep_per_cycle += delta;
++	p->total_sleep += delta;
++}
++
++static inline void delta_cpu_stats(task_t *p, unsigned long long now)
++{
++	unsigned long long delta;
++
++	/* sched_clock() is not guaranteed monotonic */
++	if (now <= p->sched_timestamp)
++		return;
++
++	delta = now - p->sched_timestamp;
++	p->sched_timestamp = now;
++	p->avg_cpu_per_cycle += delta;
++	p->total_cpu += delta;
++}
++
++static inline void delta_delay_stats(task_t *p, unsigned long long now)
++{
++	unsigned long long delta;
++
++	/* sched_clock() is not guaranteed monotonic */
++	if (now <= p->sched_timestamp)
++		return;
++
++	delta = now - p->sched_timestamp;
++	p->sched_timestamp = now;
++	p->avg_delay_per_cycle += delta;
++	p->total_delay += delta;
++	p->rq->total_delay += delta;
++}
++
++/*
++ * Update various statistics for the end of a
++ * ((on_run_queue :-> on_cpu)* :-> sleep) cycle.
++ * We can't just do this in activate_task() as every invocation of that
++ * function is not the genuine end of a cycle.
++ */
++static void update_stats_for_cycle(task_t *p)
++{
++	unsigned long long now = adjusted_sched_clock(p);
++
++	delta_sleep_stats(p, now);
++	if (in_interrupt())
++		p->intr_wake_ups++;
++	p->cycle_count++;
++	if (!rt_task(p))
++		decay_avgs_and_calculate_rates(p);
++}
++
++static inline void decay_sched_ia_bonus(struct task_struct *p)
++{
++	p->interactive_bonus *= SCHED_IA_BONUS_ALPHA;
++	p->interactive_bonus >>= SCHED_IA_BONUS_OFFSET;
++}
++
++/*
++ * Check whether a task with an interactive bonus still qualifies and if not
++ * decrease its bonus
++ * This never gets called on real time tasks
++ */
++static void reassess_cpu_boundness(task_t *p)
++{
++	if (max_ia_bonus == 0) {
++		p->interactive_bonus = 0;
++		return;
++	}
++	/*
++	 * No point going any further if there's no bonus to lose
++	 */
++	if (p->interactive_bonus == 0)
++		return;
++
++	if (p->cpu_usage_rate > cpu_hog_threshold)
++		decay_sched_ia_bonus(p);
++}
++
++/*
++ * Check whether a task qualifies for an interactive bonus and if it does
++ * increase its bonus
++ * This never gets called on real time tasks
++ */
++static void reassess_interactiveness(task_t *p)
++{
++	if (max_ia_bonus == 0) {
++		p->interactive_bonus = 0;
++		return;
++	}
++	/*
++	 * No sleep means not interactive (in most cases), but
++	 */
++	if (unlikely(p->avg_sleep_per_cycle > LOWER_MAX_IA_SLEEP)) {
++		/*
++		 * Really long sleeps mean it's probably not interactive
++		 */
++		if (unlikely(p->avg_sleep_per_cycle > UPPER_MAX_IA_SLEEP))
++			decay_sched_ia_bonus(p);
++		return;
++	}
++	if (p->sleepiness > ia_threshold) {
++		decay_sched_ia_bonus(p);
++		p->interactive_bonus += map_proportion_rnd(p->sleepiness, max_ia_bonus);
++	}
++}
++
++/*
++ * Check whether a task qualifies for a throughput bonus and if it does
++ * give it one
++ * This never gets called on real time tasks
++ */
++static void recalc_throughput_bonus(task_t *p)
++{
++	unsigned long long ratio;
++	unsigned long long expected_delay;
++	unsigned long long adjusted_delay;
++	unsigned long long load = p->rq->avg_nr_running;
++
++	p->throughput_bonus = 0;
++	if (max_tpt_bonus == 0)
++		return;
++
++	if (load <= SCHED_AVG_ONE)
++		expected_delay = 0;
++	else
++		expected_delay = SCHED_AVG_MUL(p->avg_cpu_per_cycle, (load - SCHED_AVG_ONE));
++
++	/*
++	 * No unexpected delay means no bonus, but
++	 * NB this test also avoids a possible divide by zero error if
++	 * cpu is also zero and negative bonuses
++	 */
++	if (p->avg_delay_per_cycle <= expected_delay)
++		return;
++
++	adjusted_delay  = p->avg_delay_per_cycle - expected_delay;
++	ratio = calc_proportion(adjusted_delay, adjusted_delay + p->avg_cpu_per_cycle);
++	ratio = proportion_sqrt(ratio);
++	p->throughput_bonus = map_proportion_rnd(ratio, max_tpt_bonus);
++}
++
++/*
++ * effective_prio - return the priority that is based on the static
++ * priority but is modified by bonuses/penalties.
++ */
++static inline int effective_prio(const task_t *p)
++{
++	int prio;
++	unsigned int bonus_factor;
++
++	if (rt_task(p))
++		return p->prio;
++
++	switch (sched_mode) {
++	case SCHED_MODE_ENTITLEMENT_BASED:
++		prio = p->eb_priority;
++		break;
++	default:
++		prio = p->static_prio;
++	}
++
++	/*
++	 * kernel threads get maximum bonuses
++	 */
++	if (p->mm == NULL)
++		return prio;
++
++	bonus_factor = MAX_TOTAL_BONUS;
++	bonus_factor -= SCHED_IA_BONUS_RND(p->interactive_bonus);
++	bonus_factor -= p->throughput_bonus;
++
++	return prio + bonus_factor;
++}
++
++static void recalc_task_prio(task_t *p, unsigned long long now)
++{
++	/*
++	 * Throughput bonus is dependent on how busy the CPU is so do it here to
++	 * catch any CPU changes
++	 */
++	if (!rt_task(p)) {
++		recalc_throughput_bonus(p);
++		if (sched_mode == SCHED_MODE_ENTITLEMENT_BASED) {
++			if (task_should_be_yardstick(p))
++				set_eb_yardstick(p);
++			calculate_eb_priority(p);
++		}
++	}
++	p->prio = effective_prio(p);
++}
++#elif defined(CONFIG_STAIRCASE)
+ /*
+  * burst - extra intervals an interactive task can run for at best priority
+  * instead of descending priorities.
+@@ -1234,7 +1951,7 @@
+ 
+ static inline int generic_task_queued(task_t *p)
+ {
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_STAIRCASE) || defined(CONFIG_SPA)
+ 	return !list_empty(&p->run_list);
+ #else
+ 	return (int)p->array;
+@@ -1279,6 +1996,19 @@
+  * Update all the scheduling statistics stuff. (sleep average
+  * calculation, priority modifiers, etc.)
+  */
++#if defined(CONFIG_SPA)
++static void activate_task(task_t *p)
++{
++	/* Compensate for drifting sched_clock */
++	unsigned long long now = adjusted_sched_clock(p);
++
++	recalc_task_prio(p, now);
++	p->timestamp = now;
++	p->time_slice = task_timeslice(p);
++
++	__activate_task(p);
++}
++#else
+ static void activate_task(task_t *p, runqueue_t *rq, int local)
+ {
+ 	unsigned long long now;
+@@ -1358,11 +2088,22 @@
+ 	__activate_task(p, rq);
+ #endif
+ }
++#endif
+ 
+ /*
+  * deactivate_task - remove a task from the runqueue.
+  */
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++static void deactivate_task(struct task_struct *p)
++{
++	p->rq->nr_running--;
++	if (p->state == TASK_UNINTERRUPTIBLE)
++		p->rq->nr_uninterruptible++;
++	dequeue_task(p);
++	if (p->rq->nr_running == 1)
++		stop_promotions(p->rq);
++}
++#elif defined(CONFIG_STAIRCASE)
+ static void deactivate_task(struct task_struct *p, runqueue_t *rq)
+ {
+ 	rq->nr_running--;
+@@ -1420,14 +2161,29 @@
+ }
+ #endif
+ 
++#if defined(CONFIG_SPA)
++static inline void preempt_curr_if_warranted(struct task_struct *p)
++{
++	if (generic_task_preempts_curr(p, p->rq))
++		resched_task(p->rq->curr);
++}
++#endif
++
+ /**
+  * task_curr - is this task currently executing on a CPU?
+  * @p: the task in question.
+  */
++#if defined(CONFIG_SPA)
++inline int task_curr(const task_t *p)
++{
++	return p->rq->curr == p;
++}
++#else
+ inline int task_curr(const task_t *p)
+ {
+ 	return cpu_curr(task_cpu(p)) == p;
+ }
++#endif
+ 
+ #ifdef CONFIG_SMP
+ enum request_type {
+@@ -1483,6 +2239,28 @@
+  * smp_call_function() if an IPI is sent by the same process we are
+  * waiting to become inactive.
+  */
++#if defined(CONFIG_SPA)
++void wait_task_inactive(task_t * p)
++{
++	unsigned long flags;
++	spinlock_t *rql;
++	int preempted;
++
++repeat:
++	rql = task_rq_lock(p, &flags);
++	/* Must be off runqueue entirely, not preempted. */
++	if (unlikely(generic_task_queued(p))) {
++		/* If it's preempted, we yield.  It could be a while. */
++		preempted = !task_is_running(p);
++		task_rq_unlock(rql, &flags);
++		cpu_relax();
++		if (preempted)
++			yield();
++		goto repeat;
++	}
++	task_rq_unlock(rql, &flags);
++}
++#else
+ void wait_task_inactive(task_t * p)
+ {
+ 	unsigned long flags;
+@@ -1503,6 +2281,7 @@
+ 	}
+ 	task_rq_unlock(rq, &flags);
+ }
++#endif
+ 
+ /***
+  * kick_process - kick a running thread to enter/exit the kernel
+@@ -1610,13 +2389,21 @@
+ 	unsigned long flags;
+ 	long old_state;
+ 	runqueue_t *rq;
++#if defined(CONFIG_SPA)
++	spinlock_t *rql;
++#endif
+ #ifdef CONFIG_SMP
+ 	unsigned long load, this_load;
+ 	struct sched_domain *sd;
+ 	int new_cpu;
+ #endif
+ 
++#if defined(CONFIG_SPA)
++	rql = task_rq_lock(p, &flags);
++	rq = p->rq;
++#else
+ 	rq = task_rq_lock(p, &flags);
++#endif
+ 	schedstat_inc(rq, ttwu_cnt);
+ 	old_state = p->state;
+ 	if (!(old_state & state))
+@@ -1625,6 +2412,10 @@
+ 	if (generic_task_queued(p))
+ 		goto out_running;
+ 
++#if defined(CONFIG_SPA)
++	update_stats_for_cycle(p);
++#endif
++
+ 	cpu = task_cpu(p);
+ 	this_cpu = smp_processor_id();
+ 
+@@ -1666,7 +2457,12 @@
+ 		imbalance = sd->imbalance_pct + (sd->imbalance_pct - 100) / 2;
+ 
+ 		if ((sd->flags & SD_WAKE_AFFINE) &&
+-				!task_hot(p, rq->timestamp_last_tick, sd)) {
++#if defined(CONFIG_SPA)
++				!task_hot(p, sd)
++#else
++				!task_hot(p, rq->timestamp_last_tick, sd)
++#endif
++				) {
+ 			/*
+ 			 * This domain has SD_WAKE_AFFINE and p is cache cold
+ 			 * in this domain.
+@@ -1695,9 +2491,15 @@
+ 	if (new_cpu != cpu && cpu_isset(new_cpu, p->cpus_allowed)) {
+ 		schedstat_inc(rq, ttwu_moved);
+ 		set_task_cpu(p, new_cpu);
++#if defined(CONFIG_SPA)
++		task_rq_unlock(rql, &flags);
++		rql = task_rq_lock(p, &flags);
++		adjust_sched_timestamp(p, rq);
++#else
+ 		task_rq_unlock(rq, &flags);
+ 		/* might preempt at this point */
+ 		rq = task_rq_lock(p, &flags);
++#endif
+ 		old_state = p->state;
+ 		if (!(old_state & state))
+ 			goto out;
+@@ -1716,11 +2518,20 @@
+ 		 * Tasks on involuntary sleep don't earn
+ 		 * sleep_avg beyond just interactive state.
+ 		 */
+-#if !defined(CONFIG_NICKSCHED) && !defined(CONFIG_STAIRCASE)
++#if !defined(CONFIG_NICKSCHED) && !defined(CONFIG_STAIRCASE) && !defined(CONFIG_SPA)
+ 		p->activated = -1;
+ #endif
+ 	}
+ 
++#if defined(CONFIG_SPA)
++	/*
++	 * Do this here rather than in activate_task() because activate() gets
++	 * called at times when thes calculations are unnecessary e.g. for a
++	 * change of CPU
++	 */
++	if (!rt_task(p))
++		reassess_interactiveness(p);
++#endif
+ 	/*
+ 	 * Sync wakeups (i.e. those types of wakeups where the waker
+ 	 * has indicated that it will leave the CPU in short order)
+@@ -1729,7 +2540,11 @@
+ 	 * the waker guarantees that the freshly woken up task is going
+ 	 * to be considered on this CPU.)
+ 	 */
++#if defined(CONFIG_SPA)
++	activate_task(p);
++#else
+ 	activate_task(p, rq, cpu == this_cpu);
++#endif
+ 	if (!sync || cpu != this_cpu) {
+ 		if (generic_task_preempts_curr(p, rq))
+ 			resched_task(rq->curr);
+@@ -1739,7 +2554,11 @@
+ out_running:
+ 	p->state = TASK_RUNNING;
+ out:
++#if defined(CONFIG_SPA)
++	task_rq_unlock(rql, &flags);
++#else
+ 	task_rq_unlock(rq, &flags);
++#endif
+ 
+ 	return success;
+ }
+@@ -1757,6 +2576,15 @@
+ 	return try_to_wake_up(p, state, 0);
+ }
+ 
++#if defined(CONFIG_SPA)
++static inline void initialize_bonuses(task_t *p)
++{
++	p->interactive_bonus = (max_ia_bonus >= initial_ia_bonus) ?
++				initial_ia_bonus : max_ia_bonus;
++	p->throughput_bonus =  0;
++}
++#endif
++
+ #ifdef CONFIG_SMP
+ static int find_idlest_cpu(struct task_struct *p, int this_cpu,
+ 			   struct sched_domain *sd);
+@@ -1779,7 +2607,7 @@
+ 	 */
+ 	p->state = TASK_RUNNING;
+ 	INIT_LIST_HEAD(&p->run_list);
+-#if !defined(CONFIG_STAIRCASE)
++#if !defined(CONFIG_STAIRCASE) && !defined(CONFIG_SPA)
+ 	p->array = NULL;
+ #endif
+ 	spin_lock_init(&p->switch_lock);
+@@ -1790,7 +2618,18 @@
+ 	/* Want to start with kernel preemption disabled. */
+ 	p->thread_info->preempt_count = 1;
+ #endif
+-#if defined(CONFIG_NICKSCHED)
++#if defined(CONFIG_SPA)
++	/*
++	 * Give the child a new timeslice
++	 */
++	p->time_slice = task_timeslice(p);
++	p->timestamp = sched_clock();
++	/*
++	 * Initialize the scheduling statistics and bonus counters
++	 */
++	initialize_stats(p);
++	initialize_bonuses(p);
++#elif defined(CONFIG_NICKSCHED)
+ 	preempt_disable();
+ 	rq = this_rq();
+ 
+@@ -1859,7 +2698,52 @@
+  */
+ void fastcall wake_up_new_task(task_t * p, unsigned long clone_flags)
+ {
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++	unsigned long flags;
++	int this_cpu, cpu;
++	spinlock_t *rql;
++
++	rql = task_rq_lock(p, &flags);
++	cpu = task_cpu(p);
++	this_cpu = smp_processor_id();
++
++	BUG_ON(p->state != TASK_RUNNING);
++
++	if (likely(cpu == this_cpu)) {
++		/*
++		 * Now that the idle task is back on the run queue we need
++		 * extra care to make sure that its one and only fork() doesn't
++		 * end up in the idle priority slot.  Just testing for empty
++		 * run list is no longer adequate.
++		 */
++		if (unlikely(!generic_task_queued(current) || RUNQUEUE_IDLE(current->rq))) {
++			p->prio = effective_prio(p);
++			__activate_task(p);
++		} else {
++			/*
++			 * Put the child on the same list(s) as (but ahead of) the parent
++		 	 */
++			p->prio = current->prio;
++			list_add_tail(&p->run_list, &current->run_list);
++			current->rq->nr_running++;
++		}
++		set_need_resched();
++	} else {
++		runqueue_t *this_rq = cpu_rq(this_cpu);
++		p->prio = effective_prio(p);
++
++		adjust_timestamp(p, this_rq);
++		adjust_sched_timestamp(p, this_rq);
++		__activate_task(p);
++		preempt_curr_if_warranted(p);
++	}
++
++	if (unlikely(cpu != this_cpu)) {
++		task_rq_unlock(rql, &flags);
++		rql = task_rq_lock(current, &flags);
++	}
++	task_rq_unlock(rql, &flags);
++#elif defined(CONFIG_STAIRCASE)
+ 	unsigned long flags;
+ 	int this_cpu, cpu;
+ 	runqueue_t *rq;
+@@ -2032,6 +2916,9 @@
+ #endif
+ }
+ 
++#if defined(CONFIG_SPA)
++static int log_at_exit = 0;
++#endif
+ #if !defined(CONFIG_STAIRCASE)
+ /*
+  * Potentially available exiting-child timeslices are
+@@ -2044,7 +2931,19 @@
+  */
+ void fastcall sched_exit(task_t * p)
+ {
+-#if !defined(CONFIG_NICKSCHED)
++#if defined(CONFIG_SPA)
++	struct task_sched_stats stats;
++
++	if (!log_at_exit)
++		return;
++
++	get_task_sched_stats(p, &stats);
++	printk("SCHED_EXIT[%d] (%s) %llu %llu %llu %llu %llu %lu %lu %lu %lu\n",
++		p->pid, p->comm,
++		stats.total_sleep, stats.total_cpu, stats.total_delay,
++		stats.cycle_count, stats.intr_wake_ups,
++		p->nvcsw, p->nivcsw, p->cnvcsw, p->cnivcsw);
++#elif !defined(CONFIG_NICKSCHED)
+ 	unsigned long flags;
+ 	runqueue_t *rq;
+ 
+@@ -2301,10 +3200,18 @@
+ static void sched_migrate_task(task_t *p, int dest_cpu)
+ {
+ 	migration_req_t req;
++#if defined(CONFIG_SPA)
++	spinlock_t *rql;
++#else
+ 	runqueue_t *rq;
++#endif
+ 	unsigned long flags;
+ 
++#if defined(CONFIG_SPA)
++	rql = task_rq_lock(p, &flags);
++#else
+ 	rq = task_rq_lock(p, &flags);
++#endif
+ 	if (!cpu_isset(dest_cpu, p->cpus_allowed)
+ 	    || unlikely(cpu_is_offline(dest_cpu)))
+ 		goto out;
+@@ -2313,16 +3220,28 @@
+ 	/* force the process onto the specified CPU */
+ 	if (migrate_task(p, dest_cpu, &req)) {
+ 		/* Need to wait for migration thread (might exit: take ref). */
++#if defined(CONFIG_SPA)
++		struct task_struct *mt = p->rq->migration_thread;
++#else
+ 		struct task_struct *mt = rq->migration_thread;
++#endif
+ 		get_task_struct(mt);
++#if defined(CONFIG_SPA)
++		task_rq_unlock(rql, &flags);
++#else
+ 		task_rq_unlock(rq, &flags);
++#endif
+ 		wake_up_process(mt);
+ 		put_task_struct(mt);
+ 		wait_for_completion(&req.done);
+ 		return;
+ 	}
+ out:
++#if defined(CONFIG_SPA)
++	task_rq_unlock(rql, &flags);
++#else
+ 	task_rq_unlock(rq, &flags);
++#endif
+ }
+ 
+ /*
+@@ -2364,6 +3283,23 @@
+  * pull_task - move a task from a remote runqueue to the local runqueue.
+  * Both runqueues must be locked.
+  */
++#if defined(CONFIG_SPA)
++void pull_task(task_t *p,  int this_cpu)
++{
++	runqueue_t *src_rq = p->rq;
++
++	dequeue_task(p);
++	src_rq->nr_running--;
++	delta_delay_stats(p, adjusted_sched_clock(p));
++	set_task_cpu(p, this_cpu);
++	p->rq->nr_running++;
++	enqueue_task(p);
++	adjust_timestamp(p, src_rq);
++	adjust_sched_timestamp(p, src_rq);
++	preempt_curr_if_warranted(p);
++}
++#else
++
+ #if defined(CONFIG_STAIRCASE)
+ static inline
+ void pull_task(runqueue_t *src_rq, task_t *p,
+@@ -2405,9 +3341,37 @@
+ 		resched_task(this_rq->curr);
+ }
+ 
++#endif
++
+ /*
+  * can_migrate_task - may task p from runqueue rq be migrated to this_cpu?
+  */
++#if defined(CONFIG_SPA)
++static inline
++int can_migrate_task(task_t *p, int this_cpu,
++		     struct sched_domain *sd, enum idle_type idle)
++{
++	/*
++	 * We do not migrate tasks that are:
++	 * 1) running (obviously), or
++	 * 2) cannot be migrated to this CPU due to cpus_allowed, or
++	 * 3) are cache-hot on their current CPU.
++	 */
++	if (task_is_running(p))
++		return 0;
++	if (!cpu_isset(this_cpu, p->cpus_allowed))
++		return 0;
++
++	/* Aggressive migration if we've failed balancing */
++	if (idle == NEWLY_IDLE ||
++			sd->nr_balance_failed < sd->cache_nice_tries) {
++		if (task_hot(p, sd))
++			return 0;
++	}
++
++	return 1;
++}
++#else
+ static inline
+ int can_migrate_task(task_t *p, runqueue_t *rq, int this_cpu,
+ 		     struct sched_domain *sd, enum idle_type idle)
+@@ -2432,6 +3396,7 @@
+ 
+ 	return 1;
+ }
++#endif
+ 
+ /*
+  * move_tasks tries to move up to max_nr_move tasks from busiest to this_rq,
+@@ -2444,7 +3409,27 @@
+ 		      unsigned long max_nr_move, struct sched_domain *sd,
+ 		      enum idle_type idle)
+ {
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++	struct list_head *head, *curr;
++	int idx, pulled = 0;
++	task_t *tmp;
++
++	if (max_nr_move <= 0 || busiest->nr_running <= 1)
++		goto out;
++
++	/* Start searching at priority 0: */
++	idx = 0;
++skip_bitmap:
++	if (!idx)
++		idx = sched_find_first_bit(busiest->bitmap);
++	else
++		idx = find_next_bit(busiest->bitmap, IDLE_PRIO, idx);
++	if (idx >= IDLE_PRIO)
++		goto out;
++
++	head = &busiest->queues[idx].queue;
++	curr = head->prev;
++#elif defined(CONFIG_STAIRCASE)
+ 	struct list_head *head, *curr;
+ 	int idx, pulled = 0;
+ 	task_t *tmp;
+@@ -2512,7 +3497,12 @@
+ 
+ 	curr = curr->prev;
+ 
+-	if (!can_migrate_task(tmp, busiest, this_cpu, sd, idle)) {
++#if defined(CONFIG_SPA)
++	if (!can_migrate_task(tmp, this_cpu, sd, idle))
++#else
++	if (!can_migrate_task(tmp, busiest, this_cpu, sd, idle))
++#endif
++	{
+ 		if (curr != head)
+ 			goto skip_queue;
+ 		idx++;
+@@ -2527,7 +3517,9 @@
+ 	schedstat_inc(this_rq, pt_gained[idle]);
+ 	schedstat_inc(busiest, pt_lost[idle]);
+ 
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++	pull_task(tmp, this_cpu);
++#elif defined(CONFIG_STAIRCASE)
+ 	pull_task(busiest, tmp, this_rq, this_cpu);
+ #else
+ 	pull_task(busiest, array, tmp, this_rq, dst_array, this_cpu);
+@@ -2992,6 +3984,12 @@
+ 		}
+ 	}
+ }
++#if defined(CONFIG_SPA)
++static inline int needs_idle_balance(const runqueue_t *rq)
++{
++	return rq->nr_running == 0;
++}
++#endif
+ #else
+ /*
+  * on UP we do not need to balance between CPUs:
+@@ -3002,6 +4000,12 @@
+ static inline void idle_balance(int cpu, runqueue_t *rq)
+ {
+ }
++#if defined(CONFIG_SPA)
++static inline int needs_idle_balance(const runqueue_t *rq)
++{
++	return 0;
++}
++#endif
+ #endif
+ 
+ #if !defined(CONFIG_NICKSCHED)
+@@ -3021,6 +4025,50 @@
+ }
+ #endif
+ 
++#if defined(CONFIG_SPA)
++/*
++ * Are promotions due?
++ */
++static inline int promotions_due(const runqueue_t *rq)
++{
++	return unlikely(time_after_eq(jiffies, rq->next_prom_due)) && (rq->nr_running > 1);
++}
++
++/* 
++ * Assume runqueue lock is NOT already held.
++ * This is not executed when current task is SCHED_FIFO
++ */
++static void do_promotions(runqueue_t *rq)
++{
++	int idx = MAX_RT_PRIO;
++
++	spin_lock(&rq->lock);
++	rq->pcount++;
++	if (rq->nr_running < rq->pcount) {
++		rq->next_prom_due = jiffies + base_prom_interval_ticks;
++		goto out_unlock;
++	}
++	for (;;) {
++		int new_prio;
++		idx = find_next_bit(rq->bitmap, IDLE_PRIO, idx + 1);
++		if (idx > (IDLE_PRIO - 1))
++			break;
++
++		new_prio = idx - 1;
++		__list_splice(&rq->queues[idx].queue, rq->queues[new_prio].queue.prev);
++		INIT_LIST_HEAD(&rq->queues[idx].queue);
++		__clear_bit(idx, rq->bitmap);
++		__set_bit(new_prio, rq->bitmap);
++	}
++	/* The only prio field that needs update is the current task's */
++	if (likely(rq->curr->prio > MAX_RT_PRIO))
++		rq->curr->prio--;
++	restart_promotions(rq);
++out_unlock:
++	spin_unlock(&rq->lock);
++}
++#endif
++
+ DEFINE_PER_CPU(struct kernel_stat, kstat);
+ 
+ EXPORT_PER_CPU_SYMBOL(kstat);
+@@ -3048,6 +4096,104 @@
+  * It also gets called by the fork code, when changing the parent's
+  * timeslices.
+  */
++#if defined(CONFIG_SPA)
++
++void scheduler_tick(int user_ticks, int sys_ticks)
++{
++	int cpu = smp_processor_id();
++	struct cpu_usage_stat *cpustat = &kstat_this_cpu.cpustat;
++	task_t *p = current;
++	unsigned long decayed_avg_nr_running;
++	unsigned long long now;
++
++	now = p->rq->timestamp_last_tick = sched_clock();
++
++	if (rcu_pending(cpu))
++		rcu_check_callbacks(cpu, user_ticks);
++
++	/* note: this timer irq context must be accounted for as well */
++	if (hardirq_count() - HARDIRQ_OFFSET) {
++		cpustat->irq += sys_ticks;
++		sys_ticks = 0;
++	} else if (softirq_count()) {
++		cpustat->softirq += sys_ticks;
++		sys_ticks = 0;
++	}
++
++	/*
++	 * While it's only being used for throughput bonus calculation races
++	 * reading rq->avg_nr_running will be harmless so don't bother locking
++	 */
++	decayed_avg_nr_running = SCHED_AVG_MUL(p->rq->avg_nr_running, SCHED_AVG_ALPHA);
++	if (is_idle_task(p)) {
++		p->rq->avg_nr_running = decayed_avg_nr_running;
++		if (sched_mode == SCHED_MODE_ENTITLEMENT_BASED) {
++			spin_lock(&p->rq->lock);
++			if (!--p->rq->eb_ticks_to_decay)
++				decay_eb_yardstick(p->rq);
++			spin_unlock(&p->rq->lock);
++		}
++		if (atomic_read(&p->rq->nr_iowait) > 0)
++			cpustat->iowait += sys_ticks;
++		else
++			cpustat->idle += sys_ticks;
++		if (wake_priority_sleeper(p->rq))
++			goto out;
++		rebalance_tick(cpu, p->rq, IDLE);
++		return;
++	}
++	p->rq->avg_nr_running = decayed_avg_nr_running + p->rq->nr_running;
++	if (TASK_NICE(p) > 0)
++		cpustat->nice += user_ticks;
++	else
++		cpustat->user += user_ticks;
++	cpustat->system += sys_ticks;
++
++	/*
++	 * SCHED_FIFO tasks never run out of timeslice.
++	 */
++	if (unlikely(p->policy == SCHED_FIFO))
++		goto out;
++
++	spin_lock(&p->rq->lock);
++	if ((sched_mode == SCHED_MODE_ENTITLEMENT_BASED) && (!--p->rq->eb_ticks_to_decay)) {
++		decay_eb_yardstick(p->rq);
++		if (likely(!rt_task(p)) && task_should_be_yardstick(p))
++			set_eb_yardstick(p);
++	}
++	if (!--p->time_slice) {
++		dequeue_task(p);
++		set_tsk_need_resched(p);
++		if (likely(p->policy != SCHED_RR)) {
++			delta_cpu_stats(p, now);
++			decay_avgs_and_calculate_rates(p);		
++			recalc_throughput_bonus(p);
++			reassess_cpu_boundness(p);
++			/*
++			 * Arguably the interactive bonus should be updated here
++			 * as well.  But depends on whether we wish to encourage
++			 * interactive tasks to maintain a high bonus or CPU bound
++			 * tasks to lose some of there bonus?
++			 */
++			if (sched_mode == SCHED_MODE_ENTITLEMENT_BASED) {
++				if (task_should_be_yardstick(p))
++					set_eb_yardstick(p);
++				calculate_eb_priority(p);
++			}
++			p->prio = effective_prio(p);
++		}
++		p->time_slice = task_timeslice(p);
++		enqueue_task(p);
++	}
++	spin_unlock(&p->rq->lock);
++out:
++	rebalance_tick(cpu, p->rq, NOT_IDLE);
++	if (unlikely(promotions_due(p->rq)))
++		do_promotions(p->rq);
++}
++
++#else
++
+ void scheduler_tick(int user_ticks, int sys_ticks)
+ {
+ #if defined(CONFIG_NICKSCHED)
+@@ -3244,6 +4390,8 @@
+ #endif
+ }
+ 
++#endif
++
+ #if !defined(CONFIG_NICKSCHED)
+ #ifdef CONFIG_SCHED_SMT
+ static inline void wake_sleeping_dependent(int cpu, runqueue_t *rq)
+@@ -3273,9 +4421,17 @@
+ 	}
+ }
+ 
++#if defined(CONFIG_SPA)
++static inline int dependent_sleeper(int cpu, task_t *p)
++#else
+ static inline int dependent_sleeper(int cpu, runqueue_t *rq, task_t *p)
++#endif
+ {
++#if defined(CONFIG_SPA)
++	struct sched_domain *sd = p->rq->sd;
++#else
+ 	struct sched_domain *sd = rq->sd;
++#endif
+ 	cpumask_t sibling_map;
+ 	int ret = 0, i;
+ 
+@@ -3331,35 +4487,157 @@
+ 			p->mm && smt_curr->mm && !rt_task(p))
+ 				ret = 1;
+ 
+-		/*
+-		 * Reschedule a lower priority task on the SMT sibling,
+-		 * or wake it up if it has been put to sleep for priority
+-		 * reasons.
+-		 */
+-		if ((((p->time_slice * (100 - sd->per_cpu_gain) / 100) >
+-			task_timeslice(smt_curr) || rt_task(p)) &&
+-			smt_curr->mm && p->mm && !rt_task(smt_curr)) ||
+-			(smt_curr == smt_rq->idle && smt_rq->nr_running))
+-				resched_task(smt_curr);
+-#endif
++		/*
++		 * Reschedule a lower priority task on the SMT sibling,
++		 * or wake it up if it has been put to sleep for priority
++		 * reasons.
++		 */
++		if ((((p->time_slice * (100 - sd->per_cpu_gain) / 100) >
++			task_timeslice(smt_curr) || rt_task(p)) &&
++			smt_curr->mm && p->mm && !rt_task(smt_curr)) ||
++			(smt_curr == smt_rq->idle && smt_rq->nr_running))
++				resched_task(smt_curr);
++#endif
++	}
++	return ret;
++}
++#if defined(CONFIG_SPA)
++static inline int dependent_idle(const task_t *p)
++{
++	return p == p->rq->idle;
++}
++#endif
++#else
++static inline void wake_sleeping_dependent(int cpu, runqueue_t *rq)
++{
++}
++
++#if defined(CONFIG_SPA)
++static inline int dependent_sleeper(int cpu, task_t *p)
++#else
++static inline int dependent_sleeper(int cpu, runqueue_t *rq, task_t *p)
++#endif
++{
++	return 0;
++}
++#if defined(CONFIG_SPA)
++static inline int dependent_idle(const task_t *p)
++{
++	return 0;
++}
++#endif
++#endif
++#endif
++
++/*
++ * schedule() is the main scheduler function.
++ */
++#if defined(CONFIG_SPA)
++
++asmlinkage void __sched schedule(void)
++{
++	long *switch_count;
++	task_t *prev, *next;
++	runqueue_t *rq;
++	unsigned long long now;
++	int cpu, idx;
++
++	/*
++	 * Test if we are atomic.  Since do_exit() needs to call into
++	 * schedule() atomically, we ignore that path for now.
++	 * Otherwise, whine if we are scheduling when we should not be.
++	 */
++	if (likely(!(current->state & (TASK_DEAD | TASK_ZOMBIE)))) {
++		if (unlikely(in_atomic())) {
++			printk(KERN_ERR "bad: scheduling while atomic!\n");
++			dump_stack();
++		}
++	}
++	profile_hit(SCHED_PROFILING, __builtin_return_address(0));
++
++need_resched:
++	preempt_disable();
++	prev = current;
++	rq = prev->rq;
++
++	/*
++	 * The idle thread is not allowed to schedule!
++	 * Remove this check after it has been exercised a bit.
++	 */
++	if (unlikely(current == rq->idle) && current->state != TASK_RUNNING) {
++		printk(KERN_ERR "bad: scheduling from the idle thread!\n");
++		dump_stack();
++	}
++
++	release_kernel_lock(prev);
++	schedstat_inc(rq, sched_cnt);
++	now = clock_us();
++
++	spin_lock_irq(&rq->lock);
++
++	/*
++	 * if entering off of a kernel preemption go straight
++	 * to picking the next task.
++	 */
++	switch_count = &prev->nivcsw;
++	if (prev->state && !(preempt_count() & PREEMPT_ACTIVE)) {
++		switch_count = &prev->nvcsw;
++		if (unlikely((prev->state & TASK_INTERRUPTIBLE) &&
++				unlikely(signal_pending(prev))))
++			prev->state = TASK_RUNNING;
++		else
++			deactivate_task(prev);
++	}
++
++	cpu = smp_processor_id();
++	if (unlikely(needs_idle_balance(rq)))
++		idle_balance(cpu, rq);
++
++	idx = sched_find_first_bit(rq->bitmap);
++	next = list_entry(rq->queues[idx].queue.next, task_t, run_list);
++	/*
++	 * update prio just in case next has been promoted since it was queued
++	 */ 
++	next->prio = idx;
++	if (dependent_idle(next)) {
++		wake_sleeping_dependent(cpu, rq);
++		goto switch_tasks;
+ 	}
+-	return ret;
+-}
+-#else
+-static inline void wake_sleeping_dependent(int cpu, runqueue_t *rq)
+-{
+-}
+ 
+-static inline int dependent_sleeper(int cpu, runqueue_t *rq, task_t *p)
+-{
+-	return 0;
++	if (dependent_sleeper(cpu, next))
++		next = rq->idle;
++switch_tasks:
++	prefetch(next);
++	clear_tsk_need_resched(prev);
++	rcu_qsctr_inc(task_cpu(prev));
++
++	delta_cpu_stats(prev, now);
++	prev->timestamp = now;
++
++	sched_info_switch(prev, next);
++	if (likely(prev != next)) {
++		delta_delay_stats(next, now);
++		next->timestamp = now;
++		rq->nr_switches++;
++		rq->curr = next;
++		++*switch_count;
++
++		prepare_arch_switch(rq, next);
++		prev = context_switch(rq, prev, next);
++		barrier();
++
++		finish_task_switch(prev);
++	} else
++		spin_unlock_irq(&rq->lock);
++
++	reacquire_kernel_lock(current);
++	preempt_enable_no_resched();
++	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
++		goto need_resched;
+ }
+-#endif
+-#endif
+ 
+-/*
+- * schedule() is the main scheduler function.
+- */
++#else
++
+ asmlinkage void __sched schedule(void)
+ {
+ 	long *switch_count;
+@@ -3632,6 +4910,8 @@
+ 		goto need_resched;
+ }
+ 
++#endif
++
+ EXPORT_SYMBOL(schedule);
+ 
+ #ifdef CONFIG_PREEMPT
+@@ -3875,13 +5155,18 @@
+ void set_user_nice(task_t *p, long nice)
+ {
+ 	unsigned long flags;
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_STAIRCASE) || defined(CONFIG_SPA)
+ 	int queued;
+ #else
+ 	prio_array_t *array;
+ #endif
++#if defined(CONFIG_SPA)
++	spinlock_t *rql;
++#else
+ 	runqueue_t *rq;
+-	int old_prio, new_prio, delta;
++	int old_prio;
++#endif
++	int new_prio, delta;
+ 
+ 	if (TASK_NICE(p) == nice || nice < -20 || nice > 19)
+ 		return;
+@@ -3889,7 +5174,11 @@
+ 	 * We have to be careful, if called from sys_setpriority(),
+ 	 * the task might be in the middle of scheduling on another CPU.
+ 	 */
++#if defined(CONFIG_SPA)
++	rql = task_rq_lock(p, &flags);
++#else
+ 	rq = task_rq_lock(p, &flags);
++#endif
+ 	/*
+ 	 * The RT priorities are set via setscheduler(), but we still
+ 	 * allow the 'normal' nice value to be set - but as expected
+@@ -3900,7 +5189,10 @@
+ 		p->static_prio = NICE_TO_PRIO(nice);
+ 		goto out_unlock;
+ 	}
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++	if ((queued = generic_task_queued(p)))
++		dequeue_task(p);
++#elif defined(CONFIG_STAIRCASE)
+ 	if ((queued = generic_task_queued(p)))
+ 		dequeue_task(p, rq);
+ #else
+@@ -3909,21 +5201,39 @@
+ 		dequeue_task(p, array);
+ #endif
+ 
++#if defined(CONFIG_SPA)
++	new_prio = NICE_TO_PRIO(nice);
++	delta = new_prio - p->static_prio;
++	p->static_prio = new_prio;
++	p->prio += delta;
++	p->eb_shares = nice_to_shares(nice);
++#else
+ 	old_prio = p->prio;
+ 	new_prio = NICE_TO_PRIO(nice);
+ 	delta = new_prio - old_prio;
+ 	p->static_prio = NICE_TO_PRIO(nice);
+ 	p->prio += delta;
++#endif
+ 
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++	if (queued) {
++		enqueue_task(p);
++		/*
++		 * If the task increased its priority or is running and
++		 * lowered its priority, then reschedule its CPU:
++		 */
++		if (delta < 0 || (delta > 0 && generic_task_running(p->rq, p)))
++			resched_task(p->rq->curr);
++	}
++#elif defined(CONFIG_STAIRCASE)
+ 	if (queued) {
+ 		enqueue_task(p, rq);
+ 		/*
+ 		 * If the task increased its priority or is running and
+ 		 * lowered its priority, then reschedule its CPU:
+ 		 */
+-		if (delta < 0 || (delta > 0 && generic_task_running(rq, p)))
+-			resched_task(rq->curr);
++		if (delta < 0 || (delta > 0 && task_is_running(p)))
++			resched_task(p->rq->curr);
+ 	}
+ #else
+ 	if (array) {
+@@ -3937,7 +5247,11 @@
+ 	}
+ #endif
+ out_unlock:
++#if defined(CONFIG_SPA)
++	task_rq_unlock(rql, &flags);
++#else
+ 	task_rq_unlock(rq, &flags);
++#endif
+ }
+ 
+ EXPORT_SYMBOL(set_user_nice);
+@@ -4057,13 +5371,17 @@
+ 	struct sched_param lp;
+ 	int retval = -EINVAL;
+ 	int oldprio;
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_STAIRCASE) || defined(CONFIG_SPA)
+ 	int queued;
+ #else
+ 	prio_array_t *array;
+ #endif
+ 	unsigned long flags;
++#if defined(CONFIG_SPA)
++	spinlock_t *rql;
++#else
+ 	runqueue_t *rq;
++#endif
+ 	task_t *p;
+ 
+ 	if (!param || pid < 0)
+@@ -4088,7 +5406,11 @@
+ 	 * To be able to change p->policy safely, the apropriate
+ 	 * runqueue lock must be held.
+ 	 */
++#if defined(CONFIG_SPA)
++	rql = task_rq_lock(p, &flags);
++#else
+ 	rq = task_rq_lock(p, &flags);
++#endif
+ 
+ 	if (policy < 0)
+ 		policy = p->policy;
+@@ -4121,6 +5443,10 @@
+ 	if (retval)
+ 		goto out_unlock;
+ 
++#if defined(CONFIG_SPA)
++	if ((queued = generic_task_queued(p)))
++		deactivate_task(p);
++#else
+ #if defined(CONFIG_STAIRCASE)
+ 	if ((queued = generic_task_queued(p)))
+ #else
+@@ -4132,16 +5458,19 @@
+ #else
+ 		deactivate_task(p, task_rq(p));
+ #endif
++#endif
+ 	retval = 0;
+ 	oldprio = p->prio;
+ 	__setscheduler(p, policy, lp.sched_priority);
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_STAIRCASE) || defined(CONFIG_SPA)
+ 	if (queued)
+ #else
+ 	if (array)
+ #endif
+ 	{
+-#if defined(CONFIG_NICKSCHED)
++#if defined(CONFIG_SPA)
++		__activate_task(p);
++#elif defined(CONFIG_NICKSCHED)
+ 		__activate_task(p, rq, array);
+ #else
+ 		__activate_task(p, task_rq(p));
+@@ -4151,15 +5480,27 @@
+ 		 * our priority decreased, or if we are not currently running on
+ 		 * this runqueue and our priority is higher than the current's
+ 		 */
++#if defined(CONFIG_SPA)
++		if (task_is_running(p)) {
++			if (p->prio > oldprio)
++				resched_task(p);
++		} else
++			preempt_curr_if_warranted(p);
++#else
+ 		if (generic_task_running(rq, p)) {
+ 			if (p->prio > oldprio)
+ 				resched_task(rq->curr);
+ 		} else if (generic_task_preempts_curr(p, rq))
+ 			resched_task(rq->curr);
++#endif
+ 	}
+ 
+ out_unlock:
++#if defined(CONFIG_SPA)
++	task_rq_unlock(rql, &flags);
++#else
+ 	task_rq_unlock(rq, &flags);
++#endif
+ out_unlock_tasklist:
+ 	read_unlock_irq(&tasklist_lock);
+ 
+@@ -4359,6 +5700,90 @@
+ 	return real_len;
+ }
+ 
++#if defined(CONFIG_SPA)
++void get_task_sched_stats(struct task_struct *tsk, struct task_sched_stats *stats)
++{
++	int on_runq = 0;
++	int on_cpu = 0;
++	unsigned long long timestamp;
++	unsigned long flags;
++	spinlock_t *rql = task_rq_lock(tsk, &flags);
++
++	stats->timestamp = tsk->rq->timestamp_last_tick;
++	stats->cycle_count = tsk->cycle_count;
++	stats->total_sleep = tsk->total_sleep;
++	stats->total_cpu = tsk->total_cpu;
++	stats->total_delay = tsk->total_delay;
++	stats->intr_wake_ups = tsk->intr_wake_ups;
++	timestamp = tsk->sched_timestamp;
++	if ((on_runq = generic_task_queued(tsk)))
++		on_cpu = tsk->rq->idle == tsk;
++
++	task_rq_unlock(rql, &flags);
++
++	/*
++	 * Update values to the previous tick (only)
++	 */
++	if (stats->timestamp > timestamp) {
++		unsigned long long delta = stats->timestamp - timestamp;
++
++		if (on_cpu) {
++			stats->total_cpu += delta;
++		} else if (on_runq) {
++			stats->total_delay += delta;
++		} else {
++			stats->total_sleep += delta;
++		}
++	}
++}
++
++EXPORT_SYMBOL(get_task_sched_stats);
++
++/*
++ * Get scheduling statistics for the nominated CPU
++ */
++void get_cpu_sched_stats(unsigned int cpu, struct cpu_sched_stats *stats)
++{
++	int idle;
++	unsigned long long idle_timestamp;
++	runqueue_t *rq = cpu_rq(cpu);
++
++	/*
++	 * No need to crash the whole machine if they've asked for stats for
++	 * a non existent CPU, just send back zero.
++	 */
++	if (rq == NULL) {
++		stats->timestamp = 0;
++		stats->total_idle = 0;
++		stats->total_busy = 0;
++		stats->total_delay = 0;
++		stats->nr_switches = 0;
++
++		return;
++	}
++	local_irq_disable();
++	spin_lock(&rq->lock);
++	idle = rq->curr == rq->idle;
++	stats->timestamp = rq->timestamp_last_tick;
++	idle_timestamp = rq->idle->sched_timestamp;
++	stats->total_idle = rq->idle->total_cpu;
++	stats->total_busy = rq->idle->total_delay;
++	stats->total_delay = rq->total_delay;
++	stats->nr_switches = rq->nr_switches;
++	spin_unlock_irq(&rq->lock);
++
++	/*
++	 * Update idle/busy time to the current tick
++	 */
++	if (idle)
++		stats->total_idle += (stats->timestamp - idle_timestamp);
++	else
++		stats->total_busy += (stats->timestamp - idle_timestamp);
++}
++
++EXPORT_SYMBOL(get_cpu_sched_stats);
++#endif
++
+ /**
+  * sys_sched_yield - yield the current processor to other threads.
+  *
+@@ -4366,6 +5791,44 @@
+  * to the expired array. If there are no other threads running on this
+  * CPU then this function will return.
+  */
++#if defined(CONFIG_SPA)
++
++asmlinkage long sys_sched_yield(void)
++{
++	spinlock_t *rql = this_rq_lock();
++
++	/* If there's other tasks on this CPU make sure that at least
++	 * one of them get some CPU before this task's next bite of the
++	 * cherry.  Dequeue before looking for the appropriate run
++	 * queue so that we don't find our queue if we were the sole
++	 * occupant of that queue.
++	 */
++	dequeue_task(current);
++	/*
++	 * special rule: RT tasks will just roundrobin.
++	 */
++	if (likely(!rt_task(current))) {
++		runqueue_t *rq = current->rq;
++		int idx = find_next_bit(rq->bitmap, IDLE_PRIO, current->prio);
++		if (idx < IDLE_PRIO)
++			current->prio = idx;
++	}
++	enqueue_task(current);
++
++	/*
++	 * Since we are going to call schedule() anyway, there's
++	 * no need to preempt or enable interrupts:
++	 */
++	_raw_spin_unlock(rql);
++	preempt_enable_no_resched();
++
++	schedule();
++
++	return 0;
++}
++
++#else
++
+ asmlinkage long sys_sched_yield(void)
+ {
+ 	runqueue_t *rq = this_rq_lock();
+@@ -4424,6 +5887,8 @@
+ 	return 0;
+ }
+ 
++#endif
++
+ void __sched __cond_resched(void)
+ {
+ 	set_current_state(TASK_RUNNING);
+@@ -4675,7 +6140,14 @@
+ 	runqueue_t *rq = cpu_rq(cpu);
+ 	unsigned long flags;
+ 
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++	idle->prio = IDLE_PRIO;
++	initialize_stats(idle);
++	initialize_bonuses(idle);
++	idle->state = TASK_RUNNING;
++	set_task_cpu(idle, cpu);
++	idle->sched_timestamp = adjusted_sched_clock(idle);
++#elif defined(CONFIG_STAIRCASE)
+ 	idle->prio = MAX_PRIO;
+ 	idle->state = TASK_RUNNING;
+ 	idle->burst = 0;
+@@ -4749,11 +6221,19 @@
+ 	unsigned long flags;
+ 	int ret = 0;
+ 	migration_req_t req;
++#if defined(CONFIG_SPA)
++	spinlock_t *rql;
++#else
+ 	runqueue_t *rq;
++#endif
+ 
+ 	perfctr_set_cpus_allowed(p, new_mask);
+ 
++#if defined(CONFIG_SPA)
++	rql = task_rq_lock(p, &flags);
++#else
+ 	rq = task_rq_lock(p, &flags);
++#endif
+ 	if (!cpus_intersects(new_mask, cpu_online_map)) {
+ 		ret = -EINVAL;
+ 		goto out;
+@@ -4766,14 +6246,23 @@
+ 
+ 	if (migrate_task(p, any_online_cpu(new_mask), &req)) {
+ 		/* Need help from migration thread: drop lock and wait. */
++#if defined(CONFIG_SPA)
++		task_rq_unlock(rql, &flags);
++		wake_up_process(p->rq->migration_thread);
++#else
+ 		task_rq_unlock(rq, &flags);
+ 		wake_up_process(rq->migration_thread);
++#endif
+ 		wait_for_completion(&req.done);
+ 		tlb_migrate_finish(p->mm);
+ 		return 0;
+ 	}
+ out:
++#if defined(CONFIG_SPA)
++	task_rq_unlock(rql, &flags);
++#else
+ 	task_rq_unlock(rq, &flags);
++#endif
+ 	return ret;
+ }
+ 
+@@ -4806,6 +6295,27 @@
+ 	if (!cpu_isset(dest_cpu, p->cpus_allowed))
+ 		goto out;
+ 
++#if defined(CONFIG_SPA)
++	if (generic_task_queued(p)) {
++		/*
++		 * Don't do set_task_cpu() until AFTER we dequeue the task,
++		 * since dequeue_task() relies on p->rq always being accurate.
++		 */
++		deactivate_task(p);
++		delta_delay_stats(p, adjusted_sched_clock(p));
++		set_task_cpu(p, dest_cpu);
++		/*
++		 *  activate_task() will set the timestamp correctly so there's
++		 *  no need to adjust it here
++		 */
++		activate_task(p);
++		preempt_curr_if_warranted(p);
++	} else {
++		delta_sleep_stats(p, adjusted_sched_clock(p));
++		set_task_cpu(p, dest_cpu);
++}
++	adjust_sched_timestamp(p, rq_src);
++#else
+ 	set_task_cpu(p, dest_cpu);
+ 	if (generic_task_queued(p)) {
+ 		/*
+@@ -4821,6 +6331,7 @@
+ 		if (generic_task_preempts_curr(p, rq_dest))
+ 			resched_task(rq_dest->curr);
+ 	}
++#endif
+ 
+ out:
+ 	double_rq_unlock(rq_src, rq_dest);
+@@ -4968,9 +6479,16 @@
+ 	 */
+ 	spin_lock_irqsave(&rq->lock, flags);
+ 
++#if defined(CONFIG_SPA)
++	dequeue_task(p);
++	__setscheduler(p, SCHED_FIFO, MAX_RT_PRIO-1);
++	/* Add idle task to _front_ of it's priority queue */
++	__activate_task_head(p);
++#else
+ 	__setscheduler(p, SCHED_FIFO, MAX_RT_PRIO-1);
+ 	/* Add idle task to _front_ of it's priority queue */
+ 	__activate_idle_task(p, rq);
++#endif
+ 
+ 	spin_unlock_irqrestore(&rq->lock, flags);
+ }
+@@ -4985,7 +6503,12 @@
+ {
+ 	int cpu = (long)hcpu;
+ 	struct task_struct *p;
++#if !defined(CONFIG_SPA) || defined(CONFIG_HOTPLUG_CPU)
+ 	struct runqueue *rq;
++#endif
++#if defined(CONFIG_SPA)
++	spinlock_t *rql;
++#endif
+ 	unsigned long flags;
+ 
+ 	switch (action) {
+@@ -4996,9 +6519,17 @@
+ 		p->flags |= PF_NOFREEZE;
+ 		kthread_bind(p, cpu);
+ 		/* Must be high prio: stop_machine expects to yield to it. */
++#if defined(CONFIG_SPA)
++		rql = task_rq_lock(p, &flags);
++#else
+ 		rq = task_rq_lock(p, &flags);
++#endif
+ 		__setscheduler(p, SCHED_FIFO, MAX_RT_PRIO-1);
++#if defined(CONFIG_SPA)
++		task_rq_unlock(rql, &flags);
++#else
+ 		task_rq_unlock(rq, &flags);
++#endif
+ 		cpu_rq(cpu)->migration_thread = p;
+ 		break;
+ 	case CPU_ONLINE:
+@@ -5017,6 +6548,16 @@
+ 		rq = cpu_rq(cpu);
+ 		kthread_stop(rq->migration_thread);
+ 		rq->migration_thread = NULL;
++#if defined(CONFIG_SPA)
++		/* Idle task back to normal in IDLE_PRIO slot */
++		rql = task_rq_lock(rq->idle, &flags);
++		deactivate_task(rq->idle);
++		rq->idle->static_prio = IDLE_PRIO;
++		__setscheduler(rq->idle, SCHED_NORMAL, 0);
++		enqueue_task(rq->idle);
++		task_rq_unlock(rql, &flags);
++		BUG_ON(rq->nr_running != 0);
++#else
+ 		/* Idle task back to normal (off runqueue, low prio) */
+ 		rq = task_rq_lock(rq->idle, &flags);
+ 		deactivate_task(rq->idle, rq);
+@@ -5024,6 +6565,7 @@
+ 		__setscheduler(rq->idle, SCHED_NORMAL, 0);
+ 		task_rq_unlock(rq, &flags);
+ 		BUG_ON(rq->nr_running != 0);
++#endif
+ 
+ 		/* No need to migrate the tasks: it was best-effort if
+ 		 * they didn't do lock_cpu_hotplug().  Just wake up
+@@ -5477,7 +7019,7 @@
+ {
+ 	runqueue_t *rq;
+ 	int i, j;
+-#if !defined(CONFIG_STAIRCASE)
++#if !defined(CONFIG_STAIRCASE) && !defined(CONFIG_SPA)
+ 	int k;
+ #endif
+ 
+@@ -5503,7 +7045,10 @@
+ #endif
+ 
+ 	for (i = 0; i < NR_CPUS; i++) {
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++		rq = cpu_rq(i);
++		spin_lock_init(&rq->lock);
++#elif defined(CONFIG_STAIRCASE)
+ 		rq = cpu_rq(i);
+ 		spin_lock_init(&rq->lock);
+ 		rq->cache_ticks = 0;
+@@ -5530,7 +7075,22 @@
+ #endif
+ 		atomic_set(&rq->nr_iowait, 0);
+ 
+-#if defined(CONFIG_STAIRCASE)
++#if defined(CONFIG_SPA)
++		for (j = 0; j <= IDLE_PRIO; j++) {
++			rq->queues[j].prio = j;
++			INIT_LIST_HEAD(&rq->queues[j].queue);
++		}
++		bitmap_zero(rq->bitmap, NUM_PRIO_SLOTS);
++		/* delimiter for bitsearch */
++		__set_bit(IDLE_PRIO, rq->bitmap);
++		rq->timestamp_last_tick = 0;
++		rq->next_prom_due = ULONG_MAX;
++		rq->pcount = 0;
++		rq->total_delay = 0;
++		rq->eb_yardstick = 0;
++		rq->eb_ticks_to_decay = time_slice_ticks;
++		rq->avg_nr_running = 0;
++#elif defined(CONFIG_STAIRCASE)
+ 		for (j = 0; j <= MAX_PRIO; j++)
+ 			INIT_LIST_HEAD(&rq->queue[j]);
+ 		memset(rq->bitmap, 0, BITS_TO_LONGS(MAX_PRIO+1)*sizeof(long));
+@@ -5649,3 +7209,221 @@
+ 
+ EXPORT_SYMBOL(__preempt_write_lock);
+ #endif /* defined(CONFIG_SMP) && defined(CONFIG_PREEMPT) */
++
++#if defined(CONFIG_SYSCTL) && defined(CONFIG_SPA)
++/*
++ * CPU scheduler control via /proc/sys/cpusched/xxx
++ */
++enum
++{
++	CPU_SCHED_END_OF_LIST=0,
++	CPU_SCHED_TIME_SLICE=1,
++	CPU_SCHED_SCHED_RR_TIME_SLICE,
++	CPU_SCHED_BASE_PROMOTION_INTERVAL,
++	CPU_SCHED_MAX_IA_BONUS,
++	CPU_SCHED_MAX_TPT_BONUS,
++	CPU_SCHED_IA_THRESHOLD,
++	CPU_SCHED_CPU_HOG_THRESHOLD,
++	CPU_SCHED_LOG_AT_EXIT,
++	CPU_SCHED_MODE,
++	CPU_SCHED_INITIAL_IA_BONUS,
++};
++
++static const unsigned int zero = 0;
++static const unsigned int one = 1;
++#define min_milli_value zero
++static const unsigned int max_milli_value = 1000;
++#define min_max_ia_bonus zero
++static const unsigned int max_max_ia_bonus = MAX_MAX_IA_BONUS;
++#define min_max_tpt_bonus zero
++static const unsigned int max_max_tpt_bonus = MAX_MAX_TPT_BONUS;
++static unsigned int time_slice_msecs = DEFAULT_TIME_SLICE_MSECS;
++static unsigned int sched_rr_time_slice_msecs = DEFAULT_TIME_SLICE_MSECS;
++#define min_time_slice_msecs one
++static const unsigned int max_time_slice_msecs = MAX_TIME_SLICE_MSECS;
++static unsigned int base_prom_interval_msecs = BASE_PROM_INTERVAL_MSECS;
++#define min_base_prom_interval_msecs one
++static const unsigned int max_base_prom_interval_msecs = INT_MAX;
++
++static int proc_time_slice_msecs(ctl_table *ctp, int write, struct file *fp,
++				void __user *buffer, size_t *lenp, loff_t *ppos)
++{
++	int res = proc_dointvec_minmax(ctp, write, fp, buffer, lenp, ppos);
++
++	if ((res == 0) && write)
++		time_slice_ticks = MSECS_TO_JIFFIES_MIN_1(time_slice_msecs);
++
++	return res;
++}
++
++static int proc_sched_rr_time_slice_msecs(ctl_table *ctp, int write, struct file *fp,
++				void __user *buffer, size_t *lenp, loff_t *ppos)
++{
++	int res = proc_dointvec_minmax(ctp, write, fp, buffer, lenp, ppos);
++
++	if ((res == 0) && write)
++		sched_rr_time_slice_ticks = MSECS_TO_JIFFIES_MIN_1(sched_rr_time_slice_msecs);
++
++	return res;
++}
++
++static int proc_base_prom_interval_msecs(ctl_table *ctp, int write, struct file *fp,
++				void __user *buffer, size_t *lenp, loff_t *ppos)
++{
++	int res = proc_dointvec_minmax(ctp, write, fp, buffer, lenp, ppos);
++
++	if ((res == 0) && write)
++		base_prom_interval_ticks = MSECS_TO_JIFFIES_MIN_1(base_prom_interval_msecs);
++
++	return res;
++}
++
++static int proc_cpu_hog_threshold(ctl_table *ctp, int write, struct file *fp,
++				void __user *buffer, size_t *lenp, loff_t *ppos)
++{
++	int res = proc_dointvec_minmax(ctp, write, fp, buffer, lenp, ppos);
++
++	if ((res == 0) && write)
++		cpu_hog_threshold = calc_proportion(cpu_hog_threshold_ppt, 1000);
++
++	return res;
++}
++
++static int proc_ia_threshold(ctl_table *ctp, int write, struct file *fp,
++				void __user *buffer, size_t *lenp, loff_t *ppos)
++{
++	int res = proc_dointvec_minmax(ctp, write, fp, buffer, lenp, ppos);
++
++	if ((res == 0) && write)
++		ia_threshold = calc_proportion(ia_threshold_ppt, 1000);
++
++	return res;
++}
++
++#define SCHED_MODE_BUFFER_LEN 16
++static char current_sched_mode[SCHED_MODE_BUFFER_LEN] = "";
++static int proc_sched_mode(ctl_table *ctp, int write, struct file *fp,
++				void __user *buffer, size_t *lenp, loff_t *ppos)
++{
++	int res;
++
++	strcpy(current_sched_mode, sched_mode_names[sched_mode]);
++	res = proc_dostring(ctp, write, fp, buffer, lenp, ppos);
++
++	if ((res == 0) && write) {
++		int i;
++
++		for (i = 0; sched_mode_names[i] != NULL; i++)
++			if (strcmp(current_sched_mode, sched_mode_names[i]) == 0)
++				break;
++		if (sched_mode_names[i] == NULL)
++			res = -EINVAL;
++		else /* set the scheduling mode */
++			sched_mode = i;
++	}
++
++	return res;
++}
++
++ctl_table cpu_sched_table[] = {
++	{
++		.ctl_name	= CPU_SCHED_TIME_SLICE,
++		.procname	= "time_slice",
++		.data		= &time_slice_msecs,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_time_slice_msecs,
++		.extra1		= (void *)&min_time_slice_msecs,
++		.extra2		= (void *)&max_time_slice_msecs
++	},
++	{
++		.ctl_name	= CPU_SCHED_SCHED_RR_TIME_SLICE,
++		.procname	= "sched_rr_time_slice",
++		.data		= &sched_rr_time_slice_msecs,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_sched_rr_time_slice_msecs,
++		.extra1		= (void *)&min_time_slice_msecs,
++		.extra2		= (void *)&max_time_slice_msecs
++	},
++	{
++		.ctl_name	= CPU_SCHED_BASE_PROMOTION_INTERVAL,
++		.procname	= "base_promotion_interval",
++		.data		= &base_prom_interval_msecs,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_base_prom_interval_msecs,
++		.extra1		= (void *)&min_base_prom_interval_msecs,
++		.extra2		= (void *)&max_base_prom_interval_msecs
++	},
++	{
++		.ctl_name	= CPU_SCHED_MAX_IA_BONUS,
++		.procname	= "max_ia_bonus",
++		.data		= &max_ia_bonus,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec_minmax,
++		.extra1		= (void *)&min_max_ia_bonus,
++		.extra2		= (void *)&max_max_ia_bonus
++	},
++	{
++		.ctl_name	= CPU_SCHED_INITIAL_IA_BONUS,
++		.procname	= "initial_ia_bonus",
++		.data		= &initial_ia_bonus,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec_minmax,
++		.extra1		= (void *)&min_max_ia_bonus,
++		.extra2		= (void *)&max_max_ia_bonus
++	},
++	{
++		.ctl_name	= CPU_SCHED_MAX_TPT_BONUS,
++		.procname	= "max_tpt_bonus",
++		.data		= &max_tpt_bonus,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec_minmax,
++		.extra1		= (void *)&min_max_tpt_bonus,
++		.extra2		= (void *)&max_max_tpt_bonus
++	},
++	{
++		.ctl_name	= CPU_SCHED_IA_THRESHOLD,
++		.procname	= "ia_threshold",
++		.data		= &ia_threshold_ppt,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_ia_threshold,
++		.extra1		= (void *)&min_milli_value,
++		.extra2		= (void *)&max_milli_value
++	},
++	{
++		.ctl_name	= CPU_SCHED_CPU_HOG_THRESHOLD,
++		.procname	= "cpu_hog_threshold",
++		.data		= &cpu_hog_threshold_ppt,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_cpu_hog_threshold,
++		.extra1		= (void *)&min_milli_value,
++		.extra2		= (void *)&max_milli_value
++	},
++	{
++		.ctl_name	= CPU_SCHED_LOG_AT_EXIT,
++		.procname	= "log_at_exit",
++		.data		= &log_at_exit,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec_minmax,
++		.extra1		= (void *)&zero,
++		.extra2		= (void *)&one
++	},
++	{
++		.ctl_name	= CPU_SCHED_MODE,
++		.procname	= "mode",
++		.data		= &current_sched_mode,
++		.maxlen		= SCHED_MODE_BUFFER_LEN,
++		.mode		= 0644,
++		.proc_handler	= &proc_sched_mode,
++	},
++	{ .ctl_name = CPU_SCHED_END_OF_LIST }
++};
++#endif
+Index: xx-sources/kernel/sysctl.c
+===================================================================
+--- xx-sources.orig/kernel/sysctl.c	2004-08-13 21:09:41.000000000 -0400
++++ xx-sources/kernel/sysctl.c	2004-08-13 21:53:41.770102776 -0400
+@@ -154,6 +154,9 @@
+ #ifdef CONFIG_UNIX98_PTYS
+ extern ctl_table pty_table[];
+ #endif
++#if defined(CONFIG_SPA)
++extern ctl_table cpu_sched_table[];
++#endif
+ 
+ #ifdef HAVE_ARCH_PICK_MMAP_LAYOUT
+ int sysctl_legacy_va_layout;
+@@ -677,6 +680,14 @@
+ 		.proc_handler	= &proc_dointvec,
+ 	},
+ #endif
++#if defined(CONFIG_SPA)
++	{
++		.ctl_name	= KERN_CPU_SCHED,
++		.procname	= "cpusched",
++		.mode		= 0555,
++		.child		= cpu_sched_table,
++	},
++#endif
+ 	{ .ctl_name = 0 }
+ };
+ 

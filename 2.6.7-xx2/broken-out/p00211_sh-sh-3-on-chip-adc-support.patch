@@ -1,0 +1,151 @@
+
+From: Paul Mundt <lethal@Linux-SH.ORG>
+
+This adds support for the SH-3's on-chip ADC (which is needed by things like
+the touchscreen, etc.).
+
+Signed-off-by: Andriy Skulysh <askulysh@image.kiev.ua>
+Signed-off-by: Paul Mundt <lethal@linux-sh.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/sh/kernel/cpu/Makefile  |    1 
+ 25-akpm/arch/sh/kernel/cpu/adc.c     |   36 +++++++++++++++++++++++++++++++++++
+ 25-akpm/include/asm-sh/adc.h         |   12 +++++++++++
+ 25-akpm/include/asm-sh/cpu-sh3/adc.h |   28 +++++++++++++++++++++++++++
+ 25-akpm/include/asm-sh/hp6xx/hp6xx.h |   18 ++++++++++++++---
+ 5 files changed, 92 insertions(+), 3 deletions(-)
+
+diff -puN /dev/null arch/sh/kernel/cpu/adc.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/kernel/cpu/adc.c	2004-06-23 20:00:13.355659656 -0700
+@@ -0,0 +1,36 @@
++/*
++ * linux/arch/sh/kernel/adc.c -- SH3 on-chip ADC support
++ *
++ *  Copyright (C) 2004  Andriy Skulysh <askulysh@image.kiev.ua>
++ */
++
++#include <linux/module.h>
++#include <asm/adc.h>
++#include <asm/io.h>
++
++
++int adc_single(unsigned int channel)
++{
++	int off;
++	unsigned char csr;
++
++	if (channel >= 8) return -1;
++
++	off = (channel & 0x03) << 2;
++
++	csr = ctrl_inb(ADCSR);
++	csr = channel | ADCSR_ADST | ADCSR_CKS;
++	ctrl_outb(csr, ADCSR);
++
++	do {
++		csr = ctrl_inb(ADCSR);
++	} while ((csr & ADCSR_ADF) == 0);
++
++	csr &= ~(ADCSR_ADF | ADCSR_ADST);
++	ctrl_outb(csr, ADCSR);
++
++	return (((ctrl_inb(ADDRAH + off) << 8) |
++		ctrl_inb(ADDRAL + off)) >> 6);
++}
++
++EXPORT_SYMBOL(adc_single);
+diff -puN arch/sh/kernel/cpu/Makefile~sh-sh-3-on-chip-adc-support arch/sh/kernel/cpu/Makefile
+--- 25/arch/sh/kernel/cpu/Makefile~sh-sh-3-on-chip-adc-support	2004-06-23 20:00:13.350660416 -0700
++++ 25-akpm/arch/sh/kernel/cpu/Makefile	2004-06-23 20:00:13.355659656 -0700
+@@ -10,6 +10,7 @@ obj-$(CONFIG_CPU_SH4)		+= sh4/
+ 
+ obj-$(CONFIG_SH_RTC)            += rtc.o
+ obj-$(CONFIG_UBC_WAKEUP)	+= ubc.o
++obj-$(CONFIG_SH_ADC)            += adc.o
+ 
+ USE_STANDARD_AS_RULE := true
+ 
+diff -puN /dev/null include/asm-sh/adc.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/adc.h	2004-06-23 20:00:13.355659656 -0700
+@@ -0,0 +1,12 @@
++#ifndef __ASM_ADC_H
++#define __ASM_ADC_H
++
++/*
++ * Copyright (C) 2004  Andriy Skulysh
++ */
++
++#include <asm/cpu/adc.h>
++
++int adc_single(unsigned int channel);
++
++#endif /* __ASM_ADC_H */
+diff -puN /dev/null include/asm-sh/cpu-sh3/adc.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/cpu-sh3/adc.h	2004-06-23 20:00:13.356659504 -0700
+@@ -0,0 +1,28 @@
++#ifndef __ASM_CPU_SH3_ADC_H
++#define __ASM_CPU_SH3_ADC_H
++
++/*
++ * Copyright (C) 2004  Andriy Skulysh
++ */
++
++
++#define ADDRAH	0xa4000080
++#define ADDRAL	0xa4000082
++#define ADDRBH	0xa4000084
++#define ADDRBL	0xa4000086
++#define ADDRCH	0xa4000088
++#define ADDRCL	0xa400008a
++#define ADDRDH	0xa400008c
++#define ADDRDL	0xa400008e
++#define ADCSR	0xa4000090
++
++#define ADCSR_ADF	0x80
++#define ADCSR_ADIE	0x40
++#define ADCSR_ADST	0x20
++#define ADCSR_MULTI	0x10
++#define ADCSR_CKS	0x08
++#define ADCSR_CH_MASK	0x07
++
++#define ADCR	0xa4000092
++
++#endif /* __ASM_CPU_SH3_ADC_H */
+diff -puN include/asm-sh/hp6xx/hp6xx.h~sh-sh-3-on-chip-adc-support include/asm-sh/hp6xx/hp6xx.h
+--- 25/include/asm-sh/hp6xx/hp6xx.h~sh-sh-3-on-chip-adc-support	2004-06-23 20:00:13.351660264 -0700
++++ 25-akpm/include/asm-sh/hp6xx/hp6xx.h	2004-06-23 20:00:13.356659504 -0700
+@@ -5,9 +5,22 @@
+  * Copyright (C) 2003  Andriy Skulysh
+  */
+ 
++#define HP680_TS_IRQ IRQ3_IRQ
+ 
+-#define DAC_LCD_BRIGHTNESS		0
+-#define DAC_SPEAKER_VOLUME		1
++#define DAC_LCD_BRIGHTNESS	0
++#define DAC_SPEAKER_VOLUME	1
++
++#define PHDR_TS_PEN_DOWN	0x08
++
++#define SCPDR_TS_SCAN_ENABLE	0x20
++#define SCPDR_TS_SCAN_Y		0x02
++#define SCPDR_TS_SCAN_X		0x01
++
++#define SCPCR_TS_ENABLE		0x405
++#define SCPCR_TS_MASK		0xc0f
++
++#define ADC_CHANNEL_TS_Y	1
++#define ADC_CHANNEL_TS_X	2
+ 
+ #define HD64461_GPADR_SPEAKER	0x01
+ #define HD64461_GPADR_PCMCIA0	(0x02|0x08)
+@@ -16,4 +29,3 @@
+ 
+ 
+ #endif /* __ASM_SH_HP6XX_H */
+-
+_

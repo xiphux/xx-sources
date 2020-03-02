@@ -1,0 +1,94 @@
+
+From: Pavel Machek <pavel@ucw.cz>
+
+swsusp currently has very poor progress indication.  Thanks to Erik Rigtorp
+<erik@rigtorp.com>, we have percentages there, so people know how long wait
+to expect.  Please apply,
+
+From: Erik Rigtorp <erik@rigtorp.com>
+Signed-off-by: Pavel Machek <pavel@suse.cz>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/power/disk.c   |   18 ++++++++++++++----
+ 25-akpm/kernel/power/swsusp.c |   22 +++++++++++++++-------
+ 2 files changed, 29 insertions(+), 11 deletions(-)
+
+diff -puN kernel/power/disk.c~swsusp-progress-in-percent kernel/power/disk.c
+--- 25/kernel/power/disk.c~swsusp-progress-in-percent	2004-10-01 20:15:08.604882464 -0700
++++ 25-akpm/kernel/power/disk.c	2004-10-01 20:15:08.610881552 -0700
+@@ -85,10 +85,20 @@ static int in_suspend __nosavedata = 0;
+ 
+ static void free_some_memory(void)
+ {
+-	printk("Freeing memory: ");
+-	while (shrink_all_memory(10000))
+-		printk(".");
+-	printk("|\n");
++	unsigned int i = 0;
++	unsigned int tmp;
++	unsigned long pages = 0;
++	char *p = "-\\|/";
++
++	printk("Freeing memory...  ");
++	while ((tmp = shrink_all_memory(10000))) {
++		pages += tmp;
++		printk("\b%c", p[i]);
++		i++;
++		if (i > 3)
++			i = 0;
++	}
++	printk("\bdone (%li pages freed)\n", pages);
+ }
+ 
+ 
+diff -puN kernel/power/swsusp.c~swsusp-progress-in-percent kernel/power/swsusp.c
+--- 25/kernel/power/swsusp.c~swsusp-progress-in-percent	2004-10-01 20:15:08.605882312 -0700
++++ 25-akpm/kernel/power/swsusp.c	2004-10-01 20:15:08.612881248 -0700
+@@ -294,15 +294,19 @@ static int data_write(void)
+ {
+ 	int error = 0;
+ 	int i;
++	unsigned int mod = nr_copy_pages / 100;
+ 
+-	printk( "Writing data to swap (%d pages): ", nr_copy_pages );
++	if (!mod)
++		mod = 1;
++
++	printk( "Writing data to swap (%d pages)...     ", nr_copy_pages );
+ 	for (i = 0; i < nr_copy_pages && !error; i++) {
+-		if (!(i%100))
+-			printk( "." );
++		if (!(i%mod))
++			printk( "\b\b\b\b%3d%%", i / mod );
+ 		error = write_page((pagedir_nosave+i)->address,
+ 					  &((pagedir_nosave+i)->swap_address));
+ 	}
+-	printk(" %d Pages done.\n",i);
++	printk("\b\b\b\bdone\n");
+ 	return error;
+ }
+ 
+@@ -1141,14 +1145,18 @@ static int __init data_read(void)
+ 	struct pbe * p;
+ 	int error;
+ 	int i;
++	int mod = nr_copy_pages / 100;
++
++	if (!mod)
++		mod = 1;
+ 
+ 	if ((error = swsusp_pagedir_relocate()))
+ 		return error;
+ 
+-	printk( "Reading image data (%d pages): ", nr_copy_pages );
++	printk( "Reading image data (%d pages):     ", nr_copy_pages );
+ 	for(i = 0, p = pagedir_nosave; i < nr_copy_pages && !error; i++, p++) {
+-		if (!(i%100))
+-			printk( "." );
++		if (!(i%mod))
++			printk( "\b\b\b\b%3d%%", i / mod );
+ 		error = bio_read_page(swp_offset(p->swap_address),
+ 				  (void *)p->address);
+ 	}
+_

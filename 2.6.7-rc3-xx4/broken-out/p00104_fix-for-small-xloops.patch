@@ -1,0 +1,22 @@
+The const_udelay calculation relies on the "overflow" of the lower 32 bits
+of the mull operation. What's in the lower 32 bits is "cut off", so that a
+"rounding down" phenomenon exists. For large arguments to {n,u}delay, this does
+not matter, as udelay and ndelay round _up_ themselves. However, for small
+delays (for cyclone timer: up to 20ns; for pmtmr-based delay timer it's even
+up to 1500ns or 1us) it _is_ a critical error. Empirical testing has shown that
+it happens only (for usual values of loops_per_jiffies) if xloops is lower or
+equal to six. Let's be safe, and double that value, and add one xloop if
+xloop is smaller than 13.
+Signed-off-by: Dominik Brodowski <linux@brodo.de>
+
+diff -ruN linux-original/arch/i386/lib/delay.c linux/arch/i386/lib/delay.c
+--- linux-original/arch/i386/lib/delay.c	2004-06-07 23:02:02.472656160 +0200
++++ linux/arch/i386/lib/delay.c	2004-06-07 22:55:40.063791144 +0200
+@@ -34,6 +34,8 @@
+ 	__asm__("mull %0"
+ 		:"=d" (xloops), "=&a" (d0)
+ 		:"1" (xloops),"0" (current_cpu_data.loops_per_jiffy * HZ));
++	if (unlikely(xloops < 13))
++		xloops++;
+         __delay(xloops);
+ }

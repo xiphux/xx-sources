@@ -1,0 +1,56 @@
+
+From: pmeda@akamai.com
+
+When poll returns error, we do not need to copy out the the revents.  When
+poll returns succeess, we can copy pollfds in units of pages, since there
+is no harm in copying fds and events back.
+
+(akpm: this is a user-visible change.  Previously, a poll() which returned
+-EINTR would have copied some stuff into userspace anyway.  Now it won't copy
+anything.  Silly/broken applications may care)
+
+Signed-off-by:  Prasanna Meda <pmeda@akamai.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/select.c |   18 +++++++++---------
+ 1 files changed, 9 insertions(+), 9 deletions(-)
+
+diff -puN fs/select.c~poll-mini-optimisations fs/select.c
+--- 25/fs/select.c~poll-mini-optimisations	Wed Jan 12 15:34:34 2005
++++ 25-akpm/fs/select.c	Wed Jan 12 15:34:34 2005
+@@ -502,24 +502,24 @@ asmlinkage long sys_poll(struct pollfd _
+ 		}
+ 		i -= pp->len;
+ 	}
+-	fdcount = do_poll(nfds, head, &table, timeout);
++
++	err = fdcount = do_poll(nfds, head, &table, timeout);
++	if (!fdcount && signal_pending(current))
++		err = -EINTR;
++	if (err < 0)
++		goto out_fds;
+ 
+ 	/* OK, now copy the revents fields back to user space. */
+ 	walk = head;
+ 	err = -EFAULT;
+ 	while(walk != NULL) {
+ 		struct pollfd *fds = walk->entries;
+-		int j;
+-
+-		for (j=0; j < walk->len; j++, ufds++) {
+-			if(__put_user(fds[j].revents, &ufds->revents))
+-				goto out_fds;
+-		}
++		if (copy_to_user(ufds, fds, sizeof(struct pollfd) * walk->len))
++			goto out_fds;
++		ufds += walk->len;
+ 		walk = walk->next;
+   	}
+ 	err = fdcount;
+-	if (!fdcount && signal_pending(current))
+-		err = -EINTR;
+ out_fds:
+ 	walk = head;
+ 	while(walk!=NULL) {
+_

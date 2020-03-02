@@ -1,0 +1,88 @@
+
+From: Dmitry Torokhov <dtor_core@ameritech.net>
+
+  Input: Switch to use bus' default device and driver attributes to
+         manage serio sysfs attributes
+  
+Signed-off-by: Dmitry Torokhov <dtor@mail.ru>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/input/serio/serio.c |   23 +++++++++++++++--------
+ 1 files changed, 15 insertions(+), 8 deletions(-)
+
+diff -puN drivers/input/serio/serio.c~input-serio-use-bus-default-driver-device-attributes drivers/input/serio/serio.c
+--- 25/drivers/input/serio/serio.c~input-serio-use-bus-default-driver-device-attributes	2004-06-27 22:51:12.146348536 -0700
++++ 25-akpm/drivers/input/serio/serio.c	2004-06-27 22:51:12.150347928 -0700
+@@ -245,14 +245,12 @@ static ssize_t serio_show_description(st
+ 	struct serio *serio = to_serio_port(dev);
+ 	return sprintf(buf, "%s\n", serio->name);
+ }
+-static DEVICE_ATTR(description, S_IRUGO, serio_show_description, NULL);
+ 
+ static ssize_t serio_show_legacy_position(struct device *dev, char *buf)
+ {
+ 	struct serio *serio = to_serio_port(dev);
+ 	return sprintf(buf, "%s\n", serio->phys);
+ }
+-static DEVICE_ATTR(legacy_position, S_IRUGO, serio_show_legacy_position, NULL);
+ 
+ static ssize_t serio_show_driver(struct device *dev, char *buf)
+ {
+@@ -290,7 +288,14 @@ static ssize_t serio_rebind_driver(struc
+ 
+ 	return retval;
+ }
+-static DEVICE_ATTR(driver, S_IWUSR | S_IRUGO, serio_show_driver, serio_rebind_driver);
++
++static struct device_attribute serio_device_attrs[] = {
++	__ATTR(description, S_IRUGO, serio_show_description, NULL),
++	__ATTR(legacy_position, S_IRUGO, serio_show_legacy_position, NULL),
++	__ATTR(driver, S_IWUSR | S_IRUGO, serio_show_driver, serio_rebind_driver),
++	__ATTR_NULL
++};
++
+ 
+ static void serio_release_port(struct device *dev)
+ {
+@@ -312,9 +317,6 @@ static void serio_create_port(struct ser
+ 	if (serio->parent)
+ 		serio->dev.parent = &serio->parent->dev;
+ 	device_register(&serio->dev);
+-	device_create_file(&serio->dev, &dev_attr_description);
+-	device_create_file(&serio->dev, &dev_attr_legacy_position);
+-	device_create_file(&serio->dev, &dev_attr_driver);
+ }
+ 
+ /*
+@@ -489,7 +491,11 @@ static ssize_t serio_driver_show_descrip
+ 	struct serio_driver *driver = to_serio_driver(drv);
+ 	return sprintf(buf, "%s\n", driver->description ? driver->description : "(none)");
+ }
+-static DRIVER_ATTR(description, S_IRUGO, serio_driver_show_description, NULL);
++
++static struct driver_attribute serio_driver_attrs[] = {
++	__ATTR(description, S_IRUGO, serio_driver_show_description, NULL),
++	__ATTR_NULL
++};
+ 
+ void serio_register_driver(struct serio_driver *drv)
+ {
+@@ -501,7 +507,6 @@ void serio_register_driver(struct serio_
+ 
+ 	drv->driver.bus = &serio_bus;
+ 	driver_register(&drv->driver);
+-	driver_create_file(&drv->driver, &driver_attr_description);
+ 
+ 	if (drv->manual_bind)
+ 		goto out;
+@@ -607,6 +612,8 @@ static int __init serio_init(void)
+ 		return -1;
+ 	}
+ 
++	serio_bus.dev_attrs = serio_device_attrs;
++	serio_bus.drv_attrs = serio_driver_attrs;
+ 	bus_register(&serio_bus);
+ 
+ 	return 0;
+_

@@ -1,0 +1,57 @@
+
+From: Arnd Bergmann <arnd@arndb.de>
+
+Reading the contents of a module_param_string through sysfs currently
+oopses because the param_get_charp() function cannot operate on a
+kparam_string struct.  This introduces the required param_get_string.
+
+Signed-off-by: Arnd Bergmann <arnd@arndb.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/moduleparam.h |    3 ++-
+ 25-akpm/kernel/params.c             |    7 +++++++
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff -puN include/linux/moduleparam.h~fix-reading-string-module-parameters-in-sysfs include/linux/moduleparam.h
+--- 25/include/linux/moduleparam.h~fix-reading-string-module-parameters-in-sysfs	2004-08-04 23:41:30.831907072 -0700
++++ 25-akpm/include/linux/moduleparam.h	2004-08-04 23:41:30.836906312 -0700
+@@ -73,7 +73,7 @@ struct kparam_array
+ #define module_param_string(name, string, len, perm)			\
+ 	static struct kparam_string __param_string_##name		\
+ 		= { len, string };					\
+-	module_param_call(name, param_set_copystring, param_get_charp,	\
++	module_param_call(name, param_set_copystring, param_get_string,	\
+ 		   &__param_string_##name, perm)
+ 
+ /* Called on module insert or kernel boot */
+@@ -140,6 +140,7 @@ extern int param_array_set(const char *v
+ extern int param_array_get(char *buffer, struct kernel_param *kp);
+ 
+ extern int param_set_copystring(const char *val, struct kernel_param *kp);
++extern int param_get_string(char *buffer, struct kernel_param *kp);
+ 
+ int param_array(const char *name,
+ 		const char *val,
+diff -puN kernel/params.c~fix-reading-string-module-parameters-in-sysfs kernel/params.c
+--- 25/kernel/params.c~fix-reading-string-module-parameters-in-sysfs	2004-08-04 23:41:30.833906768 -0700
++++ 25-akpm/kernel/params.c	2004-08-04 23:41:30.837906160 -0700
+@@ -339,6 +339,12 @@ int param_set_copystring(const char *val
+ 	return 0;
+ }
+ 
++int param_get_string(char *buffer, struct kernel_param *kp)
++{
++	struct kparam_string *kps = kp->arg;
++	return strlcpy(buffer, kps->string, kps->maxlen);
++}
++
+ EXPORT_SYMBOL(param_set_short);
+ EXPORT_SYMBOL(param_get_short);
+ EXPORT_SYMBOL(param_set_ushort);
+@@ -360,3 +366,4 @@ EXPORT_SYMBOL(param_get_invbool);
+ EXPORT_SYMBOL(param_array_set);
+ EXPORT_SYMBOL(param_array_get);
+ EXPORT_SYMBOL(param_set_copystring);
++EXPORT_SYMBOL(param_get_string);
+_

@@ -1,0 +1,345 @@
+Timekeeping is runqueue design dependant so privatise those functions.
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+Index: linux-2.6.10-rc2-mm1/include/linux/scheduler.h
+===================================================================
+--- linux-2.6.10-rc2-mm1.orig/include/linux/scheduler.h	2004-11-17 22:08:33.539762129 +1100
++++ linux-2.6.10-rc2-mm1/include/linux/scheduler.h	2004-11-17 22:37:19.497540526 +1100
+@@ -24,6 +24,7 @@ struct sched_drv
+ 	unsigned long (*nr_uninterruptible)(void);
+ 	unsigned long long (*nr_context_switches)(void);
+ 	unsigned long (*nr_iowait)(void);
++	unsigned long (*nr_iowait_task_cpu)(const task_t *);
+ 	int (*idle_cpu)(int);
+ 	void (*init_idle)(task_t *, int);
+ 	void (*exit)(task_t *);
+Index: linux-2.6.10-rc2-mm1/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc2-mm1.orig/kernel/sched.c	2004-11-17 22:08:33.541761821 +1100
++++ linux-2.6.10-rc2-mm1/kernel/sched.c	2004-11-17 22:37:19.495540833 +1100
+@@ -1192,6 +1192,11 @@ static unsigned long ingo_nr_iowait(void
+ 	return sum;
+ }
+ 
++static unsigned long ingo_nr_iowait_task_cpu(const task_t *p)
++{
++	return atomic_read(&task_rq(p)->nr_iowait);
++}
++
+ #ifdef CONFIG_SMP
+ 
+ /*
+@@ -1998,148 +2003,6 @@ static inline int wake_priority_sleeper(
+ 			((rq)->curr->static_prio > (rq)->best_expired_prio))
+ 
+ /*
+- * Do the virtual cpu time signal calculations.
+- * @p: the process that the cpu time gets accounted to
+- * @cputime: the cpu time spent in user space since the last update
+- */
+-static inline void account_it_virt(struct task_struct * p, cputime_t cputime)
+-{
+-	cputime_t it_virt = p->it_virt_value;
+-
+-	if (cputime_gt(it_virt, cputime_zero) &&
+-	    cputime_gt(cputime, cputime_zero)) {
+-		if (cputime_ge(cputime, it_virt)) {
+-			it_virt = cputime_add(it_virt, p->it_virt_incr);
+-			send_sig(SIGVTALRM, p, 1);
+-		}
+-		it_virt = cputime_sub(it_virt, cputime);
+-		p->it_virt_value = it_virt;
+-	}
+-}
+-
+-/*
+- * Do the virtual profiling signal calculations.
+- * @p: the process that the cpu time gets accounted to
+- * @cputime: the cpu time spent in user and kernel space since the last update
+- */
+-static void account_it_prof(struct task_struct *p, cputime_t cputime)
+-{
+-	cputime_t it_prof = p->it_prof_value;
+-
+-	if (cputime_gt(it_prof, cputime_zero) &&
+-	    cputime_gt(cputime, cputime_zero)) {
+-		if (cputime_ge(cputime, it_prof)) {
+-			it_prof = cputime_add(it_prof, p->it_prof_incr);
+-			send_sig(SIGPROF, p, 1);
+-		}
+-		it_prof = cputime_sub(it_prof, cputime);
+-		p->it_prof_value = it_prof;
+-	}
+-}
+-
+-/*
+- * Check if the process went over its cputime resource limit after
+- * some cpu time got added to utime/stime.
+- * @p: the process that the cpu time gets accounted to
+- * @cputime: the cpu time spent in user and kernel space since the last update
+- */
+-static void check_rlimit(struct task_struct *p, cputime_t cputime)
+-{
+-	cputime_t total, tmp;
+-
+-	total = cputime_add(p->utime, p->stime);
+-	tmp = jiffies_to_cputime(p->signal->rlim[RLIMIT_CPU].rlim_cur);
+-	if (unlikely(cputime_gt(total, tmp))) {
+-		/* Send SIGXCPU every second. */
+-		tmp = cputime_sub(total, cputime);
+-		if (cputime_to_secs(tmp) < cputime_to_secs(total))
+-			send_sig(SIGXCPU, p, 1);
+-		/* and SIGKILL when we go over max.. */
+-		tmp = jiffies_to_cputime(p->signal->rlim[RLIMIT_CPU].rlim_max);
+-		if (cputime_gt(total, tmp))
+-			send_sig(SIGKILL, p, 1);
+-	}
+-}
+-
+-/*
+- * Account user cpu time to a process.
+- * @p: the process that the cpu time gets accounted to
+- * @hardirq_offset: the offset to subtract from hardirq_count()
+- * @cputime: the cpu time spent in user space since the last update
+- */
+-void account_user_time(struct task_struct *p, cputime_t cputime)
+-{
+-	struct cpu_usage_stat *cpustat = &kstat_this_cpu.cpustat;
+-	cputime64_t tmp;
+-
+-	p->utime = cputime_add(p->utime, cputime);
+-
+-	/* Check for signals (SIGVTALRM, SIGPROF, SIGXCPU & SIGKILL). */
+-	check_rlimit(p, cputime);
+-	account_it_virt(p, cputime);
+-	account_it_prof(p, cputime);
+-
+-	/* Add user time to cpustat. */
+-	tmp = cputime_to_cputime64(cputime);
+-	if (TASK_NICE(p) > 0)
+-		cpustat->nice = cputime64_add(cpustat->nice, tmp);
+-	else
+-		cpustat->user = cputime64_add(cpustat->user, tmp);
+-}
+-
+-/*
+- * Account system cpu time to a process.
+- * @p: the process that the cpu time gets accounted to
+- * @hardirq_offset: the offset to subtract from hardirq_count()
+- * @cputime: the cpu time spent in kernel space since the last update
+- */
+-void account_system_time(struct task_struct *p, int hardirq_offset,
+-			 cputime_t cputime)
+-{
+-	struct cpu_usage_stat *cpustat = &kstat_this_cpu.cpustat;
+-	runqueue_t *rq = this_rq();
+-	cputime64_t tmp;
+-
+-	p->stime = cputime_add(p->stime, cputime);
+-
+-	/* Check for signals (SIGPROF, SIGXCPU & SIGKILL). */
+-	if (likely(p->signal && p->exit_state < EXIT_ZOMBIE)) {
+-		check_rlimit(p, cputime);
+-		account_it_prof(p, cputime);
+-	}
+-
+-	/* Add system time to cpustat. */
+-	tmp = cputime_to_cputime64(cputime);
+-	if (hardirq_count() - hardirq_offset)
+-		cpustat->irq = cputime64_add(cpustat->irq, tmp);
+-	else if (softirq_count())
+-		cpustat->softirq = cputime64_add(cpustat->softirq, tmp);
+-	else if (p != rq->idle)
+-		cpustat->system = cputime64_add(cpustat->system, tmp);
+-	else if (atomic_read(&rq->nr_iowait) > 0)
+-		cpustat->iowait = cputime64_add(cpustat->iowait, tmp);
+-	else
+-		cpustat->idle = cputime64_add(cpustat->idle, tmp);
+-}
+-
+-/*
+- * Account for involuntary wait time.
+- * @p: the process from which the cpu time has been stolen
+- * @steal: the cpu time spent in involuntary wait
+- */
+-void account_steal_time(struct task_struct *p, cputime_t steal)
+-{
+-	struct cpu_usage_stat *cpustat = &kstat_this_cpu.cpustat;
+-	cputime64_t steal64 = cputime_to_cputime64(steal);
+-	runqueue_t *rq = this_rq();
+-
+-	if (p == rq->idle)
+-		cpustat->system = cputime64_add(cpustat->system, steal64);
+-	else
+-		cpustat->steal = cputime64_add(cpustat->steal, steal64);
+-}
+-
+-/*
+  * This function gets called by the timer code, with HZ frequency.
+  * We call it with interrupts disabled.
+  *
+@@ -3946,6 +3809,7 @@ struct sched_drv ingo_sched_drv = {
+ 	.nr_uninterruptible	= ingo_nr_uninterruptible,
+ 	.nr_context_switches	= ingo_nr_context_switches,
+ 	.nr_iowait		= ingo_nr_iowait,
++	.nr_iowait_task_cpu	= ingo_nr_iowait_task_cpu,
+ 	.idle_cpu		= ingo_idle_cpu,
+ 	.init_idle		= ingo_init_idle,
+ 	.exit			= ingo_sched_exit,
+Index: linux-2.6.10-rc2-mm1/kernel/scheduler.c
+===================================================================
+--- linux-2.6.10-rc2-mm1.orig/kernel/scheduler.c	2004-11-17 22:08:33.543761514 +1100
++++ linux-2.6.10-rc2-mm1/kernel/scheduler.c	2004-11-17 22:40:09.375448106 +1100
+@@ -44,6 +44,151 @@
+ DEFINE_PER_CPU(struct kernel_stat, kstat);
+ EXPORT_PER_CPU_SYMBOL(kstat);
+ 
++unsigned long nr_iowait_task_cpu(const task_t *p)
++{
++	return scheduler->nr_iowait_task_cpu(p);
++}
++
++/*
++ * Do the virtual cpu time signal calculations.
++ * @p: the process that the cpu time gets accounted to
++ * @cputime: the cpu time spent in user space since the last update
++ */
++static inline void account_it_virt(struct task_struct * p, cputime_t cputime)
++{
++	cputime_t it_virt = p->it_virt_value;
++
++	if (cputime_gt(it_virt, cputime_zero) &&
++	    cputime_gt(cputime, cputime_zero)) {
++		if (cputime_ge(cputime, it_virt)) {
++			it_virt = cputime_add(it_virt, p->it_virt_incr);
++			send_sig(SIGVTALRM, p, 1);
++		}
++		it_virt = cputime_sub(it_virt, cputime);
++		p->it_virt_value = it_virt;
++	}
++}
++
++/*
++ * Do the virtual profiling signal calculations.
++ * @p: the process that the cpu time gets accounted to
++ * @cputime: the cpu time spent in user and kernel space since the last update
++ */
++static void account_it_prof(struct task_struct *p, cputime_t cputime)
++{
++	cputime_t it_prof = p->it_prof_value;
++
++	if (cputime_gt(it_prof, cputime_zero) &&
++	    cputime_gt(cputime, cputime_zero)) {
++		if (cputime_ge(cputime, it_prof)) {
++			it_prof = cputime_add(it_prof, p->it_prof_incr);
++			send_sig(SIGPROF, p, 1);
++		}
++		it_prof = cputime_sub(it_prof, cputime);
++		p->it_prof_value = it_prof;
++	}
++}
++
++/*
++ * Check if the process went over its cputime resource limit after
++ * some cpu time got added to utime/stime.
++ * @p: the process that the cpu time gets accounted to
++ * @cputime: the cpu time spent in user and kernel space since the last update
++ */
++static void check_rlimit(struct task_struct *p, cputime_t cputime)
++{
++	cputime_t total, tmp;
++
++	total = cputime_add(p->utime, p->stime);
++	tmp = jiffies_to_cputime(p->signal->rlim[RLIMIT_CPU].rlim_cur);
++	if (unlikely(cputime_gt(total, tmp))) {
++		/* Send SIGXCPU every second. */
++		tmp = cputime_sub(total, cputime);
++		if (cputime_to_secs(tmp) < cputime_to_secs(total))
++			send_sig(SIGXCPU, p, 1);
++		/* and SIGKILL when we go over max.. */
++		tmp = jiffies_to_cputime(p->signal->rlim[RLIMIT_CPU].rlim_max);
++		if (cputime_gt(total, tmp))
++			send_sig(SIGKILL, p, 1);
++	}
++}
++
++/*
++ * Account user cpu time to a process.
++ * @p: the process that the cpu time gets accounted to
++ * @hardirq_offset: the offset to subtract from hardirq_count()
++ * @cputime: the cpu time spent in user space since the last update
++ */
++void account_user_time(struct task_struct *p, cputime_t cputime)
++{
++	struct cpu_usage_stat *cpustat = &kstat_this_cpu.cpustat;
++	cputime64_t tmp;
++
++	p->utime = cputime_add(p->utime, cputime);
++
++	/* Check for signals (SIGVTALRM, SIGPROF, SIGXCPU & SIGKILL). */
++	check_rlimit(p, cputime);
++	account_it_virt(p, cputime);
++	account_it_prof(p, cputime);
++
++	/* Add user time to cpustat. */
++	tmp = cputime_to_cputime64(cputime);
++	if (task_nice(p) > 0)
++		cpustat->nice = cputime64_add(cpustat->nice, tmp);
++	else
++		cpustat->user = cputime64_add(cpustat->user, tmp);
++}
++
++/*
++ * Account system cpu time to a process.
++ * @p: the process that the cpu time gets accounted to
++ * @hardirq_offset: the offset to subtract from hardirq_count()
++ * @cputime: the cpu time spent in kernel space since the last update
++ */
++void account_system_time(struct task_struct *p, int hardirq_offset,
++			 cputime_t cputime)
++{
++	struct cpu_usage_stat *cpustat = &kstat_this_cpu.cpustat;
++	cputime64_t tmp;
++
++	p->stime = cputime_add(p->stime, cputime);
++
++	/* Check for signals (SIGPROF, SIGXCPU & SIGKILL). */
++	if (likely(p->signal && p->exit_state < EXIT_ZOMBIE)) {
++		check_rlimit(p, cputime);
++		account_it_prof(p, cputime);
++	}
++
++	/* Add system time to cpustat. */
++	tmp = cputime_to_cputime64(cputime);
++	if (hardirq_count() - hardirq_offset)
++		cpustat->irq = cputime64_add(cpustat->irq, tmp);
++	else if (softirq_count())
++		cpustat->softirq = cputime64_add(cpustat->softirq, tmp);
++	else if (!is_idle_task(p))
++		cpustat->system = cputime64_add(cpustat->system, tmp);
++	else if (nr_iowait_task_cpu(p) > 0)
++		cpustat->iowait = cputime64_add(cpustat->iowait, tmp);
++	else
++		cpustat->idle = cputime64_add(cpustat->idle, tmp);
++}
++
++/*
++ * Account for involuntary wait time.
++ * @p: the process from which the cpu time has been stolen
++ * @steal: the cpu time spent in involuntary wait
++ */
++void account_steal_time(struct task_struct *p, cputime_t steal)
++{
++	struct cpu_usage_stat *cpustat = &kstat_this_cpu.cpustat;
++	cputime64_t steal64 = cputime_to_cputime64(steal);
++
++	if (!is_idle_task(p))
++		cpustat->system = cputime64_add(cpustat->system, steal64);
++	else
++		cpustat->steal = cputime64_add(cpustat->steal, steal64);
++}
++
+ #ifdef CONFIG_SMP
+ /***
+  * kick_process - kick a running thread to enter/exit the kernel

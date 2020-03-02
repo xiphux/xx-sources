@@ -1,0 +1,33 @@
+
+From: Badari Pulavarty <pbadari@us.ibm.com>
+
+We're being lazy when calculating the size of the needed BIO, allocating
+two extra pages to cope with funny alignments.
+
+Change that to be exact, thus allocating smaller BIOs someties.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/direct-io.c |    8 ++++++--
+ 1 files changed, 6 insertions(+), 2 deletions(-)
+
+diff -puN fs/direct-io.c~dio-bio-sizing-fix fs/direct-io.c
+--- 25/fs/direct-io.c~dio-bio-sizing-fix	Mon Aug  2 16:18:34 2004
++++ 25-akpm/fs/direct-io.c	Mon Aug  2 16:18:34 2004
+@@ -954,8 +954,12 @@ direct_io_worker(int rw, struct kiocb *i
+ 	dio->waiter = NULL;
+ 
+ 	dio->pages_in_io = 0;
+-	for (seg = 0; seg < nr_segs; seg++) 
+-		dio->pages_in_io += (iov[seg].iov_len >> blkbits) + 2; 
++	for (seg = 0; seg < nr_segs; seg++) {
++		user_addr = (unsigned long)iov[seg].iov_base;
++		dio->pages_in_io +=
++			((user_addr+iov[seg].iov_len +PAGE_SIZE-1)/PAGE_SIZE
++				- user_addr/PAGE_SIZE);
++	}
+ 
+ 	for (seg = 0; seg < nr_segs; seg++) {
+ 		user_addr = (unsigned long)iov[seg].iov_base;
+_

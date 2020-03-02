@@ -1,0 +1,514 @@
+could you try the replacement patch below - what results does it give?
+
+	Ingo
+
+Index: xx-sources/arch/i386/kernel/smpboot.c
+===================================================================
+--- xx-sources.orig/arch/i386/kernel/smpboot.c	2005-01-14 10:00:36.184934024 +0000
++++ xx-sources/arch/i386/kernel/smpboot.c	2005-01-14 10:03:46.895941544 +0000
+@@ -855,6 +855,8 @@
+ cycles_t cacheflush_time;
+ unsigned long cache_decay_ticks;
+ 
++extern unsigned long sched_cache_size;
++
+ static void smp_tune_scheduling (void)
+ {
+ 	unsigned long cachesize;       /* kB   */
+@@ -885,6 +887,7 @@
+ 		}
+ 
+ 		cacheflush_time = (cpu_khz>>10) * (cachesize<<10) / bandwidth;
++		sched_cache_size = cachesize * 1024;
+ 	}
+ 
+ 	cache_decay_ticks = (long)cacheflush_time/cpu_khz + 1;
+Index: xx-sources/arch/x86_64/kernel/smpboot.c
+===================================================================
+--- xx-sources.orig/arch/x86_64/kernel/smpboot.c	2004-11-18 23:28:25.000000000 +0000
++++ xx-sources/arch/x86_64/kernel/smpboot.c	2005-01-14 10:05:03.128352456 +0000
+@@ -663,6 +663,8 @@
+ cycles_t cacheflush_time;
+ unsigned long cache_decay_ticks;
+ 
++extern unsigned long sched_cache_size;
++
+ static void smp_tune_scheduling (void)
+ {
+ 	int cachesize;       /* kB   */
+@@ -693,6 +695,7 @@
+ 		}
+ 
+ 		cacheflush_time = (cpu_khz>>10) * (cachesize<<10) / bandwidth;
++		sched_cache_size = cachesize * 1024;
+ 	}
+ 
+ 	cache_decay_ticks = (long)cacheflush_time/cpu_khz * HZ / 1000;
+Index: xx-sources/include/asm-i386/topology.h
+===================================================================
+--- xx-sources.orig/include/asm-i386/topology.h	2005-01-14 10:00:36.189933264 +0000
++++ xx-sources/include/asm-i386/topology.h	2005-01-14 10:03:46.896941392 +0000
+@@ -78,7 +78,7 @@
+ 	.max_interval		= 32,			\
+ 	.busy_factor		= 32,			\
+ 	.imbalance_pct		= 125,			\
+-	.cache_hot_time		= (10*1000000),		\
++	.cache_hot_time		= cache_decay_nsec,	\
+ 	.cache_nice_tries	= 1,			\
+ 	.per_cpu_gain		= 100,			\
+ 	.flags			= SD_LOAD_BALANCE	\
+Index: xx-sources/include/asm-x86_64/topology.h
+===================================================================
+--- xx-sources.orig/include/asm-x86_64/topology.h	2004-11-18 23:30:10.000000000 +0000
++++ xx-sources/include/asm-x86_64/topology.h	2005-01-14 10:05:46.614741520 +0000
+@@ -42,7 +42,7 @@
+ 	.max_interval		= 32,			\
+ 	.busy_factor		= 32,			\
+ 	.imbalance_pct		= 125,			\
+-	.cache_hot_time		= (10*1000000),		\
++	.cache_hot_time		= cache_decay_nsec,	\
+ 	.cache_nice_tries	= 1,			\
+ 	.per_cpu_gain		= 100,			\
+ 	.flags			= SD_LOAD_BALANCE	\
+Index: xx-sources/include/linux/sched.h
+===================================================================
+--- xx-sources.orig/include/linux/sched.h	2005-01-14 10:03:46.726967232 +0000
++++ xx-sources/include/linux/sched.h	2005-01-14 10:03:46.896941392 +0000
+@@ -1059,6 +1059,16 @@
+ extern int cond_resched_lock(spinlock_t * lock);
+ extern int cond_resched_softirq(void);
+ 
++#ifdef CONFIG_SMP
++extern void fill_cache(void *__cache, unsigned long __size);
++extern void source_handler(void *__data);
++extern void target_handler(void *__data);
++unsigned long long measure_one(void *cache, unsigned long size, int source, int target);
++unsigned long long measure_cacheflush_time(int cpu1, int cpu2);
++extern unsigned long sched_cache_size;
++extern unsigned long long cache_decay_nsec;
++#endif
++
+ /*
+  * Does a critical section need to be broken due to another
+  * task waiting?:
+Index: xx-sources/kernel/nicksched.c
+===================================================================
+--- xx-sources.orig/kernel/nicksched.c	2005-01-14 10:03:46.729966776 +0000
++++ xx-sources/kernel/nicksched.c	2005-01-14 10:03:46.898941088 +0000
+@@ -3149,11 +3149,47 @@
+ /*
+  * Set up scheduler domains and groups.  Callers must hold the hotplug lock.
+  */
+-static void __devinit arch_init_sched_domains(void)
++__init static void arch_init_sched_domains(void)
+ {
+-	int i;
++	int i, cpu1 = -1, cpu2 = -1;
++	unsigned long long min_delta = -1ULL;
++
+ 	cpumask_t cpu_default_map;
+ 
++	printk("arch cache_decay_nsec: %ld\n", cache_decay_ticks*1000000);
++	printk("migration cost matrix (cache_size: %ld, cpu: %ld MHz):\n",
++		sched_cache_size, cpu_khz/1000);
++	printk("      ");
++	for (cpu1 = 0; cpu1 < NR_CPUS; cpu1++) {
++		if (!cpu_online(cpu1))
++			continue;
++		printk("  [%02d]", cpu1);
++	}
++	printk("\n");
++	for (cpu1 = 0; cpu1 < NR_CPUS; cpu1++) {
++		if (!cpu_online(cpu1))
++			continue;
++		printk("[%02d]: ", cpu1);
++		for (cpu2 = 0; cpu2 < NR_CPUS; cpu2++) {
++			unsigned long long delta;
++
++			if (!cpu_online(cpu2))
++				continue;
++			delta = measure_cacheflush_time(cpu1, cpu2);
++			
++			printk(" %3Ld.%ld", delta >> 20,
++				(((long)delta >> 10) / 102) % 10);
++			if ((cpu1 != cpu2) && (delta < min_delta))
++				min_delta = delta;
++		}
++		printk("\n");
++	}
++	printk("min_delta: %Ld\n", min_delta);
++	if (min_delta != -1ULL)
++		cache_decay_nsec = min_delta;
++	printk("using cache_decay nsec: %Ld (%Ld msec)\n",
++		cache_decay_nsec, cache_decay_nsec >> 20);
++
+ #if defined(CONFIG_SCHED_SMT) && defined(CONFIG_NUMA)
+ 	check_sibling_maps();
+ #endif
+@@ -3655,7 +3691,7 @@
+                        deactivate_task(p, task_rq(p));
+                __setscheduler(p, SCHED_NORMAL, 0);
+                if (array) {
+-                       __activate_task(p, task_rq(p));
++                       __activate_task(p, task_rq(p), array);
+                        resched_task(rq->curr);
+                }
+ 
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2005-01-14 10:03:46.800955984 +0000
++++ xx-sources/kernel/sched.c	2005-01-14 10:03:46.899940936 +0000
+@@ -3210,11 +3210,47 @@
+ /*
+  * Set up scheduler domains and groups.  Callers must hold the hotplug lock.
+  */
+-static void __devinit arch_init_sched_domains(void)
++__init static void arch_init_sched_domains(void)
+ {
+-	int i;
++	int i, cpu1 = -1, cpu2 = -1;
++	unsigned long long min_delta = -1ULL;
++
+ 	cpumask_t cpu_default_map;
+ 
++	printk("arch cache_decay_nsec: %ld\n", cache_decay_ticks*1000000);
++	printk("migration cost matrix (cache_size: %ld, cpu: %ld MHz):\n",
++		sched_cache_size, cpu_khz/1000);
++	printk("      ");
++	for (cpu1 = 0; cpu1 < NR_CPUS; cpu1++) {
++		if (!cpu_online(cpu1))
++			continue;
++		printk("  [%02d]", cpu1);
++	}
++	printk("\n");
++	for (cpu1 = 0; cpu1 < NR_CPUS; cpu1++) {
++		if (!cpu_online(cpu1))
++			continue;
++		printk("[%02d]: ", cpu1);
++		for (cpu2 = 0; cpu2 < NR_CPUS; cpu2++) {
++			unsigned long long delta;
++
++			if (!cpu_online(cpu2))
++				continue;
++			delta = measure_cacheflush_time(cpu1, cpu2);
++			
++			printk(" %3Ld.%ld", delta >> 20,
++				(((long)delta >> 10) / 102) % 10);
++			if ((cpu1 != cpu2) && (delta < min_delta))
++				min_delta = delta;
++		}
++		printk("\n");
++	}
++	printk("min_delta: %Ld\n", min_delta);
++	if (min_delta != -1ULL)
++		cache_decay_nsec = min_delta;
++	printk("using cache_decay nsec: %Ld (%Ld msec)\n",
++		cache_decay_nsec, cache_decay_nsec >> 20);
++
+ #if defined(CONFIG_SCHED_SMT) && defined(CONFIG_NUMA)
+ 	check_sibling_maps();
+ #endif
+Index: xx-sources/kernel/scheduler.c
+===================================================================
+--- xx-sources.orig/kernel/scheduler.c	2005-01-14 10:03:46.801955832 +0000
++++ xx-sources/kernel/scheduler.c	2005-01-14 10:03:46.900940784 +0000
+@@ -193,6 +193,191 @@
+ void set_task_cpu(struct task_struct *p, unsigned int cpu);
+ 
+ #ifdef CONFIG_SMP
++/*
++ * Task migration cost measurement between source and target CPUs.
++ *
++ * This is done by measuring the worst-case cost. Here are the
++ * steps that are taken:
++ *
++ * 1) the source CPU dirties its L2 cache with a shared buffer
++ * 2) the target CPU dirties its L2 cache with a local buffer
++ * 3) the target CPU dirties the shared buffer
++ *
++ * We measure the time step #3 takes - this is the cost of migrating
++ * a cache-hot task that has a large, dirty dataset in the L2 cache,
++ * to another CPU.
++ */
++
++
++/*
++ * Dirty a big buffer in a hard-to-predict (for the L2 cache) way. This
++ * is the operation that is timed, so we try to generate unpredictable
++ * cachemisses that still end up filling the L2 cache:
++ */
++__init void fill_cache(void *__cache, unsigned long __size)
++{
++	unsigned long size = __size/sizeof(long);
++	unsigned long *cache = __cache;
++	unsigned long data = 0xdeadbeef;
++	int i;
++
++	for (i = 0; i < size/4; i++) {
++		if ((i & 3) == 0)
++			cache[i] = data;
++		if ((i & 3) == 1)
++			cache[size-1-i] = data;
++		if ((i & 3) == 2)
++			cache[size/2-i] = data;
++		if ((i & 3) == 3)
++			cache[size/2+i] = data;
++ 	}
++}
++
++struct flush_data {
++	unsigned long source, target;
++	void (*fn)(void *, unsigned long);
++	void *cache;
++	void *local_cache;
++	unsigned long size;
++	unsigned long long delta;
++};
++
++/*
++ * Dirty L2 on the source CPU:
++ */
++__init void source_handler(void *__data)
++{
++	struct flush_data *data = __data;
++
++	if (smp_processor_id() != data->source)
++		return;
++
++	memset(data->cache, 0, data->size);
++}
++
++/*
++ * Dirty the L2 cache on this CPU and then access the shared
++ * buffer. (which represents the working set of the migrated task.)
++ */
++__init void target_handler(void *__data)
++{
++	struct flush_data *data = __data;
++	unsigned long long t0, t1;
++	unsigned long flags;
++
++	if (smp_processor_id() != data->target)
++		return;
++
++	memset(data->local_cache, 0, data->size);
++	local_irq_save(flags);
++	t0 = sched_clock();
++	fill_cache(data->cache, data->size);
++	t1 = sched_clock();
++	local_irq_restore(flags);
++
++	data->delta = t1 - t0;
++}
++
++/*
++ * Measure the cache-cost of one task migration:
++ */
++__init unsigned long long measure_one(void *cache, unsigned long size,
++					     int source, int target)
++{
++	struct flush_data data;
++	unsigned long flags;
++	void *local_cache;
++
++	local_cache = vmalloc(size);
++	if (!local_cache) {
++		printk("couldnt allocate local cache ...\n");
++		return 0;
++	}
++	memset(local_cache, 0, size);
++
++	local_irq_save(flags);
++	local_irq_enable();
++
++	data.source = source;
++	data.target = target;
++	data.size = size;
++	data.cache = cache;
++	data.local_cache = local_cache;
++
++	if (on_each_cpu(source_handler, &data, 1, 1) != 0) {
++		printk("measure_one: timed out waiting for other CPUs\n");
++		local_irq_restore(flags);
++		return -1;
++	}
++	if (on_each_cpu(target_handler, &data, 1, 1) != 0) {
++		printk("measure_one: timed out waiting for other CPUs\n");
++ 		local_irq_restore(flags);
++		return -1;
++	}
++
++	vfree(local_cache);
++
++	return data.delta;
++}
++
++__initdata unsigned long sched_cache_size;
++
++/*
++ * Measure a series of task migrations and return the maximum
++ * result - the worst-case. Since this code runs early during
++ * bootup the system is 'undisturbed' and the maximum latency
++ * makes sense.
++ *
++ * As the working set we use 2.1 times the L2 cache size, this is
++ * chosen in such a nonsymmetric way so that fill_cache() doesnt
++ * iterate at power-of-2 boundaries (which might hit cache mapping
++ * artifacts and pessimise the results).
++ */
++__init unsigned long long measure_cacheflush_time(int cpu1, int cpu2)
++{
++	unsigned long size = sched_cache_size*21/10;
++	unsigned long long delta, max = 0;
++	void *cache;
++	int i;
++
++	if (!size) {
++		printk("arch has not set cachesize - using default.\n");
++		return 0;
++	}
++	if (!cpu_online(cpu1) || !cpu_online(cpu2)) {
++		printk("cpu %d and %d not both online!\n", cpu1, cpu2);
++		return 0;
++	}
++	cache = vmalloc(size);
++	if (!cache) {
++		printk("could not vmalloc %ld bytes for cache!\n", size);
++		return 0;
++	}
++	memset(cache, 0, size);
++	for (i = 0; i < 20; i++) {
++		delta = measure_one(cache, size, cpu1, cpu2);
++		if (delta > max)
++			max = delta;
++	}
++
++	vfree(cache);
++
++	/*
++	 * A task is considered 'cache cold' if at least 2 times
++	 * the worst-case cost of migration has passed.
++	 * (this limit is only listened to if the load-balancing
++	 * situation is 'nice' - if there is a large imbalance we
++	 * ignore it for the sake of CPU utilization and
++	 * processing fairness.)
++	 *
++	 * (We use 2.1 times the L2 cachesize in our measurement,
++	 *  we keep this factor when returning.)
++	 */
++	return max;
++}
++
++__initdata unsigned long long cache_decay_nsec;
++
+ /***
+  * kick_process - kick a running thread to enter/exit the kernel
+  * @p: the to-be-kicked thread
+Index: xx-sources/kernel/staircase.c
+===================================================================
+--- xx-sources.orig/kernel/staircase.c	2005-01-14 10:03:46.803955528 +0000
++++ xx-sources/kernel/staircase.c	2005-01-14 10:03:46.902940480 +0000
+@@ -2976,11 +2976,47 @@
+ /*
+  * Set up scheduler domains and groups.  Callers must hold the hotplug lock.
+  */
+-static void __devinit arch_init_sched_domains(void)
++__init static void arch_init_sched_domains(void)
+ {
+-	int i;
++	int i, cpu1 = -1, cpu2 = -1;
++	unsigned long long min_delta = -1ULL;
++
+ 	cpumask_t cpu_default_map;
+ 
++	printk("arch cache_decay_nsec: %ld\n", cache_decay_ticks*1000000);
++	printk("migration cost matrix (cache_size: %ld, cpu: %ld MHz):\n",
++		sched_cache_size, cpu_khz/1000);
++	printk("      ");
++	for (cpu1 = 0; cpu1 < NR_CPUS; cpu1++) {
++		if (!cpu_online(cpu1))
++			continue;
++		printk("  [%02d]", cpu1);
++	}
++	printk("\n");
++	for (cpu1 = 0; cpu1 < NR_CPUS; cpu1++) {
++		if (!cpu_online(cpu1))
++			continue;
++		printk("[%02d]: ", cpu1);
++		for (cpu2 = 0; cpu2 < NR_CPUS; cpu2++) {
++			unsigned long long delta;
++
++			if (!cpu_online(cpu2))
++				continue;
++			delta = measure_cacheflush_time(cpu1, cpu2);
++			
++			printk(" %3Ld.%ld", delta >> 20,
++				(((long)delta >> 10) / 102) % 10);
++			if ((cpu1 != cpu2) && (delta < min_delta))
++				min_delta = delta;
++		}
++		printk("\n");
++	}
++	printk("min_delta: %Ld\n", min_delta);
++	if (min_delta != -1ULL)
++		cache_decay_nsec = min_delta;
++	printk("using cache_decay nsec: %Ld (%Ld msec)\n",
++		cache_decay_nsec, cache_decay_nsec >> 20);
++
+ #if defined(CONFIG_SCHED_SMT) && defined(CONFIG_NUMA)
+ 	check_sibling_maps();
+ #endif
+Index: xx-sources/kernel/xsched.c
+===================================================================
+--- xx-sources.orig/kernel/xsched.c	2005-01-14 10:03:46.805955224 +0000
++++ xx-sources/kernel/xsched.c	2005-01-14 10:03:46.903940328 +0000
+@@ -3048,11 +3048,47 @@
+ /*
+  * Set up scheduler domains and groups.  Callers must hold the hotplug lock.
+  */
+-static void __devinit arch_init_sched_domains(void)
++__init static void arch_init_sched_domains(void)
+ {
+-	int i;
++	int i, cpu1 = -1, cpu2 = -1;
++	unsigned long long min_delta = -1ULL;
++
+ 	cpumask_t cpu_default_map;
+ 
++	printk("arch cache_decay_nsec: %ld\n", cache_decay_ticks*1000000);
++	printk("migration cost matrix (cache_size: %ld, cpu: %ld MHz):\n",
++		sched_cache_size, cpu_khz/1000);
++	printk("      ");
++	for (cpu1 = 0; cpu1 < NR_CPUS; cpu1++) {
++		if (!cpu_online(cpu1))
++			continue;
++		printk("  [%02d]", cpu1);
++	}
++	printk("\n");
++	for (cpu1 = 0; cpu1 < NR_CPUS; cpu1++) {
++		if (!cpu_online(cpu1))
++			continue;
++		printk("[%02d]: ", cpu1);
++		for (cpu2 = 0; cpu2 < NR_CPUS; cpu2++) {
++			unsigned long long delta;
++
++			if (!cpu_online(cpu2))
++				continue;
++			delta = measure_cacheflush_time(cpu1, cpu2);
++			
++			printk(" %3Ld.%ld", delta >> 20,
++				(((long)delta >> 10) / 102) % 10);
++			if ((cpu1 != cpu2) && (delta < min_delta))
++				min_delta = delta;
++		}
++		printk("\n");
++	}
++	printk("min_delta: %Ld\n", min_delta);
++	if (min_delta != -1ULL)
++		cache_decay_nsec = min_delta;
++	printk("using cache_decay nsec: %Ld (%Ld msec)\n",
++		cache_decay_nsec, cache_decay_nsec >> 20);
++
+ #if defined(CONFIG_SCHED_SMT) && defined(CONFIG_NUMA)
+ 	check_sibling_maps();
+ #endif

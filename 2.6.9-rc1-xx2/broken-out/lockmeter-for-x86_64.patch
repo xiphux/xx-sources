@@ -1,0 +1,254 @@
+
+From: Alexander Nyberg <alexn@telia.com>
+
+This is basically a cut and paste from i386 code.  At some places however
+some unresolved addresses at places like [0x1000211eb38] shows up, which is
+a bit weird.  I'm hoping for a comment from any of the SGI guys, as the
+code is so similar to i386 I don't know if problem lies below or in the
+generic code.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/x86_64/Kconfig.debug      |    7 ++
+ 25-akpm/arch/x86_64/lib/dec_and_lock.c |    2 
+ 25-akpm/include/asm-x86_64/lockmeter.h |  102 +++++++++++++++++++++++++++++++++
+ 25-akpm/include/asm-x86_64/spinlock.h  |   69 ++++++++++++++++++++++
+ 4 files changed, 180 insertions(+)
+
+diff -puN arch/x86_64/Kconfig.debug~lockmeter-for-x86_64 arch/x86_64/Kconfig.debug
+--- 25/arch/x86_64/Kconfig.debug~lockmeter-for-x86_64	2004-08-24 22:06:54.590355232 -0700
++++ 25-akpm/arch/x86_64/Kconfig.debug	2004-08-24 22:06:54.596354320 -0700
+@@ -62,6 +62,13 @@ config IOMMU_LEAK
+          Add a simple leak tracer to the IOMMU code. This is useful when you
+ 	 are debugging a buggy device driver that leaks IOMMU mappings.
+ 
++config LOCKMETER
++	bool "Kernel lock metering"
++	depends on SMP
++	help
++	  Say Y to enable kernel lock metering, which adds overhead to SMP locks,
++	  but allows you to see various statistics using the lockstat command.
++
+ source "arch/x86_64/Kconfig.kgdb"
+ 
+ endmenu
+diff -puN arch/x86_64/lib/dec_and_lock.c~lockmeter-for-x86_64 arch/x86_64/lib/dec_and_lock.c
+--- 25/arch/x86_64/lib/dec_and_lock.c~lockmeter-for-x86_64	2004-08-24 22:06:54.591355080 -0700
++++ 25-akpm/arch/x86_64/lib/dec_and_lock.c	2004-08-24 22:06:54.596354320 -0700
+@@ -10,6 +10,7 @@
+ #include <linux/spinlock.h>
+ #include <asm/atomic.h>
+ 
++#ifndef ATOMIC_DEC_AND_LOCK
+ int atomic_dec_and_lock(atomic_t *atomic, spinlock_t *lock)
+ {
+ 	int counter;
+@@ -38,3 +39,4 @@ slow_path:
+ 	spin_unlock(lock);
+ 	return 0;
+ }
++#endif
+diff -puN /dev/null include/asm-x86_64/lockmeter.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-x86_64/lockmeter.h	2004-08-24 22:06:54.597354168 -0700
+@@ -0,0 +1,102 @@
++/*
++ *  Copyright (C) 1999,2000 Silicon Graphics, Inc.
++ *
++ *  Written by John Hawkes (hawkes@sgi.com)
++ *  Based on klstat.h by Jack Steiner (steiner@sgi.com)
++ *
++ *  Modified by Ray Bryant (raybry@us.ibm.com)
++ *  Changes Copyright (C) 2000 IBM, Inc.
++ *  Added save of index in spinlock_t to improve efficiency
++ *  of "hold" time reporting for spinlocks.
++ *  Added support for hold time statistics for read and write
++ *  locks.
++ *  Moved machine dependent code here from include/lockmeter.h.
++ *
++ */
++
++#ifndef _X8664_LOCKMETER_H
++#define _X8664_LOCKMETER_H
++
++#include <asm/spinlock.h>
++#include <asm/rwlock.h>
++
++#include <linux/version.h>
++
++#ifdef __KERNEL__
++extern unsigned int cpu_khz;
++#define CPU_CYCLE_FREQUENCY	(cpu_khz * 1000)
++#else
++#define CPU_CYCLE_FREQUENCY	450000000
++#endif
++
++#define THIS_CPU_NUMBER		smp_processor_id()
++
++/*
++ * macros to cache and retrieve an index value inside of a spin lock
++ * these macros assume that there are less than 65536 simultaneous
++ * (read mode) holders of a rwlock.  Not normally a problem!!
++ * we also assume that the hash table has less than 65535 entries.
++ */
++/*
++ * instrumented spinlock structure -- never used to allocate storage
++ * only used in macros below to overlay a spinlock_t
++ */
++typedef struct inst_spinlock_s {
++	/* remember, Intel is little endian */
++	unsigned short lock;
++	unsigned short index;
++} inst_spinlock_t;
++#define PUT_INDEX(lock_ptr,indexv) ((inst_spinlock_t *)(lock_ptr))->index = indexv
++#define GET_INDEX(lock_ptr)        ((inst_spinlock_t *)(lock_ptr))->index
++
++/*
++ * macros to cache and retrieve an index value in a read/write lock
++ * as well as the cpu where a reader busy period started
++ * we use the 2nd word (the debug word) for this, so require the
++ * debug word to be present
++ */
++/*
++ * instrumented rwlock structure -- never used to allocate storage
++ * only used in macros below to overlay a rwlock_t
++ */
++typedef struct inst_rwlock_s {
++	volatile int lock;
++	unsigned short index;
++	unsigned short cpu;
++} inst_rwlock_t;
++#define PUT_RWINDEX(rwlock_ptr,indexv) ((inst_rwlock_t *)(rwlock_ptr))->index = indexv
++#define GET_RWINDEX(rwlock_ptr)        ((inst_rwlock_t *)(rwlock_ptr))->index
++#define PUT_RW_CPU(rwlock_ptr,cpuv)    ((inst_rwlock_t *)(rwlock_ptr))->cpu = cpuv
++#define GET_RW_CPU(rwlock_ptr)         ((inst_rwlock_t *)(rwlock_ptr))->cpu
++
++/*
++ * return the number of readers for a rwlock_t
++ */
++#define RWLOCK_READERS(rwlock_ptr)   rwlock_readers(rwlock_ptr)
++
++extern inline int rwlock_readers(rwlock_t *rwlock_ptr)
++{
++	int tmp = (int) rwlock_ptr->lock;
++	/* read and write lock attempts may cause the lock value to temporarily */
++	/* be negative.  Until it is >= 0 we know nothing (i. e. can't tell if  */
++	/* is -1 because it was write locked and somebody tried to read lock it */
++	/* or if it is -1 because it was read locked and somebody tried to write*/
++	/* lock it. ........................................................... */
++	do {
++		tmp = (int) rwlock_ptr->lock;
++	} while (tmp < 0);
++	if (tmp == 0) return(0);
++	else return(RW_LOCK_BIAS-tmp);
++}
++
++/*
++ * return true if rwlock is write locked
++ * (note that other lock attempts can cause the lock value to be negative)
++ */
++#define RWLOCK_IS_WRITE_LOCKED(rwlock_ptr) ((rwlock_ptr)->lock <= 0)
++#define IABS(x) ((x) > 0 ? (x) : -(x))
++#define RWLOCK_IS_READ_LOCKED(rwlock_ptr)  ((IABS((rwlock_ptr)->lock) % RW_LOCK_BIAS) != 0)
++
++#define get_cycles64()	get_cycles()
++
++#endif /* _X8664_LOCKMETER_H */
+diff -puN include/asm-x86_64/spinlock.h~lockmeter-for-x86_64 include/asm-x86_64/spinlock.h
+--- 25/include/asm-x86_64/spinlock.h~lockmeter-for-x86_64	2004-08-24 22:06:54.592354928 -0700
++++ 25-akpm/include/asm-x86_64/spinlock.h	2004-08-24 22:06:54.598354016 -0700
+@@ -138,6 +138,11 @@ printk("eip: %p\n", &&here);
+  */
+ typedef struct {
+ 	volatile unsigned int lock;
++#ifdef CONFIG_LOCKMETER
++	/* required for LOCKMETER since all bits in lock are used */
++	/* and we need this storage for CPU and lock INDEX        */
++	unsigned lockmeter_magic;
++#endif
+ #ifdef CONFIG_DEBUG_SPINLOCK
+ 	unsigned magic;
+ #endif
+@@ -145,11 +150,19 @@ typedef struct {
+ 
+ #define RWLOCK_MAGIC	0xdeaf1eed
+ 
++#ifdef CONFIG_LOCKMETER
++#ifdef CONFIG_DEBUG_SPINLOCK
++#define RWLOCK_MAGIC_INIT	, 0, RWLOCK_MAGIC
++#else
++#define RWLOCK_MAGIC_INIT	, 0
++#endif
++#else /* !CONFIG_LOCKMETER */
+ #ifdef CONFIG_DEBUG_SPINLOCK
+ #define RWLOCK_MAGIC_INIT	, RWLOCK_MAGIC
+ #else
+ #define RWLOCK_MAGIC_INIT	/* */
+ #endif
++#endif /* !CONFIG_LOCKMETER */
+ 
+ #define RW_LOCK_UNLOCKED (rwlock_t) { RW_LOCK_BIAS RWLOCK_MAGIC_INIT }
+ 
+@@ -196,4 +209,60 @@ static inline int _raw_write_trylock(rwl
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_LOCKMETER
++static inline int _raw_read_trylock(rwlock_t *lock)
++{
++/* FIXME -- replace with assembler */
++	atomic_t *count = (atomic_t *)lock;
++	atomic_dec(count);
++	if (count->counter > 0)
++		return 1;
++	atomic_inc(count);
++	return 0;
++}
++#endif
++
++#if defined(CONFIG_LOCKMETER) && defined(CONFIG_HAVE_DEC_LOCK)
++extern void _metered_spin_lock  (spinlock_t *lock);
++extern void _metered_spin_unlock(spinlock_t *lock);
++
++/*
++ *  Matches what is in arch/x86_64/lib/dec_and_lock.c, except this one is
++ *  "static inline" so that the spin_lock(), if actually invoked, is charged
++ *  against the real caller, not against the catch-all atomic_dec_and_lock
++ */
++static inline int atomic_dec_and_lock(atomic_t *atomic, spinlock_t *lock)
++{
++	int counter;
++	int newcount;
++
++repeat:
++	counter = atomic_read(atomic);
++	newcount = counter-1;
++
++	if (!newcount)
++		goto slow_path;
++
++	asm volatile("lock; cmpxchgl %1,%2"
++		:"=a" (newcount)
++		:"r" (newcount), "m" (atomic->counter), "0" (counter));
++
++	/* If the above failed, "eax" will have changed */
++	if (newcount != counter)
++		goto repeat;
++	return 0;
++
++slow_path:
++	preempt_disable();
++	_metered_spin_lock(lock);
++	if (atomic_dec_and_test(atomic))
++		return 1;
++	_metered_spin_unlock(lock);
++	preempt_enable();
++	return 0;
++}
++
++#define ATOMIC_DEC_AND_LOCK
++#endif
++
+ #endif /* __ASM_SPINLOCK_H */
+_

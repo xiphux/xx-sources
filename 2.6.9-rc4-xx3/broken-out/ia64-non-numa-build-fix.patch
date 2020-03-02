@@ -1,0 +1,38 @@
+
+
+arch/ia64/kernel/domain.c: In function `sched_domain_node_span':
+arch/ia64/kernel/domain.c:74: warning: unused variable `next_node'
+arch/ia64/kernel/domain.c: In function `arch_destroy_sched_domains':
+arch/ia64/kernel/domain.c:328: error: `sched_group_nodes' undeclared (first use in this function)
+arch/ia64/kernel/domain.c:328: error: (Each undeclared identifier is reported only once
+arch/ia64/kernel/domain.c:328: error: for each function it appears in.)
+arch/ia64/kernel/domain.c: At top level:
+arch/ia64/kernel/domain.c:65: warning: `sched_domain_node_span' defined but not used
+
+Dumb hack to make it compile.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ia64/kernel/domain.c |    2 ++
+ 1 files changed, 2 insertions(+)
+
+diff -puN arch/ia64/kernel/domain.c~ia64-non-numa-build-fix arch/ia64/kernel/domain.c
+--- 25/arch/ia64/kernel/domain.c~ia64-non-numa-build-fix	2004-09-26 17:18:28.167376360 -0700
++++ 25-akpm/arch/ia64/kernel/domain.c	2004-09-26 17:18:28.170375904 -0700
+@@ -323,6 +323,7 @@ next_sg:
+ 
+ void __devinit arch_destroy_sched_domains(void)
+ {
++#ifdef CONFIG_NUMA
+ 	int i;
+ 	for (i = 0; i < MAX_NUMNODES; i++) {
+ 		struct sched_group *oldsg, *sg = sched_group_nodes[i];
+@@ -337,5 +338,6 @@ next_sg:
+ 			goto next_sg;
+ 		sched_group_nodes[i] = NULL;
+ 	}
++#endif
+ }
+ 
+_

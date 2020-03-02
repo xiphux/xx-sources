@@ -1,0 +1,232 @@
+diff -urN linuxold/include/linux/sched.h linuxnew/include/linux/sched.h
+--- linuxold/include/linux/sched.h	2004-07-01 05:22:59.504787656 -0400
++++ linuxnew/include/linux/sched.h	2004-07-01 05:30:16.937287808 -0400
+@@ -193,7 +193,7 @@
+ void io_schedule(void);
+ long io_schedule_timeout(long timeout);
+ #ifdef CONFIG_STAIRCASE
+-extern int interactive, compute;
++extern int sched_interactive, sched_compute;
+ #endif
+ 
+ extern void cpu_init (void);
+@@ -720,7 +720,8 @@
+ #define PF_FRIDGE_WAIT	0x01000000	/* this thread is currently doing I/O */
+ #ifdef CONFIG_STAIRCASE
+ #define PF_FORKED	0x02000000	/* I have just forked */
+-#define PF_PREEMPTED	0x04000000	/* I have just been preempted */
++#define PF_YIELDED	0x04000000	/* I have just yielded */
++#define PF_UISLEEP	0x08000000	/* Uninterruptible sleep */
+ #endif
+ 
+ #ifdef CONFIG_EBS
+diff -urN linuxold/kernel/sched.c linuxnew/kernel/sched.c
+--- linuxold/kernel/sched.c	2004-07-01 05:22:59.851734912 -0400
++++ linuxnew/kernel/sched.c	2004-07-01 05:45:59.403011240 -0400
+@@ -83,7 +83,7 @@
+ #elif defined(CONFIG_SPA)
+  	"1.0"
+ #elif defined(CONFIG_STAIRCASE)
+-	"7.4"
++	"7.8"
+ #else
+ 	"NA"
+ #endif
+@@ -518,14 +518,14 @@
+ 
+ #define TASK_PREEMPTS_CURR(p, rq)     ( (p)->prio < (rq)->curr->prio )
+ #elif defined(CONFIG_STAIRCASE)
+-int compute = 0;
++int sched_compute = 0;
+ /*
+  *This is the time all tasks within the same priority round robin.
+  *compute setting is reserved for dedicated computational scheduling
+  *and has ten times larger intervals.
+  */
+ #define _RR_INTERVAL		((10 * HZ / 1000) ? : 1)
+-#define RR_INTERVAL		(_RR_INTERVAL * (1 + 9 * compute))
++#define RR_INTERVAL()		(_RR_INTERVAL * (1 + 9 * sched_compute))
+ #elif defined(CONFIG_SPA)
+ /*
+  * These are the 'tuning knobs' of the scheduler:
+@@ -1062,7 +1062,7 @@
+ #elif defined(CONFIG_STAIRCASE)
+ static int rr_interval(task_t * p)
+ {
+-	int rr_interval = RR_INTERVAL;
++	int rr_interval = RR_INTERVAL();
+ 	if (batch_task(p))
+ 		rr_interval *= 10;
+ 	else if (iso_task(p))
+@@ -1076,12 +1076,10 @@
+ {
+ 	if (p->prio >= rq->curr->prio)
+ 		return 0;
+-	if (!compute || rq->cache_ticks >= cache_decay_ticks ||
++	if (!sched_compute || rq->cache_ticks >= cache_decay_ticks ||
+ 		rt_task(p) || !p->mm || rq->curr == rq->idle ||
+-		(batch_task(rq->curr) && !batch_task(p))) {
+-			rq->curr->flags |= PF_PREEMPTED;
++		(batch_task(rq->curr) && !batch_task(p)))
+ 			return 1;
+-	}
+ 	rq->preempted = 1;
+ 		return 0;
+ }
+@@ -1166,11 +1164,7 @@
+ 		)
+ {
+ #ifdef CONFIG_STAIRCASE
+-	if (rq->curr->flags & PF_PREEMPTED) {
+-		rq->curr->flags &= ~PF_PREEMPTED;
+-		list_add(&p->run_list, rq->queue + p->prio);
+-	} else
+-		list_add_tail(&p->run_list, rq->queue + p->prio);
++	list_add_tail(&p->run_list, rq->queue + p->prio);
+ 	__set_bit(p->prio, rq->bitmap);
+ #elif defined(CONFIG_SPA) || defined(CONFIG_EBS)
+ 	list_add_tail(&p->run_list, &rq->queues[prio].queue);
+@@ -1577,18 +1571,18 @@
+  */
+ static unsigned int slice(task_t *p)
+ {
+-	unsigned int slice = RR_INTERVAL;
++	unsigned int slice = RR_INTERVAL();
+ 	if (!rt_task(p))
+-		slice += burst(p) * RR_INTERVAL;
++		slice += burst(p) * RR_INTERVAL();
+ 	if (batch_task(p))
+ 		slice *= 10;
+ 	return slice;
+ }
+ 
+ /*
+- * interactive - interactive tasks get longer intervals at best priority
++ * sched_interactive - sysctl which allows interactive tasks to have bursts
+  */
+-int interactive = 1;
++int sched_interactive = 1;
+ 
+ /*
+  * effective_prio - dynamic priority dependent on burst.
+@@ -1613,7 +1607,7 @@
+ 	if (p->burst > best_burst)
+ 		p->burst = best_burst;
+ 	first_slice = rr;
+-	if (interactive && !compute)
++	if (sched_interactive && !sched_compute)
+ 		first_slice *= (p->burst + 1);
+ 	prio = MAX_PRIO - 2 - best_burst;
+ 
+@@ -1625,24 +1619,31 @@
+ 	return prio;
+ }
+ 
++/*
++ * recalc_task_prio - this checks for tasks that run ultra short timeslices
++ * or have just forked a thread/process and make them continue their old
++ * slice instead of starting a new one at high priority.
++ */
+ static void recalc_task_prio(task_t *p, unsigned long long now)
+ {
+ 	unsigned long sleep_time = now - p->timestamp;
+-	unsigned long run_time = NS_TO_JIFFIES(p->runtime);
+-	unsigned long total_run = NS_TO_JIFFIES(p->totalrun) + run_time;
+-	if (((!run_time && NS_TO_JIFFIES(p->runtime + sleep_time) < rr_interval(p))
+-		|| p->flags & PF_FORKED) &&
++	unsigned long ns_totalrun = p->totalrun + p->runtime;
++	unsigned long total_run = NS_TO_JIFFIES(ns_totalrun);
++	if ((p->flags & PF_FORKED || ((!(NS_TO_JIFFIES(p->runtime)) ||
++		!sched_interactive || sched_compute) && 
++		NS_TO_JIFFIES(p->runtime + sleep_time) < RR_INTERVAL())) &&
+ 		!batch_task(p)) {
+ 			p->flags &= ~PF_FORKED;
+ 			if (p->slice - total_run < 1) {
+ 				p->totalrun = 0;
+ 				dec_burst(p);
+ 			} else {
+-				p->totalrun += p->runtime;
+-				p->slice -= NS_TO_JIFFIES(p->totalrun);
++				p->totalrun = ns_totalrun;
++				p->slice -= total_run;
+ 			}
+ 	} else {
+-		inc_burst(p);
++		if (!(p->flags & PF_UISLEEP))
++			inc_burst(p);
+ 		p->runtime = 0;
+ 		p->totalrun = 0;
+ 	}
+@@ -1919,6 +1920,7 @@
+ 	recalc_task_prio(p, now);
+ 
+ #ifdef CONFIG_STAIRCASE
++	p->flags &= ~PF_UISLEEP;
+ 	p->prio = effective_prio(p);
+ 	p->time_slice = rr_interval(p);
+ 	if (batch_task(p))
+@@ -1990,8 +1992,12 @@
+ 	p->array_sequence = rq->array_sequence;
+ #endif
+ 	rq->nr_running--;
+-	if (p->state == TASK_UNINTERRUPTIBLE)
++	if (p->state == TASK_UNINTERRUPTIBLE) {
++#ifdef CONFIG_STAIRCASE
++		p->flags |= PF_UISLEEP;
++#endif
+ 		rq->nr_uninterruptible++;
++	}
+ #ifdef CONFIG_STAIRCASE
+ 	dequeue_task(p, rq);
+ #elif defined(CONFIG_SPA) || defined(CONFIG_EBS)
+@@ -4858,7 +4864,14 @@
+  	add_delay_ts(prev,runcpu_total,prev->timestamp,now);
+ 	prev->timestamp = now;
+ #endif
+-
++#ifdef CONFIG_STAIRCASE
++	if (next->flags & PF_YIELDED) {
++		next->flags &= ~PF_YIELDED;
++		dequeue_task(next, rq);
++		next->prio = effective_prio(next);
++		enqueue_task_head(next, rq);
++	}
++#endif
+ 	if (likely(prev != next)) {
+   		add_delay_ts(next,waitcpu_total,next->timestamp,now);
+   		inc_delay(next,runs);
+@@ -6143,9 +6156,11 @@
+ #ifdef CONFIG_STAIRCASE
+ 	dequeue_task(current, rq);
+ 	current->slice = slice(current);
+-	current->time_slice = RR_INTERVAL;
+-	if (!rt_task(current) && !batch_task(current))
++	current->time_slice = RR_INTERVAL();
++	if (!rt_task(current) && !batch_task(current)) {
++		current->flags |= PF_YIELDED;
+ 		current->prio = MAX_PRIO - 2;
++	}
+ 	current->burst = 0;
+ 	enqueue_task(current, rq);
+ #else
+diff -urN linuxold/kernel/sysctl.c linuxnew/kernel/sysctl.c
+--- linuxold/kernel/sysctl.c	2004-07-01 05:22:59.867732480 -0400
++++ linuxnew/kernel/sysctl.c	2004-07-01 05:39:43.162208536 -0400
+@@ -638,7 +638,7 @@
+ 	{
+ 		.ctl_name	= KERN_INTERACTIVE,
+ 		.procname	= "interactive",
+-		.data		= &interactive,
++		.data		= &sched_interactive,
+ 		.maxlen		= sizeof (int),
+ 		.mode		= 0644,
+ 		.proc_handler	= &proc_dointvec,
+@@ -646,7 +646,7 @@
+ 	{
+ 		.ctl_name	= KERN_COMPUTE,
+ 		.procname	= "compute",
+-		.data		= &compute,
++		.data		= &sched_compute,
+ 		.maxlen		= sizeof (int),
+ 		.mode		= 0644,
+ 		.proc_handler	= &proc_dointvec,

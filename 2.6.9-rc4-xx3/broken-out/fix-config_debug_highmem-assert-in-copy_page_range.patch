@@ -1,0 +1,50 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+copy_page_range() triggers a CONFIG_DEBUG_HIGHMEM assert, because if a
+preemption occurs right at a PMD_SIZE boundary the kmap/kunmap doesnt
+match.  This isnt a real problem because atomic_kunmap doesnt do anything
+if CONFIG_DEBUG_HIGHMEM is not set and the atomic_map's are still correct,
+but it's ugly nevertheless.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/memory.c |   16 ++++++++--------
+ 1 files changed, 8 insertions(+), 8 deletions(-)
+
+diff -puN mm/memory.c~fix-config_debug_highmem-assert-in-copy_page_range mm/memory.c
+--- 25/mm/memory.c~fix-config_debug_highmem-assert-in-copy_page_range	Thu Sep 30 15:28:10 2004
++++ 25-akpm/mm/memory.c	Thu Sep 30 15:28:10 2004
+@@ -329,14 +329,6 @@ skip_copy_pte_range:
+ 				set_pte(dst_pte, pte);
+ 				page_dup_rmap(page);
+ cont_copy_pte_range_noset:
+-				address += PAGE_SIZE;
+-				if (address >= end) {
+-					pte_unmap_nested(src_pte);
+-					pte_unmap(dst_pte);
+-					goto out_unlock;
+-				}
+-				src_pte++;
+-				dst_pte++;
+ 				/*
+ 				 * We are holding two locks at this point -
+ 				 * any of them could generate latencies in
+@@ -356,6 +348,14 @@ cont_copy_pte_range_noset:
+ 					dst_pte = pte_offset_map(dst_pmd, address);
+ 					src_pte = pte_offset_map_nested(src_pmd, address);
+ 				}
++				address += PAGE_SIZE;
++				if (address >= end) {
++					pte_unmap_nested(src_pte);
++					pte_unmap(dst_pte);
++					goto out_unlock;
++				}
++				src_pte++;
++				dst_pte++;
+ 			} while ((unsigned long)src_pte & PTE_TABLE_MASK);
+ 			pte_unmap_nested(src_pte-1);
+ 			pte_unmap(dst_pte-1);
+_

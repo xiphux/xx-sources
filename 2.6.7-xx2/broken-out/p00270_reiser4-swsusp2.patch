@@ -1,0 +1,113 @@
+---
+
+ linux-2.6.7-rc1-xx1-xiphux/fs/reiser4/entd.c     |   12 +++++++++---
+ linux-2.6.7-rc1-xx1-xiphux/fs/reiser4/ktxnmgrd.c |   15 ++++++++-------
+ 2 files changed, 17 insertions(+), 10 deletions(-)
+
+diff -puN fs/reiser4/ktxnmgrd.c~reiser4-swsusp2 fs/reiser4/ktxnmgrd.c
+--- linux-2.6.7-rc1-xx1/fs/reiser4/ktxnmgrd.c~reiser4-swsusp2	2004-06-02 04:13:21.009894552 -0400
++++ linux-2.6.7-rc1-xx1-xiphux/fs/reiser4/ktxnmgrd.c	2004-06-02 04:14:45.322077152 -0400
+@@ -79,11 +79,16 @@ ktxnmgrd(void *arg)
+ 	struct super_block * super;
+ 	ktxnmgrd_context *ctx;
+ 	txn_mgr * mgr;
++	DECLARE_SWSUSP_LOCAL_VAR;
+ 
+ 	/* standard kernel thread prologue */
+ 	me = current;
+ 	/* reparent_to_init() is done by daemonize() */
+ 	daemonize(__FUNCTION__);
++	current->flags |= PF_SYNCTHREAD;
++
++	SWSUSP_THREAD_FLAGS_RESET;
++	SWSUSP_ACTIVITY_START(PF_SYNCTHREAD);
+ 
+ 	/* block all signals */
+ 	spin_lock_irq(&me->sighand->siglock);
+@@ -106,13 +111,6 @@ ktxnmgrd(void *arg)
+ 	while (1) {
+ 		int result;
+ 
+-		/* software suspend support. */
+-		if (me->flags & PF_FREEZE) {
+-			spin_unlock(&ctx->guard);
+-			refrigerator(PF_FREEZE/*PF_IOTHREAD*/);
+-			spin_lock(&ctx->guard);
+-		}
+-
+ 		set_comm("wait");
+ 		/* wait for @ctx -> timeout or explicit wake up.
+ 
+@@ -121,8 +119,10 @@ ktxnmgrd(void *arg)
+ 		   load-average. This doesn't require any special handling,
+ 		   because all signals were blocked.
+ 		*/
++		SWSUSP_ACTIVITY_SYNCTHREAD_PAUSING;
+ 		result = kcond_timedwait(&ctx->wait,
+ 					 &ctx->guard, ctx->timeout, 1);
++		SWSUSP_ACTIVITY_RESTARTING(PF_SYNCTHREAD);
+ 
+ 		if (result != -ETIMEDOUT && result != -EINTR && result != 0) {
+ 			/* some other error */
+@@ -156,6 +156,7 @@ ktxnmgrd(void *arg)
+ 
+ 	spin_unlock(&ctx->guard);
+ 
++	SWSUSP_ACTIVITY_END;
+ 	complete_and_exit(&ctx->finish, 0);
+ 	/* not reached. */
+ 	return 0;
+diff -puN fs/reiser4/entd.c~reiser4-swsusp2 fs/reiser4/entd.c
+--- linux-2.6.7-rc1-xx1/fs/reiser4/entd.c~reiser4-swsusp2	2004-06-02 04:14:52.274020296 -0400
++++ linux-2.6.7-rc1-xx1-xiphux/fs/reiser4/entd.c	2004-06-02 04:16:51.980822096 -0400
+@@ -100,6 +100,7 @@ entd(void *arg)
+ 	struct super_block *super;
+ 	struct task_struct *me;
+ 	entd_context       *ctx;
++	DECLARE_SWSUSP_LOCAL_VAR;
+ 
+ 	assert("vs-1655", list_empty(&current_thread_info()->generic.private_pages));
+ 
+@@ -108,6 +109,10 @@ entd(void *arg)
+ 	me = current;
+ 	/* reparent_to_init() is done by daemonize() */
+ 	daemonize("ent:%s", super->s_id);
++	current->flags |= PF_SYNCTHREAD;
++
++	SWSUSP_THREAD_FLAGS_RESET;
++	SWSUSP_ACTIVITY_START(PF_SYNCTHREAD);
+ 
+ 	/* block all signals */
+ 	spin_lock_irq(&me->sighand->siglock);
+@@ -131,9 +136,6 @@ entd(void *arg)
+ 	while (1) {
+ 		int result = 0;
+ 
+-		if (me->flags & PF_FREEZE)
+-			refrigerator(PF_FREEZE);
+-
+ 		spin_lock(&ctx->guard);
+ 
+ 		while (ctx->wbq_nr != 0) {
+@@ -152,8 +154,11 @@ entd(void *arg)
+ 
+ 		entd_set_comm(".");
+ 
++
++		SWSUSP_ACTIVITY_SYNCTHREAD_PAUSING;
+ 		/* wait for work */
+ 		result = kcond_wait(&ctx->wait, &ctx->guard, 1);
++		SWSUSP_ACTIVITY_RESTARTING(PF_SYNCTHREAD);
+ 		if (result != -EINTR && result != 0)
+ 			/* some other error */
+ 			warning("nikita-3099", "Error: %i", result);
+@@ -167,6 +172,7 @@ entd(void *arg)
+ 		spin_unlock(&ctx->guard);
+ 	}
+ 	wakeup_all_wbq(ctx);
++	SWSUSP_ACTIVITY_END;
+ 	complete_and_exit(&ctx->finish, 0);
+ 	/* not reached. */
+ 	return 0;
+
+_

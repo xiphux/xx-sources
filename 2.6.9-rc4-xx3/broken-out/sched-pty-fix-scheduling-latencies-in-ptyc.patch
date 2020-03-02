@@ -1,0 +1,27 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+The attached patch fixes long scheduling latencies in pty_read()caused by
+the BKL.
+
+Has been tested as part of the -VP patchset and in earlier -mm trees.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/pty.c |    1 +
+ 1 files changed, 1 insertion(+)
+
+diff -puN drivers/char/pty.c~sched-pty-fix-scheduling-latencies-in-ptyc drivers/char/pty.c
+--- 25/drivers/char/pty.c~sched-pty-fix-scheduling-latencies-in-ptyc	2004-09-30 22:36:08.610562600 -0700
++++ 25-akpm/drivers/char/pty.c	2004-09-30 22:36:08.614561992 -0700
+@@ -140,6 +140,7 @@ static int pty_write(struct tty_struct *
+ 			c     += n;
+ 			count -= n;
+ 			to->ldisc.receive_buf(to, temp_buffer, NULL, n);
++			cond_resched();
+ 		}
+ 		up(&tty->flip.pty_sem);
+ 	} else {
+_

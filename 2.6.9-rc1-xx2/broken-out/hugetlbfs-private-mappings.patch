@@ -1,0 +1,64 @@
+
+From: Oleg Nesterov <oleg@tv-sign.ru>
+
+Hugetlbfs silently coerce private mappings of hugetlb files into shared
+ones.  So private writable mapping has MAP_SHARED semantics.  I think, such
+mappings should be disallowed.
+
+First, such behavior allows open hugetlbfs file O_RDONLY, and overwrite it
+via mmap(PROT_READ|PROT_WRITE, MAP_PRIVATE), so it is security bug.
+
+Second, private writable mmap() should fail just because kernel does not
+support this.
+
+I belisve, it is ok to allow private readonly hugetlb mappings,
+sys_mprotect() does not work with hugetlb vmas.
+
+There is another problem.  Hugetlb mapping is always prefaulted, pages
+allocated at mmap() time.  So even readonly mapping allows to enlarge the
+size of the hugetlbfs file, and steal huge pages without appropriative
+permissions.
+
+Signed-off-by: Oleg Nesterov <oleg@tv-sign.ru>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/hugetlbfs/inode.c |   16 ++++++++++++++--
+ 1 files changed, 14 insertions(+), 2 deletions(-)
+
+diff -puN fs/hugetlbfs/inode.c~hugetlbfs-private-mappings fs/hugetlbfs/inode.c
+--- 25/fs/hugetlbfs/inode.c~hugetlbfs-private-mappings	2004-07-11 21:51:48.172311568 -0700
++++ 25-akpm/fs/hugetlbfs/inode.c	2004-07-11 21:51:48.176310960 -0700
+@@ -52,6 +52,9 @@ static int hugetlbfs_file_mmap(struct fi
+ 	loff_t len, vma_len;
+ 	int ret;
+ 
++	if ((vma->vm_flags & (VM_MAYSHARE | VM_WRITE)) == VM_WRITE)
++		return -EINVAL;
++
+ 	if (vma->vm_pgoff & (HPAGE_SIZE / PAGE_SIZE - 1))
+ 		return -EINVAL;
+ 
+@@ -70,10 +73,19 @@ static int hugetlbfs_file_mmap(struct fi
+ 	file_accessed(file);
+ 	vma->vm_flags |= VM_HUGETLB | VM_RESERVED;
+ 	vma->vm_ops = &hugetlb_vm_ops;
++
++	ret = -ENOMEM;
++	len = vma_len + ((loff_t)vma->vm_pgoff << PAGE_SHIFT);
++	if (!(vma->vm_flags & VM_WRITE) && len > inode->i_size)
++		goto out;
++
+ 	ret = hugetlb_prefault(mapping, vma);
+-	len = vma_len +	((loff_t)vma->vm_pgoff << PAGE_SHIFT);
+-	if (ret == 0 && inode->i_size < len)
++	if (ret)
++		goto out;
++
++	if (inode->i_size < len)
+ 		inode->i_size = len;
++out:
+ 	up(&inode->i_sem);
+ 
+ 	return ret;
+_

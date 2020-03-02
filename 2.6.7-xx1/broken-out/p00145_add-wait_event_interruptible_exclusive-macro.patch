@@ -1,0 +1,61 @@
+
+From: dcn@sgi.com (Dean Nelson)
+
+This patch defines a macro that does exactly what
+wait_event_interruptible() does except that it adds the current task to the
+wait queue as an exclusive task (i.e., sets the WQ_FLAG_EXCLUSIVE flag)
+rather than as a non-exclusive task as wait_event_interruptible() does.
+
+This allows one to do a wake_up_nr() to wake up a specific number of tasks.
+ I'm in the process of submitting a patch to linux-ia64 that requires this
+capability.  (Its subject line is "[PATCH 3/4] SGI Altix cross partition
+functionality".)
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/wait.h |   31 ++++++++++++++++++++++++++++++-
+ 1 files changed, 30 insertions(+), 1 deletion(-)
+
+diff -puN include/linux/wait.h~add-wait_event_interruptible_exclusive-macro include/linux/wait.h
+--- 25/include/linux/wait.h~add-wait_event_interruptible_exclusive-macro	2004-06-19 02:21:31.303665352 -0700
++++ 25-akpm/include/linux/wait.h	2004-06-19 02:21:31.306664896 -0700
+@@ -200,7 +200,36 @@ do {									\
+ 		__wait_event_interruptible_timeout(wq, condition, __ret); \
+ 	__ret;								\
+ })
+-	
++
++#define __wait_event_interruptible_exclusive(wq, condition, ret)	\
++do {									\
++	wait_queue_t __wait;						\
++	init_waitqueue_entry(&__wait, current);				\
++									\
++	add_wait_queue_exclusive(&wq, &__wait);				\
++	for (;;) {							\
++		set_current_state(TASK_INTERRUPTIBLE);			\
++		if (condition)						\
++			break;						\
++		if (!signal_pending(current)) {				\
++			schedule();					\
++			continue;					\
++		}							\
++		ret = -ERESTARTSYS;					\
++		break;							\
++	}								\
++	current->state = TASK_RUNNING;					\
++	remove_wait_queue(&wq, &__wait);				\
++} while (0)
++
++#define wait_event_interruptible_exclusive(wq, condition)		\
++({									\
++	int __ret = 0;							\
++	if (!(condition))						\
++		__wait_event_interruptible_exclusive(wq, condition, __ret);\
++	__ret;								\
++})
++
+ /*
+  * Must be called with the spinlock in the wait_queue_head_t held.
+  */
+_

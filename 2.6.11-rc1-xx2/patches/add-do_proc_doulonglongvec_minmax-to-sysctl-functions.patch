@@ -1,0 +1,195 @@
+
+From: "Zou, Nanhai" <nanhai.zou@intel.com>
+
+I will need read and write unsigned long long value via sysctl interface in
+my next patch.
+
+Signed-off-by: Zou Nan hai <nanhai.zou@intel.com>
+DESC
+add-do_proc_doulonglongvec_minmax-to-sysctl-functions-fix
+EDESC
+DESC
+add-do_proc_doulonglongvec_minmax-to-sysctl-functions fix 2
+EDESC
+From: Magnus Damm <damm@opensource.se>
+
+This patch makes the code compile with CONFIG_SYSCTL unset.
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/sysctl.h |    2 
+ 25-akpm/kernel/sysctl.c        |  128 +++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 130 insertions(+)
+
+diff -puN include/linux/sysctl.h~add-do_proc_doulonglongvec_minmax-to-sysctl-functions include/linux/sysctl.h
+--- 25/include/linux/sysctl.h~add-do_proc_doulonglongvec_minmax-to-sysctl-functions	2005-01-10 21:14:59.976457160 -0800
++++ 25-akpm/include/linux/sysctl.h	2005-01-10 21:14:59.981456400 -0800
+@@ -797,6 +797,8 @@ extern int proc_dointvec_userhz_jiffies(
+ 					void __user *, size_t *, loff_t *);
+ extern int proc_doulongvec_minmax(ctl_table *, int, struct file *,
+ 				  void __user *, size_t *, loff_t *);
++extern int proc_doulonglongvec_minmax(ctl_table *, int, struct file *,
++				  void __user *, size_t *, loff_t *);
+ extern int proc_doulongvec_ms_jiffies_minmax(ctl_table *table, int,
+ 				      struct file *, void __user *, size_t *, loff_t *);
+ 
+diff -puN kernel/sysctl.c~add-do_proc_doulonglongvec_minmax-to-sysctl-functions kernel/sysctl.c
+--- 25/kernel/sysctl.c~add-do_proc_doulonglongvec_minmax-to-sysctl-functions	2005-01-10 21:14:59.977457008 -0800
++++ 25-akpm/kernel/sysctl.c	2005-01-10 21:14:59.983456096 -0800
+@@ -1835,6 +1835,120 @@ int proc_doulongvec_minmax(ctl_table *ta
+     return do_proc_doulongvec_minmax(table, write, filp, buffer, lenp, ppos, 1l, 1l);
+ }
+ 
++static int do_proc_doulonglongvec_minmax(ctl_table *table, int write,
++				     struct file *filp,
++				     void __user *buffer,
++				     size_t *lenp, loff_t *ppos,
++				     unsigned long long convmul,
++				     unsigned long long convdiv)
++{
++#define TMPBUFLEN 21
++	unsigned long long *i, *min, *max, val;
++	int vleft, first=1, neg;
++	size_t len, left;
++	char buf[TMPBUFLEN], *p;
++	char __user *s = buffer;
++
++	if (!table->data || !table->maxlen || !*lenp ||
++	    (*ppos && !write)) {
++		*lenp = 0;
++		return 0;
++	}
++
++	i = (unsigned long long *) table->data;
++	min = (unsigned long long *) table->extra1;
++	max = (unsigned long long *) table->extra2;
++	vleft = table->maxlen / sizeof(unsigned long long);
++	left = *lenp;
++
++	for (; left && vleft--; i++, min++, max++, first=0) {
++		if (write) {
++			while (left) {
++				char c;
++				if (get_user(c, s))
++					return -EFAULT;
++				if (!isspace(c))
++					break;
++				left--;
++				s++;
++			}
++			if (!left)
++				break;
++			neg = 0;
++			len = left;
++			if (len > TMPBUFLEN-1)
++				len = TMPBUFLEN-1;
++			if (copy_from_user(buf, s, len))
++				return -EFAULT;
++			buf[len] = 0;
++			p = buf;
++			if (*p == '-' && left > 1) {
++				neg = 1;
++				left--, p++;
++			}
++			if (*p < '0' || *p > '9')
++				break;
++			val = simple_strtoull(p, &p, 0) * convmul;
++			do_div(val, convdiv);
++			len = p-buf;
++			if ((len < left) && *p && !isspace(*p))
++				break;
++			if (neg)
++				val = -val;
++			s += len;
++			left -= len;
++
++			if(neg)
++				continue;
++			if ((min && val < *min) || (max && val > *max))
++				continue;
++			*i = val;
++		} else {
++			p = buf;
++			if (!first)
++				*p++ = '\t';
++			val = convdiv * (*i);
++			do_div(val, convmul);
++			sprintf(p, "%llu", val);
++			len = strlen(buf);
++			if (len > left)
++				len = left;
++			if (copy_to_user(s, buf, len))
++				return -EFAULT;
++			left -= len;
++			s += len;
++		}
++	}
++
++	if (!write && !first && left) {
++		if(put_user('\n', s))
++			return -EFAULT;
++		left--, s++;
++	}
++	if (write) {
++		while (left) {
++			char c;
++			if (get_user(c, s++))
++				return -EFAULT;
++			if (!isspace(c))
++				break;
++			left--;
++		}
++	}
++	if (write && first)
++		return -EINVAL;
++	*lenp -= left;
++	*ppos += *lenp;
++	return 0;
++#undef TMPBUFLEN
++}
++
++int proc_doulonglongvec_minmax(ctl_table *table, int write, struct file *filp,
++			   void __user *buffer, size_t *lenp, loff_t *ppos)
++{
++    return do_proc_doulonglongvec_minmax(table, write, filp, buffer, lenp, ppos, 1LLU, 1LLU);
++}
++
+ /**
+  * proc_doulongvec_ms_jiffies_minmax - read a vector of millisecond values with min/max values
+  * @table: the sysctl table
+@@ -1998,6 +2112,13 @@ int proc_doulongvec_minmax(ctl_table *ta
+ 	return -ENOSYS;
+ }
+ 
++int proc_doulonglongvec_minmax(ctl_table *table, int write,
++				      struct file *filp,
++				      void __user *buffer,
++				      size_t *lenp, loff_t *ppos)
++{
++	return -ENOSYS;
++}
+ int proc_doulongvec_ms_jiffies_minmax(ctl_table *table, int write,
+ 				      struct file *filp,
+ 				      void __user *buffer,
+@@ -2193,6 +2314,12 @@ int proc_doulongvec_minmax(ctl_table *ta
+ 	return -ENOSYS;
+ }
+ 
++int proc_doulonglongvec_minmax(ctl_table *table, int write, struct file *filp,
++			   void __user *buffer, size_t *lenp, loff_t *ppos)
++{
++	return -ENOSYS;
++}
++
+ int proc_doulongvec_ms_jiffies_minmax(ctl_table *table, int write,
+ 				      struct file *filp,
+ 				      void __user *buffer,
+@@ -2223,6 +2350,7 @@ EXPORT_SYMBOL(proc_dointvec_minmax);
+ EXPORT_SYMBOL(proc_dointvec_userhz_jiffies);
+ EXPORT_SYMBOL(proc_dostring);
+ EXPORT_SYMBOL(proc_doulongvec_minmax);
++EXPORT_SYMBOL(proc_doulonglongvec_minmax);
+ EXPORT_SYMBOL(proc_doulongvec_ms_jiffies_minmax);
+ EXPORT_SYMBOL(register_sysctl_table);
+ EXPORT_SYMBOL(sysctl_intvec);
+_

@@ -1,0 +1,61 @@
+
+From: Dmitry Torokhov <dtor_core@ameritech.net>
+
+  Input: link serio ports to their parent devices in ambakmi,
+         gscps2, pcips2 and sa1111ps2 drivers
+  
+Signed-off-by: Dmitry Torokhov <dtor@mail.ru>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/input/serio/ambakmi.c   |    1 +
+ 25-akpm/drivers/input/serio/gscps2.c    |    1 +
+ 25-akpm/drivers/input/serio/pcips2.c    |    1 +
+ 25-akpm/drivers/input/serio/sa1111ps2.c |    1 +
+ 4 files changed, 4 insertions(+)
+
+diff -puN drivers/input/serio/ambakmi.c~input-bind-serio-ports-and-their-parents drivers/input/serio/ambakmi.c
+--- 25/drivers/input/serio/ambakmi.c~input-bind-serio-ports-and-their-parents	2004-06-27 22:51:07.922990584 -0700
++++ 25-akpm/drivers/input/serio/ambakmi.c	2004-06-27 22:51:07.930989368 -0700
+@@ -141,6 +141,7 @@ static int amba_kmi_probe(struct amba_de
+ 	strlcpy(io->name, dev->dev.bus_id, sizeof(io->name));
+ 	strlcpy(io->phys, dev->dev.bus_id, sizeof(io->phys));
+ 	io->port_data	= kmi;
++	io->dev.parent	= &dev->dev;
+ 
+ 	kmi->io 	= io;
+ 	kmi->base	= ioremap(dev->res.start, KMI_SIZE);
+diff -puN drivers/input/serio/gscps2.c~input-bind-serio-ports-and-their-parents drivers/input/serio/gscps2.c
+--- 25/drivers/input/serio/gscps2.c~input-bind-serio-ports-and-their-parents	2004-06-27 22:51:07.923990432 -0700
++++ 25-akpm/drivers/input/serio/gscps2.c	2004-06-27 22:51:07.931989216 -0700
+@@ -385,6 +385,7 @@ static int __init gscps2_probe(struct pa
+ 	serio->open		= gscps2_open;
+ 	serio->close		= gscps2_close;
+ 	serio->port_data	= ps2port;
++	serio->dev.parent	= &dev->dev;
+ 
+ 	list_add_tail(&ps2port->node, &ps2port_list);
+ 
+diff -puN drivers/input/serio/pcips2.c~input-bind-serio-ports-and-their-parents drivers/input/serio/pcips2.c
+--- 25/drivers/input/serio/pcips2.c~input-bind-serio-ports-and-their-parents	2004-06-27 22:51:07.924990280 -0700
++++ 25-akpm/drivers/input/serio/pcips2.c	2004-06-27 22:51:07.931989216 -0700
+@@ -159,6 +159,7 @@ static int __devinit pcips2_probe(struct
+ 	strlcpy(serio->name, pci_name(dev), sizeof(serio->name));
+ 	strlcpy(serio->phys, dev->dev.bus_id, sizeof(serio->phys));
+ 	serio->port_data	= ps2if;
++	serio->dev.parent	= &dev->dev;
+ 	ps2if->io		= serio;
+ 	ps2if->dev		= dev;
+ 	ps2if->base		= pci_resource_start(dev, 0);
+diff -puN drivers/input/serio/sa1111ps2.c~input-bind-serio-ports-and-their-parents drivers/input/serio/sa1111ps2.c
+--- 25/drivers/input/serio/sa1111ps2.c~input-bind-serio-ports-and-their-parents	2004-06-27 22:51:07.926989976 -0700
++++ 25-akpm/drivers/input/serio/sa1111ps2.c	2004-06-27 22:51:07.931989216 -0700
+@@ -252,6 +252,7 @@ static int ps2_probe(struct sa1111_dev *
+ 	strlcpy(serio->name, dev->dev.bus_id, sizeof(serio->name));
+ 	strlcpy(serio->phys, dev->dev.bus_id, sizeof(serio->phys));
+ 	serio->port_data	= ps2if;
++	serio->dev.parent	= &dev->dev;
+ 	ps2if->io		= serio;
+ 	ps2if->dev		= dev;
+ 	sa1111_set_drvdata(dev, ps2if);
+_

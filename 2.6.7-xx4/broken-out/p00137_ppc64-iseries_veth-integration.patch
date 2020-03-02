@@ -1,0 +1,289 @@
+
+From: Stephen Rothwell <sfr@canb.auug.org.au>
+
+Signed-off-by: Stephen Rothwell <sfr@canb.auug.org.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc64/kernel/vio.c             |   22 +++--
+ 25-akpm/drivers/net/iseries_veth.c          |  104 +++++++++++++++++-----------
+ 25-akpm/drivers/net/iseries_veth.h          |    2 
+ 25-akpm/include/asm-ppc64/iSeries/HvTypes.h |    1 
+ 4 files changed, 79 insertions(+), 50 deletions(-)
+
+diff -puN arch/ppc64/kernel/vio.c~ppc64-iseries_veth-integration arch/ppc64/kernel/vio.c
+--- 25/arch/ppc64/kernel/vio.c~ppc64-iseries_veth-integration	2004-06-28 13:22:04.144144928 -0700
++++ 25-akpm/arch/ppc64/kernel/vio.c	2004-06-28 13:22:04.152143712 -0700
+@@ -26,7 +26,9 @@
+ #include <asm/vio.h>
+ #include <asm/hvcall.h>
+ #include <asm/iSeries/vio.h>
++#include <asm/iSeries/HvTypes.h>
+ #include <asm/iSeries/HvCallXm.h>
++#include <asm/iSeries/HvLpConfig.h>
+ 
+ #define DBGENTER() pr_debug("%s entered\n", __FUNCTION__)
+ 
+@@ -48,19 +50,11 @@ static struct vio_dev *__init vio_regist
+ static struct iommu_table veth_iommu_table;
+ static struct iommu_table vio_iommu_table;
+ 
+-static struct vio_dev _veth_dev = {
+-	.iommu_table = &veth_iommu_table,
+-	.dev.bus = &vio_bus_type
+-};
+ static struct vio_dev _vio_dev  = {
+ 	.iommu_table = &vio_iommu_table,
+ 	.dev.bus = &vio_bus_type
+ };
+-
+-struct vio_dev *iSeries_veth_dev = &_veth_dev;
+ struct device *iSeries_vio_dev = &_vio_dev.dev;
+-
+-EXPORT_SYMBOL(iSeries_veth_dev);
+ EXPORT_SYMBOL(iSeries_vio_dev);
+ 
+ #define device_is_compatible(a, b)	1
+@@ -227,6 +221,18 @@ static void probe_bus_pseries(void)
+ #ifdef CONFIG_PPC_ISERIES
+ static void probe_bus_iseries(void)
+ {
++	HvLpIndexMap vlan_map = HvLpConfig_getVirtualLanIndexMap();
++	struct vio_dev *viodev;
++	int i;
++
++	vlan_map = HvLpConfig_getVirtualLanIndexMap();
++	for (i = 0; i < HVMAXARCHITECTEDVIRTUALLANS; i++) {
++		if ((vlan_map & (0x8000 >> i)) == 0)
++			continue;
++		viodev = vio_register_device_iseries("vlan", i);
++		/* veth is special and has it own iommu_table */
++		viodev->iommu_table = &veth_iommu_table;
++	}
+ }
+ #endif
+ 
+diff -puN drivers/net/iseries_veth.c~ppc64-iseries_veth-integration drivers/net/iseries_veth.c
+--- 25/drivers/net/iseries_veth.c~ppc64-iseries_veth-integration	2004-06-28 13:22:04.146144624 -0700
++++ 25-akpm/drivers/net/iseries_veth.c	2004-06-28 13:22:04.154143408 -0700
+@@ -81,8 +81,6 @@
+ 
+ #include "iseries_veth.h"
+ 
+-extern struct vio_dev *iSeries_veth_dev;
+-
+ MODULE_AUTHOR("Kyle Lucke <klucke@us.ibm.com>");
+ MODULE_DESCRIPTION("iSeries Virtual ethernet driver");
+ MODULE_LICENSE("GPL");
+@@ -119,6 +117,7 @@ struct veth_msg {
+ 	int token;
+ 	unsigned long in_use;
+ 	struct sk_buff *skb;
++	struct device *dev;
+ };
+ 
+ struct veth_lpar_connection {
+@@ -147,6 +146,7 @@ struct veth_lpar_connection {
+ };
+ 
+ struct veth_port {
++	struct device *dev;
+ 	struct net_device_stats stats;
+ 	u64 mac_addr;
+ 	HvLpIndexMap lpar_map;
+@@ -843,7 +843,7 @@ static void veth_tx_timeout(struct net_d
+ 	spin_unlock_irqrestore(&port->pending_gate, flags);
+ }
+ 
+-struct net_device * __init veth_probe_one(int vlan)
++static struct net_device * __init veth_probe_one(int vlan, struct device *vdev)
+ {
+ 	struct net_device *dev;
+ 	struct veth_port *port;
+@@ -869,6 +869,7 @@ struct net_device * __init veth_probe_on
+ 		if (map & (0x8000 >> vlan))
+ 			port->lpar_map |= (1 << i);
+ 	}
++	port->dev = vdev;
+ 
+ 	dev->dev_addr[0] = 0x02;
+ 	dev->dev_addr[1] = 0x01;
+@@ -893,6 +894,8 @@ struct net_device * __init veth_probe_on
+ 	dev->watchdog_timeo = 2 * (VETH_ACKTIMEOUT * HZ / 1000000);
+ 	dev->tx_timeout = veth_tx_timeout;
+ 
++	SET_NETDEV_DEV(dev, vdev);
++
+ 	rc = register_netdev(dev);
+ 	if (rc != 0) {
+ 		veth_printk(KERN_ERR,
+@@ -945,7 +948,7 @@ static int veth_transmit_to_one(struct s
+ 	}
+ 
+ 	dma_length = skb->len;
+-	dma_address = vio_map_single(iSeries_veth_dev, skb->data,
++	dma_address = dma_map_single(port->dev, skb->data,
+ 				     dma_length, DMA_TO_DEVICE);
+ 
+ 	if (dma_mapping_error(dma_address))
+@@ -954,6 +957,7 @@ static int veth_transmit_to_one(struct s
+ 	/* Is it really necessary to check the length and address
+ 	 * fields of the first entry here? */
+ 	msg->skb = skb;
++	msg->dev = port->dev;
+ 	msg->data.addr[0] = dma_address;
+ 	msg->data.len[0] = dma_length;
+ 	msg->data.eofmask = 1 << VETH_EOF_SHIFT;
+@@ -1059,7 +1063,7 @@ static void veth_recycle_msg(struct veth
+ 		dma_address = msg->data.addr[0];
+ 		dma_length = msg->data.len[0];
+ 
+-		vio_unmap_single(iSeries_veth_dev, dma_address, dma_length,
++		dma_unmap_single(msg->dev, dma_address, dma_length,
+ 				 DMA_TO_DEVICE);
+ 
+ 		if (msg->skb) {
+@@ -1327,6 +1331,58 @@ static void veth_timed_ack(unsigned long
+ 	spin_unlock_irqrestore(&cnx->lock, flags);
+ }
+ 
++static int veth_remove(struct vio_dev *vdev)
++{
++	int i = vdev->unit_address;
++	struct net_device *dev;
++
++	dev = veth_dev[i];
++	if (dev != NULL) {
++		veth_dev[i] = NULL;
++		unregister_netdev(dev);
++		free_netdev(dev);
++	}
++	return 0;
++}
++
++static int veth_probe(struct vio_dev *vdev, const struct vio_device_id *id)
++{
++	int i = vdev->unit_address;
++	struct net_device *dev;
++
++	dev = veth_probe_one(i, &vdev->dev);
++	if (dev == NULL) {
++		veth_remove(vdev);
++		return 1;
++	}
++	veth_dev[i] = dev;
++
++	/* Start the state machine on each connection, to commence
++	 * link negotiation */
++	for (i = 0; i < HVMAXARCHITECTEDLPS; i++)
++		if (veth_cnx[i])
++			veth_kick_statemachine(veth_cnx[i]);
++
++	return 0;
++}
++
++/**
++ * veth_device_table: Used by vio.c to match devices that we
++ * support.
++ */
++static struct vio_device_id veth_device_table[] __devinitdata = {
++	{ "vlan", "" },
++	{ NULL, NULL }
++};
++MODULE_DEVICE_TABLE(vio, veth_device_table);
++
++static struct vio_driver veth_driver = {
++	.name = "iseries_veth",
++	.id_table = veth_device_table,
++	.probe = veth_probe,
++	.remove = veth_remove
++};
++
+ /*
+  * Module initialization/cleanup
+  */
+@@ -1335,27 +1391,17 @@ void __exit veth_module_cleanup(void)
+ {
+ 	int i;
+ 
++	vio_unregister_driver(&veth_driver);
++
+ 	for (i = 0; i < HVMAXARCHITECTEDLPS; ++i)
+ 		veth_destroy_connection(i);
+ 
+ 	HvLpEvent_unregisterHandler(HvLpEvent_Type_VirtualLan);
+-
+-	for (i = 0; i < HVMAXARCHITECTEDVIRTUALLANS; ++i) {
+-		struct net_device *dev = veth_dev[i];
+-
+-		if (! dev)
+-			continue;
+-
+-		veth_dev[i] = NULL;
+-		unregister_netdev(dev);
+-		free_netdev(dev);
+-	}
+ }
+ module_exit(veth_module_cleanup);
+ 
+ int __init veth_module_init(void)
+ {
+-	HvLpIndexMap vlan_map = HvLpConfig_getVirtualLanIndexMap();
+ 	int i;
+ 	int rc;
+ 
+@@ -1369,31 +1415,9 @@ int __init veth_module_init(void)
+ 		}
+ 	}
+ 
+-	for (i = 0; i < HVMAXARCHITECTEDVIRTUALLANS; ++i) {
+-		struct net_device *dev;
+-
+-		if (! (vlan_map & (0x8000 >> i)))
+-			continue;
+-
+-		dev = veth_probe_one(i);
+-
+-		if (! dev) {
+-			veth_module_cleanup();
+-			return rc;
+-		}
+-
+-		veth_dev[i] = dev;
+-	}
+-
+ 	HvLpEvent_registerHandler(HvLpEvent_Type_VirtualLan,
+ 				  &veth_handle_event);
+ 
+-	/* Start the state machine on each connection, to commence
+-	 * link negotiation */
+-	for (i = 0; i < HVMAXARCHITECTEDLPS; i++)
+-		if (veth_cnx[i])
+-			veth_kick_statemachine(veth_cnx[i]);
+-
+-	return 0;
++	return vio_register_driver(&veth_driver);
+ }
+ module_init(veth_module_init);
+diff -puN drivers/net/iseries_veth.h~ppc64-iseries_veth-integration drivers/net/iseries_veth.h
+--- 25/drivers/net/iseries_veth.h~ppc64-iseries_veth-integration	2004-06-28 13:22:04.147144472 -0700
++++ 25-akpm/drivers/net/iseries_veth.h	2004-06-28 13:22:04.155143256 -0700
+@@ -43,6 +43,4 @@ struct VethLpEvent {
+ 
+ };
+ 
+-#define HVMAXARCHITECTEDVIRTUALLANS (16)
+-
+ #endif	/* _ISERIES_VETH_H */
+diff -puN include/asm-ppc64/iSeries/HvTypes.h~ppc64-iseries_veth-integration include/asm-ppc64/iSeries/HvTypes.h
+--- 25/include/asm-ppc64/iSeries/HvTypes.h~ppc64-iseries_veth-integration	2004-06-28 13:22:04.149144168 -0700
++++ 25-akpm/include/asm-ppc64/iSeries/HvTypes.h	2004-06-28 13:22:04.155143256 -0700
+@@ -65,6 +65,7 @@ typedef u8	HvAgentId;		// Hypervisor Dev
+ 
+ 
+ #define HVMAXARCHITECTEDLPS 32
++#define HVMAXARCHITECTEDVIRTUALLANS 16
+ #define HVCHUNKSIZE 256 * 1024
+ #define HVPAGESIZE 4 * 1024
+ #define HVLPMINMEGSPRIMARY 256
+_

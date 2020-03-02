@@ -1,0 +1,339 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/sound/core/init.c                  |    2 +-
+ 25-akpm/sound/core/memory.c                |    4 ++--
+ 25-akpm/sound/core/pcm_native.c            |    2 +-
+ 25-akpm/sound/core/seq/oss/seq_oss_midi.c  |    2 +-
+ 25-akpm/sound/core/seq/oss/seq_oss_synth.c |    2 +-
+ 25-akpm/sound/core/seq/seq_clientmgr.c     |    2 +-
+ 25-akpm/sound/core/seq/seq_queue.c         |    2 +-
+ 25-akpm/sound/core/timer.c                 |    2 +-
+ 25-akpm/sound/oss/emu10k1/midi.c           |    2 +-
+ 25-akpm/sound/oss/gus_wave.c               |    2 +-
+ 25-akpm/sound/oss/mad16.c                  |    2 +-
+ 25-akpm/sound/oss/midibuf.c                |    2 +-
+ 25-akpm/sound/oss/opl3sa.c                 |    2 +-
+ 25-akpm/sound/oss/opl3sa2.c                |    2 +-
+ 25-akpm/sound/oss/pas2_card.c              |    2 +-
+ 25-akpm/sound/oss/pss.c                    |    2 +-
+ 25-akpm/sound/oss/sb_common.c              |    2 +-
+ 25-akpm/sound/oss/sequencer.c              |    2 +-
+ 25-akpm/sound/oss/sys_timer.c              |    2 +-
+ 25-akpm/sound/oss/uart6850.c               |    2 +-
+ 25-akpm/sound/oss/waveartist.c             |    2 +-
+ 25-akpm/sound/oss/wavfront.c               |    2 +-
+ 25-akpm/sound/oss/wf_midi.c                |    2 +-
+ 25-akpm/sound/oss/ymfpci.c                 |    2 +-
+ 25-akpm/sound/sound_core.c                 |    2 +-
+ 25 files changed, 26 insertions(+), 26 deletions(-)
+
+diff -puN sound/core/init.c~lock-initializer-cleanup-sound sound/core/init.c
+--- 25/sound/core/init.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/core/init.c	Wed Jan 12 16:54:17 2005
+@@ -39,7 +39,7 @@ struct snd_shutdown_f_ops {
+ 
+ unsigned int snd_cards_lock = 0;	/* locked for registering/using */
+ snd_card_t *snd_cards[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS-1)] = NULL};
+-rwlock_t snd_card_rwlock = RW_LOCK_UNLOCKED;
++DEFINE_RWLOCK(snd_card_rwlock);
+ 
+ #if defined(CONFIG_SND_MIXER_OSS) || defined(CONFIG_SND_MIXER_OSS_MODULE)
+ int (*snd_mixer_oss_notify_callback)(snd_card_t *card, int free_flag);
+diff -puN sound/core/memory.c~lock-initializer-cleanup-sound sound/core/memory.c
+--- 25/sound/core/memory.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/core/memory.c	Wed Jan 12 16:54:17 2005
+@@ -50,8 +50,8 @@ static long snd_alloc_kmalloc;
+ static long snd_alloc_vmalloc;
+ static LIST_HEAD(snd_alloc_kmalloc_list);
+ static LIST_HEAD(snd_alloc_vmalloc_list);
+-static spinlock_t snd_alloc_kmalloc_lock = SPIN_LOCK_UNLOCKED;
+-static spinlock_t snd_alloc_vmalloc_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(snd_alloc_kmalloc_lock);
++static DEFINE_SPINLOCK(snd_alloc_vmalloc_lock);
+ #define KMALLOC_MAGIC 0x87654321
+ #define VMALLOC_MAGIC 0x87654320
+ static snd_info_entry_t *snd_memory_info_entry;
+diff -puN sound/core/pcm_native.c~lock-initializer-cleanup-sound sound/core/pcm_native.c
+--- 25/sound/core/pcm_native.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/core/pcm_native.c	Wed Jan 12 16:54:17 2005
+@@ -65,7 +65,7 @@ static int snd_pcm_hw_params_old_user(sn
+  *
+  */
+ 
+-rwlock_t snd_pcm_link_rwlock = RW_LOCK_UNLOCKED;
++DEFINE_RWLOCK(snd_pcm_link_rwlock);
+ static DECLARE_RWSEM(snd_pcm_link_rwsem);
+ 
+ 
+diff -puN sound/core/seq/oss/seq_oss_midi.c~lock-initializer-cleanup-sound sound/core/seq/oss/seq_oss_midi.c
+--- 25/sound/core/seq/oss/seq_oss_midi.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/core/seq/oss/seq_oss_midi.c	Wed Jan 12 16:54:17 2005
+@@ -56,7 +56,7 @@ struct seq_oss_midi_t {
+ static int max_midi_devs;
+ static seq_oss_midi_t *midi_devs[SNDRV_SEQ_OSS_MAX_MIDI_DEVS];
+ 
+-static spinlock_t register_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(register_lock);
+ 
+ /*
+  * prototypes
+diff -puN sound/core/seq/oss/seq_oss_synth.c~lock-initializer-cleanup-sound sound/core/seq/oss/seq_oss_synth.c
+--- 25/sound/core/seq/oss/seq_oss_synth.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/core/seq/oss/seq_oss_synth.c	Wed Jan 12 16:54:17 2005
+@@ -75,7 +75,7 @@ static seq_oss_synth_t midi_synth_dev = 
+ 	"MIDI", /* name */
+ };
+ 
+-static spinlock_t register_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(register_lock);
+ 
+ /*
+  * prototypes
+diff -puN sound/core/seq/seq_clientmgr.c~lock-initializer-cleanup-sound sound/core/seq/seq_clientmgr.c
+--- 25/sound/core/seq/seq_clientmgr.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/core/seq/seq_clientmgr.c	Wed Jan 12 16:54:17 2005
+@@ -51,7 +51,7 @@
+ #define SNDRV_SEQ_LFLG_OUTPUT	0x0002
+ #define SNDRV_SEQ_LFLG_OPEN	(SNDRV_SEQ_LFLG_INPUT|SNDRV_SEQ_LFLG_OUTPUT)
+ 
+-static spinlock_t clients_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(clients_lock);
+ static DECLARE_MUTEX(register_mutex);
+ 
+ /*
+diff -puN sound/core/seq/seq_queue.c~lock-initializer-cleanup-sound sound/core/seq/seq_queue.c
+--- 25/sound/core/seq/seq_queue.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/core/seq/seq_queue.c	Wed Jan 12 16:54:17 2005
+@@ -49,7 +49,7 @@
+ 
+ /* list of allocated queues */
+ static queue_t *queue_list[SNDRV_SEQ_MAX_QUEUES];
+-static spinlock_t queue_list_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(queue_list_lock);
+ /* number of queues allocated */
+ static int num_queues;
+ 
+diff -puN sound/core/timer.c~lock-initializer-cleanup-sound sound/core/timer.c
+--- 25/sound/core/timer.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/core/timer.c	Wed Jan 12 16:54:17 2005
+@@ -76,7 +76,7 @@ static LIST_HEAD(snd_timer_list);
+ static LIST_HEAD(snd_timer_slave_list);
+ 
+ /* lock for slave active lists */
+-static spinlock_t slave_active_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(slave_active_lock);
+ 
+ static DECLARE_MUTEX(register_mutex);
+ 
+diff -puN sound/oss/emu10k1/midi.c~lock-initializer-cleanup-sound sound/oss/emu10k1/midi.c
+--- 25/sound/oss/emu10k1/midi.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/emu10k1/midi.c	Wed Jan 12 16:54:17 2005
+@@ -45,7 +45,7 @@
+ #include "../sound_config.h"
+ #endif
+ 
+-static spinlock_t midi_spinlock __attribute((unused)) = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(midi_spinlock __attribute((unused)));
+ 
+ static void init_midi_hdr(struct midi_hdr *midihdr)
+ {
+diff -puN sound/oss/gus_wave.c~lock-initializer-cleanup-sound sound/oss/gus_wave.c
+--- 25/sound/oss/gus_wave.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/gus_wave.c	Wed Jan 12 16:54:17 2005
+@@ -139,7 +139,7 @@ static int      pcm_current_block;
+ static unsigned long pcm_current_buf;
+ static int      pcm_current_count;
+ static int      pcm_current_intrflag;
+-spinlock_t gus_lock=SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(gus_lock);
+ 
+ extern int     *gus_osp;
+ 
+diff -puN sound/oss/mad16.c~lock-initializer-cleanup-sound sound/oss/mad16.c
+--- 25/sound/oss/mad16.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/mad16.c	Wed Jan 12 16:54:17 2005
+@@ -53,7 +53,7 @@
+ static int      mad16_conf;
+ static int      mad16_cdsel;
+ static struct gameport gameport;
+-static spinlock_t lock=SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(lock);
+ 
+ #define C928	1
+ #define MOZART	2
+diff -puN sound/oss/midibuf.c~lock-initializer-cleanup-sound sound/oss/midibuf.c
+--- 25/sound/oss/midibuf.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/midibuf.c	Wed Jan 12 16:54:17 2005
+@@ -53,7 +53,7 @@ static void midi_poll(unsigned long dumm
+ static struct timer_list poll_timer = TIMER_INITIALIZER(midi_poll, 0, 0);
+ 
+ static volatile int open_devs;
+-static spinlock_t lock=SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(lock);
+ 
+ #define DATA_AVAIL(q) (q->len)
+ #define SPACE_AVAIL(q) (MAX_QUEUE_SIZE - q->len)
+diff -puN sound/oss/opl3sa2.c~lock-initializer-cleanup-sound sound/oss/opl3sa2.c
+--- 25/sound/oss/opl3sa2.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/opl3sa2.c	Wed Jan 12 16:54:17 2005
+@@ -832,7 +832,7 @@ static struct pnp_driver opl3sa2_driver 
+ /* End of component functions */
+ 
+ #ifdef CONFIG_PM
+-static spinlock_t opl3sa2_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(opl3sa2_lock);
+ 
+ /* Power Management support functions */
+ static int opl3sa2_suspend(struct pm_dev *pdev, unsigned int pm_mode)
+diff -puN sound/oss/opl3sa.c~lock-initializer-cleanup-sound sound/oss/opl3sa.c
+--- 25/sound/oss/opl3sa.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/opl3sa.c	Wed Jan 12 16:54:17 2005
+@@ -36,7 +36,7 @@
+ static int sb_initialized;
+ #endif
+ 
+-static spinlock_t lock=SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(lock);
+ 
+ static unsigned char opl3sa_read(int addr)
+ {
+diff -puN sound/oss/pas2_card.c~lock-initializer-cleanup-sound sound/oss/pas2_card.c
+--- 25/sound/oss/pas2_card.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/pas2_card.c	Wed Jan 12 16:54:17 2005
+@@ -40,7 +40,7 @@ int      	pas_translate_code = 0;
+ static int      pas_intr_mask;
+ static int      pas_irq;
+ static int      pas_sb_base;
+-spinlock_t	pas_lock=SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(pas_lock);
+ #ifndef CONFIG_PAS_JOYSTICK
+ static int	joystick;
+ #else
+diff -puN sound/oss/pss.c~lock-initializer-cleanup-sound sound/oss/pss.c
+--- 25/sound/oss/pss.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/pss.c	Wed Jan 12 16:54:17 2005
+@@ -143,7 +143,7 @@ typedef struct pss_confdata {
+   
+ static pss_confdata pss_data;
+ static pss_confdata *devc = &pss_data;
+-static spinlock_t lock=SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(lock);
+ 
+ static int      pss_initialized;
+ static int      nonstandard_microcode;
+diff -puN sound/oss/sb_common.c~lock-initializer-cleanup-sound sound/oss/sb_common.c
+--- 25/sound/oss/sb_common.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/sb_common.c	Wed Jan 12 16:54:17 2005
+@@ -67,7 +67,7 @@ void *smw_free;
+ 
+ static int jazz16_base;			/* Not detected */
+ static unsigned char jazz16_bits;	/* I/O relocation bits */
+-static spinlock_t jazz16_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(jazz16_lock);
+ 
+ /*
+  * Logitech Soundman Wave specific initialization code
+diff -puN sound/oss/sequencer.c~lock-initializer-cleanup-sound sound/oss/sequencer.c
+--- 25/sound/oss/sequencer.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/sequencer.c	Wed Jan 12 16:54:17 2005
+@@ -28,7 +28,7 @@ static int      pending_timer = -1;	/* F
+ extern unsigned long seq_time;
+ 
+ static int      obsolete_api_used;
+-static spinlock_t lock=SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(lock);
+ 
+ /*
+  * Local counts for number of synth and MIDI devices. These are initialized
+diff -puN sound/oss/sys_timer.c~lock-initializer-cleanup-sound sound/oss/sys_timer.c
+--- 25/sound/oss/sys_timer.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/sys_timer.c	Wed Jan 12 16:54:17 2005
+@@ -27,7 +27,7 @@ static volatile unsigned long next_event
+ static unsigned long prev_event_time;
+ 
+ static void     poll_def_tmr(unsigned long dummy);
+-static spinlock_t lock=SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(lock);
+ 
+ static struct timer_list def_tmr = TIMER_INITIALIZER(poll_def_tmr, 0, 0);
+ 
+diff -puN sound/oss/uart6850.c~lock-initializer-cleanup-sound sound/oss/uart6850.c
+--- 25/sound/oss/uart6850.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/uart6850.c	Wed Jan 12 16:54:17 2005
+@@ -72,7 +72,7 @@ static int uart6850_opened;
+ static int uart6850_irq;
+ static int uart6850_detected;
+ static int my_dev;
+-static spinlock_t lock=SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(lock);
+ 
+ static void (*midi_input_intr) (int dev, unsigned char data);
+ static void poll_uart6850(unsigned long dummy);
+diff -puN sound/oss/waveartist.c~lock-initializer-cleanup-sound sound/oss/waveartist.c
+--- 25/sound/oss/waveartist.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/waveartist.c	Wed Jan 12 16:54:17 2005
+@@ -146,7 +146,7 @@ typedef struct wavnc_port_info {
+ 
+ static int		nr_waveartist_devs;
+ static wavnc_info	adev_info[MAX_AUDIO_DEV];
+-static spinlock_t	waveartist_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(waveartist_lock);
+ 
+ #ifndef CONFIG_ARCH_NETWINDER
+ #define machine_is_netwinder() 0
+diff -puN sound/oss/wavfront.c~lock-initializer-cleanup-sound sound/oss/wavfront.c
+--- 25/sound/oss/wavfront.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/wavfront.c	Wed Jan 12 16:54:17 2005
+@@ -277,7 +277,7 @@ struct wf_config {
+ 	wait_queue_head_t interrupt_sleeper; 
+ } dev;
+ 
+-static spinlock_t lock=SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(lock);
+ static int  detect_wffx(void);
+ static int  wffx_ioctl (wavefront_fx_info *);
+ static int  wffx_init (void);
+diff -puN sound/oss/wf_midi.c~lock-initializer-cleanup-sound sound/oss/wf_midi.c
+--- 25/sound/oss/wf_midi.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/wf_midi.c	Wed Jan 12 16:54:17 2005
+@@ -81,7 +81,7 @@ static struct wf_mpu_config *phys_dev = 
+ static struct wf_mpu_config *virt_dev = &devs[1];
+ 
+ static void start_uart_mode (void);
+-static spinlock_t lock=SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(lock);
+ 
+ #define	OUTPUT_READY	0x40
+ #define	INPUT_AVAIL	0x80
+diff -puN sound/oss/ymfpci.c~lock-initializer-cleanup-sound sound/oss/ymfpci.c
+--- 25/sound/oss/ymfpci.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/oss/ymfpci.c	Wed Jan 12 16:54:17 2005
+@@ -99,7 +99,7 @@ static void ymfpci_disable_dsp(ymfpci_t 
+ static void ymfpci_download_image(ymfpci_t *codec);
+ static void ymf_memload(ymfpci_t *unit);
+ 
+-static spinlock_t ymf_devs_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(ymf_devs_lock);
+ static LIST_HEAD(ymf_devs);
+ 
+ /*
+diff -puN sound/sound_core.c~lock-initializer-cleanup-sound sound/sound_core.c
+--- 25/sound/sound_core.c~lock-initializer-cleanup-sound	Wed Jan 12 16:54:17 2005
++++ 25-akpm/sound/sound_core.c	Wed Jan 12 16:54:17 2005
+@@ -146,7 +146,7 @@ static struct sound_unit *__sound_remove
+  *	This lock guards the sound loader list.
+  */
+ 
+-static spinlock_t sound_loader_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(sound_loader_lock);
+ 
+ /*
+  *	Allocate the controlling structure and add it to the sound driver
+_

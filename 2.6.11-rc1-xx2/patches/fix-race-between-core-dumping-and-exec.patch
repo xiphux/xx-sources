@@ -1,0 +1,52 @@
+
+From: Roland McGrath <roland@redhat.com>
+
+When threads are sharing mm via CLONE_VM (linuxthreads, vfork), there is a
+race condition where one thread doing a core dump and synchronizing all
+mm-sharing threads for it can deadlock waiting for another thread that just
+did an exec and will never synchronize.  This patch makes the exec_mmap
+check for a pending core dump and punt the exec to synchronize with that,
+as if the core dump had struck before entering the execve system call at
+all.
+
+Signed-off-by: Roland McGrath <roland@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/exec.c |   16 ++++++++++++++++
+ 1 files changed, 16 insertions(+)
+
+diff -puN fs/exec.c~fix-race-between-core-dumping-and-exec fs/exec.c
+--- 25/fs/exec.c~fix-race-between-core-dumping-and-exec	Tue Jan 11 13:57:31 2005
++++ 25-akpm/fs/exec.c	Tue Jan 11 13:57:31 2005
+@@ -550,6 +550,21 @@ static int exec_mmap(struct mm_struct *m
+ 	old_mm = current->mm;
+ 	mm_release(tsk, old_mm);
+ 
++	if (old_mm) {
++		/*
++		 * Make sure that if there is a core dump in progress
++		 * for the old mm, we get out and die instead of going
++		 * through with the exec.  We must hold mmap_sem around
++		 * checking core_waiters and changing tsk->mm.  The
++		 * core-inducing thread will increment core_waiters for
++		 * each thread whose ->mm == old_mm.
++		 */
++		down_read(&old_mm->mmap_sem);
++		if (unlikely(old_mm->core_waiters)) {
++			up_read(&old_mm->mmap_sem);
++			return -EINTR;
++		}
++	}
+ 	task_lock(tsk);
+ 	active_mm = tsk->active_mm;
+ 	tsk->mm = mm;
+@@ -558,6 +573,7 @@ static int exec_mmap(struct mm_struct *m
+ 	task_unlock(tsk);
+ 	arch_pick_mmap_layout(mm);
+ 	if (old_mm) {
++		up_read(&old_mm->mmap_sem);
+ 		if (active_mm != old_mm) BUG();
+ 		mmput(old_mm);
+ 		return 0;
+_

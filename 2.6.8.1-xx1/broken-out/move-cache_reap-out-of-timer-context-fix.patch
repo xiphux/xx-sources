@@ -1,0 +1,40 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/slab.c |   11 ++++-------
+ 1 files changed, 4 insertions(+), 7 deletions(-)
+
+diff -puN mm/slab.c~move-cache_reap-out-of-timer-context-fix mm/slab.c
+--- 25/mm/slab.c~move-cache_reap-out-of-timer-context-fix	2004-07-27 23:58:48.228442632 -0700
++++ 25-akpm/mm/slab.c	2004-07-27 23:58:48.233441872 -0700
+@@ -575,8 +575,9 @@ static void __slab_error(const char *fun
+ /*
+  * Initiate the reap timer running on the target CPU.  We run at around 1 to 2Hz
+  * via the workqueue/eventd.
+- * Add the CPU number into the expiration time to minimize the possibility of the
+- * CPUs getting into lockstep and contending for the global cache chain lock.
++ * Add the CPU number into the expiration time to minimize the possibility of
++ * the CPUs getting into lockstep and contending for the global cache chain
++ * lock.
+  */
+ static void __devinit start_cpu_timer(int cpu)
+ {
+@@ -2696,14 +2697,10 @@ static void drain_array_locked(kmem_cach
+  * If we cannot acquire the cache chain semaphore then just give up - we'll
+  * try again on the next iteration.
+  */
+-static void cache_reap (void *unused)
++static void cache_reap(void *unused)
+ {
+ 	struct list_head *walk;
+ 
+-#if DEBUG
+-	BUG_ON(!in_interrupt());
+-	BUG_ON(in_irq());
+-#endif
+ 	if (down_trylock(&cache_chain_sem)) {
+ 		/* Give up. Setup the next iteration. */
+ 		schedule_delayed_work(&__get_cpu_var(reap_work), REAPTIMEOUT_CPUC + smp_processor_id());
+_

@@ -1,0 +1,143 @@
+---
+
+ linux-2.6.7-rc2-xx2-xiphux/arch/i386/power/suspend2.c               |    7 
+ linux-2.6.7-rc2-xx2-xiphux/drivers/md/dm-raid1.c                    |    2 
+ linux-2.6.7-rc2-xx2-xiphux/drivers/md/kcopyd.c                      |    2 
+ linux-2.6.7-rc2-xx2-xiphux/drivers/scsi/libata-core.c               |    2 
+ linux-2.6.7-rc2-xx2-xiphux/include/linux/suspend-version-specific.h |   21 ++
+ linux-2.6.7-rc2-xx2-xiphux/kernel/power/memory_pool.c               |    2 
+ linux-2.6.7-rc2-xx2-xiphux/kernel/power/pagedir.c                   |    6 
+ 8 files changed, 69 insertions(+), 55 deletions(-)
+
+diff -puN kernel/power/pagedir.c~swsusp2-compile-fixes-xx kernel/power/pagedir.c
+--- linux-2.6.7-rc2-xx2/kernel/power/pagedir.c~swsusp2-compile-fixes-xx	2004-06-03 17:50:27.457692544 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/kernel/power/pagedir.c	2004-06-03 17:50:27.473690112 -0400
+@@ -295,13 +295,15 @@ void mark_pages_for_pageset2(void)
+ 	for_each_zone(zone) {
+ 		spin_lock(&zone->lru_lock);
+ 		INACTIVE_LIST_FOR_EACH(SetPagePageset2);
+-		ACTIVE_LIST_FOR_EACH(SetPagePageset2);
++		ACTIVE_MAPPED_LIST_FOR_EACH(SetPagePageset2);
++		ACTIVE_UNMAPPED_LIST_FOR_EACH(SetPagePageset2);
+ 		spin_unlock(&zone->lru_lock);
+ 	}
+ #else
+ 	spin_lock(&pagemap_lru_lock);
+ 	INACTIVE_LIST_FOR_EACH(SetPagePageset2);
+-	ACTIVE_LIST_FOR_EACH(SetPagePageset2);
++	ACTIVE_MAPPED_LIST_FOR_EACH(SetPagePageset2);
++	ACTIVE_UNMAPPED_LIST_FOR_EACH(SetPagePageset2);
+ 	spin_unlock(&pagemap_lru_lock);
+ #endif
+ 
+diff -puN include/linux/suspend-version-specific.h~swsusp2-compile-fixes-xx include/linux/suspend-version-specific.h
+--- linux-2.6.7-rc2-xx2/include/linux/suspend-version-specific.h~swsusp2-compile-fixes-xx	2004-06-03 17:50:27.459692240 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/include/linux/suspend-version-specific.h	2004-06-03 17:50:27.474689960 -0400
+@@ -100,11 +100,24 @@ do { \
+  } \
+ } while(0)
+ 
+-#define ACTIVE_LIST_FOR_EACH(procedure) \
++#define ACTIVE_MAPPED_LIST_FOR_EACH(procedure) \
+ do { \
+- if (zone->nr_active) { \
+-  struct list_head * entry = zone->active_list.prev; \
+-  while (entry != &zone->active_list) { \
++ if (zone->nr_active_mapped) { \
++  struct list_head * entry = zone->active_mapped_list.prev; \
++  while (entry != &zone->active_mapped_list) { \
++   struct page * page; \
++   page = list_entry(entry, struct page, lru); \
++   procedure(page); \
++   entry = entry->prev; \
++  } \
++ } \
++} while(0)
++
++#define ACTIVE_UNMAPPED_LIST_FOR_EACH(procedure) \
++do { \
++ if (zone->nr_active_unmapped) { \
++  struct list_head * entry = zone->active_unmapped_list.prev; \
++  while (entry != &zone->active_unmapped_list) { \
+    struct page * page; \
+    page = list_entry(entry, struct page, lru); \
+    procedure(page); \
+diff -puN kernel/power/memory_pool.c~swsusp2-compile-fixes-xx kernel/power/memory_pool.c
+--- linux-2.6.7-rc2-xx2/kernel/power/memory_pool.c~swsusp2-compile-fixes-xx	2004-06-03 17:50:27.461691936 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/kernel/power/memory_pool.c	2004-06-03 17:50:27.475689808 -0400
+@@ -243,7 +243,7 @@ check_and_return:
+ 			page_count(page));
+ 	if (PageLRU(page))
+ 		BUG();
+-	if (PageActive(page))
++	if (PageActiveMapped(page) || PageActiveUnmapped(page))
+ 		BUG();
+ 	if (suspend_pool_level[order] && !suspend_memory_pool[order]) {
+ 		printk("Original value was %p.\n", orig_value);
+diff -puN drivers/md/kcopyd.c~swsusp2-compile-fixes-xx drivers/md/kcopyd.c
+--- linux-2.6.7-rc2-xx2/drivers/md/kcopyd.c~swsusp2-compile-fixes-xx	2004-06-03 17:50:27.463691632 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/drivers/md/kcopyd.c	2004-06-03 17:50:27.476689656 -0400
+@@ -649,7 +649,7 @@ int __init kcopyd_init(void)
+ 	if (r)
+ 		return r;
+ 
+-	_kcopyd_wq = create_singlethread_workqueue("kcopyd");
++	_kcopyd_wq = create_singlethread_workqueue("kcopyd", 0);
+ 	if (!_kcopyd_wq) {
+ 		jobs_exit();
+ 		return -ENOMEM;
+diff -puN drivers/md/dm-raid1.c~swsusp2-compile-fixes-xx drivers/md/dm-raid1.c
+--- linux-2.6.7-rc2-xx2/drivers/md/dm-raid1.c~swsusp2-compile-fixes-xx	2004-06-03 17:50:34.014695728 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/drivers/md/dm-raid1.c	2004-06-03 17:50:47.275679752 -0400
+@@ -1243,7 +1243,7 @@ static int __init dm_mirror_init(void)
+ 	if (r)
+ 		return r;
+ 
+-	_kmirrord_wq = create_workqueue("kmirrord");
++	_kmirrord_wq = create_workqueue("kmirrord", 0);
+ 	if (!_kmirrord_wq) {
+ 		DMERR("couldn't start kmirrord");
+ 		dm_dirty_log_exit();
+diff -puN drivers/scsi/libata-core.c~swsusp2-compile-fixes-xx drivers/scsi/libata-core.c
+--- linux-2.6.7-rc2-xx2/drivers/scsi/libata-core.c~swsusp2-compile-fixes-xx	2004-06-03 17:57:56.489429344 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/drivers/scsi/libata-core.c	2004-06-03 17:58:07.300785768 -0400
+@@ -3438,7 +3438,7 @@ int pci_test_config_bits(struct pci_dev 
+ 
+ static int __init ata_init(void)
+ {
+-	ata_wq = create_workqueue("ata");
++	ata_wq = create_workqueue("ata", 0);
+ 	if (!ata_wq)
+ 		return -ENOMEM;
+ 
+diff -puN arch/i386/power/suspend2.c~swsusp2-compile-fixes-xx arch/i386/power/suspend2.c
+--- linux-2.6.7-rc2-xx2/arch/i386/power/suspend2.c~swsusp2-compile-fixes-xx	2004-06-03 18:12:00.705089056 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/arch/i386/power/suspend2.c	2004-06-03 18:17:46.381538248 -0400
+@@ -290,8 +290,8 @@ extern void suspend_apic_reload_state(vo
+  */
+ 
+ extern irq_desc_t irq_desc[];
+-extern unsigned long irq_affinity[];
+-unsigned long saved_affinity[NR_IRQS];
++extern cpumask_t irq_affinity[];
++cpumask_t saved_affinity[NR_IRQS];
+ 
+ /*
+  * Routine to save the old irq affinities and change affinities of all irqs to
+@@ -300,13 +300,12 @@ unsigned long saved_affinity[NR_IRQS];
+ static void set_irq_affinity(void)
+ {
+ 	int i;
+-	int cpu = smp_processor_id();
+ 
+ 	memcpy(saved_affinity, irq_affinity, NR_IRQS * sizeof(unsigned long));
+ 	for (i = 0; i < NR_IRQS; i++) {
+ 		if (irq_desc[i].handler == NULL)
+ 			continue;
+-		irq_affinity[i] = 1UL << cpu;
++		irq_affinity[i] = cpumask_of_cpu(smp_processor_id());
+ 		if (irq_desc[i].handler->set_affinity != NULL)
+ 			irq_desc[i].handler->set_affinity(i, irq_affinity[i]);
+ 	}
+
+_

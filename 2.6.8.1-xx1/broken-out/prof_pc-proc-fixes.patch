@@ -1,0 +1,88 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+Fix up compile with CONFIG_PROC_FS=n.  Accomplish this by conditionally
+declaring create_prof_cpu_mask(), privatizing create_proc_profile(), and
+unconditionally including profile_hit() and profile_tick().
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/proc/proc_misc.c     |    1 -
+ 25-akpm/include/linux/profile.h |    7 +++++--
+ 25-akpm/kernel/profile.c        |   13 +++++++------
+ 3 files changed, 12 insertions(+), 9 deletions(-)
+
+diff -puN fs/proc/proc_misc.c~prof_pc-proc-fixes fs/proc/proc_misc.c
+--- 25/fs/proc/proc_misc.c~prof_pc-proc-fixes	Fri Aug  6 15:08:12 2004
++++ 25-akpm/fs/proc/proc_misc.c	Fri Aug  6 15:08:12 2004
+@@ -658,7 +658,6 @@ void __init proc_misc_init(void)
+ 				(size_t)high_memory - PAGE_OFFSET + PAGE_SIZE;
+ 	}
+ #endif
+-	create_proc_profile();
+ #ifdef CONFIG_MAGIC_SYSRQ
+ 	entry = create_proc_entry("sysrq-trigger", S_IWUSR, NULL);
+ 	if (entry)
+diff -puN include/linux/profile.h~prof_pc-proc-fixes include/linux/profile.h
+--- 25/include/linux/profile.h~prof_pc-proc-fixes	Fri Aug  6 15:08:12 2004
++++ 25-akpm/include/linux/profile.h	Fri Aug  6 15:08:12 2004
+@@ -20,10 +20,13 @@ int __init profile_setup(char * str);
+ 
+ /* init basic kernel profiler */
+ void __init profile_init(void);
+-void create_prof_cpu_mask(struct proc_dir_entry *);
+ void profile_tick(int, struct pt_regs *);
+ void profile_hit(int, void *);
+-void create_proc_profile(void);
++#ifdef CONFIG_PROC_FS
++void create_prof_cpu_mask(struct proc_dir_entry *);
++#else
++#define create_prof_cpu_mask(x)			do { (void)(x); } while (0)
++#endif
+ 
+ extern unsigned int * prof_buffer;
+ extern unsigned long prof_len;
+diff -puN kernel/profile.c~prof_pc-proc-fixes kernel/profile.c
+--- 25/kernel/profile.c~prof_pc-proc-fixes	Fri Aug  6 15:08:12 2004
++++ 25-akpm/kernel/profile.c	Fri Aug  6 15:08:12 2004
+@@ -167,11 +167,6 @@ EXPORT_SYMBOL_GPL(unregister_profile_not
+ EXPORT_SYMBOL_GPL(profile_event_register);
+ EXPORT_SYMBOL_GPL(profile_event_unregister);
+ 
+-#ifdef CONFIG_PROC_FS
+-#include <linux/proc_fs.h>
+-#include <asm/uaccess.h>
+-#include <asm/ptrace.h>
+-
+ void profile_hit(int type, void *__pc)
+ {
+ 	unsigned long pc;
+@@ -190,6 +185,11 @@ void profile_tick(int type, struct pt_re
+ 		profile_hit(type, (void *)profile_pc(regs));
+ }
+ 
++#ifdef CONFIG_PROC_FS
++#include <linux/proc_fs.h>
++#include <asm/uaccess.h>
++#include <asm/ptrace.h>
++
+ static int prof_cpu_mask_read_proc (char *page, char **start, off_t off,
+ 			int count, int *eof, void *data)
+ {
+@@ -292,7 +292,7 @@ static struct file_operations proc_profi
+ 	.write		= write_profile,
+ };
+ 
+-void __init create_proc_profile(void)
++static int __init create_proc_profile(void)
+ {
+ 	struct proc_dir_entry *entry;
+ 
+@@ -303,4 +303,5 @@ void __init create_proc_profile(void)
+ 	entry->proc_fops = &proc_profile_operations;
+ 	entry->size = (1+prof_len) * sizeof(unsigned int);
+ }
++module_init(create_proc_profile);
+ #endif /* CONFIG_PROC_FS */
+_

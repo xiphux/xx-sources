@@ -1,0 +1,33 @@
+
+From: Neil Brown <neilb@cse.unsw.edu.au>
+
+Fix a problem wherein device nodes on a ro-exported mount cannot be opened
+read/write.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/nfsd/vfs.c |    7 ++++---
+ 1 files changed, 4 insertions(+), 3 deletions(-)
+
+diff -puN fs/nfsd/vfs.c~knfsd-server-permissions-fix fs/nfsd/vfs.c
+--- 25/fs/nfsd/vfs.c~knfsd-server-permissions-fix	2004-08-04 23:37:50.278436296 -0700
++++ 25-akpm/fs/nfsd/vfs.c	2004-08-04 23:37:50.283435536 -0700
+@@ -557,12 +557,13 @@ static struct accessmap	nfs3_anyaccess[]
+ 	 * to the server to check for access for things like /dev/null
+ 	 * (which really, the server doesn't care about).  So
+ 	 * We provide simple access checking for them, looking
+-	 * mainly at mode bits
++	 * mainly at mode bits, and we make sure to ignore read-only
++	 * filesystem checks
+ 	 */
+     {	NFS3_ACCESS_READ,	MAY_READ			},
+     {	NFS3_ACCESS_EXECUTE,	MAY_EXEC			},
+-    {	NFS3_ACCESS_MODIFY,	MAY_WRITE			},
+-    {	NFS3_ACCESS_EXTEND,	MAY_WRITE			},
++    {	NFS3_ACCESS_MODIFY,	MAY_WRITE|MAY_LOCAL_ACCESS	},
++    {	NFS3_ACCESS_EXTEND,	MAY_WRITE|MAY_LOCAL_ACCESS	},
+ 
+     {	0,			0				}
+ };
+_

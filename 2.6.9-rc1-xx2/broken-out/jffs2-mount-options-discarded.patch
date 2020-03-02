@@ -1,0 +1,33 @@
+
+From: Todd Poynor <tpoynor@mvista.com>
+
+  Yoann Vandoorselaere noticed an attempt to mount a JFFS2 filesystem
+  read-only mounts writeable instead.
+
+From: David Woodhouse <dwmw2@infradead.org>
+
+  and make it fix the memory leak on failure too:
+
+Signed-off-by: David Woodhouse <dwmw2@infradead.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Index: xx-sources/fs/jffs2/super.c
+===================================================================
+--- xx-sources.orig/fs/jffs2/super.c	2004-09-01 13:39:06.971256128 -0400
++++ xx-sources/fs/jffs2/super.c	2004-09-01 13:43:29.085408720 -0400
+@@ -130,7 +130,7 @@
+ 		  mtd->index, mtd->name));
+ 
+ 	sb->s_op = &jffs2_super_operations;
+-	sb->s_flags |= MS_NOATIME;
++	sb->s_flags = flags | MS_NOATIME;
+ 
+ 	ret = jffs2_do_fill_super(sb, data, (flags&MS_VERBOSE)?1:0);
+ 
+@@ -330,6 +330,7 @@
+  out_compressors:
+ 	jffs2_compressors_exit();
+  out:
++	kmem_cache_destroy(jffs2_inode_cachep);
+ 	return ret;
+ }
+ 

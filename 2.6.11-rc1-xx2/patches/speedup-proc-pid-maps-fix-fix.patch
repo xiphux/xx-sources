@@ -1,0 +1,61 @@
+
+From: Prasanna Meda <pmeda@akamai.com>
+
+Third version:
+Seek fix: When  last_addr is reset by lseek, we need to depend on f_pos and
+ignore f_version here. This is fixed and made this code common with starting map.
+
+Signed-off-by: Prasanna Meda <pmeda@akamai.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/proc/task_mmu.c |   24 ++++++++++++------------
+ 1 files changed, 12 insertions(+), 12 deletions(-)
+
+diff -puN fs/proc/task_mmu.c~speedup-proc-pid-maps-fix-fix fs/proc/task_mmu.c
+--- 25/fs/proc/task_mmu.c~speedup-proc-pid-maps-fix-fix	2005-01-09 23:58:18.735615832 -0800
++++ 25-akpm/fs/proc/task_mmu.c	2005-01-09 23:58:18.738615376 -0800
+@@ -121,6 +121,13 @@ static void *m_start(struct seq_file *m,
+ 	struct vm_area_struct *map, *tail_map;
+ 	loff_t l = *pos;
+ 
++	/*
++	 * We remember last_addr rather than next_addr to hit with
++	 * mmap_cache most of the time. We have zero last_addr at
++	 * the begining and also after lseek. We will have -1 last_addr
++	 * after the end of the maps.
++	 */
++
+ 	if (last_addr == -1UL)
+ 		return NULL;
+ 
+@@ -133,23 +140,16 @@ static void *m_start(struct seq_file *m,
+ 	tail_map = get_gate_vma(task);
+ 	down_read(&mm->mmap_sem);
+ 
+-	/*
+-	 * First map is special, since we remember last_addr
+-	 * rather than current_addr to hit with mmap_cache most of the time.
+-	 */
+-	if (!l) {
+-		map = mm->mmap;
+-		goto out;
+-	}
+-
+ 	/* Start with last addr hint */
+-	map = find_vma(mm, last_addr);
+-	if (map) {
++	if (last_addr && (map = find_vma(mm, last_addr))) {
+ 		map = map->vm_next;
+ 		goto out;
+ 	}
+ 
+-	/* Check the map index is within the range, and do linear scan */
++	/*
++	 * Check the map index is within the range and do
++	 * sequential scan until f_pos.
++	 */
+ 	if ((unsigned long)l < mm->map_count) {
+ 		map = mm->mmap;
+ 		while (l-- && map)
+_

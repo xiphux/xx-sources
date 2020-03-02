@@ -1,0 +1,100 @@
+
+From: James Bottomley <James.Bottomley@SteelEye.com>
+
+This patch implements dma_get_required_mask() which may be used by drivers
+to probe the optimal DMA descriptor type they should be implementing on the
+platform.
+
+I've also tested it this time with the sym_2 driver...making it chose the
+correct descriptors for the platform.  (although I don't have a 64 bit
+platform with >4GB memory, so I only confirmed it selects the 32 bit
+descriptors all the time...)
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/DMA-API.txt   |   14 ++++++++++++++
+ 25-akpm/include/linux/dma-mapping.h |   23 +++++++++++++++++++++++
+ 25-akpm/mm/bootmem.c                |    5 +++++
+ 3 files changed, 42 insertions(+)
+
+diff -puN Documentation/DMA-API.txt~dma_get_required_mask Documentation/DMA-API.txt
+--- 25/Documentation/DMA-API.txt~dma_get_required_mask	2004-06-28 17:37:35.129480896 -0700
++++ 25-akpm/Documentation/DMA-API.txt	2004-06-28 17:37:35.137479680 -0700
+@@ -162,6 +162,20 @@ parameters if it is.
+ 
+ Returns: 1 if successful and 0 if not
+ 
++u64
++dma_get_required_mask(struct device *dev)
++
++After setting the mask with dma_set_mask(), this API returns the
++actual mask (within that already set) that the platform actually
++requires to operate efficiently.  Usually this means the returned mask
++is the minimum required to cover all of memory.  Examining the
++required mask gives drivers with variable descriptor sizes the
++opportunity to use smaller descriptors as necessary.
++
++Requesting the required mask does not alter the current mask.  If you
++wish to take advantage of it, you should issue another dma_set_mask()
++call to lower the mask again.
++
+ 
+ Part Id - Streaming DMA mappings
+ --------------------------------
+diff -puN include/linux/dma-mapping.h~dma_get_required_mask include/linux/dma-mapping.h
+--- 25/include/linux/dma-mapping.h~dma_get_required_mask	2004-06-28 17:37:35.131480592 -0700
++++ 25-akpm/include/linux/dma-mapping.h	2004-06-28 17:37:35.137479680 -0700
+@@ -19,6 +19,29 @@ enum dma_data_direction {
+ #define dma_sync_single		dma_sync_single_for_cpu
+ #define dma_sync_sg		dma_sync_sg_for_cpu
+ 
++#ifndef ARCH_HAS_DMA_GET_REQUIRED_MASK
++static inline u64 dma_get_required_mask(struct device *dev)
++{
++	extern unsigned long max_pfn; /* defined in bootmem.h but may
++					 not be included */
++	u32 low_totalram = ((max_pfn - 1) << PAGE_SHIFT);
++	u32 high_totalram = ((max_pfn - 1) >> (32 - PAGE_SHIFT));
++	u64 mask;
++
++	if (!high_totalram) {
++		/* convert to mask just covering totalram */
++		low_totalram = (1 << (fls(low_totalram) - 1));
++		low_totalram += low_totalram - 1;
++		mask = low_totalram;
++	} else {
++		high_totalram = (1 << (fls(high_totalram) - 1));
++		high_totalram += high_totalram - 1;
++		mask = (((u64)high_totalram) << 32) + 0xffffffff;
++	}
++	return mask & *dev->dma_mask;
++}
++#endif
++
+ #endif
+ 
+ 
+diff -puN mm/bootmem.c~dma_get_required_mask mm/bootmem.c
+--- 25/mm/bootmem.c~dma_get_required_mask	2004-06-28 17:37:35.133480288 -0700
++++ 25-akpm/mm/bootmem.c	2004-06-28 17:37:35.138479528 -0700
+@@ -16,6 +16,7 @@
+ #include <linux/init.h>
+ #include <linux/bootmem.h>
+ #include <linux/mmzone.h>
++#include <linux/module.h>
+ #include <asm/dma.h>
+ #include <asm/io.h>
+ 
+@@ -27,6 +28,10 @@ unsigned long max_low_pfn;
+ unsigned long min_low_pfn;
+ unsigned long max_pfn;
+ 
++EXPORT_SYMBOL(max_pfn);		/* This is exported so
++				 * dma_get_required_mask(), which uses
++				 * it, can be an inline function */
++
+ /* return the number of _pages_ that will be allocated for the boot bitmap */
+ unsigned long __init bootmem_bootmap_pages (unsigned long pages)
+ {
+_

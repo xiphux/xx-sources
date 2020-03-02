@@ -1,0 +1,198 @@
+---
+
+ linux-2.6.7-xx4-xiphux/kernel/sched.c  |   60 +++++++++++++--------------------
+ linux-2.6.7-xx4-xiphux/mm/page_alloc.c |    2 -
+ 2 files changed, 26 insertions(+), 36 deletions(-)
+
+diff -puN mm/page_alloc.c~np2-to-np3 mm/page_alloc.c
+--- linux-2.6.7-xx4/mm/page_alloc.c~np2-to-np3	2004-06-29 19:44:21.108814528 -0400
++++ linux-2.6.7-xx4-xiphux/mm/page_alloc.c	2004-06-29 19:52:54.571756296 -0400
+@@ -642,7 +642,7 @@ __alloc_pages(unsigned int gfp_mask, uns
+ 		min = z->pages_min;
+ 		if (gfp_mask & __GFP_HIGH)
+ 			min -= min>>2;
+-		if (unlikely(rt_task(p)))
++		if (unlikely(rt_task(p)) && !in_interrupt())
+ 			min -= min>>2;
+ 		min += (1<<order) + z->protection[alloc_type];
+ 
+diff -puN kernel/sched.c~np2-to-np3 kernel/sched.c
+--- linux-2.6.7-xx4/kernel/sched.c~np2-to-np3	2004-06-29 19:44:23.489452616 -0400
++++ linux-2.6.7-xx4-xiphux/kernel/sched.c	2004-06-29 19:52:24.883269632 -0400
+@@ -1390,16 +1390,12 @@ effective_prio
+  * __activate_task - move a task to the runqueue.
+  */
+ static inline void __activate_task(task_t *p, runqueue_t *rq
+-#ifdef CONFIG_NICKSCHED
+-		, prio_array_t *array
+-#elif defined(CONFIG_SPA) || defined(CONFIG_EBS)
++#if defined(CONFIG_SPA) || defined(CONFIG_EBS)
+ 		, int prio
+ #endif
+ 		)
+ {
+-#ifdef CONFIG_NICKSCHED
+-	enqueue_task(p, array);
+-#elif defined(CONFIG_STAIRCASE)
++#ifdef CONFIG_STAIRCASE
+ 	enqueue_task(p, rq);
+ #elif defined(CONFIG_SPA) || defined(CONFIG_EBS)
+ #ifdef CONFIG_SPA
+@@ -1410,18 +1406,24 @@ static inline void __activate_task(task_
+ 	enqueue_task(p, rq->active);
+ #endif
+ 	rq->nr_running++;
++#ifdef CONFIG_SCHED_STATS
++	p->runnable_timestamp = jiffies;
++#endif
++}
++
+ #ifdef CONFIG_NICKSCHED
++static inline void __activate_task_array(task_t *p, runqueue_t *rq, prio_array_t *array)
++{
++	enqueue_task(p, array);
++	rq->nr_running++;
+ 	if (likely(!rt_task(p))) {
+ 		if (p->prio < array->min_prio)
+ 			array->min_prio = p->prio;
+ 		if (p->static_prio < array->min_nice)
+ 			array->min_nice = p->static_prio;
+ 	}
+-#endif
+-#ifdef CONFIG_SCHED_STATS
+-	p->runnable_timestamp = jiffies;
+-#endif
+ }
++#endif
+ 
+ #if !defined(CONFIG_SPA) && !defined(CONFIG_EBS)
+ /*
+@@ -1782,7 +1784,6 @@ activate_task(task_t *p, runqueue_t *rq,
+ 	return prio;
+ #else
+ #ifdef CONFIG_NICKSCHED
+-	prio_array_t *array;
+ 	unsigned long long sleep;
+ #elif defined(CONFIG_SPA)
+ 	int prio = effective_prio(p);
+@@ -1807,13 +1808,8 @@ activate_task(task_t *p, runqueue_t *rq,
+ 	 * If we have slept through an active/expired array switch, restart
+ 	 * our timeslice too.
+ 	 */
+-	array = rq->active;
+-	if (rq->array_sequence != p->array_sequence) {
+-		p->used_slice = 0;
+-	} else if (unlikely(p->used_slice == -1)) {
+-		array = rq->expired;
++	if (rq->array_sequence != p->array_sequence)
+ 		p->used_slice = 0;
+-	}
+ #elif defined(CONFIG_STAIRCASE)
+ 	p->slice = slice(p);
+ 	recalc_task_prio(p, now);
+@@ -1850,9 +1846,7 @@ activate_task(task_t *p, runqueue_t *rq,
+ #ifndef CONFIG_NICKSCHED
+ 	p->timestamp = now;
+ #endif
+-#ifdef CONFIG_NICKSCHED
+-	__activate_task(p, rq, array);
+-#elif defined(CONFIG_SPA)
++#ifdef CONFIG_SPA
+ 	__activate_task(p, rq, prio);
+ 	return prio;
+ #else
+@@ -2209,9 +2203,7 @@ static int try_to_wake_up(task_t * p, un
+ 		this_load -= SCHED_LOAD_SCALE;
+ 
+ 	/* Don't pull the task off an idle CPU to a busy one */
+-	if (load < 3*SCHED_LOAD_SCALE/2
+-			&& this_load + SCHED_LOAD_SCALE/2 > load
+-			&& target_load(cpu) + this_load > SCHED_LOAD_SCALE)
++	if (load < SCHED_LOAD_SCALE/2 && this_load > SCHED_LOAD_SCALE/2)
+ 		goto out_set_cpu;
+ 
+ 	new_cpu = this_cpu; /* Wake to this CPU if we can */
+@@ -2660,7 +2652,7 @@ void fastcall wake_up_new_process(task_t
+ 			if (unlikely(!current->array))
+ #endif
+ #ifdef CONFIG_NICKSCHED
+-				__activate_task(p, rq, array);
++				__activate_task_array(p, rq, array);
+ #else
+ 				__activate_task(p, rq);
+ #endif
+@@ -2691,7 +2683,7 @@ void fastcall wake_up_new_process(task_t
+ 		 	else
+  				__activate_task(p, rq, EBS_MIN_PRI);
+ #elif defined(CONFIG_NICKSCHED)
+-			__activate_task(p, rq, array);
++			__activate_task_array(p, rq, array);
+ #elif defined(CONFIG_SPA)
+ 			__activate_task(p, rq, effective_prio(p));
+ #else
+@@ -2739,7 +2731,7 @@ void fastcall wake_up_new_process(task_t
+ #endif
+ #else
+ #ifdef CONFIG_NICKSCHED
+-		__activate_task(p, rq, array);
++		__activate_task_array(p, rq, array);
+ #else
+ 		__activate_task(p, rq);
+ #endif
+@@ -3385,10 +3377,8 @@ find_busiest_group(struct sched_domain *
+ 			/* Bias balancing toward cpus of our domain */
+ 			if (local_group)
+ 				load = target_load(i);
+-			else if (idle == NOT_IDLE)
+-				load = source_load(i);
+ 			else
+-				load = cpu_rq(i)->nr_running * SCHED_LOAD_SCALE;
++				load = source_load(i);
+ 
+ 			nr_cpus++;
+ 			avg_load += load;
+@@ -3487,7 +3477,8 @@ nextgroup:
+ 	return busiest;
+ 
+ out_balanced:
+-	if (busiest && (idle != NOT_IDLE && max_load > SCHED_LOAD_SCALE) ) {
++	if (busiest && (idle == NEWLY_IDLE ||
++			(idle == IDLE && max_load > SCHED_LOAD_SCALE)) ) {
+ 		*imbalance = 1;
+ 		return busiest;
+ 	}
+@@ -3512,12 +3503,11 @@ static runqueue_t *find_busiest_queue(
+ 
+ 	cpus_and(tmp, group->cpumask, cpu_online_map);
+ 	for_each_cpu_mask(i, tmp) {
+-		runqueue_t *rq = cpu_rq(i);
+-		load = rq->nr_running;
++		load = source_load(i);
+ 
+ 		if (load > max_load) {
+ 			max_load = load;
+-			busiest = rq;
++			busiest = cpu_rq(i);
+ 		}
+ 	}
+ 
+@@ -4375,7 +4365,7 @@ need_resched:
+ 	spin_lock_irq(&rq->lock);
+ 
+ #ifdef CONFIG_NICKSCHED
+-	if (unlikely(prev->used_slice == -1) && likely(prev->array)) {
++	if (unlikely(prev->used_slice == -1)) {
+ 		prev->used_slice = 0;
+ 		if (unlikely(rt_task(prev))) {
+ 			if (prev->policy == SCHED_RR) {
+@@ -5484,7 +5474,7 @@ static int setscheduler(pid_t pid, int p
+ #endif
+ 	{
+ #ifdef CONFIG_NICKSCHED
+-		__activate_task(p, rq, array);
++		__activate_task_array(p, rq, array);
+ #elif defined(CONFIG_SPA) || defined(CONFIG_EBS)
+ 		int prio = effective_prio(p);
+ 		__activate_task(p, task_rq(p), prio);
+
+_

@@ -1,0 +1,35 @@
+
+From: Alexander Gran <alex@zodiac.dnsalias.org>
+
+Suspending of the e1000 in my Thinkpad did not work.  The attached patch does
+the trick for me.
+
+Cc: <john.ronciak@intel.com>, <ganesh.venkatesan@intel.com>, <scott.feldman@intel.com>
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/e1000/e1000_main.c |    3 +++
+ 1 files changed, 3 insertions(+)
+
+diff -puN drivers/net/e1000/e1000_main.c~enable-suspend-resuming-of-e1000 drivers/net/e1000/e1000_main.c
+--- 25/drivers/net/e1000/e1000_main.c~enable-suspend-resuming-of-e1000	2004-06-19 16:26:29.876310792 -0700
++++ 25-akpm/drivers/net/e1000/e1000_main.c	2004-06-19 16:26:29.881310032 -0700
+@@ -2865,6 +2865,8 @@ e1000_suspend(struct pci_dev *pdev, uint
+ 		}
+ 	}
+ 
++	pci_disable_device(pdev);
++
+ 	state = (state > 0) ? 3 : 0;
+ 	pci_set_power_state(pdev, state);
+ 
+@@ -2879,6 +2881,7 @@ e1000_resume(struct pci_dev *pdev)
+ 	struct e1000_adapter *adapter = netdev->priv;
+ 	uint32_t manc;
+ 
++	pci_enable_device(pdev);
+ 	pci_set_power_state(pdev, 0);
+ 	pci_restore_state(pdev, adapter->pci_state);
+ 
+_

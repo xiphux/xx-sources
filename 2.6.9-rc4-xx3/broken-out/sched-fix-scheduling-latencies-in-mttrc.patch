@@ -1,0 +1,52 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+Fix scheduling latencies in the MTRR-setting codepath.  Also, fix bad bug:
+MTRR's _must_ be set with interrupts disabled!
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/cpu/mtrr/generic.c |   12 +++++++-----
+ 1 files changed, 7 insertions(+), 5 deletions(-)
+
+diff -puN arch/i386/kernel/cpu/mtrr/generic.c~sched-fix-scheduling-latencies-in-mttrc arch/i386/kernel/cpu/mtrr/generic.c
+--- 25/arch/i386/kernel/cpu/mtrr/generic.c~sched-fix-scheduling-latencies-in-mttrc	Tue Sep 14 17:42:08 2004
++++ 25-akpm/arch/i386/kernel/cpu/mtrr/generic.c	Tue Sep 14 17:42:08 2004
+@@ -240,11 +240,14 @@ static void prepare_set(void)
+ 	/*  Note that this is not ideal, since the cache is only flushed/disabled
+ 	   for this CPU while the MTRRs are changed, but changing this requires
+ 	   more invasive changes to the way the kernel boots  */
+-	spin_lock(&set_atomicity_lock);
++	/*
++	 * Since we are disabling the cache dont allow any interrupts - they
++	 * would run extremely slow and would only increase the pain:
++	 */
++	spin_lock_irq(&set_atomicity_lock);
+ 
+ 	/*  Enter the no-fill (CD=1, NW=0) cache mode and flush caches. */
+ 	cr0 = read_cr0() | 0x40000000;	/* set CD flag */
+-	wbinvd();
+ 	write_cr0(cr0);
+ 	wbinvd();
+ 
+@@ -266,8 +269,7 @@ static void prepare_set(void)
+ 
+ static void post_set(void)
+ {
+-	/*  Flush caches and TLBs  */
+-	wbinvd();
++	/*  Flush TLBs (no need to flush caches - they are disabled)  */
+ 	__flush_tlb();
+ 
+ 	/* Intel (P6) standard MTRRs */
+@@ -279,7 +281,7 @@ static void post_set(void)
+ 	/*  Restore value of CR4  */
+ 	if ( cpu_has_pge )
+ 		write_cr4(cr4);
+-	spin_unlock(&set_atomicity_lock);
++	spin_unlock_irq(&set_atomicity_lock);
+ }
+ 
+ static void generic_set_all(void)
+_

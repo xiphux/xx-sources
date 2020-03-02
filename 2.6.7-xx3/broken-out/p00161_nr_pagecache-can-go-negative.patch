@@ -1,0 +1,40 @@
+
+
+We use per-cpu counters for the system-wide pagecache accounting.  The
+counters spill into the global nr_pagecache atomic_t when they underflow or
+overflow.
+
+Hence it is possible, under weird circumstances, for nr_pagecache to go
+negative.  Anton says he has hit this.
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/pagemap.h |    6 +++++-
+ 1 files changed, 5 insertions(+), 1 deletion(-)
+
+diff -puN include/linux/pagemap.h~nr_pagecache-can-go-negative include/linux/pagemap.h
+--- 25/include/linux/pagemap.h~nr_pagecache-can-go-negative	2004-06-21 22:12:01.946964008 -0700
++++ 25-akpm/include/linux/pagemap.h	2004-06-21 22:13:02.422770288 -0700
+@@ -8,6 +8,7 @@
+ #include <linux/fs.h>
+ #include <linux/list.h>
+ #include <linux/highmem.h>
++#include <linux/compiler.h>
+ #include <asm/uaccess.h>
+ #include <linux/gfp.h>
+ 
+@@ -136,7 +137,10 @@ static inline void pagecache_acct(int co
+ 
+ static inline unsigned long get_page_cache_size(void)
+ {
+-        return atomic_read(&nr_pagecache);
++	int ret = atomic_read(&nr_pagecache);
++	if (unlikely(ret < 0))
++		ret = 0;
++	return ret;
+ }
+ 
+ static inline pgoff_t linear_page_index(struct vm_area_struct *vma,
+_

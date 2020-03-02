@@ -1,0 +1,28 @@
+
+From: Pavel Machek <pavel@ucw.cz>
+
+When image is already on the disk, returning back to user is dangerous.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/power/disk.c |    6 ++++--
+ 1 files changed, 4 insertions(+), 2 deletions(-)
+
+diff -puN kernel/power/disk.c~mm-swsusp-make-sure-we-do-not-return-to-userspace-where-image-is-on-disk kernel/power/disk.c
+--- 25/kernel/power/disk.c~mm-swsusp-make-sure-we-do-not-return-to-userspace-where-image-is-on-disk	Wed Jul 28 16:17:41 2004
++++ 25-akpm/kernel/power/disk.c	Wed Jul 28 16:17:41 2004
+@@ -63,8 +63,10 @@ static int power_down(u32 mode)
+ 		break;
+ 	}
+ 	machine_halt();
+-	device_power_up();
+-	local_irq_restore(flags);
++	/* Valid image is on the disk, if we continue we risk serious data corruption
++	   after resume. */
++	printk("Please power me down manually\n");
++	while(1);
+ 	return 0;
+ }
+ 
+_

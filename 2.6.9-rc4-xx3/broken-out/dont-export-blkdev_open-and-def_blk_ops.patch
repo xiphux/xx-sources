@@ -1,0 +1,55 @@
+
+From: Christoph Hellwig <hch@lst.de>
+
+Already since 2.4 all block devices use block_device_operations and
+shouldn't deal with file operations directly.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/block_dev.c     |    6 +-----
+ 25-akpm/include/linux/fs.h |    1 -
+ 2 files changed, 1 insertion(+), 6 deletions(-)
+
+diff -puN fs/block_dev.c~dont-export-blkdev_open-and-def_blk_ops fs/block_dev.c
+--- 25/fs/block_dev.c~dont-export-blkdev_open-and-def_blk_ops	2004-09-26 17:20:36.724832656 -0700
++++ 25-akpm/fs/block_dev.c	2004-09-26 17:20:36.730831744 -0700
+@@ -666,7 +666,7 @@ int blkdev_get(struct block_device *bdev
+ 
+ EXPORT_SYMBOL(blkdev_get);
+ 
+-int blkdev_open(struct inode * inode, struct file * filp)
++static int blkdev_open(struct inode * inode, struct file * filp)
+ {
+ 	struct block_device *bdev;
+ 	int res;
+@@ -695,8 +695,6 @@ int blkdev_open(struct inode * inode, st
+ 	return res;
+ }
+ 
+-EXPORT_SYMBOL(blkdev_open);
+-
+ int blkdev_put(struct block_device *bdev)
+ {
+ 	int ret = 0;
+@@ -798,8 +796,6 @@ struct file_operations def_blk_fops = {
+ 	.sendfile	= generic_file_sendfile,
+ };
+ 
+-EXPORT_SYMBOL(def_blk_fops);
+-
+ int ioctl_by_bdev(struct block_device *bdev, unsigned cmd, unsigned long arg)
+ {
+ 	int res;
+diff -puN include/linux/fs.h~dont-export-blkdev_open-and-def_blk_ops include/linux/fs.h
+--- 25/include/linux/fs.h~dont-export-blkdev_open-and-def_blk_ops	2004-09-26 17:20:36.726832352 -0700
++++ 25-akpm/include/linux/fs.h	2004-09-26 17:20:36.733831288 -0700
+@@ -1330,7 +1330,6 @@ extern struct block_device *bdget(dev_t)
+ extern void bd_set_size(struct block_device *, loff_t size);
+ extern void bd_forget(struct inode *inode);
+ extern void bdput(struct block_device *);
+-extern int blkdev_open(struct inode *, struct file *);
+ extern struct block_device *open_by_devnum(dev_t, unsigned);
+ extern struct file_operations def_blk_fops;
+ extern struct address_space_operations def_blk_aops;
+_

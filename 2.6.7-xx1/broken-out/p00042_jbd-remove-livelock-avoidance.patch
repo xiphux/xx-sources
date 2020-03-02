@@ -1,0 +1,73 @@
+
+
+Many years ago it was the case that a
+
+	while (1) {
+		write(fd, buf, 1);
+		lseek(fd, 0, SEEK_SET);
+	}
+
+would livelock kjournald because kjournald could never clean all the buffers
+on the transaction's list.
+
+So I put some code in journal_dirty_data() to detect this and to block the
+write() caller.  It can cause unpleasant latencies under some circumstances.
+
+With the dual list writeout arrangement in journal_commit_transaction() the
+livelock is no longer possible so we can remove this code.
+
+
+---
+
+ 25-akpm/fs/jbd/transaction.c |   23 -----------------------
+ 1 files changed, 23 deletions(-)
+
+diff -puN fs/jbd/transaction.c~jbd-remove-livelock-avoidance fs/jbd/transaction.c
+--- 25/fs/jbd/transaction.c~jbd-remove-livelock-avoidance	2004-05-12 21:01:51.321865184 -0700
++++ 25-akpm/fs/jbd/transaction.c	2004-05-12 21:01:51.325864576 -0700
+@@ -939,7 +939,6 @@ out:
+ int journal_dirty_data(handle_t *handle, struct buffer_head *bh)
+ {
+ 	journal_t *journal = handle->h_transaction->t_journal;
+-	int need_brelse = 0;
+ 	struct journal_head *jh;
+ 
+ 	if (is_handle_aborted(handle))
+@@ -1024,24 +1023,6 @@ int journal_dirty_data(handle_t *handle,
+ 				goto no_journal;
+ 			}
+ 
+-			/*
+-			 * This buffer may be undergoing writeout in commit.  We
+-			 * can't return from here and let the caller dirty it
+-			 * again because that can cause the write-out loop in
+-			 * commit to never terminate.
+-			 */
+-			if (buffer_dirty(bh)) {
+-				get_bh(bh);
+-				spin_unlock(&journal->j_list_lock);
+-				jbd_unlock_bh_state(bh);
+-				need_brelse = 1;
+-				sync_dirty_buffer(bh);
+-				jbd_lock_bh_state(bh);
+-				spin_lock(&journal->j_list_lock);
+-				/* The buffer may become locked again at any
+-				   time if it is redirtied */
+-			}
+-
+ 			/* journal_clean_data_list() may have got there first */
+ 			if (jh->b_transaction != NULL) {
+ 				JBUFFER_TRACE(jh, "unfile from commit");
+@@ -1071,10 +1052,6 @@ int journal_dirty_data(handle_t *handle,
+ no_journal:
+ 	spin_unlock(&journal->j_list_lock);
+ 	jbd_unlock_bh_state(bh);
+-	if (need_brelse) {
+-		BUFFER_TRACE(bh, "brelse");
+-		__brelse(bh);
+-	}
+ 	JBUFFER_TRACE(jh, "exit");
+ 	journal_put_journal_head(jh);
+ 	return 0;
+
+_

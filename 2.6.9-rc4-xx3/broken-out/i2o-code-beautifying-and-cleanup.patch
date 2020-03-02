@@ -1,0 +1,1103 @@
+
+From: Markus Lidel <Markus.Lidel@shadowconnect.com>
+
+- added KERN_* to printk where it was missing (original from Alan Cox)
+
+- removed unused code which was commented out already (original from Alan
+  Cox)
+
+- make error messages more sane in i2o_block (original from Alan Cox)
+
+Signed-off-by: Markus Lidel <Markus.Lidel@shadowconnect.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/message/i2o/debug.c      |  196 ++++++++++++++++---------------
+ 25-akpm/drivers/message/i2o/driver.c     |   31 ++--
+ 25-akpm/drivers/message/i2o/i2o_block.c  |  177 ---------------------------
+ 25-akpm/drivers/message/i2o/i2o_config.c |   94 --------------
+ 25-akpm/drivers/message/i2o/i2o_proc.c   |    9 -
+ 25-akpm/drivers/message/i2o/i2o_scsi.c   |   74 ++---------
+ 25-akpm/drivers/message/i2o/iop.c        |   14 +-
+ 25-akpm/drivers/message/i2o/pci.c        |   10 -
+ 8 files changed, 152 insertions(+), 453 deletions(-)
+
+diff -puN drivers/message/i2o/debug.c~i2o-code-beautifying-and-cleanup drivers/message/i2o/debug.c
+--- 25/drivers/message/i2o/debug.c~i2o-code-beautifying-and-cleanup	Fri Oct  8 14:32:24 2004
++++ 25-akpm/drivers/message/i2o/debug.c	Fri Oct  8 14:32:24 2004
+@@ -54,7 +54,7 @@ void i2o_report_status(const char *sever
+ 	if (cmd == I2O_CMD_UTIL_EVT_REGISTER)
+ 		return;		// No status in this reply
+ 
+-	printk("%s%s: ", severity, str);
++	printk(KERN_DEBUG "%s%s: ", severity, str);
+ 
+ 	if (cmd < 0x1F)		// Utility cmd
+ 		i2o_report_util_cmd(cmd);
+@@ -62,7 +62,7 @@ void i2o_report_status(const char *sever
+ 	else if (cmd >= 0xA0 && cmd <= 0xEF)	// Executive cmd
+ 		i2o_report_exec_cmd(cmd);
+ 	else
+-		printk("Cmd = %0#2x, ", cmd);	// Other cmds
++		printk(KERN_DEBUG "Cmd = %0#2x, ", cmd);	// Other cmds
+ 
+ 	if (msg[0] & MSG_FAIL) {
+ 		i2o_report_fail_status(req_status, msg);
+@@ -74,7 +74,8 @@ void i2o_report_status(const char *sever
+ 	if (cmd < 0x1F || (cmd >= 0xA0 && cmd <= 0xEF))
+ 		i2o_report_common_dsc(detailed_status);
+ 	else
+-		printk(" / DetailedStatus = %0#4x.\n", detailed_status);
++		printk(KERN_DEBUG " / DetailedStatus = %0#4x.\n",
++		       detailed_status);
+ }
+ 
+ /* Used to dump a message to syslog during debugging */
+@@ -129,20 +130,20 @@ void i2o_report_controller_unit(struct i
+ 
+ 	printk(KERN_INFO "    Class: ");
+ 	//sprintf(str, "%-21s", i2o_get_class_name(d->lct_data.class_id));
+-	printk("%s\n", str);
++	printk(KERN_DEBUG "%s\n", str);
+ 
+ 	printk(KERN_INFO "  Subclass: 0x%04X\n", d->lct_data.sub_class);
+ 	printk(KERN_INFO "     Flags: ");
+ 
+ 	if (d->lct_data.device_flags & (1 << 0))
+-		printk("C");	// ConfigDialog requested
++		printk(KERN_DEBUG "C");	// ConfigDialog requested
+ 	if (d->lct_data.device_flags & (1 << 1))
+-		printk("U");	// Multi-user capable
++		printk(KERN_DEBUG "U");	// Multi-user capable
+ 	if (!(d->lct_data.device_flags & (1 << 4)))
+-		printk("P");	// Peer service enabled!
++		printk(KERN_DEBUG "P");	// Peer service enabled!
+ 	if (!(d->lct_data.device_flags & (1 << 5)))
+-		printk("M");	// Mgmt service enabled!
+-	printk("\n");
++		printk(KERN_DEBUG "M");	// Mgmt service enabled!
++	printk(KERN_DEBUG "\n");
+ }
+ 
+ /*
+@@ -177,9 +178,11 @@ void i2o_report_fail_status(u8 req_statu
+ 	};
+ 
+ 	if (req_status == I2O_FSC_TRANSPORT_UNKNOWN_FAILURE)
+-		printk("TRANSPORT_UNKNOWN_FAILURE (%0#2x)\n.", req_status);
++		printk(KERN_DEBUG "TRANSPORT_UNKNOWN_FAILURE (%0#2x)\n.",
++		       req_status);
+ 	else
+-		printk("TRANSPORT_%s.\n", FAIL_STATUS[req_status & 0x0F]);
++		printk(KERN_DEBUG "TRANSPORT_%s.\n",
++		       FAIL_STATUS[req_status & 0x0F]);
+ 
+ 	/* Dump some details */
+ 
+@@ -192,16 +195,17 @@ void i2o_report_fail_status(u8 req_statu
+ 
+ 	printk(KERN_ERR "  Severity:  0x%02X ", (msg[4] >> 16) & 0xFF);
+ 	if (msg[4] & (1 << 16))
+-		printk("(FormatError), "
++		printk(KERN_DEBUG "(FormatError), "
+ 		       "this msg can never be delivered/processed.\n");
+ 	if (msg[4] & (1 << 17))
+-		printk("(PathError), "
++		printk(KERN_DEBUG "(PathError), "
+ 		       "this msg can no longer be delivered/processed.\n");
+ 	if (msg[4] & (1 << 18))
+-		printk("(PathState), "
++		printk(KERN_DEBUG "(PathState), "
+ 		       "the system state does not allow delivery.\n");
+ 	if (msg[4] & (1 << 19))
+-		printk("(Congestion), resources temporarily not available;"
++		printk(KERN_DEBUG
++		       "(Congestion), resources temporarily not available;"
+ 		       "do not retry immediately.\n");
+ }
+ 
+@@ -227,9 +231,9 @@ void i2o_report_common_status(u8 req_sta
+ 	};
+ 
+ 	if (req_status >= ARRAY_SIZE(REPLY_STATUS))
+-		printk("RequestStatus = %0#2x", req_status);
++		printk(KERN_DEBUG "RequestStatus = %0#2x", req_status);
+ 	else
+-		printk("%s", REPLY_STATUS[req_status]);
++		printk(KERN_DEBUG "%s", REPLY_STATUS[req_status]);
+ }
+ 
+ /*
+@@ -272,9 +276,10 @@ static void i2o_report_common_dsc(u16 de
+ 	};
+ 
+ 	if (detailed_status > I2O_DSC_DEVICE_NOT_AVAILABLE)
+-		printk(" / DetailedStatus = %0#4x.\n", detailed_status);
++		printk(KERN_DEBUG " / DetailedStatus = %0#4x.\n",
++		       detailed_status);
+ 	else
+-		printk(" / %s.\n", COMMON_DSC[detailed_status]);
++		printk(KERN_DEBUG " / %s.\n", COMMON_DSC[detailed_status]);
+ }
+ 
+ /*
+@@ -284,49 +289,49 @@ static void i2o_report_util_cmd(u8 cmd)
+ {
+ 	switch (cmd) {
+ 	case I2O_CMD_UTIL_NOP:
+-		printk("UTIL_NOP, ");
++		printk(KERN_DEBUG "UTIL_NOP, ");
+ 		break;
+ 	case I2O_CMD_UTIL_ABORT:
+-		printk("UTIL_ABORT, ");
++		printk(KERN_DEBUG "UTIL_ABORT, ");
+ 		break;
+ 	case I2O_CMD_UTIL_CLAIM:
+-		printk("UTIL_CLAIM, ");
++		printk(KERN_DEBUG "UTIL_CLAIM, ");
+ 		break;
+ 	case I2O_CMD_UTIL_RELEASE:
+-		printk("UTIL_CLAIM_RELEASE, ");
++		printk(KERN_DEBUG "UTIL_CLAIM_RELEASE, ");
+ 		break;
+ 	case I2O_CMD_UTIL_CONFIG_DIALOG:
+-		printk("UTIL_CONFIG_DIALOG, ");
++		printk(KERN_DEBUG "UTIL_CONFIG_DIALOG, ");
+ 		break;
+ 	case I2O_CMD_UTIL_DEVICE_RESERVE:
+-		printk("UTIL_DEVICE_RESERVE, ");
++		printk(KERN_DEBUG "UTIL_DEVICE_RESERVE, ");
+ 		break;
+ 	case I2O_CMD_UTIL_DEVICE_RELEASE:
+-		printk("UTIL_DEVICE_RELEASE, ");
++		printk(KERN_DEBUG "UTIL_DEVICE_RELEASE, ");
+ 		break;
+ 	case I2O_CMD_UTIL_EVT_ACK:
+-		printk("UTIL_EVENT_ACKNOWLEDGE, ");
++		printk(KERN_DEBUG "UTIL_EVENT_ACKNOWLEDGE, ");
+ 		break;
+ 	case I2O_CMD_UTIL_EVT_REGISTER:
+-		printk("UTIL_EVENT_REGISTER, ");
++		printk(KERN_DEBUG "UTIL_EVENT_REGISTER, ");
+ 		break;
+ 	case I2O_CMD_UTIL_LOCK:
+-		printk("UTIL_LOCK, ");
++		printk(KERN_DEBUG "UTIL_LOCK, ");
+ 		break;
+ 	case I2O_CMD_UTIL_LOCK_RELEASE:
+-		printk("UTIL_LOCK_RELEASE, ");
++		printk(KERN_DEBUG "UTIL_LOCK_RELEASE, ");
+ 		break;
+ 	case I2O_CMD_UTIL_PARAMS_GET:
+-		printk("UTIL_PARAMS_GET, ");
++		printk(KERN_DEBUG "UTIL_PARAMS_GET, ");
+ 		break;
+ 	case I2O_CMD_UTIL_PARAMS_SET:
+-		printk("UTIL_PARAMS_SET, ");
++		printk(KERN_DEBUG "UTIL_PARAMS_SET, ");
+ 		break;
+ 	case I2O_CMD_UTIL_REPLY_FAULT_NOTIFY:
+-		printk("UTIL_REPLY_FAULT_NOTIFY, ");
++		printk(KERN_DEBUG "UTIL_REPLY_FAULT_NOTIFY, ");
+ 		break;
+ 	default:
+-		printk("Cmd = %0#2x, ", cmd);
++		printk(KERN_DEBUG "Cmd = %0#2x, ", cmd);
+ 	}
+ }
+ 
+@@ -337,106 +342,106 @@ static void i2o_report_exec_cmd(u8 cmd)
+ {
+ 	switch (cmd) {
+ 	case I2O_CMD_ADAPTER_ASSIGN:
+-		printk("EXEC_ADAPTER_ASSIGN, ");
++		printk(KERN_DEBUG "EXEC_ADAPTER_ASSIGN, ");
+ 		break;
+ 	case I2O_CMD_ADAPTER_READ:
+-		printk("EXEC_ADAPTER_READ, ");
++		printk(KERN_DEBUG "EXEC_ADAPTER_READ, ");
+ 		break;
+ 	case I2O_CMD_ADAPTER_RELEASE:
+-		printk("EXEC_ADAPTER_RELEASE, ");
++		printk(KERN_DEBUG "EXEC_ADAPTER_RELEASE, ");
+ 		break;
+ 	case I2O_CMD_BIOS_INFO_SET:
+-		printk("EXEC_BIOS_INFO_SET, ");
++		printk(KERN_DEBUG "EXEC_BIOS_INFO_SET, ");
+ 		break;
+ 	case I2O_CMD_BOOT_DEVICE_SET:
+-		printk("EXEC_BOOT_DEVICE_SET, ");
++		printk(KERN_DEBUG "EXEC_BOOT_DEVICE_SET, ");
+ 		break;
+ 	case I2O_CMD_CONFIG_VALIDATE:
+-		printk("EXEC_CONFIG_VALIDATE, ");
++		printk(KERN_DEBUG "EXEC_CONFIG_VALIDATE, ");
+ 		break;
+ 	case I2O_CMD_CONN_SETUP:
+-		printk("EXEC_CONN_SETUP, ");
++		printk(KERN_DEBUG "EXEC_CONN_SETUP, ");
+ 		break;
+ 	case I2O_CMD_DDM_DESTROY:
+-		printk("EXEC_DDM_DESTROY, ");
++		printk(KERN_DEBUG "EXEC_DDM_DESTROY, ");
+ 		break;
+ 	case I2O_CMD_DDM_ENABLE:
+-		printk("EXEC_DDM_ENABLE, ");
++		printk(KERN_DEBUG "EXEC_DDM_ENABLE, ");
+ 		break;
+ 	case I2O_CMD_DDM_QUIESCE:
+-		printk("EXEC_DDM_QUIESCE, ");
++		printk(KERN_DEBUG "EXEC_DDM_QUIESCE, ");
+ 		break;
+ 	case I2O_CMD_DDM_RESET:
+-		printk("EXEC_DDM_RESET, ");
++		printk(KERN_DEBUG "EXEC_DDM_RESET, ");
+ 		break;
+ 	case I2O_CMD_DDM_SUSPEND:
+-		printk("EXEC_DDM_SUSPEND, ");
++		printk(KERN_DEBUG "EXEC_DDM_SUSPEND, ");
+ 		break;
+ 	case I2O_CMD_DEVICE_ASSIGN:
+-		printk("EXEC_DEVICE_ASSIGN, ");
++		printk(KERN_DEBUG "EXEC_DEVICE_ASSIGN, ");
+ 		break;
+ 	case I2O_CMD_DEVICE_RELEASE:
+-		printk("EXEC_DEVICE_RELEASE, ");
++		printk(KERN_DEBUG "EXEC_DEVICE_RELEASE, ");
+ 		break;
+ 	case I2O_CMD_HRT_GET:
+-		printk("EXEC_HRT_GET, ");
++		printk(KERN_DEBUG "EXEC_HRT_GET, ");
+ 		break;
+ 	case I2O_CMD_ADAPTER_CLEAR:
+-		printk("EXEC_IOP_CLEAR, ");
++		printk(KERN_DEBUG "EXEC_IOP_CLEAR, ");
+ 		break;
+ 	case I2O_CMD_ADAPTER_CONNECT:
+-		printk("EXEC_IOP_CONNECT, ");
++		printk(KERN_DEBUG "EXEC_IOP_CONNECT, ");
+ 		break;
+ 	case I2O_CMD_ADAPTER_RESET:
+-		printk("EXEC_IOP_RESET, ");
++		printk(KERN_DEBUG "EXEC_IOP_RESET, ");
+ 		break;
+ 	case I2O_CMD_LCT_NOTIFY:
+-		printk("EXEC_LCT_NOTIFY, ");
++		printk(KERN_DEBUG "EXEC_LCT_NOTIFY, ");
+ 		break;
+ 	case I2O_CMD_OUTBOUND_INIT:
+-		printk("EXEC_OUTBOUND_INIT, ");
++		printk(KERN_DEBUG "EXEC_OUTBOUND_INIT, ");
+ 		break;
+ 	case I2O_CMD_PATH_ENABLE:
+-		printk("EXEC_PATH_ENABLE, ");
++		printk(KERN_DEBUG "EXEC_PATH_ENABLE, ");
+ 		break;
+ 	case I2O_CMD_PATH_QUIESCE:
+-		printk("EXEC_PATH_QUIESCE, ");
++		printk(KERN_DEBUG "EXEC_PATH_QUIESCE, ");
+ 		break;
+ 	case I2O_CMD_PATH_RESET:
+-		printk("EXEC_PATH_RESET, ");
++		printk(KERN_DEBUG "EXEC_PATH_RESET, ");
+ 		break;
+ 	case I2O_CMD_STATIC_MF_CREATE:
+-		printk("EXEC_STATIC_MF_CREATE, ");
++		printk(KERN_DEBUG "EXEC_STATIC_MF_CREATE, ");
+ 		break;
+ 	case I2O_CMD_STATIC_MF_RELEASE:
+-		printk("EXEC_STATIC_MF_RELEASE, ");
++		printk(KERN_DEBUG "EXEC_STATIC_MF_RELEASE, ");
+ 		break;
+ 	case I2O_CMD_STATUS_GET:
+-		printk("EXEC_STATUS_GET, ");
++		printk(KERN_DEBUG "EXEC_STATUS_GET, ");
+ 		break;
+ 	case I2O_CMD_SW_DOWNLOAD:
+-		printk("EXEC_SW_DOWNLOAD, ");
++		printk(KERN_DEBUG "EXEC_SW_DOWNLOAD, ");
+ 		break;
+ 	case I2O_CMD_SW_UPLOAD:
+-		printk("EXEC_SW_UPLOAD, ");
++		printk(KERN_DEBUG "EXEC_SW_UPLOAD, ");
+ 		break;
+ 	case I2O_CMD_SW_REMOVE:
+-		printk("EXEC_SW_REMOVE, ");
++		printk(KERN_DEBUG "EXEC_SW_REMOVE, ");
+ 		break;
+ 	case I2O_CMD_SYS_ENABLE:
+-		printk("EXEC_SYS_ENABLE, ");
++		printk(KERN_DEBUG "EXEC_SYS_ENABLE, ");
+ 		break;
+ 	case I2O_CMD_SYS_MODIFY:
+-		printk("EXEC_SYS_MODIFY, ");
++		printk(KERN_DEBUG "EXEC_SYS_MODIFY, ");
+ 		break;
+ 	case I2O_CMD_SYS_QUIESCE:
+-		printk("EXEC_SYS_QUIESCE, ");
++		printk(KERN_DEBUG "EXEC_SYS_QUIESCE, ");
+ 		break;
+ 	case I2O_CMD_SYS_TAB_SET:
+-		printk("EXEC_SYS_TAB_SET, ");
++		printk(KERN_DEBUG "EXEC_SYS_TAB_SET, ");
+ 		break;
+ 	default:
+-		printk("Cmd = %#02x, ", cmd);
++		printk(KERN_DEBUG "Cmd = %#02x, ", cmd);
+ 	}
+ }
+ 
+@@ -445,28 +450,28 @@ void i2o_debug_state(struct i2o_controll
+ 	printk(KERN_INFO "%s: State = ", c->name);
+ 	switch (((i2o_status_block *) c->status_block.virt)->iop_state) {
+ 	case 0x01:
+-		printk("INIT\n");
++		printk(KERN_DEBUG "INIT\n");
+ 		break;
+ 	case 0x02:
+-		printk("RESET\n");
++		printk(KERN_DEBUG "RESET\n");
+ 		break;
+ 	case 0x04:
+-		printk("HOLD\n");
++		printk(KERN_DEBUG "HOLD\n");
+ 		break;
+ 	case 0x05:
+-		printk("READY\n");
++		printk(KERN_DEBUG "READY\n");
+ 		break;
+ 	case 0x08:
+-		printk("OPERATIONAL\n");
++		printk(KERN_DEBUG "OPERATIONAL\n");
+ 		break;
+ 	case 0x10:
+-		printk("FAILED\n");
++		printk(KERN_DEBUG "FAILED\n");
+ 		break;
+ 	case 0x11:
+-		printk("FAULTED\n");
++		printk(KERN_DEBUG "FAULTED\n");
+ 		break;
+ 	default:
+-		printk("%x (unknown !!)\n",
++		printk(KERN_DEBUG "%x (unknown !!)\n",
+ 		       ((i2o_status_block *) c->status_block.virt)->iop_state);
+ 	}
+ };
+@@ -516,53 +521,58 @@ void i2o_dump_hrt(struct i2o_controller 
+ 		d = (u8 *) (rows + 2);
+ 		state = p[1] << 8 | p[0];
+ 
+-		printk("TID %04X:[", state & 0xFFF);
++		printk(KERN_DEBUG "TID %04X:[", state & 0xFFF);
+ 		state >>= 12;
+ 		if (state & (1 << 0))
+-			printk("H");	/* Hidden */
++			printk(KERN_DEBUG "H");	/* Hidden */
+ 		if (state & (1 << 2)) {
+-			printk("P");	/* Present */
++			printk(KERN_DEBUG "P");	/* Present */
+ 			if (state & (1 << 1))
+-				printk("C");	/* Controlled */
++				printk(KERN_DEBUG "C");	/* Controlled */
+ 		}
+ 		if (state > 9)
+-			printk("*");	/* Hard */
++			printk(KERN_DEBUG "*");	/* Hard */
+ 
+-		printk("]:");
++		printk(KERN_DEBUG "]:");
+ 
+ 		switch (p[3] & 0xFFFF) {
+ 		case 0:
+ 			/* Adapter private bus - easy */
+-			printk("Local bus %d: I/O at 0x%04X Mem 0x%08X",
+-			       p[2], d[1] << 8 | d[0], *(u32 *) (d + 4));
++			printk(KERN_DEBUG
++			       "Local bus %d: I/O at 0x%04X Mem 0x%08X", p[2],
++			       d[1] << 8 | d[0], *(u32 *) (d + 4));
+ 			break;
+ 		case 1:
+ 			/* ISA bus */
+-			printk("ISA %d: CSN %d I/O at 0x%04X Mem 0x%08X",
+-			       p[2], d[2], d[1] << 8 | d[0], *(u32 *) (d + 4));
++			printk(KERN_DEBUG
++			       "ISA %d: CSN %d I/O at 0x%04X Mem 0x%08X", p[2],
++			       d[2], d[1] << 8 | d[0], *(u32 *) (d + 4));
+ 			break;
+ 
+ 		case 2:	/* EISA bus */
+-			printk("EISA %d: Slot %d I/O at 0x%04X Mem 0x%08X",
++			printk(KERN_DEBUG
++			       "EISA %d: Slot %d I/O at 0x%04X Mem 0x%08X",
+ 			       p[2], d[3], d[1] << 8 | d[0], *(u32 *) (d + 4));
+ 			break;
+ 
+ 		case 3:	/* MCA bus */
+-			printk("MCA %d: Slot %d I/O at 0x%04X Mem 0x%08X",
+-			       p[2], d[3], d[1] << 8 | d[0], *(u32 *) (d + 4));
++			printk(KERN_DEBUG
++			       "MCA %d: Slot %d I/O at 0x%04X Mem 0x%08X", p[2],
++			       d[3], d[1] << 8 | d[0], *(u32 *) (d + 4));
+ 			break;
+ 
+ 		case 4:	/* PCI bus */
+-			printk("PCI %d: Bus %d Device %d Function %d",
+-			       p[2], d[2], d[1], d[0]);
++			printk(KERN_DEBUG
++			       "PCI %d: Bus %d Device %d Function %d", p[2],
++			       d[2], d[1], d[0]);
+ 			break;
+ 
+ 		case 0x80:	/* Other */
+ 		default:
+-			printk("Unsupported bus type.");
++			printk(KERN_DEBUG "Unsupported bus type.");
+ 			break;
+ 		}
+-		printk("\n");
++		printk(KERN_DEBUG "\n");
+ 		rows += length;
+ 	}
+ }
+diff -puN drivers/message/i2o/driver.c~i2o-code-beautifying-and-cleanup drivers/message/i2o/driver.c
+--- 25/drivers/message/i2o/driver.c~i2o-code-beautifying-and-cleanup	Fri Oct  8 14:32:24 2004
++++ 25-akpm/drivers/message/i2o/driver.c	Fri Oct  8 14:32:24 2004
+@@ -18,7 +18,6 @@
+ #include <linux/rwsem.h>
+ #include <linux/i2o.h>
+ 
+-
+ /* max_drivers - Maximum I2O drivers (OSMs) which could be registered */
+ unsigned int i2o_max_drivers = I2O_MAX_DRIVERS;
+ module_param_named(max_drivers, i2o_max_drivers, uint, 0);
+@@ -146,7 +145,7 @@ void i2o_driver_unregister(struct i2o_dr
+ 		struct i2o_device *i2o_dev;
+ 
+ 		list_for_each_entry(i2o_dev, &c->devices, list)
+-			i2o_driver_notify_device_remove(drv, i2o_dev);
++		    i2o_driver_notify_device_remove(drv, i2o_dev);
+ 
+ 		i2o_driver_notify_controller_remove(drv, c);
+ 	}
+@@ -246,14 +245,15 @@ int i2o_driver_dispatch(struct i2o_contr
+  *	Send notifications to all registered drivers that a new controller was
+  *	added.
+  */
+-void i2o_driver_notify_controller_add_all(struct i2o_controller *c) {
++void i2o_driver_notify_controller_add_all(struct i2o_controller *c)
++{
+ 	int i;
+ 	struct i2o_driver *drv;
+ 
+-	for(i = 0; i < I2O_MAX_DRIVERS; i ++) {
++	for (i = 0; i < I2O_MAX_DRIVERS; i++) {
+ 		drv = i2o_drivers[i];
+ 
+-		if(drv)
++		if (drv)
+ 			i2o_driver_notify_controller_add(drv, c);
+ 	}
+ }
+@@ -265,14 +265,15 @@ void i2o_driver_notify_controller_add_al
+  *	Send notifications to all registered drivers that a controller was
+  *	removed.
+  */
+-void i2o_driver_notify_controller_remove_all(struct i2o_controller *c) {
++void i2o_driver_notify_controller_remove_all(struct i2o_controller *c)
++{
+ 	int i;
+ 	struct i2o_driver *drv;
+ 
+-	for(i = 0; i < I2O_MAX_DRIVERS; i ++) {
++	for (i = 0; i < I2O_MAX_DRIVERS; i++) {
+ 		drv = i2o_drivers[i];
+ 
+-		if(drv)
++		if (drv)
+ 			i2o_driver_notify_controller_remove(drv, c);
+ 	}
+ }
+@@ -283,14 +284,15 @@ void i2o_driver_notify_controller_remove
+  *
+  *	Send notifications to all registered drivers that a device was added.
+  */
+-void i2o_driver_notify_device_add_all(struct i2o_device *i2o_dev) {
++void i2o_driver_notify_device_add_all(struct i2o_device *i2o_dev)
++{
+ 	int i;
+ 	struct i2o_driver *drv;
+ 
+-	for(i = 0; i < I2O_MAX_DRIVERS; i ++) {
++	for (i = 0; i < I2O_MAX_DRIVERS; i++) {
+ 		drv = i2o_drivers[i];
+ 
+-		if(drv)
++		if (drv)
+ 			i2o_driver_notify_device_add(drv, i2o_dev);
+ 	}
+ }
+@@ -301,14 +303,15 @@ void i2o_driver_notify_device_add_all(st
+  *
+  *	Send notifications to all registered drivers that a device was removed.
+  */
+-void i2o_driver_notify_device_remove_all(struct i2o_device *i2o_dev) {
++void i2o_driver_notify_device_remove_all(struct i2o_device *i2o_dev)
++{
+ 	int i;
+ 	struct i2o_driver *drv;
+ 
+-	for(i = 0; i < I2O_MAX_DRIVERS; i ++) {
++	for (i = 0; i < I2O_MAX_DRIVERS; i++) {
+ 		drv = i2o_drivers[i];
+ 
+-		if(drv)
++		if (drv)
+ 			i2o_driver_notify_device_remove(drv, i2o_dev);
+ 	}
+ }
+diff -puN drivers/message/i2o/i2o_block.c~i2o-code-beautifying-and-cleanup drivers/message/i2o/i2o_block.c
+--- 25/drivers/message/i2o/i2o_block.c~i2o-code-beautifying-and-cleanup	Fri Oct  8 14:32:24 2004
++++ 25-akpm/drivers/message/i2o/i2o_block.c	Fri Oct  8 14:32:24 2004
+@@ -420,7 +420,6 @@ static int i2o_block_reply(struct i2o_co
+ 		struct i2o_message *pmsg;
+ 		u32 pm;
+ 
+-		printk(KERN_WARNING "FAIL");
+ 		/*
+ 		 * FAILed message from controller
+ 		 * We increment the error count and abort it
+@@ -538,12 +537,12 @@ static int i2o_block_reply(struct i2o_co
+ 		 *      Don't stick a supertrak100 into cache aggressive modes
+ 		 */
+ 
+-		printk(KERN_ERR "\n/dev/%s error: %s", dev->gd->disk_name,
++		printk(KERN_ERR "/dev/%s error: %s", dev->gd->disk_name,
+ 		       bsa_errors[readl(&msg->body[0]) & 0xffff]);
+ 		if (readl(&msg->body[0]) & 0x00ff0000)
+-			printk(" - DDM attempted %d retries",
++			printk(KERN_ERR " - DDM attempted %d retries",
+ 			       (readl(&msg->body[0]) >> 16) & 0x00ff);
+-		printk(".\n");
++		printk(KERN_ERR ".\n");
+ 		req->errors++;
+ 	} else
+ 		req->errors = 0;
+@@ -563,7 +562,7 @@ static int i2o_block_reply(struct i2o_co
+ 		i2o_block_sglist_free(ireq);
+ 		i2o_block_request_free(ireq);
+ 	} else
+-		printk(KERN_ERR "still remaining chunks\n");
++		printk(KERN_ERR "i2o_block: still remaining chunks\n");
+ 
+ 	return 1;
+ };
+@@ -573,174 +572,6 @@ static void i2o_block_event(struct i2o_e
+ 	printk(KERN_INFO "block-osm: event received\n");
+ };
+ 
+-#if 0
+-static int i2o_block_event(void *dummy)
+-{
+-	unsigned int evt;
+-	unsigned long flags;
+-	struct i2o_block_device *dev;
+-	int unit;
+-	//The only event that has data is the SCSI_SMART event.
+-	struct i2o_reply {
+-		u32 header[4];
+-		u32 evt_indicator;
+-		u8 ASC;
+-		u8 ASCQ;
+-		u16 pad;
+-		u8 data[16];
+-	} *evt_local;
+-
+-	daemonize("i2oblock");
+-	allow_signal(SIGKILL);
+-
+-	evt_running = 1;
+-
+-	while (1) {
+-		if (down_interruptible(&i2ob_evt_sem)) {
+-			evt_running = 0;
+-			printk("exiting...");
+-			break;
+-		}
+-
+-		/*
+-		 * Keep another CPU/interrupt from overwriting the
+-		 * message while we're reading it
+-		 *
+-		 * We stuffed the unit in the TxContext and grab the event mask
+-		 * None of the BSA we care about events have EventData
+-		 */
+-		spin_lock_irqsave(&i2ob_evt_lock, flags);
+-		evt_local = (struct i2o_reply *)evt_msg;
+-		spin_unlock_irqrestore(&i2ob_evt_lock, flags);
+-
+-		unit = le32_to_cpu(evt_local->header[3]);
+-		evt = le32_to_cpu(evt_local->evt_indicator);
+-
+-		dev = &i2o_blk_dev[unit];
+-		switch (evt) {
+-			/*
+-			 * New volume loaded on same TID, so we just re-install.
+-			 * The TID/controller don't change as it is the same
+-			 * I2O device.  It's just new media that we have to
+-			 * rescan.
+-			 */
+-		case I2O_EVT_IND_BSA_VOLUME_LOAD:
+-			{
+-				i2ob_install_device(dev->i2o_device->iop,
+-						    dev->i2o_device, unit);
+-				add_disk(dev->gendisk);
+-				break;
+-			}
+-
+-			/*
+-			 * No media, so set all parameters to 0 and set the media
+-			 * change flag. The I2O device is still valid, just doesn't
+-			 * have media, so we don't want to clear the controller or
+-			 * device pointer.
+-			 */
+-		case I2O_EVT_IND_BSA_VOLUME_UNLOAD:
+-			{
+-				struct gendisk *p = dev->gendisk;
+-				blk_queue_max_sectors(dev->gendisk->queue, 0);
+-				del_gendisk(p);
+-				put_disk(p);
+-				dev->gendisk = NULL;
+-				dev->media_change_flag = 1;
+-				break;
+-			}
+-
+-		case I2O_EVT_IND_BSA_VOLUME_UNLOAD_REQ:
+-			printk(KERN_WARNING
+-			       "%s: Attempt to eject locked media\n",
+-			       dev->i2o_device->dev_name);
+-			break;
+-
+-			/*
+-			 * The capacity has changed and we are going to be
+-			 * updating the max_sectors and other information
+-			 * about this disk.  We try a revalidate first. If
+-			 * the block device is in use, we don't want to
+-			 * do that as there may be I/Os bound for the disk
+-			 * at the moment.  In that case we read the size
+-			 * from the device and update the information ourselves
+-			 * and the user can later force a partition table
+-			 * update through an ioctl.
+-			 */
+-		case I2O_EVT_IND_BSA_CAPACITY_CHANGE:
+-			{
+-				u64 size;
+-
+-				if (i2ob_query_device(dev, 0x0004, 0, &size, 8)
+-				    != 0)
+-					i2ob_query_device(dev, 0x0000, 4, &size,
+-							  8);
+-
+-				spin_lock_irqsave(dev->req_queue->queue_lock,
+-						  flags);
+-				set_capacity(dev->gendisk, size >> 9);
+-				spin_unlock_irqrestore(dev->req_queue->
+-						       queue_lock, flags);
+-				break;
+-			}
+-
+-			/*
+-			 * We got a SCSI SMART event, we just log the relevant
+-			 * information and let the user decide what they want
+-			 * to do with the information.
+-			 */
+-		case I2O_EVT_IND_BSA_SCSI_SMART:
+-			{
+-				char buf[16];
+-				printk(KERN_INFO
+-				       "I2O Block: %s received a SCSI SMART Event\n",
+-				       dev->i2o_device->dev_name);
+-				evt_local->data[16] = '\0';
+-				sprintf(buf, "%s", &evt_local->data[0]);
+-				printk(KERN_INFO "      Disk Serial#:%s\n",
+-				       buf);
+-				printk(KERN_INFO "      ASC 0x%02x \n",
+-				       evt_local->ASC);
+-				printk(KERN_INFO "      ASCQ 0x%02x \n",
+-				       evt_local->ASCQ);
+-				break;
+-			}
+-
+-			/*
+-			 *      Non event
+-			 */
+-
+-		case 0:
+-			break;
+-
+-			/*
+-			 * An event we didn't ask for.  Call the card manufacturer
+-			 * and tell them to fix their firmware :)
+-			 */
+-
+-		case 0x20:
+-			/*
+-			 * If a promise card reports 0x20 event then the brown stuff
+-			 * hit the fan big time. The card seems to recover but loses
+-			 * the pending writes. Deeply ungood except for testing fsck
+-			 */
+-			if (dev->i2o_device->iop->promise)
+-				panic
+-				    ("I2O controller firmware failed. Reboot and force a filesystem check.\n");
+-		default:
+-			printk(KERN_INFO
+-			       "%s: Received event 0x%X we didn't register for\n"
+-			       KERN_INFO
+-			       "   Blame the I2O card manufacturer 8)\n",
+-			       dev->i2o_device->dev_name, evt);
+-			break;
+-		}
+-	};
+-
+-	complete_and_exit(&i2ob_thread_dead, 0);
+-	return 0;
+-}
+-#endif
+-
+ /*
+  *	SCSI-CAM for ioctl geometry mapping
+  *	Duplicated with SCSI - this should be moved into somewhere common
+diff -puN drivers/message/i2o/i2o_config.c~i2o-code-beautifying-and-cleanup drivers/message/i2o/i2o_config.c
+--- 25/drivers/message/i2o/i2o_config.c~i2o-code-beautifying-and-cleanup	Fri Oct  8 14:32:24 2004
++++ 25-akpm/drivers/message/i2o/i2o_config.c	Fri Oct  8 14:32:24 2004
+@@ -74,96 +74,6 @@ struct i2o_cfg_info {
+ static struct i2o_cfg_info *open_files = NULL;
+ static ulong i2o_cfg_info_id = 0;
+ 
+-#if 0
+-/*
+- *	This is the callback for any message we have posted. The message itself
+- *	will be returned to the message pool when we return from the IRQ
+- *
+- *	This runs in irq context so be short and sweet.
+- */
+-static void i2o_cfg_reply(struct i2o_handler *h, struct i2o_controller *c,
+-			  struct i2o_message *m)
+-{
+-	u32 *msg = (u32 *) m;
+-
+-	if (msg[0] & MSG_FAIL) {
+-		u32 *preserved_msg = (u32 *) (c->msg_virt + msg[7]);
+-
+-		printk(KERN_ERR "i2o_config: IOP failed to process the msg.\n");
+-
+-		/* Release the preserved msg frame by resubmitting it as a NOP */
+-
+-		preserved_msg[0] = THREE_WORD_MSG_SIZE | SGL_OFFSET_0;
+-		preserved_msg[1] = I2O_CMD_UTIL_NOP << 24 | HOST_TID << 12 | 0;
+-		preserved_msg[2] = 0;
+-		i2o_post_message(c, msg[7]);
+-	}
+-
+-	if (msg[4] >> 24)	// ReqStatus != SUCCESS
+-		i2o_report_status(KERN_INFO, "i2o_config", msg);
+-
+-	if (m->function == I2O_CMD_UTIL_EVT_REGISTER) {
+-		struct i2o_cfg_info *inf;
+-
+-		for (inf = open_files; inf; inf = inf->next)
+-			if (inf->q_id == i2o_cntxt_list_get(c, msg[3]))
+-				break;
+-
+-		//
+-		// If this is the case, it means that we're getting
+-		// events for a file descriptor that's been close()'d
+-		// w/o the user unregistering for events first.
+-		// The code currently assumes that the user will
+-		// take care of unregistering for events before closing
+-		// a file.
+-		//
+-		// TODO:
+-		// Should we track event registartion and deregister
+-		// for events when a file is close()'d so this doesn't
+-		// happen? That would get rid of the search through
+-		// the linked list since file->private_data could point
+-		// directly to the i2o_config_info data structure...but
+-		// it would mean having all sorts of tables to track
+-		// what each file is registered for...I think the
+-		// current method is simpler. - DS
+-		//
+-		if (!inf)
+-			return;
+-
+-		inf->event_q[inf->q_in].id.iop = c->unit;
+-		inf->event_q[inf->q_in].id.tid = m->target_tid;
+-		inf->event_q[inf->q_in].id.evt_mask = msg[4];
+-
+-		//
+-		// Data size = msg size - reply header
+-		//
+-		inf->event_q[inf->q_in].data_size = (m->size - 5) * 4;
+-		if (inf->event_q[inf->q_in].data_size)
+-			memcpy(inf->event_q[inf->q_in].evt_data,
+-			       (unsigned char *)(msg + 5),
+-			       inf->event_q[inf->q_in].data_size);
+-
+-		spin_lock(&i2o_config_lock);
+-		MODINC(inf->q_in, I2O_EVT_Q_LEN);
+-		if (inf->q_len == I2O_EVT_Q_LEN) {
+-			MODINC(inf->q_out, I2O_EVT_Q_LEN);
+-			inf->q_lost++;
+-		} else {
+-			// Keep I2OEVTGET on another CPU from touching this
+-			inf->q_len++;
+-		}
+-		spin_unlock(&i2o_config_lock);
+-
+-//              printk(KERN_INFO "File %p w/id %d has %d events\n",
+-//                      inf->fp, inf->q_id, inf->q_len);
+-
+-		kill_fasync(&inf->fasync, SIGIO, POLL_IN);
+-	}
+-
+-	return;
+-}
+-#endif
+-
+ /*
+  *	Each of these describes an i2o message handler. They are
+  *	multiplexed by the i2o_core code
+@@ -388,7 +298,7 @@ static int i2o_cfg_swdl(unsigned long ar
+ 	writel(0xD0000000 | fragsize, &msg->body[3]);
+ 	writel(buffer.phys, &msg->body[4]);
+ 
+-//      printk("i2o_config: swdl frag %d/%d (size %d)\n", curfrag, maxfrag, fragsize);
++//      printk(KERN_INFO "i2o_config: swdl frag %d/%d (size %d)\n", curfrag, maxfrag, fragsize);
+ 	status = i2o_msg_post_wait_mem(c, m, 60, &buffer);
+ 
+ 	if (status != -ETIMEDOUT)
+@@ -461,7 +371,7 @@ static int i2o_cfg_swul(unsigned long ar
+ 	writel(0xD0000000 | fragsize, &msg->body[3]);
+ 	writel(buffer.phys, &msg->body[4]);
+ 
+-//      printk("i2o_config: swul frag %d/%d (size %d)\n", curfrag, maxfrag, fragsize);
++//      printk(KERN_INFO "i2o_config: swul frag %d/%d (size %d)\n", curfrag, maxfrag, fragsize);
+ 	status = i2o_msg_post_wait_mem(c, m, 60, &buffer);
+ 
+ 	if (status != I2O_POST_WAIT_OK) {
+diff -puN drivers/message/i2o/i2o_proc.c~i2o-code-beautifying-and-cleanup drivers/message/i2o/i2o_proc.c
+--- 25/drivers/message/i2o/i2o_proc.c~i2o-code-beautifying-and-cleanup	Fri Oct  8 14:32:24 2004
++++ 25-akpm/drivers/message/i2o/i2o_proc.c	Fri Oct  8 14:32:24 2004
+@@ -938,11 +938,6 @@ int i2o_seq_show_drivers_stored(struct s
+ 			seq_printf(seq, "                ");
+ 		}
+ 
+-#if 0
+-		if (c->i2oversion == 0x02)
+-			seq_printf(seq, "%-d", dst->module_state);
+-#endif
+-
+ 		seq_printf(seq, "%-#7x", dst->i2o_vendor_id);
+ 		seq_printf(seq, "%-#8x", dst->module_id);
+ 		seq_printf(seq, "%-29s", chtostr(dst->module_name_version, 28));
+@@ -950,10 +945,6 @@ int i2o_seq_show_drivers_stored(struct s
+ 		seq_printf(seq, "%8d ", dst->module_size);
+ 		seq_printf(seq, "%8d ", dst->mpb_size);
+ 		seq_printf(seq, "0x%04x", dst->module_flags);
+-#if 0
+-		if (c->i2oversion == 0x02)
+-			seq_printf(seq, "%d", dst->notification_level);
+-#endif
+ 		seq_printf(seq, "\n");
+ 	}
+ 
+diff -puN drivers/message/i2o/i2o_scsi.c~i2o-code-beautifying-and-cleanup drivers/message/i2o/i2o_scsi.c
+--- 25/drivers/message/i2o/i2o_scsi.c~i2o-code-beautifying-and-cleanup	Fri Oct  8 14:32:24 2004
++++ 25-akpm/drivers/message/i2o/i2o_scsi.c	Fri Oct  8 14:32:24 2004
+@@ -274,53 +274,6 @@ static const char *i2o_scsi_info(struct 
+ 	return hostdata->iop->name;
+ }
+ 
+-#if 0
+-/**
+- *	i2o_retry_run		-	retry on timeout
+- *	@f: unused
+- *
+- *	Retry congested frames. This actually needs pushing down into
+- *	i2o core. We should only bother the OSM with this when we can't
+- *	queue and retry the frame. Or perhaps we should call the OSM
+- *	and its default handler should be this in the core, and this
+- *	call a 2nd "I give up" handler in the OSM ?
+- */
+-
+-static void i2o_retry_run(unsigned long f)
+-{
+-	int i;
+-	unsigned long flags;
+-
+-	spin_lock_irqsave(&retry_lock, flags);
+-	for (i = 0; i < retry_ct; i++)
+-		i2o_post_message(retry_ctrl[i], virt_to_bus(retry[i]));
+-	retry_ct = 0;
+-	spin_unlock_irqrestore(&retry_lock, flags);
+-}
+-
+-/**
+- *	flush_pending		-	empty the retry queue
+- *
+- *	Turn each of the pending commands into a NOP and post it back
+- *	to the controller to clear it.
+- */
+-
+-static void flush_pending(void)
+-{
+-	int i;
+-	unsigned long flags;
+-
+-	spin_lock_irqsave(&retry_lock, flags);
+-	for (i = 0; i < retry_ct; i++) {
+-		retry[i][0] &= ~0xFFFFFF;
+-		retry[i][0] |= I2O_CMD_UTIL_NOP << 24;
+-		i2o_post_message(retry_ctrl[i], virt_to_bus(retry[i]));
+-	}
+-	retry_ct = 0;
+-	spin_unlock_irqrestore(&retry_lock, flags);
+-}
+-#endif
+-
+ /**
+  *	i2o_scsi_reply - SCSI OSM message reply handler
+  *	@c: controller issuing the reply
+@@ -353,27 +306,26 @@ static int i2o_scsi_reply(struct i2o_con
+ 
+ 		pmsg = c->in_queue.virt + pm;
+ 
+-		printk("IOP fail.\n");
+-		printk("From %d To %d Cmd %d.\n",
++		printk(KERN_ERR "IOP fail.\n");
++		printk(KERN_ERR "From %d To %d Cmd %d.\n",
+ 		       (msg->u.head[1] >> 12) & 0xFFF,
+ 		       msg->u.head[1] & 0xFFF, msg->u.head[1] >> 24);
+-		printk("Failure Code %d.\n", msg->body[0] >> 24);
++		printk(KERN_ERR "Failure Code %d.\n", msg->body[0] >> 24);
+ 		if (msg->body[0] & (1 << 16))
+-			printk("Format error.\n");
++			printk(KERN_ERR "Format error.\n");
+ 		if (msg->body[0] & (1 << 17))
+-			printk("Path error.\n");
++			printk(KERN_ERR "Path error.\n");
+ 		if (msg->body[0] & (1 << 18))
+-			printk("Path State.\n");
++			printk(KERN_ERR "Path State.\n");
+ 		if (msg->body[0] & (1 << 18))
+-			printk("Congestion.\n");
++			printk(KERN_ERR "Congestion.\n");
+ 
+-		printk("Failing message is %p.\n", pmsg);
++		printk(KERN_DEBUG "Failing message is %p.\n", pmsg);
+ 
+ 		cmd = i2o_cntxt_list_get(c, readl(&pmsg->u.s.tcntxt));
+ 		if (!cmd)
+ 			return 1;
+ 
+-		printk("Aborted %ld\n", cmd->serial_number);
+ 		cmd->result = DID_ERROR << 16;
+ 		cmd->scsi_done(cmd);
+ 
+@@ -416,10 +368,11 @@ static int i2o_scsi_reply(struct i2o_con
+ 				int i;
+ 				printk(KERN_ERR "SCSI: underflow 0x%08X 0x%08X"
+ 				       "\n", count, cmd->underflow);
+-				printk("Cmd: ");
++				printk(KERN_DEBUG "Cmd: ");
+ 				for (i = 0; i < 15; i++)
+-					printk("%02X ", cmd->cmnd[i]);
+-				printk(".\n");
++					printk(KERN_DEBUG "%02X ",
++					       cmd->cmnd[i]);
++				printk(KERN_DEBUG ".\n");
+ 				cmd->result = (DID_ERROR << 16);
+ 			}
+ 			break;
+@@ -517,8 +470,7 @@ void i2o_scsi_notify_controller_add(stru
+ 
+ 	rc = scsi_add_host(i2o_shost->scsi_host, &c->device);
+ 	if (rc) {
+-		printk(KERN_ERR "scsi-osm: Could not add SCSI "
+-		       "host\n");
++		printk(KERN_ERR "scsi-osm: Could not add SCSI " "host\n");
+ 		scsi_host_put(i2o_shost->scsi_host);
+ 		return;
+ 	}
+diff -puN drivers/message/i2o/iop.c~i2o-code-beautifying-and-cleanup drivers/message/i2o/iop.c
+--- 25/drivers/message/i2o/iop.c~i2o-code-beautifying-and-cleanup	Fri Oct  8 14:32:24 2004
++++ 25-akpm/drivers/message/i2o/iop.c	Fri Oct  8 14:32:24 2004
+@@ -117,7 +117,7 @@ u32 i2o_msg_get_wait(struct i2o_controll
+  *
+  *	Returns context id > 0 on success or 0 on failure.
+  */
+-u32 i2o_cntxt_list_add(struct i2o_controller *c, void *ptr)
++u32 i2o_cntxt_list_add(struct i2o_controller * c, void *ptr)
+ {
+ 	struct i2o_context_list_element *entry;
+ 	unsigned long flags;
+@@ -162,7 +162,7 @@ u32 i2o_cntxt_list_add(struct i2o_contro
+  *
+  *	Returns context id on succes or 0 on failure.
+  */
+-u32 i2o_cntxt_list_remove(struct i2o_controller *c, void *ptr)
++u32 i2o_cntxt_list_remove(struct i2o_controller * c, void *ptr)
+ {
+ 	struct i2o_context_list_element *entry;
+ 	u32 context = 0;
+@@ -691,10 +691,11 @@ static int i2o_iop_systab_set(struct i2o
+ 		res->flags = IORESOURCE_MEM;
+ 		res->start = 0;
+ 		res->end = 0;
+-		printk("%s: requires private memory resources.\n", c->name);
++		printk(KERN_INFO "%s: requires private memory resources.\n",
++		       c->name);
+ 		root = pci_find_parent_resource(c->pdev, res);
+ 		if (root == NULL)
+-			printk("Can't find parent resource!\n");
++			printk(KERN_WARNING "Can't find parent resource!\n");
+ 		if (root && allocate_resource(root, res, sb->desired_mem_size, sb->desired_mem_size, sb->desired_mem_size, 1 << 20,	/* Unspecified, so use 1Mb and play safe */
+ 					      NULL, NULL) >= 0) {
+ 			c->mem_alloc = 1;
+@@ -712,10 +713,11 @@ static int i2o_iop_systab_set(struct i2o
+ 		res->flags = IORESOURCE_IO;
+ 		res->start = 0;
+ 		res->end = 0;
+-		printk("%s: requires private memory resources.\n", c->name);
++		printk(KERN_INFO "%s: requires private memory resources.\n",
++		       c->name);
+ 		root = pci_find_parent_resource(c->pdev, res);
+ 		if (root == NULL)
+-			printk("Can't find parent resource!\n");
++			printk(KERN_WARNING "Can't find parent resource!\n");
+ 		if (root && allocate_resource(root, res, sb->desired_io_size, sb->desired_io_size, sb->desired_io_size, 1 << 20,	/* Unspecified, so use 1Mb and play safe */
+ 					      NULL, NULL) >= 0) {
+ 			c->io_alloc = 1;
+diff -puN drivers/message/i2o/pci.c~i2o-code-beautifying-and-cleanup drivers/message/i2o/pci.c
+--- 25/drivers/message/i2o/pci.c~i2o-code-beautifying-and-cleanup	Fri Oct  8 14:32:24 2004
++++ 25-akpm/drivers/message/i2o/pci.c	Fri Oct  8 14:32:24 2004
+@@ -138,13 +138,13 @@ static int __devinit i2o_pci_alloc(struc
+ 				 * If we know what card it is, set the size
+ 				 * correctly. Code is taken from dpt_i2o.c
+ 				 */
+-				if(pdev->device == 0xa501) {
+-					if(pdev->subsystem_device >= 0xc032 &&
+-					   pdev->subsystem_device <= 0xc03b) {
+-						if(c->base.len > 0x400000)
++				if (pdev->device == 0xa501) {
++					if (pdev->subsystem_device >= 0xc032 &&
++					    pdev->subsystem_device <= 0xc03b) {
++						if (c->base.len > 0x400000)
+ 							c->base.len = 0x400000;
+ 					} else {
+-						if(c->base.len > 0x100000)
++						if (c->base.len > 0x100000)
+ 							c->base.len = 0x100000;
+ 					}
+ 				}
+_

@@ -1,0 +1,99 @@
+
+From: Dipankar Sarma <dipankar@in.ibm.com>
+
+This fixes the RCU cpu offline code which was broken by singly-linked RCU
+changes.  Nathan pointed out the problems and submitted a patch for this. 
+This is an optimal fix - no need to iterate through the list of callbacks,
+just use the tail pointers and attach the list from the dead cpu.
+
+Signed-off-by: Nathan Lynch <nathanl@austin.ibm.com>
+Signed-off-by: Dipankar Sarma <dipankar@in.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/rcupdate.h |    2 ++
+ 25-akpm/kernel/rcupdate.c        |   19 +++++++++----------
+ 2 files changed, 11 insertions(+), 10 deletions(-)
+
+diff -puN include/linux/rcupdate.h~rcu-rcu-cpu-offline-fix include/linux/rcupdate.h
+--- 25/include/linux/rcupdate.h~rcu-rcu-cpu-offline-fix	2004-07-31 17:22:17.691668504 -0700
++++ 25-akpm/include/linux/rcupdate.h	2004-07-31 17:23:14.575020920 -0700
+@@ -98,6 +98,7 @@ struct rcu_data {
+         struct rcu_head *nxtlist;
+ 	struct rcu_head **nxttail;
+         struct rcu_head *curlist;
++        struct rcu_head **curtail;
+ };
+ 
+ DECLARE_PER_CPU(struct rcu_data, rcu_data);
+@@ -111,6 +112,7 @@ extern struct rcu_ctrlblk rcu_ctrlblk;
+ #define RCU_nxtlist(cpu) 	(per_cpu(rcu_data, (cpu)).nxtlist)
+ #define RCU_curlist(cpu) 	(per_cpu(rcu_data, (cpu)).curlist)
+ #define RCU_nxttail(cpu) 	(per_cpu(rcu_data, (cpu)).nxttail)
++#define RCU_curtail(cpu) 	(per_cpu(rcu_data, (cpu)).curtail)
+ 
+ static inline int rcu_pending(int cpu) 
+ {
+diff -puN kernel/rcupdate.c~rcu-rcu-cpu-offline-fix kernel/rcupdate.c
+--- 25/kernel/rcupdate.c~rcu-rcu-cpu-offline-fix	2004-07-31 17:22:17.693668200 -0700
++++ 25-akpm/kernel/rcupdate.c	2004-07-31 17:23:14.574021072 -0700
+@@ -210,19 +210,15 @@ static void rcu_check_quiescent_state(vo
+  * locking requirements, the list it's pulling from has to belong to a cpu
+  * which is dead and hence not processing interrupts.
+  */
+-static void rcu_move_batch(struct rcu_head *list)
++static void rcu_move_batch(struct rcu_head *list, struct rcu_head **tail)
+ {
+ 	int cpu;
+ 
+ 	local_irq_disable();
+-
+ 	cpu = smp_processor_id();
+-
+-	while (list != NULL) {
+-		*RCU_nxttail(cpu) = list;
+-		RCU_nxttail(cpu) = &list->next;
+-		list = list->next;
+-	}
++	*RCU_nxttail(cpu) = list;
++	if (list)
++		RCU_nxttail(cpu) = tail;
+ 	local_irq_enable();
+ }
+ 
+@@ -237,8 +233,8 @@ static void rcu_offline_cpu(int cpu)
+ 		cpu_quiet(cpu);
+ 	spin_unlock_bh(&rcu_state.mutex);
+ 
+-	rcu_move_batch(RCU_curlist(cpu));
+-	rcu_move_batch(RCU_nxtlist(cpu));
++	rcu_move_batch(RCU_curlist(cpu), RCU_curtail(cpu));
++	rcu_move_batch(RCU_nxtlist(cpu), RCU_nxttail(cpu));
+ 
+ 	tasklet_kill_immediate(&RCU_tasklet(cpu), cpu);
+ }
+@@ -271,6 +267,7 @@ static void rcu_process_callbacks(unsign
+ 	    !rcu_batch_before(rcu_ctrlblk.completed, RCU_batch(cpu))) {
+ 		rcu_list = RCU_curlist(cpu);
+ 		RCU_curlist(cpu) = NULL;
++		RCU_curtail(cpu) = &RCU_curlist(cpu);
+ 	}
+ 
+ 	local_irq_disable();
+@@ -278,6 +275,7 @@ static void rcu_process_callbacks(unsign
+ 		int next_pending, seq;
+ 
+ 		RCU_curlist(cpu) = RCU_nxtlist(cpu);
++		RCU_curtail(cpu) = RCU_nxttail(cpu);
+ 		RCU_nxtlist(cpu) = NULL;
+ 		RCU_nxttail(cpu) = &RCU_nxtlist(cpu);
+ 		local_irq_enable();
+@@ -319,6 +317,7 @@ static void __devinit rcu_online_cpu(int
+ {
+ 	memset(&per_cpu(rcu_data, cpu), 0, sizeof(struct rcu_data));
+ 	tasklet_init(&RCU_tasklet(cpu), rcu_process_callbacks, 0UL);
++	RCU_curtail(cpu) = &RCU_curlist(cpu);
+ 	RCU_nxttail(cpu) = &RCU_nxtlist(cpu);
+ 	RCU_quiescbatch(cpu) = rcu_ctrlblk.completed;
+ 	RCU_qs_pending(cpu) = 0;
+_

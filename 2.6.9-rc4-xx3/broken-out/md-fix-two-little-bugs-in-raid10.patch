@@ -1,0 +1,33 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+These can cause resync to spin when there is a faulty drive.
+
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/md/raid10.c |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletion(-)
+
+diff -puN drivers/md/raid10.c~md-fix-two-little-bugs-in-raid10 drivers/md/raid10.c
+--- 25/drivers/md/raid10.c~md-fix-two-little-bugs-in-raid10	2004-09-07 19:59:11.614482856 -0700
++++ 25-akpm/drivers/md/raid10.c	2004-09-07 19:59:11.618482248 -0700
+@@ -1496,6 +1496,7 @@ static int sync_request(mddev_t *mddev, 
+ 					rdev_dec_pending(conf->mirrors[d].rdev, mddev);
+ 			}
+ 			put_buf(r10_bio);
++			biolist = NULL;
+ 			goto giveup;
+ 		}
+ 	}
+@@ -1557,7 +1558,7 @@ static int sync_request(mddev_t *mddev, 
+ 		}
+ 	}
+ 
+-	return nr_sectors;
++	return sectors_skipped + nr_sectors;
+  giveup:
+ 	/* There is nowhere to write, so all non-sync
+ 	 * drives must be failed, so try the next chunk...
+_

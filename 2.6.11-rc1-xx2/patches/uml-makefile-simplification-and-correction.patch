@@ -1,0 +1,272 @@
+
+From: Paolo 'Blaisorblade' Giarrusso <blaisorblade_spam@yahoo.it>
+
+Cleanup: simplify a lot of strange constructs and whatever present in
+arch/um/Makefile.
+
+Also, get rid of redundant cleaning code introduced in
+"uml-fix-make-clean.patch" from 2.6.10-mm3 - when it was written it made
+sense, but I fixed most problems it addressed in a more elegant way.
+
+Also about that, don't remove $(ARCH_SYMLINKS) in make clean, but rather in
+make mrproper as we already do, like for include/asm-um and other symlinks.
+
+Finally, remove one wrong thing (almost a bug) introduced in that - the usage
+of the clean-dirs construct:
+
+clean-dirs := sys-$(SUBARCH)
+
+which is intended to delete one whole folder, rather than to descend to clean
+it, when used in normal Makefiles (not in the arch Makefile where is used,
+with no effect).  It's also not needed because that folder is cleaned because
+is listed in either $(core-y) or $(libs-y).
+
+Signed-off-by: Paolo 'Blaisorblade' Giarrusso <blaisorblade_spam@yahoo.it>
+Cc: Chris Wright <chrisw@osdl.org>
+Cc: Jeff Dike <jdike@addtoit.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/um/Kconfig           |   10 +++
+ 25-akpm/arch/um/Makefile          |   97 +++++++++++++++-----------------------
+ 25-akpm/arch/um/Makefile-os-Linux |    4 +
+ 25-akpm/arch/um/Makefile-skas     |    5 -
+ 25-akpm/arch/um/Makefile-tt       |    1 
+ 5 files changed, 52 insertions(+), 65 deletions(-)
+
+diff -puN arch/um/Kconfig~uml-makefile-simplification-and-correction arch/um/Kconfig
+--- 25/arch/um/Kconfig~uml-makefile-simplification-and-correction	Thu Jan 13 15:31:55 2005
++++ 25-akpm/arch/um/Kconfig	Thu Jan 13 15:31:55 2005
+@@ -70,6 +70,16 @@ config MODE_SKAS
+ 
+ source "arch/um/Kconfig_arch"
+ 
++config LD_SCRIPT_STATIC
++	bool
++	default y
++	depends on MODE_TT || STATIC_LINK
++
++config LD_SCRIPT_DYN
++	bool
++	default y
++	depends on !LD_SCRIPT_STATIC
++
+ config NET
+ 	bool "Networking support"
+ 	help
+diff -puN arch/um/Makefile~uml-makefile-simplification-and-correction arch/um/Makefile
+--- 25/arch/um/Makefile~uml-makefile-simplification-and-correction	Thu Jan 13 15:31:55 2005
++++ 25-akpm/arch/um/Makefile	Thu Jan 13 15:31:55 2005
+@@ -3,7 +3,7 @@
+ # Licensed under the GPL
+ #
+ 
+-ARCH_DIR = arch/um
++ARCH_DIR := arch/um
+ OS := $(shell uname -s)
+ # We require bash because the vmlinux link and loader script cpp use bash
+ # features.
+@@ -12,34 +12,38 @@ SHELL := /bin/bash
+ filechk_gen_header = $<
+ 
+ core-y			+= $(ARCH_DIR)/kernel/		\
+-			   $(ARCH_DIR)/drivers/
+-
+-clean-dirs := sys-$(SUBARCH)
++			   $(ARCH_DIR)/drivers/		\
++			   $(ARCH_DIR)/os-$(OS)/
+ 
+ # Have to precede the include because the included Makefiles reference them.
+-SYMLINK_HEADERS = archparam.h system.h sigcontext.h processor.h ptrace.h \
++SYMLINK_HEADERS := archparam.h system.h sigcontext.h processor.h ptrace.h \
+ 	arch-signal.h module.h vm-flags.h
+ SYMLINK_HEADERS := $(foreach header,$(SYMLINK_HEADERS),include/asm-um/$(header))
+ 
+-CLEAN_FILES += $(ARCH_SYMLINKS)
+-
++# The "os" symlink is only used by arch/um/include/os.h, which includes
++# ../os/include/file.h
+ ARCH_SYMLINKS = include/asm-um/arch $(ARCH_DIR)/include/sysdep $(ARCH_DIR)/os \
+ 	$(SYMLINK_HEADERS) $(ARCH_DIR)/include/uml-config.h
+ 
+ GEN_HEADERS += $(ARCH_DIR)/include/task.h $(ARCH_DIR)/include/kern_constants.h
+ 
+-MAKEFILE-$(CONFIG_MODE_TT) += Makefile-tt
+-MAKEFILE-$(CONFIG_MODE_SKAS) += Makefile-skas
++um-modes-$(CONFIG_MODE_TT) += tt
++um-modes-$(CONFIG_MODE_SKAS) += skas
++
++MODE_INCLUDE	+= $(foreach mode,$(um-modes-y),\
++		   -I$(srctree)/$(ARCH_DIR)/kernel/$(mode)/include)
+ 
+-ifneq ($(MAKEFILE-y),)
+-  include $(addprefix $(srctree)/$(ARCH_DIR)/,$(MAKEFILE-y))
++MAKEFILES-INCL	+= $(foreach mode,$(um-modes-y),\
++		   $(srctree)/$(ARCH_DIR)/Makefile-$(mode))
++
++ifneq ($(MAKEFILE-INCL),)
++  include $(MAKEFILE-INCL)
+ endif
+ 
+ ARCH_INCLUDE	:= -I$(ARCH_DIR)/include
+ SYS_DIR		:= $(ARCH_DIR)/include/sysdep-$(SUBARCH)
+ 
+ include $(srctree)/$(ARCH_DIR)/Makefile-$(SUBARCH)
+-include $(srctree)/$(ARCH_DIR)/Makefile-os-$(OS)
+ 
+ core-y += $(SUBARCH_CORE)
+ libs-y += $(SUBARCH_LIBS)
+@@ -50,12 +54,16 @@ libs-y += $(SUBARCH_LIBS)
+ # errnos.
+ 
+ CFLAGS += $(CFLAGS-y) -D__arch_um__ -DSUBARCH=\"$(SUBARCH)\" \
+-	-D_LARGEFILE64_SOURCE $(ARCH_INCLUDE) -Derrno=kernel_errno \
+-	-Dsigprocmask=kernel_sigprocmask $(MODE_INCLUDE)
++	$(ARCH_INCLUDE) $(MODE_INCLUDE)
+ 
++USER_CFLAGS := $(patsubst -I%,,$(CFLAGS))
++USER_CFLAGS := $(patsubst -D__KERNEL__,,$(USER_CFLAGS)) $(ARCH_INCLUDE) \
++	$(MODE_INCLUDE)
++CFLAGS += -Derrno=kernel_errno -Dsigprocmask=kernel_sigprocmask
+ CFLAGS += $(call cc-option,-fno-unit-at-a-time,)
+ 
+-LINK_WRAPS = -Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,calloc
++#This will adjust *FLAGS accordingly to the platform.
++include $(srctree)/$(ARCH_DIR)/Makefile-os-$(OS)
+ 
+ # These are needed for clean and mrproper, since in that case .config is not
+ # included; the values here are meaningless
+@@ -85,34 +93,16 @@ endef
+ 
+ $(shell cd $(ARCH_DIR) && ln -sf Kconfig_$(SUBARCH) Kconfig_arch)
+ 
+-CLEAN_FILES += $(TOPDIR)/$(ARCH_DIR)/include/skas_ptregs.h \
+-	$(TOPDIR)/$(ARCH_DIR)/os
+-
+ prepare: $(ARCH_SYMLINKS) $(SYS_HEADERS) $(GEN_HEADERS) \
+ 	$(ARCH_DIR)/kernel/vmlinux.lds.S
+ 
+-# These aren't in Makefile-tt because they are needed in the !CONFIG_MODE_TT +
+-# CONFIG_MODE_SKAS + CONFIG_STATIC_LINK case.
+-
+-LINK_TT = -static
+-LD_SCRIPT_TT := uml.lds.S
++LINK-$(CONFIG_LD_SCRIPT_STATIC) += -static
++LINK-$(CONFIG_LD_SCRIPT_DYN) += -Wl,-rpath,/lib
+ 
+-ifeq ($(CONFIG_STATIC_LINK),y)
+-  LINK-y += $(LINK_TT)
+-  LD_SCRIPT-y := $(LD_SCRIPT_TT)
+-else
+-ifeq ($(CONFIG_MODE_TT),y)
+-  LINK-y += $(LINK_TT)
+-  LD_SCRIPT-y := $(LD_SCRIPT_TT)
+-else
+-ifeq ($(CONFIG_MODE_SKAS),y)
+-  LINK-y += $(LINK_SKAS)
+-  LD_SCRIPT-y := $(LD_SCRIPT_SKAS)
+-endif
+-endif
+-endif
++LD_SCRIPT-$(CONFIG_LD_SCRIPT_STATIC) := uml.lds.S
++LD_SCRIPT-$(CONFIG_LD_SCRIPT_DYN) := dyn.lds.S
+ 
+-CPP_MODE_TT := $(shell [ "$(CONFIG_MODE_TT)" = "y" ] && echo -DMODE_TT)
++CPP_MODE-$(CONFIG_MODE_TT) := -DMODE_TT
+ CONFIG_KERNEL_STACK_ORDER ?= 2
+ STACK_SIZE := $(shell echo $$[ 4096 * (1 << $(CONFIG_KERNEL_STACK_ORDER)) ] )
+ 
+@@ -122,9 +112,12 @@ endif
+ 
+ CPPFLAGS_vmlinux.lds = $(shell echo -U$(SUBARCH) \
+ 	-DSTART=$(START) -DELF_ARCH=$(ELF_ARCH) \
+-	-DELF_FORMAT=\"$(ELF_FORMAT)\" $(CPP_MODE_TT) \
++	-DELF_FORMAT=\"$(ELF_FORMAT)\" $(CPP_MODE-y) \
+ 	-DKERNEL_STACK_SIZE=$(STACK_SIZE))
+ 
++#The wrappers will select whether using "malloc" or the kernel allocator.
++LINK_WRAPS = -Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,calloc
++
+ CFLAGS_vmlinux = $(LINK-y) $(LINK_WRAPS)
+ define cmd_vmlinux__
+ 	$(CC) $(CFLAGS_vmlinux) -o $@ \
+@@ -135,39 +128,27 @@ define cmd_vmlinux__
+ 	FORCE ,$^) ; rm -f linux
+ endef
+ 
+-USER_CFLAGS := $(patsubst -I%,,$(CFLAGS))
+-USER_CFLAGS := $(patsubst -Derrno=kernel_errno,,$(USER_CFLAGS))
+-USER_CFLAGS := $(patsubst -Dsigprocmask=kernel_sigprocmask,,$(USER_CFLAGS))
+-USER_CFLAGS := $(patsubst -D__KERNEL__,,$(USER_CFLAGS)) $(ARCH_INCLUDE) \
+-	$(MODE_INCLUDE)
+-USER_CFLAGS += $(ARCH_USER_CFLAGS)
+-
+-# To get a definition of F_SETSIG
+-USER_CFLAGS += -D_GNU_SOURCE
+-
+ #When cleaning we don't include .config, so we don't include
+ #TT or skas makefiles and don't clean skas_ptregs.h.
+ CLEAN_FILES += linux x.i gmon.out $(ARCH_DIR)/include/uml-config.h \
+-	$(GEN_HEADERS) $(ARCH_DIR)/include/skas_ptregs.h \
+-	$(ARCH_DIR)/util/mk_constants $(ARCH_DIR)/util/mk_task
++	$(GEN_HEADERS) $(ARCH_DIR)/include/skas_ptregs.h
+ 
+ MRPROPER_FILES += $(SYMLINK_HEADERS) $(ARCH_SYMLINKS) \
+ 	$(addprefix $(ARCH_DIR)/kernel/,$(KERN_SYMLINKS)) $(ARCH_DIR)/os
+ 
+-archmrproper:
+-	@:
+-
+ archclean:
+ 	$(Q)$(MAKE) $(clean)=$(ARCH_DIR)/util
+ 	@find . \( -name '*.bb' -o -name '*.bbg' -o -name '*.da' \
+ 		-o -name '*.gcov' \) -type f -print | xargs rm -f
+ 
+ #We need to re-preprocess this when the symlink dest changes.
+-#So we touch it.
++#So we touch it when needed.
+ $(ARCH_DIR)/kernel/vmlinux.lds.S: FORCE
+-	@echo '  SYMLINK $@'
+-	$(Q)ln -sf $(LD_SCRIPT-y) $@
+-	$(Q)touch $@
++	$(Q)if [ "$(shell readlink $@)" != "$(LD_SCRIPT-y)" ]; then \
++		echo '  SYMLINK $@'; \
++		ln -sf $(LD_SCRIPT-y) $@; \
++		touch $@; \
++	fi;
+ 
+ $(SYMLINK_HEADERS):
+ 	@echo '  SYMLINK $@'
+diff -puN arch/um/Makefile-os-Linux~uml-makefile-simplification-and-correction arch/um/Makefile-os-Linux
+--- 25/arch/um/Makefile-os-Linux~uml-makefile-simplification-and-correction	Thu Jan 13 15:31:55 2005
++++ 25-akpm/arch/um/Makefile-os-Linux	Thu Jan 13 15:31:55 2005
+@@ -3,4 +3,6 @@
+ # Licensed under the GPL
+ #
+ 
+-core-y		+= $(ARCH_DIR)/os-$(OS)/
++# To get a definition of F_SETSIG
++USER_CFLAGS += -D_GNU_SOURCE -D_LARGEFILE64_SOURCE
++CFLAGS += -D_LARGEFILE64_SOURCE
+diff -puN arch/um/Makefile-skas~uml-makefile-simplification-and-correction arch/um/Makefile-skas
+--- 25/arch/um/Makefile-skas~uml-makefile-simplification-and-correction	Thu Jan 13 15:31:55 2005
++++ 25-akpm/arch/um/Makefile-skas	Thu Jan 13 15:31:55 2005
+@@ -9,9 +9,4 @@ CFLAGS-$(CONFIG_GCOV) += -fprofile-arcs 
+ CFLAGS-$(CONFIG_GPROF) += $(PROFILE)
+ LINK-$(CONFIG_GPROF) += $(PROFILE)
+ 
+-MODE_INCLUDE += -I$(srctree)/$(ARCH_DIR)/kernel/skas/include
+-
+-LINK_SKAS = -Wl,-rpath,/lib 
+-LD_SCRIPT_SKAS = dyn.lds.S
+-
+ GEN_HEADERS += $(ARCH_DIR)/include/skas_ptregs.h
+diff -puN arch/um/Makefile-tt~uml-makefile-simplification-and-correction arch/um/Makefile-tt
+--- 25/arch/um/Makefile-tt~uml-makefile-simplification-and-correction	Thu Jan 13 15:31:55 2005
++++ 25-akpm/arch/um/Makefile-tt	Thu Jan 13 15:31:55 2005
+@@ -3,4 +3,3 @@
+ # Licensed under the GPL
+ #
+ 
+-MODE_INCLUDE += -I$(srctree)/$(ARCH_DIR)/kernel/tt/include
+_

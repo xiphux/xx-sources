@@ -1,0 +1,38 @@
+
+From: Pavel Machek <pavel@ucw.cz>
+
+Its very bad idea to freeze migration threads, as it crashes machine upon
+next call to "schedule()".  In refrigerator, I had one "wake_up_process()"
+too many.  This fixes it.
+
+Signed-off-by: Pavel Machek <pavel@suse.cz>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/power/process.c |    1 -
+ 25-akpm/kernel/sched.c         |    1 +
+ 2 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN kernel/power/process.c~prepare-for-smp-suspend kernel/power/process.c
+--- 25/kernel/power/process.c~prepare-for-smp-suspend	2004-06-23 21:44:48.626673456 -0700
++++ 25-akpm/kernel/power/process.c	2004-06-23 21:44:48.631672696 -0700
+@@ -109,7 +109,6 @@ void thaw_processes(void)
+ 			wake_up_process(p);
+ 		} else
+ 			printk(KERN_INFO " Strange, %s not stopped\n", p->comm );
+-		wake_up_process(p);
+ 	} while_each_thread(g, p);
+ 
+ 	read_unlock(&tasklist_lock);
+diff -puN kernel/sched.c~prepare-for-smp-suspend kernel/sched.c
+--- 25/kernel/sched.c~prepare-for-smp-suspend	2004-06-23 21:44:48.628673152 -0700
++++ 25-akpm/kernel/sched.c	2004-06-23 21:44:48.635672088 -0700
+@@ -3581,6 +3581,7 @@ static int migration_call(struct notifie
+ 		p = kthread_create(migration_thread, hcpu, "migration/%d",cpu);
+ 		if (IS_ERR(p))
+ 			return NOTIFY_BAD;
++		p->flags |= PF_NOFREEZE;
+ 		kthread_bind(p, cpu);
+ 		/* Must be high prio: stop_machine expects to yield to it. */
+ 		rq = task_rq_lock(p, &flags);
+_

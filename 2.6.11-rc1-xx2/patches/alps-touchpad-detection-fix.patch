@@ -1,0 +1,42 @@
+
+From: Peter Osterlund <petero2@telia.com>
+
+My ALPS touchpad is not recognized because the device gets confused by the
+Kensington ThinkingMouse probe.  It responds with "00 00 14" instead of the
+expected "00 00 64" to the "E6 report".
+
+Resetting the device before attempting the ALPS probe fixes the problem.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/input/mouse/psmouse-base.c |   12 +++++++-----
+ 1 files changed, 7 insertions(+), 5 deletions(-)
+
+diff -puN drivers/input/mouse/psmouse-base.c~alps-touchpad-detection-fix drivers/input/mouse/psmouse-base.c
+--- 25/drivers/input/mouse/psmouse-base.c~alps-touchpad-detection-fix	2005-01-09 22:43:10.218014688 -0800
++++ 25-akpm/drivers/input/mouse/psmouse-base.c	2005-01-09 22:43:10.222014080 -0800
+@@ -451,14 +451,16 @@ static int psmouse_extensions(struct psm
+ /*
+  * Try ALPS TouchPad
+  */
+-	if (max_proto > PSMOUSE_IMEX && alps_detect(psmouse, set_properties) == 0) {
+-		if (!set_properties || alps_init(psmouse) == 0)
+-			return PSMOUSE_ALPS;
+-
++	if (max_proto > PSMOUSE_IMEX) {
++		ps2_command(&psmouse->ps2dev, NULL, PSMOUSE_CMD_RESET_DIS);
++		if (alps_detect(psmouse, set_properties) == 0) {
++			if (!set_properties || alps_init(psmouse) == 0)
++				return PSMOUSE_ALPS;
+ /*
+  * Init failed, try basic relative protocols
+  */
+-		max_proto = PSMOUSE_IMEX;
++			max_proto = PSMOUSE_IMEX;
++		}
+ 	}
+ 
+ 	if (max_proto > PSMOUSE_IMEX && genius_detect(psmouse, set_properties) == 0)
+_

@@ -1,0 +1,70 @@
+Scheduler designs may not identify real time tasks by their priority so
+privatise the rt_task macro as a function.
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+Index: linux-2.6.10-rc1-mm5/include/linux/sched.h
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/include/linux/sched.h	2004-11-11 21:48:08.911176853 +1100
++++ linux-2.6.10-rc1-mm5/include/linux/sched.h	2004-11-11 21:48:11.972705087 +1100
+@@ -349,7 +349,7 @@ struct signal_struct {
+ 
+ #define MAX_PRIO		(MAX_RT_PRIO + 40)
+ 
+-#define rt_task(p)		(unlikely((p)->prio < MAX_RT_PRIO))
++extern int rt_task(task_t *p);
+ 
+ /*
+  * Some day this will be a full-fledged user tracking system..
+Index: linux-2.6.10-rc1-mm5/include/linux/scheduler.h
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/include/linux/scheduler.h	2004-11-11 21:48:06.789503792 +1100
++++ linux-2.6.10-rc1-mm5/include/linux/scheduler.h	2004-11-11 21:49:24.758488927 +1100
+@@ -3,6 +3,7 @@
+ 
+ struct sched_drv
+ {
++	int (*rt_task)(const task_t *);
+ 	void (*wait_for_completion)(struct completion *);
+ 	void (*io_schedule)(void);
+ 	long (*io_schedule_timeout)(long);
+Index: linux-2.6.10-rc1-mm5/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/kernel/sched.c	2004-11-11 21:48:06.791503484 +1100
++++ linux-2.6.10-rc1-mm5/kernel/sched.c	2004-11-11 21:50:09.399609577 +1100
+@@ -287,6 +287,11 @@ static DEFINE_PER_CPU(struct runqueue, r
+ #define task_rq(p)		cpu_rq(task_cpu(p))
+ #define cpu_curr(cpu)		(cpu_rq(cpu)->curr)
+ 
++static int ingo_rt_task(const task_t *p)
++{
++	return (unlikely((p)->prio < MAX_RT_PRIO));
++}
++
+ /*
+  * Default context-switch locking:
+  */
+@@ -4172,6 +4177,7 @@ void normalize_rt_tasks(void)
+ #endif /* CONFIG_MAGIC_SYSRQ */
+ 
+ struct sched_drv ingo_sched_drv = {
++	.rt_task		= ingo_rt_task,
+ 	.wait_for_completion	= ingo_wait_for_completion,
+ 	.io_schedule		= ingo_io_schedule,
+ 	.io_schedule_timeout	= ingo_io_schedule_timeout,
+Index: linux-2.6.10-rc1-mm5/kernel/scheduler.c
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/kernel/scheduler.c	2004-11-11 21:48:06.792503330 +1100
++++ linux-2.6.10-rc1-mm5/kernel/scheduler.c	2004-11-11 21:48:11.976704471 +1100
+@@ -922,6 +922,11 @@ unsigned long nr_iowait(void)
+ 	return scheduler->nr_iowait();
+ }
+ 
++int rt_task(task_t *task)
++{
++	return scheduler->rt_task(task);
++}
++
+ int idle_cpu(int cpu)
+ {
+ 	return scheduler->idle_cpu(cpu);

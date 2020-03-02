@@ -1,0 +1,28 @@
+
+From: <pluto@pld-linux.org>
+
+We're forgetting to set the disabled flag when APM is disabled.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/apm.c |    2 ++
+ 1 files changed, 2 insertions(+)
+
+diff -puN arch/i386/kernel/apm.c~apm_infodisabled-fix arch/i386/kernel/apm.c
+--- 25/arch/i386/kernel/apm.c~apm_infodisabled-fix	Mon Aug  9 14:16:28 2004
++++ 25-akpm/arch/i386/kernel/apm.c	Mon Aug  9 14:16:28 2004
+@@ -2271,10 +2271,12 @@ static int __init apm_init(void)
+ 	}
+ 	if ((num_online_cpus() > 1) && !power_off && !smp) {
+ 		printk(KERN_NOTICE "apm: disabled - APM is not SMP safe.\n");
++		apm_info.disabled = 1;
+ 		return -ENODEV;
+ 	}
+ 	if (PM_IS_ACTIVE()) {
+ 		printk(KERN_NOTICE "apm: overridden by ACPI.\n");
++		apm_info.disabled = 1;
+ 		return -ENODEV;
+ 	}
+ 	pm_active = 1;
+_

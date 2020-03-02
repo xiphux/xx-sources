@@ -1,0 +1,56 @@
+
+From: Chuck Ebbert <76306.1226@compuserve.com>
+
+Without this patch I get the following on bootup with media inserted in a
+USB powered Zip 250:
+
+sda: Spinning up disk....<6>EXT3 FS on hde3, internal journal
+Adding 524152k swap on /dev/hdg2.  Priority:-1 extents:1
+Adding 524152k swap on /dev/hde2.  Priority:-2 extents:1
+.<6>kjournald starting.  Commit interval 5 seconds
+((  --- Snip 17 lines of EXT3 mount messages --- ))
+..<3>microcode: error! Bad data in microcode data file
+microcode: Error in the microcode data
+.....ready
+
+Signed-off-by: Chuck Ebbert <76306.1226@compuserve.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/scsi/sd.c |    8 ++++----
+ 1 files changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN drivers/scsi/sd.c~scsi-printk-fixes drivers/scsi/sd.c
+--- 25/drivers/scsi/sd.c~scsi-printk-fixes	Wed Jun 23 16:24:26 2004
++++ 25-akpm/drivers/scsi/sd.c	Wed Jun 23 16:24:54 2004
+@@ -949,7 +949,7 @@ sd_spinup_disk(struct scsi_disk *sdkp, c
+ 		} else if (SRpnt->sr_sense_buffer[2] == NOT_READY) {
+ 			unsigned long time1;
+ 			if (!spintime) {
+-				printk(KERN_NOTICE "%s: Spinning up disk...",
++				printk(KERN_NOTICE "%s: Spinning up disk...\n",
+ 				       diskname);
+ 				cmd[0] = START_STOP;
+ 				cmd[1] = 1;	/* Return immediately */
+@@ -972,7 +972,6 @@ sd_spinup_disk(struct scsi_disk *sdkp, c
+ 				current->state = TASK_UNINTERRUPTIBLE;
+ 				time1 = schedule_timeout(time1);
+ 			} while(time1);
+-			printk(".");
+ 		} else {
+ 			/* we don't understand the sense code, so it's
+ 			 * probably pointless to loop */
+@@ -988,9 +987,10 @@ sd_spinup_disk(struct scsi_disk *sdkp, c
+ 
+ 	if (spintime) {
+ 		if (scsi_status_is_good(the_result))
+-			printk("ready\n");
++			printk(KERN_NOTICE "%s: Disk ready\n", diskname);
+ 		else
+-			printk("not responding...\n");
++			printk(KERN_NOTICE "%s: Disk not responding...\n",
++				diskname);
+ 	}
+ }
+ 
+_

@@ -1,0 +1,107 @@
+
+From: Karim Yaghmour <karim@opersys.com>
+
+signed-off-by: Karim Yaghmour <karim@opersys.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/filemap.c    |    5 +++++
+ 25-akpm/mm/memory.c     |    4 ++++
+ 25-akpm/mm/page_alloc.c |    4 ++++
+ 25-akpm/mm/page_io.c    |    2 ++
+ 4 files changed, 15 insertions(+)
+
+diff -puN mm/filemap.c~ltt-mm-events mm/filemap.c
+--- 25/mm/filemap.c~ltt-mm-events	2005-01-13 23:01:16.477692160 -0800
++++ 25-akpm/mm/filemap.c	2005-01-13 23:01:16.487690640 -0800
+@@ -28,6 +28,7 @@
+ #include <linux/blkdev.h>
+ #include <linux/security.h>
+ #include <linux/syscalls.h>
++#include <linux/ltt-events.h>
+ /*
+  * This is needed for the following functions:
+  *  - try_to_release_page
+@@ -402,9 +403,13 @@ void fastcall wait_on_page_bit(struct pa
+ {
+ 	DEFINE_WAIT_BIT(wait, &page->flags, bit_nr);
+ 
++	ltt_ev_memory(LTT_EV_MEMORY_PAGE_WAIT_START, 0);
++
+ 	if (test_bit(bit_nr, &page->flags))
+ 		__wait_on_bit(page_waitqueue(page), &wait, sync_page,
+ 							TASK_UNINTERRUPTIBLE);
++
++	ltt_ev_memory(LTT_EV_MEMORY_PAGE_WAIT_END, 0);
+ }
+ EXPORT_SYMBOL(wait_on_page_bit);
+ 
+diff -puN mm/memory.c~ltt-mm-events mm/memory.c
+--- 25/mm/memory.c~ltt-mm-events	2005-01-13 23:01:16.479691856 -0800
++++ 25-akpm/mm/memory.c	2005-01-13 23:01:16.488690488 -0800
+@@ -50,6 +50,9 @@
+ #include <linux/module.h>
+ #include <linux/init.h>
+ 
++#include <linux/module.h>
++#include <linux/ltt-events.h>
++
+ #include <asm/pgalloc.h>
+ #include <asm/uaccess.h>
+ #include <asm/tlb.h>
+@@ -1693,6 +1696,7 @@ static int do_swap_page(struct mm_struct
+ 	spin_unlock(&mm->page_table_lock);
+ 	page = lookup_swap_cache(entry);
+ 	if (!page) {
++	        ltt_ev_memory(LTT_EV_MEMORY_SWAP_IN, address);
+  		swapin_readahead(entry, address, vma);
+  		page = read_swap_cache_async(entry, vma, address);
+ 		if (!page) {
+diff -puN mm/page_alloc.c~ltt-mm-events mm/page_alloc.c
+--- 25/mm/page_alloc.c~ltt-mm-events	2005-01-13 23:01:16.480691704 -0800
++++ 25-akpm/mm/page_alloc.c	2005-01-13 23:01:16.490690184 -0800
+@@ -33,6 +33,7 @@
+ #include <linux/cpu.h>
+ #include <linux/nodemask.h>
+ #include <linux/vmalloc.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/tlbflush.h>
+ #include "internal.h"
+@@ -324,6 +325,8 @@ void __free_pages_ok(struct page *page, 
+ 	LIST_HEAD(list);
+ 	int i;
+ 
++	ltt_ev_memory(LTT_EV_MEMORY_PAGE_FREE, order);
++
+ 	if (arch_free_page(page, order))
+ 		return;
+ 
+@@ -841,6 +844,7 @@ fastcall unsigned long __get_free_pages(
+ 	page = alloc_pages(gfp_mask, order);
+ 	if (!page)
+ 		return 0;
++	ltt_ev_memory(LTT_EV_MEMORY_PAGE_ALLOC, order);
+ 	return (unsigned long) page_address(page);
+ }
+ 
+diff -puN mm/page_io.c~ltt-mm-events mm/page_io.c
+--- 25/mm/page_io.c~ltt-mm-events	2005-01-13 23:01:16.482691400 -0800
++++ 25-akpm/mm/page_io.c	2005-01-13 23:01:16.490690184 -0800
+@@ -17,6 +17,7 @@
+ #include <linux/bio.h>
+ #include <linux/swapops.h>
+ #include <linux/writeback.h>
++#include <linux/ltt-events.h>
+ #include <asm/pgtable.h>
+ 
+ static struct bio *get_swap_bio(int gfp_flags, pgoff_t index,
+@@ -103,6 +104,7 @@ int swap_writepage(struct page *page, st
+ 	inc_page_state(pswpout);
+ 	set_page_writeback(page);
+ 	unlock_page(page);
++	ltt_ev_memory(LTT_EV_MEMORY_SWAP_OUT, (unsigned long) page);
+ 	submit_bio(rw, bio);
+ out:
+ 	return ret;
+_

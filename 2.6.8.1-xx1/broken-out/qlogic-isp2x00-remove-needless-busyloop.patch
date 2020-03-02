@@ -1,0 +1,33 @@
+
+From: Bjorn Helgaas <bjorn.helgaas@hp.com>
+
+There's no need to wait for an isp2x00 to recognize a fabric if there's no
+isp2x00.  Probably nobody will notice the unnecessary slowdown on real
+hardware, but it's a significant delay on a simulator.
+
+Signed-off-by: Bjorn Helgaas <bjorn.helgaas@hp.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/scsi/qlogicfc.c |    8 +++++---
+ 1 files changed, 5 insertions(+), 3 deletions(-)
+
+diff -puN drivers/scsi/qlogicfc.c~qlogic-isp2x00-remove-needless-busyloop drivers/scsi/qlogicfc.c
+--- 25/drivers/scsi/qlogicfc.c~qlogic-isp2x00-remove-needless-busyloop	Mon Aug  9 14:54:44 2004
++++ 25-akpm/drivers/scsi/qlogicfc.c	Mon Aug  9 14:54:44 2004
+@@ -815,9 +815,11 @@ int isp2x00_detect(Scsi_Host_Template * 
+ 	   some time before recognizing it is attached to a fabric */
+ 
+ #if ISP2x00_FABRIC
+-	for (wait_time = jiffies + 5 * HZ; time_before(jiffies, wait_time);) {
+-		barrier();
+-		cpu_relax();
++	if (hosts) {
++		for (wait_time = jiffies + 5 * HZ; time_before(jiffies, wait_time);) {
++			barrier();
++			cpu_relax();
++		}
+ 	}
+ #endif
+ 
+_

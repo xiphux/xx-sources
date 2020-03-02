@@ -1,0 +1,412 @@
+
+From: <janitor@sternwelten.at>
+
+Signed-off-by: Nishanth Aravamudan <nacc@us.ibm.com>
+Signed-off-by: Maximilian Attems <janitor@sternwelten.at>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/isdn/act2000/act2000_isa.c |   11 ++---------
+ 25-akpm/drivers/isdn/capi/kcapi.c          |    7 +++----
+ 25-akpm/drivers/isdn/hisax/config.c        |    3 +--
+ 25-akpm/drivers/isdn/hisax/elsa.c          |    3 +--
+ 25-akpm/drivers/isdn/hisax/hfc_pci.c       |    3 +--
+ 25-akpm/drivers/isdn/hisax/hfc_sx.c        |    6 ++----
+ 25-akpm/drivers/isdn/hisax/hfcscard.c      |    3 +--
+ 25-akpm/drivers/isdn/hysdn/boardergo.c     |    7 +++----
+ 25-akpm/drivers/isdn/hysdn/hysdn_sched.c   |    7 +++----
+ 25-akpm/drivers/isdn/i4l/isdn_tty.c        |    4 ++--
+ 25-akpm/drivers/isdn/icn/icn.c             |   15 ++++++---------
+ 25-akpm/drivers/isdn/isdnloop/isdnloop.c   |    3 +++
+ 25-akpm/drivers/isdn/sc/card.h             |    7 ++++---
+ 25-akpm/drivers/isdn/sc/hardware.h         |    3 ---
+ 25-akpm/drivers/isdn/sc/init.c             |   10 ++++------
+ 15 files changed, 36 insertions(+), 56 deletions(-)
+
+diff -puN drivers/isdn/sc/card.h~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/sc/card.h
+--- 25/drivers/isdn/sc/card.h~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.321204856 -0700
++++ 25-akpm/drivers/isdn/sc/card.h	2004-09-30 22:37:23.348200752 -0700
+@@ -24,24 +24,25 @@
+  * We need these if they're not already included
+  */
+ #include <linux/timer.h>
++#include <linux/time.h>
+ #include <linux/isdnif.h>
+ #include "message.h"
+ 
+ /*
+  * Amount of time to wait for a reset to complete
+  */
+-#define CHECKRESET_TIME		milliseconds(4000)
++#define CHECKRESET_TIME		msecs_to_jiffies(4000)
+ 
+ /*
+  * Amount of time between line status checks
+  */
+-#define CHECKSTAT_TIME		milliseconds(8000)
++#define CHECKSTAT_TIME		msecs_to_jiffies(8000)
+ 
+ /*
+  * The maximum amount of time to wait for a message response
+  * to arrive. Use exclusively by send_and_receive
+  */
+-#define SAR_TIMEOUT		milliseconds(10000)
++#define SAR_TIMEOUT		msecs_to_jiffies(10000)
+ 
+ /*
+  * Macro to determine is a card id is valid
+diff -puN drivers/isdn/hisax/config.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/hisax/config.c
+--- 25/drivers/isdn/hisax/config.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.323204552 -0700
++++ 25-akpm/drivers/isdn/hisax/config.c	2004-09-30 22:37:23.350200448 -0700
+@@ -843,9 +843,8 @@ static int init_card(struct IsdnCardStat
+ 	}
+ 	while (cnt) {
+ 		cs->cardmsg(cs, CARD_INIT, NULL);
+-		set_current_state(TASK_UNINTERRUPTIBLE);
+ 		/* Timeout 10ms */
+-		schedule_timeout((10 * HZ) / 1000);
++		msleep(10);
+ 		printk(KERN_INFO "%s: IRQ %d count %d\n",
+ 		       CardType[cs->typ], cs->irq, kstat_irqs(cs->irq));
+ 		if (kstat_irqs(cs->irq) == irq_cnt) {
+diff -puN drivers/isdn/hisax/elsa.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/hisax/elsa.c
+--- 25/drivers/isdn/hisax/elsa.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.325204248 -0700
++++ 25-akpm/drivers/isdn/hisax/elsa.c	2004-09-30 22:37:23.351200296 -0700
+@@ -691,8 +691,7 @@ Elsa_card_msg(struct IsdnCardState *cs, 
+ 				byteout(cs->hw.elsa.ctrl, cs->hw.elsa.ctrl_reg);
+ 				byteout(cs->hw.elsa.timer, 0);
+ 				spin_unlock_irqrestore(&cs->lock, flags);
+-				set_current_state(TASK_UNINTERRUPTIBLE);
+-				schedule_timeout((110*HZ)/1000);
++				msleep(110);
+ 				spin_lock_irqsave(&cs->lock, flags);
+ 				cs->hw.elsa.ctrl_reg &= ~ELSA_ENA_TIMER_INT;
+ 				byteout(cs->hw.elsa.ctrl, cs->hw.elsa.ctrl_reg);
+diff -puN drivers/isdn/hisax/hfc_pci.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/hisax/hfc_pci.c
+--- 25/drivers/isdn/hisax/hfc_pci.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.326204096 -0700
++++ 25-akpm/drivers/isdn/hisax/hfc_pci.c	2004-09-30 22:37:23.353199992 -0700
+@@ -1619,8 +1619,7 @@ hfcpci_card_msg(struct IsdnCardState *cs
+ 			inithfcpci(cs);
+ 			reset_hfcpci(cs);
+ 			spin_unlock_irqrestore(&cs->lock, flags);
+-			set_current_state(TASK_UNINTERRUPTIBLE);
+-			schedule_timeout((80 * HZ) / 1000);	/* Timeout 80ms */
++			msleep(80);				/* Timeout 80ms */
+ 			/* now switch timer interrupt off */
+ 			spin_lock_irqsave(&cs->lock, flags);
+ 			cs->hw.hfcpci.int_m1 &= ~HFCPCI_INTS_TIMER;
+diff -puN drivers/isdn/hisax/hfc_sx.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/hisax/hfc_sx.c
+--- 25/drivers/isdn/hisax/hfc_sx.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.328203792 -0700
++++ 25-akpm/drivers/isdn/hisax/hfc_sx.c	2004-09-30 22:37:23.354199840 -0700
+@@ -314,8 +314,7 @@ release_io_hfcsx(struct IsdnCardState *c
+ 	cs->hw.hfcsx.int_m2 = 0;	/* interrupt output off ! */
+ 	Write_hfc(cs, HFCSX_INT_M2, cs->hw.hfcsx.int_m2);
+ 	Write_hfc(cs, HFCSX_CIRM, HFCSX_RESET);	/* Reset On */
+-	set_current_state(TASK_UNINTERRUPTIBLE);
+-	schedule_timeout((30 * HZ) / 1000);	/* Timeout 30ms */
++	msleep(30);				/* Timeout 30ms */
+ 	Write_hfc(cs, HFCSX_CIRM, 0);	/* Reset Off */
+ 	del_timer(&cs->hw.hfcsx.timer);
+ 	release_region(cs->hw.hfcsx.base, 2); /* release IO-Block */
+@@ -1367,8 +1366,7 @@ hfcsx_card_msg(struct IsdnCardState *cs,
+ 			spin_lock_irqsave(&cs->lock, flags);
+ 			inithfcsx(cs);
+ 			spin_unlock_irqrestore(&cs->lock, flags);
+-			set_current_state(TASK_UNINTERRUPTIBLE);
+-			schedule_timeout((80 * HZ) / 1000);	/* Timeout 80ms */
++			msleep(80);				/* Timeout 80ms */
+ 			/* now switch timer interrupt off */
+ 			spin_lock_irqsave(&cs->lock, flags);
+ 			cs->hw.hfcsx.int_m1 &= ~HFCSX_INTS_TIMER;
+diff -puN drivers/isdn/hisax/hfcscard.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/hisax/hfcscard.c
+--- 25/drivers/isdn/hisax/hfcscard.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.330203488 -0700
++++ 25-akpm/drivers/isdn/hisax/hfcscard.c	2004-09-30 22:37:23.355199688 -0700
+@@ -125,8 +125,7 @@ hfcs_card_msg(struct IsdnCardState *cs, 
+ 			init2bds0(cs);
+ 			spin_unlock_irqrestore(&cs->lock, flags);
+ 			delay = (80*HZ)/1000 +1;
+-			set_current_state(TASK_UNINTERRUPTIBLE);
+-			schedule_timeout((80*HZ)/1000);
++			msleep(80);
+ 			spin_lock_irqsave(&cs->lock, flags);
+ 			cs->hw.hfcD.ctmt |= HFCD_TIM800;
+ 			cs->BC_Write_Reg(cs, HFCD_DATA, HFCD_CTMT, cs->hw.hfcD.ctmt); 
+diff -puN drivers/isdn/act2000/act2000_isa.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/act2000/act2000_isa.c
+--- 25/drivers/isdn/act2000/act2000_isa.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.331203336 -0700
++++ 25-akpm/drivers/isdn/act2000/act2000_isa.c	2004-09-30 22:37:23.355199688 -0700
+@@ -18,13 +18,6 @@
+ 
+ static act2000_card *irq2card_map[16];
+ 
+-static void
+-act2000_isa_delay(long t)
+-{
+-        set_current_state(TASK_INTERRUPTIBLE);
+-        schedule_timeout(t);
+-}
+-
+ /*
+  * Reset Controller, then try to read the Card's signature.
+  + Return:
+@@ -419,7 +412,7 @@ act2000_isa_download(act2000_card * card
+ 
+         if (!act2000_isa_reset(card->port))
+                 return -ENXIO;
+-        act2000_isa_delay(HZ / 2);
++        msleep_interruptible(500);
+         if(copy_from_user(&cblock, cb, sizeof(cblock)))
+         	return -EFAULT;
+         length = cblock.length;
+@@ -452,6 +445,6 @@ act2000_isa_download(act2000_card * card
+                 p += l;
+         }
+         kfree(buf);
+-        act2000_isa_delay(HZ / 2);
++        msleep_interruptible(500);
+         return (act2000_isa_getid(card));
+ }
+diff -puN drivers/isdn/capi/kcapi.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/capi/kcapi.c
+--- 25/drivers/isdn/capi/kcapi.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.333203032 -0700
++++ 25-akpm/drivers/isdn/capi/kcapi.c	2004-09-30 22:37:23.356199536 -0700
+@@ -24,6 +24,7 @@
+ #include <linux/capi.h>
+ #include <linux/kernelcapi.h>
+ #include <linux/init.h>
++#include <linux/delay.h>
+ #include <asm/uaccess.h>
+ #include <linux/isdn/capicmd.h>
+ #include <linux/isdn/capiutil.h>
+@@ -831,8 +832,7 @@ static int old_capi_manufacturer(unsigne
+ 
+ 		while (card->cardstate != CARD_RUNNING) {
+ 
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(HZ/10);	/* 0.1 sec */
++			msleep_interruptible(100);	/* 0.1 sec */
+ 
+ 			if (signal_pending(current)) {
+ 				capi_ctr_put(card);
+@@ -856,8 +856,7 @@ static int old_capi_manufacturer(unsigne
+ 
+ 		while (card->cardstate > CARD_DETECTED) {
+ 
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(HZ/10);	/* 0.1 sec */
++			msleep_interruptible(100);	/* 0.1 sec */
+ 
+ 			if (signal_pending(current))
+ 				return -EINTR;
+diff -puN drivers/isdn/hysdn/boardergo.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/hysdn/boardergo.c
+--- 25/drivers/isdn/hysdn/boardergo.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.334202880 -0700
++++ 25-akpm/drivers/isdn/hysdn/boardergo.c	2004-09-30 22:37:23.357199384 -0700
+@@ -21,6 +21,7 @@
+ #include <linux/ioport.h>
+ #include <linux/interrupt.h>
+ #include <linux/vmalloc.h>
++#include <linux/delay.h>
+ #include <asm/io.h>
+ 
+ #include "hysdn_defs.h"
+@@ -246,8 +247,7 @@ ergo_writebootimg(struct HYSDN_CARD *car
+ 		/* the interrupts are still masked */
+ 
+ 		sti();
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout((20 * HZ) / 1000);	/* Timeout 20ms */
++		msleep_interruptible(20);		/* Timeout 20ms */
+ 
+ 		if (((tDpramBootSpooler *) card->dpram)->Len != DPRAM_SPOOLER_DATA_SIZE) {
+ 			if (card->debug_flags & LOG_POF_CARD)
+@@ -386,8 +386,7 @@ ergo_waitpofready(struct HYSDN_CARD *car
+ 			return (0);	/* success */
+ 		}		/* data has arrived */
+ 		sti();
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout((50 * HZ) / 1000);	/* Timeout 50ms */
++		msleep_interruptible(50);		/* Timeout 50ms */
+ 	}			/* wait until timeout */
+ 
+ 	if (card->debug_flags & LOG_POF_CARD)
+diff -puN drivers/isdn/hysdn/hysdn_sched.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/hysdn/hysdn_sched.c
+--- 25/drivers/isdn/hysdn/hysdn_sched.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.336202576 -0700
++++ 25-akpm/drivers/isdn/hysdn/hysdn_sched.c	2004-09-30 22:37:23.358199232 -0700
+@@ -17,6 +17,7 @@
+ #include <linux/kernel.h>
+ #include <linux/ioport.h>
+ #include <linux/interrupt.h>
++#include <linux/delay.h>
+ #include <asm/io.h>
+ 
+ #include "hysdn_defs.h"
+@@ -160,8 +161,7 @@ hysdn_tx_cfgline(hysdn_card * card, ucha
+ 		if (card->debug_flags & LOG_SCHED_ASYN)
+ 			hysdn_addlog(card, "async tx-cfg delayed");
+ 
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout((20 * HZ) / 1000);	/* Timeout 20ms */
++		msleep_interruptible(20);		/* Timeout 20ms */
+ 		if (!--cnt) {
+ 			restore_flags(flags);
+ 			return (-ERR_ASYNC_TIME);	/* timed out */
+@@ -190,8 +190,7 @@ hysdn_tx_cfgline(hysdn_card * card, ucha
+ 		if (card->debug_flags & LOG_SCHED_ASYN)
+ 			hysdn_addlog(card, "async tx-cfg waiting for tx-ready");
+ 
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout((20 * HZ) / 1000);	/* Timeout 20ms */
++		msleep_interruptible(20);		/* Timeout 20ms */
+ 		if (!--cnt) {
+ 			restore_flags(flags);
+ 			return (-ERR_ASYNC_TIME);	/* timed out */
+diff -puN drivers/isdn/icn/icn.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/icn/icn.c
+--- 25/drivers/isdn/icn/icn.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.337202424 -0700
++++ 25-akpm/drivers/isdn/icn/icn.c	2004-09-30 22:37:23.359199080 -0700
+@@ -762,8 +762,7 @@ icn_check_loader(int cardnumber)
+ #ifdef BOOT_DEBUG
+ 			printk(KERN_DEBUG "Loader %d TO?\n", cardnumber);
+ #endif
+-			current->state = TASK_INTERRUPTIBLE;
+-			schedule_timeout(ICN_BOOT_TIMEOUT1);
++			msleep_interruptible(ICN_BOOT_TIMEOUT1);
+ 		} else {
+ #ifdef BOOT_DEBUG
+ 			printk(KERN_DEBUG "Loader %d OK\n", cardnumber);
+@@ -788,8 +787,7 @@ icn_check_loader(int cardnumber)
+ int slsec = sec; \
+   printk(KERN_DEBUG "SLEEP(%d)\n",slsec); \
+   while (slsec) { \
+-    current->state = TASK_INTERRUPTIBLE; \
+-    schedule_timeout(HZ); \
++    msleep_interruptible(1000); \
+     slsec--; \
+   } \
+ }
+@@ -950,7 +948,7 @@ icn_loadproto(u_char __user * buffer, ic
+ 				icn_maprelease_channel(card, 0);
+ 				return -EIO;
+ 			}
+-			current->state = TASK_INTERRUPTIBLE;
++			set_current_state(TASK_INTERRUPTIBLE);
+ 			schedule_timeout(10);
+ 		}
+ 	}
+@@ -974,8 +972,7 @@ icn_loadproto(u_char __user * buffer, ic
+ #ifdef BOOT_DEBUG
+ 			printk(KERN_DEBUG "Proto TO?\n");
+ #endif
+-			current->state = TASK_INTERRUPTIBLE;
+-			schedule_timeout(ICN_BOOT_TIMEOUT1);
++			msleep_interruptible(ICN_BOOT_TIMEOUT1);
+ 		} else {
+ 			if ((card->secondhalf) || (!card->doubleS0)) {
+ #ifdef BOOT_DEBUG
+@@ -1271,9 +1268,9 @@ icn_command(isdn_ctrl * c, icn_card * ca
+ 						if (!card->leased) {
+ 							card->leased = 1;
+ 							while (card->ptype == ISDN_PTYPE_UNKNOWN) {
+-								schedule_timeout(ICN_BOOT_TIMEOUT1);
++								msleep_interruptible(ICN_BOOT_TIMEOUT1);
+ 							}
+-							schedule_timeout(ICN_BOOT_TIMEOUT1);
++							msleep_interruptible(ICN_BOOT_TIMEOUT1);
+ 							sprintf(cbuf, "00;FV2ON\n01;EAZ%c\n02;EAZ%c\n",
+ 								(a & 1)?'1':'C', (a & 2)?'2':'C');
+ 							i = icn_writecmd(cbuf, strlen(cbuf), 0, card);
+diff -puN drivers/isdn/sc/init.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/sc/init.c
+--- 25/drivers/isdn/sc/init.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.339202120 -0700
++++ 25-akpm/drivers/isdn/sc/init.c	2004-09-30 22:37:23.360198928 -0700
+@@ -7,6 +7,7 @@
+ #include <linux/module.h>
+ #include <linux/init.h>
+ #include <linux/interrupt.h>
++#include <linux/delay.h>
+ #include "includes.h"
+ #include "hardware.h"
+ #include "card.h"
+@@ -167,8 +168,7 @@ static int __init sc_init(void)
+ 		if(do_reset) {
+ 			pr_debug("Doing a SAFE probe reset\n");
+ 			outb(0xFF, io[b] + RESET_OFFSET);
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(milliseconds(10000));
++			msleep_interruptible(10000);
+ 		}
+ 		pr_debug("RAM Base for board %d is 0x%x, %s probe\n", b, ram[b],
+ 			ram[b] == 0 ? "will" : "won't");
+@@ -500,8 +500,7 @@ int identify_board(unsigned long rambase
+ 	 * Try to identify a PRI card
+ 	 */
+ 	outb(PRI_BASEPG_VAL, pgport);
+-	set_current_state(TASK_INTERRUPTIBLE);
+-	schedule_timeout(HZ);
++	msleep_interruptible(1000);
+ 	sig = readl(rambase + SIG_OFFSET);
+ 	pr_debug("Looking for a signature, got 0x%x\n", sig);
+ 	if(sig == SIGNATURE)
+@@ -511,8 +510,7 @@ int identify_board(unsigned long rambase
+ 	 * Try to identify a PRI card
+ 	 */
+ 	outb(BRI_BASEPG_VAL, pgport);
+-	set_current_state(TASK_INTERRUPTIBLE);
+-	schedule_timeout(HZ);
++	msleep_interruptible(1000);
+ 	sig = readl(rambase + SIG_OFFSET);
+ 	pr_debug("Looking for a signature, got 0x%x\n", sig);
+ 	if(sig == SIGNATURE)
+diff -puN drivers/isdn/i4l/isdn_tty.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/i4l/isdn_tty.c
+--- 25/drivers/isdn/i4l/isdn_tty.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.341201816 -0700
++++ 25-akpm/drivers/isdn/i4l/isdn_tty.c	2004-09-30 22:37:23.363198472 -0700
+@@ -13,6 +13,7 @@
+ 
+ #include <linux/config.h>
+ #include <linux/isdn.h>
++#include <linux/delay.h>
+ #include "isdn_common.h"
+ #include "isdn_tty.h"
+ #ifdef CONFIG_ISDN_AUDIO
+@@ -1748,8 +1749,7 @@ isdn_tty_close(struct tty_struct *tty, s
+ 	tty->closing = 0;
+ 	module_put(info->owner);
+ 	if (info->blocked_open) {
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout(HZ/2);
++		msleep_interruptible(500);
+ 		wake_up_interruptible(&info->open_wait);
+ 	}
+ 	info->flags &= ~(ISDN_ASYNC_NORMAL_ACTIVE | ISDN_ASYNC_CLOSING);
+diff -puN drivers/isdn/sc/hardware.h~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/sc/hardware.h
+--- 25/drivers/isdn/sc/hardware.h~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.342201664 -0700
++++ 25-akpm/drivers/isdn/sc/hardware.h	2004-09-30 22:37:23.364198320 -0700
+@@ -104,9 +104,6 @@
+  * Some handy macros
+  */
+ 
+-/* Return the number of jiffies in a given number of msecs */
+-#define milliseconds(x)	(((x)*HZ)/1000)
+-
+ /* Determine if a channel number is valid for the adapter */
+ #define IS_VALID_CHANNEL(y,x)	((x>0) && (x <= sc_adapter[y]->channels))
+ 
+diff -puN drivers/isdn/isdnloop/isdnloop.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies drivers/isdn/isdnloop/isdnloop.c
+--- 25/drivers/isdn/isdnloop/isdnloop.c~drivers-isdn-replace-milliseconds-with-msecs_to_jiffies	2004-09-30 22:37:23.344201360 -0700
++++ 25-akpm/drivers/isdn/isdnloop/isdnloop.c	2004-09-30 22:37:23.365198168 -0700
+@@ -13,6 +13,7 @@
+ #include <linux/module.h>
+ #include <linux/interrupt.h>
+ #include <linux/init.h>
++#include <linux/sched.h>
+ #include "isdnloop.h"
+ 
+ static char *revision = "$Revision: 1.11.6.7 $";
+@@ -1161,8 +1162,10 @@ isdnloop_command(isdn_ctrl * c, isdnloop
+ 						if (!card->leased) {
+ 							card->leased = 1;
+ 							while (card->ptype == ISDN_PTYPE_UNKNOWN) {
++								set_current_state(TASK_INTERRUPTIBLE);
+ 								schedule_timeout(10);
+ 							}
++							set_current_state(TASK_INTERRUPTIBLE);
+ 							schedule_timeout(10);
+ 							sprintf(cbuf, "00;FV2ON\n01;EAZ1\n02;EAZ2\n");
+ 							i = isdnloop_writecmd(cbuf, strlen(cbuf), 0, card);
+_

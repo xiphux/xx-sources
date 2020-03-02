@@ -1,0 +1,63 @@
+
+From: Adrian Bunk <bunk@fs.tum.de>
+
+> This version causes linker trouble with
+> CONFIG_I2C=m
+> CONFIG_I2C_ALGOBIT=m
+> CONFIG_FB_RIVA_I2C=y
+> 
+>   CC      init/version.o
+>   LD      init/built-in.o
+>   LD      .tmp_vmlinux1
+> drivers/built-in.o(.text+0xda101): In function `riva_setup_i2c_bus':
+> : undefined reference to `i2c_bit_add_bus'
+> drivers/built-in.o(.text+0xda218): In function `riva_delete_i2c_busses':
+> : undefined reference to `i2c_bit_del_bus'
+> drivers/built-in.o(.text+0xda237): In function `riva_delete_i2c_busses':
+> : undefined reference to `i2c_bit_del_bus'
+> drivers/built-in.o(.text+0xda2c9): In function `riva_do_probe_i2c_edid':
+> : undefined reference to `i2c_transfer'
+> make: *** [.tmp_vmlinux1] Error 1
+>...
+
+The problem is:
+FB_RIVA=y
+FB_RIVA_I2C=y
+I2C=m
+I2C_ALGOBIT=m
+
+The patch below fixes this.
+
+Besides this, it contains:
+- help text by Antonino A. Daplas
+- converted spaces to tabs
+- it was forgotten that FB_RIVA_I2C requires I2C_ALGOBIT
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/video/Kconfig |    4 +++-
+ 1 files changed, 3 insertions(+), 1 deletion(-)
+
+diff -puN drivers/video/Kconfig~re-267-mm1-linker-trouble-with-config_fb_riva_i2c=y-and-modular-i2c drivers/video/Kconfig
+--- 25/drivers/video/Kconfig~re-267-mm1-linker-trouble-with-config_fb_riva_i2c=y-and-modular-i2c	2004-06-21 23:12:10.578368648 -0700
++++ 25-akpm/drivers/video/Kconfig	2004-06-21 23:12:40.273854248 -0700
+@@ -424,6 +424,8 @@ config E1355_FB_BASE
+ config FB_RIVA
+ 	tristate "nVidia Riva support"
+ 	depends on FB && PCI
++	select I2C_ALGOBIT if FB_RIVA_I2C
++	select I2C if FB_RIVA_I2C
+ 	help
+ 	  This driver supports graphics boards with the nVidia Riva/Geforce
+ 	  chips.
+@@ -434,7 +436,7 @@ config FB_RIVA
+ 
+ config FB_RIVA_I2C
+        bool "Enable DDC Support"
+-       depends on FB_RIVA && I2C
++       depends on FB_RIVA
+        help
+ 	  This enables I2C support for nVidia Chipsets.  This is used
+ 	  only for getting EDID information from the attached display
+_

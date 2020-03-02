@@ -1,0 +1,53 @@
+
+From: <janitor@sternwelten.at>
+
+s/for/list_for_each/
+
+Signed-off-by: Domen Puncer <domen@coderock.org>
+Signed-off-by: Maximilian Attems <janitor@sternwelten.at>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/drm/radeon_mem.c |    8 ++++----
+ 1 files changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN drivers/char/drm/radeon_mem.c~janitor-list_for_each-drivers-char-drm-radeon_memc drivers/char/drm/radeon_mem.c
+--- 25/drivers/char/drm/radeon_mem.c~janitor-list_for_each-drivers-char-drm-radeon_memc	Thu Sep 23 15:39:14 2004
++++ 25-akpm/drivers/char/drm/radeon_mem.c	Thu Sep 23 15:39:14 2004
+@@ -85,7 +85,7 @@ static struct mem_block *alloc_block( st
+ 	struct mem_block *p;
+ 	int mask = (1 << align2)-1;
+ 
+-	for (p = heap->next ; p != heap ; p = p->next) {
++	list_for_each(p, heap) {
+ 		int start = (p->start + mask) & ~mask;
+ 		if (p->filp == 0 && start + size <= p->start + p->size)
+ 			return split_block( p, start, size, filp );
+@@ -98,7 +98,7 @@ static struct mem_block *find_block( str
+ {
+ 	struct mem_block *p;
+ 
+-	for (p = heap->next ; p != heap ; p = p->next) 
++	list_for_each(p, heap)
+ 		if (p->start == start)
+ 			return p;
+ 
+@@ -166,7 +166,7 @@ void radeon_mem_release( DRMFILE filp, s
+ 	if (!heap || !heap->next)
+ 		return;
+ 
+-	for (p = heap->next ; p != heap ; p = p->next) {
++	list_for_each(p, heap) {
+ 		if (p->filp == filp) 
+ 			p->filp = NULL;
+ 	}
+@@ -174,7 +174,7 @@ void radeon_mem_release( DRMFILE filp, s
+ 	/* Assumes a single contiguous range.  Needs a special filp in
+ 	 * 'heap' to stop it being subsumed.
+ 	 */
+-	for (p = heap->next ; p != heap ; p = p->next) {
++	list_for_each(p, heap) {
+ 		while (p->filp == 0 && p->next->filp == 0) {
+ 			struct mem_block *q = p->next;
+ 			p->size += q->size;
+_

@@ -1,0 +1,27 @@
+
+From: Hugh Dickins <hugh@veritas.com>
+
+tmpfs must use __copy_from_user_inatomic now, to avoid might_sleep warning,
+when knowingly using __copy_from_user with an atomic kmap.
+
+Signed-off-by: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/shmem.c |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletion(-)
+
+diff -puN mm/shmem.c~tmpfs-atomicity-fix mm/shmem.c
+--- 25/mm/shmem.c~tmpfs-atomicity-fix	2004-08-04 12:44:47.830073856 -0700
++++ 25-akpm/mm/shmem.c	2004-08-04 12:44:47.834073248 -0700
+@@ -1323,7 +1323,8 @@ shmem_file_write(struct file *file, cons
+ 			__get_user(dummy, buf + bytes - 1);
+ 
+ 			kaddr = kmap_atomic(page, KM_USER0);
+-			left = __copy_from_user(kaddr + offset, buf, bytes);
++			left = __copy_from_user_inatomic(kaddr + offset,
++							buf, bytes);
+ 			kunmap_atomic(kaddr, KM_USER0);
+ 		}
+ 		if (left) {
+_

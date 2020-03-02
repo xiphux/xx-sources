@@ -1,0 +1,41 @@
+
+From: Alan Cox <alan@lxorguk.ukuu.org.uk>
+
+These are the minimal updates for ide-disk.  They don't remove all ident
+whacking in the it8212 driver because there are genuine things to fix there
+such as the LBA28 flags.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/ide/ide-disk.c |   10 ++++++++--
+ 1 files changed, 8 insertions(+), 2 deletions(-)
+
+diff -puN drivers/ide/ide-disk.c~minimal-ide-disk-updates drivers/ide/ide-disk.c
+--- 25/drivers/ide/ide-disk.c~minimal-ide-disk-updates	Wed Oct  6 17:03:42 2004
++++ 25-akpm/drivers/ide/ide-disk.c	Wed Oct  6 17:03:42 2004
+@@ -84,6 +84,10 @@ static int lba_capacity_is_ok (struct hd
+ {
+ 	unsigned long lba_sects, chs_sects, head, tail;
+ 
++	/* No non-LBA info .. so valid! */
++	if (id->cyls == 0)
++		return 1;
++
+ 	/*
+ 	 * The ATA spec tells large drives to return
+ 	 * C/H/S = 16383/16/63 independent of their size.
+@@ -1236,8 +1240,10 @@ static void idedisk_setup (ide_drive_t *
+ 	if (id->buf_size)
+ 		printk (" w/%dKiB Cache", id->buf_size/2);
+ 
+-	printk(", CHS=%d/%d/%d", 
+-	       drive->bios_cyl, drive->bios_head, drive->bios_sect);
++	if (drive->bios_cyl)
++		printk(", CHS=%d/%d/%d",
++	       		drive->bios_cyl, drive->bios_head, drive->bios_sect);
++
+ 	if (drive->using_dma)
+ 		ide_dma_verbose(drive);
+ 	printk("\n");
+_

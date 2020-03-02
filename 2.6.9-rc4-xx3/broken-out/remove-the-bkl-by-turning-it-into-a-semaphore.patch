@@ -1,0 +1,738 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+This is the current remove-BKL patch.  I test-booted it on x86 and x64,
+trying every conceivable combination of SMP, PREEMPT and PREEMPT_BKL.  All
+other architectures should compile as well.  (most of the testing was done
+with the zaphod patch undone but it applies cleanly on vanilla -mm3 as well
+and should work fine.)
+
+this is the debugging-enabled variant of the patch which has two main
+debugging features:
+
+ - debug potentially illegal smp_processor_id() use. Has caught a number 
+   of real bugs - e.g. look at the printk.c fix in the patch.
+
+ - make it possible to enable/disable the BKL via a .config. If this 
+   goes upstream we dont want this of course, but for now it gives 
+   people a chance to find out whether any particular problem was caused 
+   by this patch.
+
+This patch has one important fix over the previous BKL patch: on PREEMPT
+kernels if we preempted BKL-using code then the code still auto-dropped the
+BKL by mistake.  This caused a number of breakages for testers, which
+breakages went away once this bug was fixed.
+
+Also the debugging mechanism has been improved alot relative to the
+previous BKL patch.
+
+Would be nice to test-drive this in -mm.  There will likely be some more
+smp_processor_id() false positives but they are 1) harmless 2) easy to fix
+up.  We could as well find more real smp_processor_id() related breakages
+as well.
+
+The most noteworthy fact is that no BKL-using code was found yet that
+relied on smp_processor_id(), which is promising from a compatibility
+POV.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/Kconfig        |   11 +
+ 25-akpm/arch/i386/kernel/traps.c |    2 
+ 25-akpm/arch/i386/lib/delay.c    |    2 
+ 25-akpm/arch/sh/lib/delay.c      |    2 
+ 25-akpm/arch/sparc64/lib/delay.c |    2 
+ 25-akpm/arch/x86_64/Kconfig      |   11 +
+ 25-akpm/arch/x86_64/lib/delay.c  |    2 
+ 25-akpm/include/asm-i386/smp.h   |    2 
+ 25-akpm/include/asm-x86_64/smp.h |    2 
+ 25-akpm/include/linux/hardirq.h  |    8 -
+ 25-akpm/include/linux/smp.h      |   21 ++-
+ 25-akpm/include/linux/smp_lock.h |   51 -------
+ 25-akpm/include/net/route.h      |    2 
+ 25-akpm/include/net/snmp.h       |   14 +-
+ 25-akpm/kernel/module.c          |    2 
+ 25-akpm/kernel/printk.c          |    3 
+ 25-akpm/kernel/sched.c           |  262 +++++++++++++++++++++++++++++++++++----
+ 25-akpm/kernel/stop_machine.c    |    4 
+ 18 files changed, 310 insertions(+), 93 deletions(-)
+
+diff -puN arch/i386/Kconfig~remove-the-bkl-by-turning-it-into-a-semaphore arch/i386/Kconfig
+--- 25/arch/i386/Kconfig~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.724907408 -0700
++++ 25-akpm/arch/i386/Kconfig	2004-10-05 02:00:52.753903000 -0700
+@@ -507,6 +507,17 @@ config PREEMPT
+ 	  Say Y here if you are building a kernel for a desktop, embedded
+ 	  or real-time system.  Say N if you are unsure.
+ 
++config PREEMPT_BKL
++	bool "Preempt The Big Kernel Lock"
++	depends on PREEMPT
++	default y
++	help
++	  This option reduces the latency of the kernel by making the
++	  big kernel lock preemptible.
++
++	  Say Y here if you are building a kernel for a desktop system.
++	  Say N if you are unsure.
++
+ config X86_UP_APIC
+ 	bool "Local APIC support on uniprocessors" if !SMP
+ 	depends on !(X86_VISWS || X86_VOYAGER)
+diff -puN arch/i386/kernel/traps.c~remove-the-bkl-by-turning-it-into-a-semaphore arch/i386/kernel/traps.c
+--- 25/arch/i386/kernel/traps.c~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.725907256 -0700
++++ 25-akpm/arch/i386/kernel/traps.c	2004-10-05 02:00:52.754902848 -0700
+@@ -357,7 +357,7 @@ void die(const char * str, struct pt_reg
+ 	};
+ 	static int die_counter;
+ 
+-	if (die.lock_owner != smp_processor_id()) {
++	if (die.lock_owner != _smp_processor_id()) {
+ 		console_verbose();
+ 		spin_lock_irq(&die.lock);
+ 		die.lock_owner = smp_processor_id();
+diff -puN arch/i386/lib/delay.c~remove-the-bkl-by-turning-it-into-a-semaphore arch/i386/lib/delay.c
+--- 25/arch/i386/lib/delay.c~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.727906952 -0700
++++ 25-akpm/arch/i386/lib/delay.c	2004-10-05 02:00:52.755902696 -0700
+@@ -34,7 +34,7 @@ inline void __const_udelay(unsigned long
+ 	xloops *= 4;
+ 	__asm__("mull %0"
+ 		:"=d" (xloops), "=&a" (d0)
+-		:"1" (xloops),"0" (current_cpu_data.loops_per_jiffy * (HZ/4)));
++		:"1" (xloops),"0" (cpu_data[_smp_processor_id()].loops_per_jiffy * (HZ/4)));
+         __delay(++xloops);
+ }
+ 
+diff -puN arch/sh/lib/delay.c~remove-the-bkl-by-turning-it-into-a-semaphore arch/sh/lib/delay.c
+--- 25/arch/sh/lib/delay.c~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.728906800 -0700
++++ 25-akpm/arch/sh/lib/delay.c	2004-10-05 02:00:52.755902696 -0700
+@@ -24,7 +24,7 @@ inline void __const_udelay(unsigned long
+ 	__asm__("dmulu.l	%0, %2\n\t"
+ 		"sts	mach, %0"
+ 		: "=r" (xloops)
+-		: "0" (xloops), "r" (current_cpu_data.loops_per_jiffy)
++		: "0" (xloops), "r" (cpu_data[_smp_processor_id()].loops_per_jiffy)
+ 		: "macl", "mach");
+ 	__delay(xloops * HZ);
+ }
+diff -puN arch/sparc64/lib/delay.c~remove-the-bkl-by-turning-it-into-a-semaphore arch/sparc64/lib/delay.c
+--- 25/arch/sparc64/lib/delay.c~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.729906648 -0700
++++ 25-akpm/arch/sparc64/lib/delay.c	2004-10-05 02:00:52.756902544 -0700
+@@ -31,7 +31,7 @@ void __const_udelay(unsigned long n)
+ {
+ 	n *= 4;
+ 
+-	n *= (cpu_data(smp_processor_id()).udelay_val * (HZ/4));
++	n *= (cpu_data(_smp_processor_id()).udelay_val * (HZ/4));
+ 	n >>= 32;
+ 
+ 	__delay(n + 1);
+diff -puN arch/x86_64/Kconfig~remove-the-bkl-by-turning-it-into-a-semaphore arch/x86_64/Kconfig
+--- 25/arch/x86_64/Kconfig~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.731906344 -0700
++++ 25-akpm/arch/x86_64/Kconfig	2004-10-05 02:00:52.756902544 -0700
+@@ -243,6 +243,17 @@ config PREEMPT
+ 	  Say Y here if you are feeling brave and building a kernel for a
+ 	  desktop, embedded or real-time system.  Say N if you are unsure.
+ 
++config PREEMPT_BKL
++	bool "Preempt The Big Kernel Lock"
++	depends on PREEMPT
++	default y
++	help
++	  This option reduces the latency of the kernel by making the
++	  big kernel lock preemptible.
++
++	  Say Y here if you are building a kernel for a desktop system.
++	  Say N if you are unsure.
++
+ config SCHED_SMT
+ 	bool "SMT (Hyperthreading) scheduler support"
+ 	depends on SMP
+diff -puN arch/x86_64/lib/delay.c~remove-the-bkl-by-turning-it-into-a-semaphore arch/x86_64/lib/delay.c
+--- 25/arch/x86_64/lib/delay.c~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.732906192 -0700
++++ 25-akpm/arch/x86_64/lib/delay.c	2004-10-05 02:00:52.756902544 -0700
+@@ -34,7 +34,7 @@ void __delay(unsigned long loops)
+ 
+ inline void __const_udelay(unsigned long xloops)
+ {
+-        __delay(((xloops * current_cpu_data.loops_per_jiffy) >> 32) * HZ);
++	__delay(((xloops * cpu_data[_smp_processor_id()].loops_per_jiffy) >> 32) * HZ);
+ }
+ 
+ void __udelay(unsigned long usecs)
+diff -puN include/asm-i386/smp.h~remove-the-bkl-by-turning-it-into-a-semaphore include/asm-i386/smp.h
+--- 25/include/asm-i386/smp.h~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.734905888 -0700
++++ 25-akpm/include/asm-i386/smp.h	2004-10-05 02:00:52.757902392 -0700
+@@ -50,7 +50,7 @@ extern u8 x86_cpu_to_apicid[];
+  * from the initial startup. We map APIC_BASE very early in page_setup(),
+  * so this is correct in the x86 case.
+  */
+-#define smp_processor_id() (current_thread_info()->cpu)
++#define __smp_processor_id() (current_thread_info()->cpu)
+ 
+ extern cpumask_t cpu_callout_map;
+ #define cpu_possible_map cpu_callout_map
+diff -puN include/asm-x86_64/smp.h~remove-the-bkl-by-turning-it-into-a-semaphore include/asm-x86_64/smp.h
+--- 25/include/asm-x86_64/smp.h~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.735905736 -0700
++++ 25-akpm/include/asm-x86_64/smp.h	2004-10-05 02:00:52.757902392 -0700
+@@ -66,7 +66,7 @@ static inline int num_booting_cpus(void)
+ 	return cpus_weight(cpu_callout_map);
+ }
+ 
+-#define smp_processor_id() read_pda(cpunumber)
++#define __smp_processor_id() read_pda(cpunumber)
+ 
+ extern __inline int hard_smp_processor_id(void)
+ {
+diff -puN include/linux/hardirq.h~remove-the-bkl-by-turning-it-into-a-semaphore include/linux/hardirq.h
+--- 25/include/linux/hardirq.h~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.737905432 -0700
++++ 25-akpm/include/linux/hardirq.h	2004-10-05 02:00:52.758902240 -0700
+@@ -61,12 +61,16 @@
+ #define in_softirq()		(softirq_count())
+ #define in_interrupt()		(irq_count())
+ 
+-#ifdef CONFIG_PREEMPT
++#if defined(CONFIG_PREEMPT) && !defined(CONFIG_PREEMPT_BKL)
+ # define in_atomic()	((preempt_count() & ~PREEMPT_ACTIVE) != kernel_locked())
++#else
++# define in_atomic()	((preempt_count() & ~PREEMPT_ACTIVE) != 0)
++#endif
++
++#ifdef CONFIG_PREEMPT
+ # define preemptible()	(preempt_count() == 0 && !irqs_disabled())
+ # define IRQ_EXIT_OFFSET (HARDIRQ_OFFSET-1)
+ #else
+-# define in_atomic()	((preempt_count() & ~PREEMPT_ACTIVE) != 0)
+ # define preemptible()	0
+ # define IRQ_EXIT_OFFSET HARDIRQ_OFFSET
+ #endif
+diff -puN include/linux/smp.h~remove-the-bkl-by-turning-it-into-a-semaphore include/linux/smp.h
+--- 25/include/linux/smp.h~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.738905280 -0700
++++ 25-akpm/include/linux/smp.h	2004-10-05 02:00:52.758902240 -0700
+@@ -95,8 +95,10 @@ void smp_prepare_boot_cpu(void);
+ /*
+  *	These macros fold the SMP functionality into a single CPU system
+  */
+- 
+-#define smp_processor_id()			0
++
++#if !defined(__smp_processor_id) || !defined(CONFIG_PREEMPT)
++# define smp_processor_id()			0
++#endif
+ #define hard_smp_processor_id()			0
+ #define smp_threads_ready			1
+ #define smp_call_function(func,info,retry,wait)	({ 0; })
+@@ -107,6 +109,21 @@ static inline void smp_send_reschedule(i
+ 
+ #endif /* !SMP */
+ 
++#ifdef __smp_processor_id
++# ifdef CONFIG_PREEMPT
++  /*
++   * temporary debugging check detecting places that use
++   * smp_processor_id() in a potentially unsafe way:
++   */
++   extern unsigned int smp_processor_id(void);
++# else
++#  define smp_processor_id() __smp_processor_id()
++# endif
++# define _smp_processor_id() __smp_processor_id()
++#else
++# define _smp_processor_id() smp_processor_id()
++#endif
++
+ #define get_cpu()		({ preempt_disable(); smp_processor_id(); })
+ #define put_cpu()		preempt_enable()
+ #define put_cpu_no_resched()	preempt_enable_no_resched()
+diff -puN include/linux/smp_lock.h~remove-the-bkl-by-turning-it-into-a-semaphore include/linux/smp_lock.h
+--- 25/include/linux/smp_lock.h~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.740904976 -0700
++++ 25-akpm/include/linux/smp_lock.h	2004-10-05 02:00:52.759902088 -0700
+@@ -7,59 +7,14 @@
+ 
+ #if defined(CONFIG_SMP) || defined(CONFIG_PREEMPT)
+ 
+-extern spinlock_t kernel_flag;
+-
+-#define kernel_locked()		(current->lock_depth >= 0)
+-
+-#define get_kernel_lock()	spin_lock(&kernel_flag)
+-#define put_kernel_lock()	spin_unlock(&kernel_flag)
+-
+-/*
+- * Release global kernel lock.
+- */
+-static inline void release_kernel_lock(struct task_struct *task)
+-{
+-	if (unlikely(task->lock_depth >= 0))
+-		put_kernel_lock();
+-}
+-
+-/*
+- * Re-acquire the kernel lock
+- */
+-static inline void reacquire_kernel_lock(struct task_struct *task)
+-{
+-	if (unlikely(task->lock_depth >= 0))
+-		get_kernel_lock();
+-}
+-
+-/*
+- * Getting the big kernel lock.
+- *
+- * This cannot happen asynchronously,
+- * so we only need to worry about other
+- * CPU's.
+- */
+-static inline void lock_kernel(void)
+-{
+-	int depth = current->lock_depth+1;
+-	if (likely(!depth))
+-		get_kernel_lock();
+-	current->lock_depth = depth;
+-}
+-
+-static inline void unlock_kernel(void)
+-{
+-	BUG_ON(current->lock_depth < 0);
+-	if (likely(--current->lock_depth < 0))
+-		put_kernel_lock();
+-}
++extern int kernel_locked(void);
++extern void lock_kernel(void);
++extern void unlock_kernel(void);
+ 
+ #else
+ 
+ #define lock_kernel()				do { } while(0)
+ #define unlock_kernel()				do { } while(0)
+-#define release_kernel_lock(task)		do { } while(0)
+-#define reacquire_kernel_lock(task)		do { } while(0)
+ #define kernel_locked()				1
+ 
+ #endif /* CONFIG_SMP || CONFIG_PREEMPT */
+diff -puN include/net/route.h~remove-the-bkl-by-turning-it-into-a-semaphore include/net/route.h
+--- 25/include/net/route.h~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.741904824 -0700
++++ 25-akpm/include/net/route.h	2004-10-05 02:00:52.759902088 -0700
+@@ -105,7 +105,7 @@ struct rt_cache_stat 
+ 
+ extern struct rt_cache_stat *rt_cache_stat;
+ #define RT_CACHE_STAT_INC(field)					  \
+-		(per_cpu_ptr(rt_cache_stat, smp_processor_id())->field++)
++		(per_cpu_ptr(rt_cache_stat, _smp_processor_id())->field++)
+ 
+ extern struct ip_rt_acct *ip_rt_acct;
+ 
+diff -puN include/net/snmp.h~remove-the-bkl-by-turning-it-into-a-semaphore include/net/snmp.h
+--- 25/include/net/snmp.h~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.743904520 -0700
++++ 25-akpm/include/net/snmp.h	2004-10-05 02:00:52.760901936 -0700
+@@ -128,18 +128,18 @@ struct linux_mib {
+ #define SNMP_STAT_USRPTR(name)	(name[1])
+ 
+ #define SNMP_INC_STATS_BH(mib, field) 	\
+-	(per_cpu_ptr(mib[0], smp_processor_id())->mibs[field]++)
++	(per_cpu_ptr(mib[0], _smp_processor_id())->mibs[field]++)
+ #define SNMP_INC_STATS_OFFSET_BH(mib, field, offset)	\
+-	(per_cpu_ptr(mib[0], smp_processor_id())->mibs[field + (offset)]++)
++	(per_cpu_ptr(mib[0], _smp_processor_id())->mibs[field + (offset)]++)
+ #define SNMP_INC_STATS_USER(mib, field) \
+-	(per_cpu_ptr(mib[1], smp_processor_id())->mibs[field]++)
++	(per_cpu_ptr(mib[1], _smp_processor_id())->mibs[field]++)
+ #define SNMP_INC_STATS(mib, field) 	\
+-	(per_cpu_ptr(mib[!in_softirq()], smp_processor_id())->mibs[field]++)
++	(per_cpu_ptr(mib[!in_softirq()], _smp_processor_id())->mibs[field]++)
+ #define SNMP_DEC_STATS(mib, field) 	\
+-	(per_cpu_ptr(mib[!in_softirq()], smp_processor_id())->mibs[field]--)
++	(per_cpu_ptr(mib[!in_softirq()], _smp_processor_id())->mibs[field]--)
+ #define SNMP_ADD_STATS_BH(mib, field, addend) 	\
+-	(per_cpu_ptr(mib[0], smp_processor_id())->mibs[field] += addend)
++	(per_cpu_ptr(mib[0], _smp_processor_id())->mibs[field] += addend)
+ #define SNMP_ADD_STATS_USER(mib, field, addend) 	\
+-	(per_cpu_ptr(mib[1], smp_processor_id())->mibs[field] += addend)
++	(per_cpu_ptr(mib[1], _smp_processor_id())->mibs[field] += addend)
+ 
+ #endif
+diff -puN kernel/module.c~remove-the-bkl-by-turning-it-into-a-semaphore kernel/module.c
+--- 25/kernel/module.c~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.744904368 -0700
++++ 25-akpm/kernel/module.c	2004-10-05 02:00:52.761901784 -0700
+@@ -395,7 +395,7 @@ static void module_unload_init(struct mo
+ 	for (i = 0; i < NR_CPUS; i++)
+ 		local_set(&mod->ref[i].count, 0);
+ 	/* Hold reference count during initialization. */
+-	local_set(&mod->ref[smp_processor_id()].count, 1);
++	local_set(&mod->ref[_smp_processor_id()].count, 1);
+ 	/* Backwards compatibility macros put refcount during init. */
+ 	mod->waiter = current;
+ }
+diff -puN kernel/printk.c~remove-the-bkl-by-turning-it-into-a-semaphore kernel/printk.c
+--- 25/kernel/printk.c~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.746904064 -0700
++++ 25-akpm/kernel/printk.c	2004-10-05 02:00:52.762901632 -0700
+@@ -644,8 +644,9 @@ void release_console_sem(void)
+ 		_con_start = con_start;
+ 		_log_end = log_end;
+ 		con_start = log_end;		/* Flush */
+-		spin_unlock_irqrestore(&logbuf_lock, flags);
++		spin_unlock(&logbuf_lock);
+ 		call_console_drivers(_con_start, _log_end);
++		local_irq_restore(flags);
+ 	}
+ 	console_locked = 0;
+ 	console_may_schedule = 0;
+diff -puN kernel/sched.c~remove-the-bkl-by-turning-it-into-a-semaphore kernel/sched.c
+--- 25/kernel/sched.c~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.748903760 -0700
++++ 25-akpm/kernel/sched.c	2004-10-05 02:00:52.767900872 -0700
+@@ -2471,6 +2471,219 @@ static inline int dependent_sleeper(int 
+ }
+ #endif
+ 
++#if defined(CONFIG_PREEMPT) && defined(__smp_processor_id)
++/*
++ * Debugging check.
++ */
++unsigned int smp_processor_id(void)
++{
++	unsigned long preempt_count = preempt_count();
++	int this_cpu = __smp_processor_id();
++	cpumask_t this_mask;
++
++	if (likely(preempt_count))
++		goto out;
++
++	if (irqs_disabled())
++		goto out;
++
++	/*
++	 * Kernel threads bound to a single CPU can safely use
++	 * smp_processor_id():
++	 */
++	this_mask = cpumask_of_cpu(this_cpu);
++
++	if (cpus_equal(current->cpus_allowed, this_mask))
++		goto out;
++
++	/*
++	 * It is valid to assume CPU-locality during early bootup:
++	 */
++	if (system_state != SYSTEM_RUNNING)
++		goto out;
++
++	/*
++	 * Avoid recursion:
++	 */
++	preempt_disable();
++
++	if (!printk_ratelimit())
++		goto out_enable;
++
++	printk(KERN_ERR "using smp_processor_id() in preemptible code: %s/%d\n",
++		current->comm, current->pid);
++	dump_stack();
++
++out_enable:
++	preempt_enable_no_resched();
++out:
++	return this_cpu;
++}
++
++EXPORT_SYMBOL(smp_processor_id);
++
++#endif
++
++#if defined(CONFIG_SMP) || defined(CONFIG_PREEMPT)
++
++#ifdef CONFIG_PREEMPT_BKL
++/*
++ * The 'big kernel semaphore'
++ *
++ * This mutex is taken and released recursively by lock_kernel()
++ * and unlock_kernel().  It is transparently dropped and reaquired
++ * over schedule().  It is used to protect legacy code that hasn't
++ * been migrated to a proper locking design yet.
++ *
++ * Note: code locked by this semaphore will only be serialized against
++ * other code using the same locking facility. The code guarantees that
++ * the task remains on the same CPU.
++ *
++ * Don't use in new code.
++ */
++static __cacheline_aligned_in_smp DECLARE_MUTEX(kernel_sem);
++
++int kernel_locked(void)
++{
++	return current->lock_depth >= 0;
++}
++
++EXPORT_SYMBOL(kernel_locked);
++
++/*
++ * Release global kernel semaphore:
++ */
++static inline void release_kernel_sem(struct task_struct *task)
++{
++	if (unlikely(task->lock_depth >= 0))
++		up(&kernel_sem);
++}
++
++/*
++ * Re-acquire the kernel semaphore.
++ *
++ * This function is called with preemption off.
++ *
++ * We are executing in schedule() so the code must be extremely careful
++ * about recursion, both due to the down() and due to the enabling of
++ * preemption. schedule() will re-check the preemption flag after
++ * reacquiring the semaphore.
++ */
++static inline void reacquire_kernel_sem(struct task_struct *task)
++{
++	int saved_lock_depth = task->lock_depth;
++
++	if (likely(saved_lock_depth < 0))
++		return;
++
++	task->lock_depth = -1;
++	preempt_enable_no_resched();
++
++	down(&kernel_sem);
++
++	preempt_disable();
++	task->lock_depth = saved_lock_depth;
++}
++
++/*
++ * Getting the big kernel semaphore.
++ */
++void lock_kernel(void)
++{
++	struct task_struct *task = current;
++	int depth = task->lock_depth + 1;
++
++	if (likely(!depth))
++		/*
++		 * No recursion worries - we set up lock_depth _after_
++		 */
++		down(&kernel_sem);
++
++	task->lock_depth = depth;
++}
++
++EXPORT_SYMBOL(lock_kernel);
++
++void unlock_kernel(void)
++{
++	struct task_struct *task = current;
++
++	BUG_ON(task->lock_depth < 0);
++
++	if (likely(--task->lock_depth < 0))
++		up(&kernel_sem);
++}
++
++EXPORT_SYMBOL(unlock_kernel);
++
++#else
++
++static spinlock_t kernel_flag = SPIN_LOCK_UNLOCKED;
++
++int kernel_locked(void)
++{
++	return current->lock_depth >= 0;
++}
++
++EXPORT_SYMBOL(kernel_locked);
++
++#define get_kernel_lock()	spin_lock(&kernel_flag)
++#define put_kernel_lock()	spin_unlock(&kernel_flag)
++
++/*
++ * Release global kernel lock.
++ */
++static inline void release_kernel_sem(struct task_struct *task)
++{
++	if (unlikely(task->lock_depth >= 0))
++		put_kernel_lock();
++}
++
++/*
++ * Re-acquire the kernel lock
++ */
++static inline void reacquire_kernel_sem(struct task_struct *task)
++{
++	if (unlikely(task->lock_depth >= 0))
++		get_kernel_lock();
++}
++
++/*
++ * Getting the big kernel lock.
++ *
++ * This cannot happen asynchronously,
++ * so we only need to worry about other
++ * CPU's.
++ */
++void lock_kernel(void)
++{
++	int depth = current->lock_depth+1;
++	if (likely(!depth))
++		get_kernel_lock();
++	current->lock_depth = depth;
++}
++
++EXPORT_SYMBOL(lock_kernel);
++
++void unlock_kernel(void)
++{
++	BUG_ON(current->lock_depth < 0);
++	if (likely(--current->lock_depth < 0))
++		put_kernel_lock();
++}
++
++EXPORT_SYMBOL(unlock_kernel);
++
++#endif
++
++#else
++
++static inline void release_kernel_sem(struct task_struct *task) { }
++static inline void reacquire_kernel_sem(struct task_struct *task) { }
++
++#endif
++
++
+ /*
+  * schedule() is the main scheduler function.
+  */
+@@ -2513,7 +2726,7 @@ need_resched:
+ 		dump_stack();
+ 	}
+ 
+-	release_kernel_lock(prev);
++	release_kernel_sem(prev);
+ 	schedstat_inc(rq, sched_cnt);
+ 	now = sched_clock();
+ 	if (likely(now - prev->timestamp < NS_MAX_SLEEP_AVG))
+@@ -2634,7 +2847,7 @@ switch_tasks:
+ 	} else
+ 		spin_unlock_irq(&rq->lock);
+ 
+-	reacquire_kernel_lock(current);
++	reacquire_kernel_sem(current);
+ 	preempt_enable_no_resched();
+ 	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
+ 		goto need_resched;
+@@ -2651,6 +2864,12 @@ EXPORT_SYMBOL(schedule);
+ asmlinkage void __sched preempt_schedule(void)
+ {
+ 	struct thread_info *ti = current_thread_info();
++#ifdef CONFIG_PREEMPT_BKL
++	struct task_struct *task = current;
++	int saved_lock_depth;
++#endif
++
++
+ 
+ 	/*
+ 	 * If there is a non-zero preempt_count or interrupts are disabled,
+@@ -2660,9 +2879,21 @@ asmlinkage void __sched preempt_schedule
+ 		return;
+ 
+ need_resched:
+-	ti->preempt_count = PREEMPT_ACTIVE;
++	preempt_count() += PREEMPT_ACTIVE;
++	/*
++	 * We keep the big kernel semaphore locked, but we
++	 * clear ->lock_depth so that schedule() doesnt
++	 * auto-release the semaphore:
++	 */
++#ifdef CONFIG_PREEMPT_BKL
++	saved_lock_depth = task->lock_depth;
++	task->lock_depth = -1;
++#endif
+ 	schedule();
+-	ti->preempt_count = 0;
++#ifdef CONFIG_PREEMPT_BKL
++	task->lock_depth = saved_lock_depth;
++#endif
++	preempt_count() -= PREEMPT_ACTIVE;
+ 
+ 	/* we could miss a preemption opportunity between schedule and now */
+ 	barrier();
+@@ -3401,6 +3632,8 @@ asmlinkage long sys_sched_yield(void)
+ 
+ static inline void __cond_resched(void)
+ {
++	if (preempt_count() & PREEMPT_ACTIVE)
++		return;
+ 	do {
+ 		preempt_count() += PREEMPT_ACTIVE;
+ 		schedule();
+@@ -3488,7 +3721,7 @@ EXPORT_SYMBOL(yield);
+  */
+ void __sched io_schedule(void)
+ {
+-	struct runqueue *rq = this_rq();
++	struct runqueue *rq = &per_cpu(runqueues, _smp_processor_id());
+ 
+ 	atomic_inc(&rq->nr_iowait);
+ 	schedule();
+@@ -3499,7 +3732,7 @@ EXPORT_SYMBOL(io_schedule);
+ 
+ long __sched io_schedule_timeout(long timeout)
+ {
+-	struct runqueue *rq = this_rq();
++	struct runqueue *rq = &per_cpu(runqueues, _smp_processor_id());
+ 	long ret;
+ 
+ 	atomic_inc(&rq->nr_iowait);
+@@ -3708,7 +3941,7 @@ void __devinit init_idle(task_t *idle, i
+ 	spin_unlock_irqrestore(&rq->lock, flags);
+ 
+ 	/* Set the preempt count _outside_ the spinlocks! */
+-#ifdef CONFIG_PREEMPT
++#if defined(CONFIG_PREEMPT) && !defined(CONFIG_PREEMPT_BKL)
+ 	idle->thread_info->preempt_count = (idle->lock_depth >= 0);
+ #else
+ 	idle->thread_info->preempt_count = 0;
+@@ -4113,21 +4346,6 @@ int __init migration_init(void)
+ }
+ #endif
+ 
+-/*
+- * The 'big kernel lock'
+- *
+- * This spinlock is taken and released recursively by lock_kernel()
+- * and unlock_kernel().  It is transparently dropped and reaquired
+- * over schedule().  It is used to protect legacy code that hasn't
+- * been migrated to a proper locking design yet.
+- *
+- * Don't use in new code.
+- *
+- * Note: spinlock debugging needs this even on !CONFIG_SMP.
+- */
+-spinlock_t kernel_flag __cacheline_aligned_in_smp = SPIN_LOCK_UNLOCKED;
+-EXPORT_SYMBOL(kernel_flag);
+-
+ #ifdef CONFIG_SMP
+ /*
+  * Attach the domain 'sd' to 'cpu' as its base domain.  Callers must
+diff -puN kernel/stop_machine.c~remove-the-bkl-by-turning-it-into-a-semaphore kernel/stop_machine.c
+--- 25/kernel/stop_machine.c~remove-the-bkl-by-turning-it-into-a-semaphore	2004-10-05 02:00:52.749903608 -0700
++++ 25-akpm/kernel/stop_machine.c	2004-10-05 02:00:52.768900720 -0700
+@@ -90,7 +90,7 @@ static int stop_machine(void)
+ 	stopmachine_state = STOPMACHINE_WAIT;
+ 
+ 	for_each_online_cpu(i) {
+-		if (i == smp_processor_id())
++		if (i == _smp_processor_id())
+ 			continue;
+ 		ret = kernel_thread(stopmachine, (void *)(long)i,CLONE_KERNEL);
+ 		if (ret < 0)
+@@ -172,7 +172,7 @@ struct task_struct *__stop_machine_run(i
+ 
+ 	/* If they don't care which CPU fn runs on, bind to any online one. */
+ 	if (cpu == NR_CPUS)
+-		cpu = smp_processor_id();
++		cpu = _smp_processor_id();
+ 
+ 	p = kthread_create(do_stop, &smdata, "kstopmachine");
+ 	if (!IS_ERR(p)) {
+_

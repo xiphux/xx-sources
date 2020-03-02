@@ -1,0 +1,132 @@
+
+From: Adam Belay <ambx1@neo.rr.com>
+
+This patch is needed for class devices to bind to physical devices detected
+in drivers/net/pcmcia.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/pcmcia/3c574_cs.c    |    1 +
+ 25-akpm/drivers/net/pcmcia/3c589_cs.c    |    1 +
+ 25-akpm/drivers/net/pcmcia/axnet_cs.c    |    1 +
+ 25-akpm/drivers/net/pcmcia/com20020_cs.c |    1 +
+ 25-akpm/drivers/net/pcmcia/fmvj18x_cs.c  |    1 +
+ 25-akpm/drivers/net/pcmcia/ibmtr_cs.c    |    1 +
+ 25-akpm/drivers/net/pcmcia/nmclan_cs.c   |    1 +
+ 25-akpm/drivers/net/pcmcia/pcnet_cs.c    |    1 +
+ 25-akpm/drivers/net/pcmcia/smc91c92_cs.c |    1 +
+ 25-akpm/drivers/net/pcmcia/xirc2ps_cs.c  |    1 +
+ 10 files changed, 10 insertions(+)
+
+diff -puN drivers/net/pcmcia/3c574_cs.c~update-drivers-net-pcmcia-2-3 drivers/net/pcmcia/3c574_cs.c
+--- 25/drivers/net/pcmcia/3c574_cs.c~update-drivers-net-pcmcia-2-3	2004-06-28 17:56:12.993539728 -0700
++++ 25-akpm/drivers/net/pcmcia/3c574_cs.c	2004-06-28 17:56:13.015536384 -0700
+@@ -518,6 +518,7 @@ static void tc574_config(dev_link_t *lin
+ 
+ 	link->state &= ~DEV_CONFIG_PENDING;
+ 	link->dev = &lp->node;
++	SET_NETDEV_DEV(dev, pcmcia_lookup_device(handle));
+ 
+ 	if (register_netdev(dev) != 0) {
+ 		printk(KERN_NOTICE "3c574_cs: register_netdev() failed\n");
+diff -puN drivers/net/pcmcia/3c589_cs.c~update-drivers-net-pcmcia-2-3 drivers/net/pcmcia/3c589_cs.c
+--- 25/drivers/net/pcmcia/3c589_cs.c~update-drivers-net-pcmcia-2-3	2004-06-28 17:56:12.995539424 -0700
++++ 25-akpm/drivers/net/pcmcia/3c589_cs.c	2004-06-28 17:56:13.016536232 -0700
+@@ -390,6 +390,7 @@ static void tc589_config(dev_link_t *lin
+     
+     link->dev = &lp->node;
+     link->state &= ~DEV_CONFIG_PENDING;
++    SET_NETDEV_DEV(dev, pcmcia_lookup_device(handle));
+ 
+     if (register_netdev(dev) != 0) {
+ 	printk(KERN_ERR "3c589_cs: register_netdev() failed\n");
+diff -puN drivers/net/pcmcia/axnet_cs.c~update-drivers-net-pcmcia-2-3 drivers/net/pcmcia/axnet_cs.c
+--- 25/drivers/net/pcmcia/axnet_cs.c~update-drivers-net-pcmcia-2-3	2004-06-28 17:56:12.998538968 -0700
++++ 25-akpm/drivers/net/pcmcia/axnet_cs.c	2004-06-28 17:56:13.018535928 -0700
+@@ -457,6 +457,7 @@ static void axnet_config(dev_link_t *lin
+     info->phy_id = (i < 32) ? i : -1;
+     link->dev = &info->node;
+     link->state &= ~DEV_CONFIG_PENDING;
++    SET_NETDEV_DEV(dev, pcmcia_lookup_device(handle));
+ 
+     if (register_netdev(dev) != 0) {
+ 	printk(KERN_NOTICE "axnet_cs: register_netdev() failed\n");
+diff -puN drivers/net/pcmcia/com20020_cs.c~update-drivers-net-pcmcia-2-3 drivers/net/pcmcia/com20020_cs.c
+--- 25/drivers/net/pcmcia/com20020_cs.c~update-drivers-net-pcmcia-2-3	2004-06-28 17:56:13.000538664 -0700
++++ 25-akpm/drivers/net/pcmcia/com20020_cs.c	2004-06-28 17:56:13.019535776 -0700
+@@ -396,6 +396,7 @@ static void com20020_config(dev_link_t *
+ 
+     link->dev = &info->node;
+     link->state &= ~DEV_CONFIG_PENDING;
++    SET_NETDEV_DEV(dev, pcmcia_lookup_device(handle));
+ 
+     i = com20020_found(dev, 0);	/* calls register_netdev */
+     
+diff -puN drivers/net/pcmcia/fmvj18x_cs.c~update-drivers-net-pcmcia-2-3 drivers/net/pcmcia/fmvj18x_cs.c
+--- 25/drivers/net/pcmcia/fmvj18x_cs.c~update-drivers-net-pcmcia-2-3	2004-06-28 17:56:13.002538360 -0700
++++ 25-akpm/drivers/net/pcmcia/fmvj18x_cs.c	2004-06-28 17:56:13.020535624 -0700
+@@ -590,6 +590,7 @@ static void fmvj18x_config(dev_link_t *l
+     lp->cardtype = cardtype;
+     link->dev = &lp->node;
+     link->state &= ~DEV_CONFIG_PENDING;
++    SET_NETDEV_DEV(dev, pcmcia_lookup_device(handle));
+ 
+     if (register_netdev(dev) != 0) {
+ 	printk(KERN_NOTICE "fmvj18x_cs: register_netdev() failed\n");
+diff -puN drivers/net/pcmcia/ibmtr_cs.c~update-drivers-net-pcmcia-2-3 drivers/net/pcmcia/ibmtr_cs.c
+--- 25/drivers/net/pcmcia/ibmtr_cs.c~update-drivers-net-pcmcia-2-3	2004-06-28 17:56:13.003538208 -0700
++++ 25-akpm/drivers/net/pcmcia/ibmtr_cs.c	2004-06-28 17:56:13.021535472 -0700
+@@ -366,6 +366,7 @@ static void ibmtr_config(dev_link_t *lin
+ 
+     link->dev = &info->node;
+     link->state &= ~DEV_CONFIG_PENDING;
++    SET_NETDEV_DEV(dev, pcmcia_lookup_device(handle));
+ 
+     i = ibmtr_probe_card(dev);
+     if (i != 0) {
+diff -puN drivers/net/pcmcia/nmclan_cs.c~update-drivers-net-pcmcia-2-3 drivers/net/pcmcia/nmclan_cs.c
+--- 25/drivers/net/pcmcia/nmclan_cs.c~update-drivers-net-pcmcia-2-3	2004-06-28 17:56:13.005537904 -0700
++++ 25-akpm/drivers/net/pcmcia/nmclan_cs.c	2004-06-28 17:56:13.023535168 -0700
+@@ -774,6 +774,7 @@ static void nmclan_config(dev_link_t *li
+ 
+   link->dev = &lp->node;
+   link->state &= ~DEV_CONFIG_PENDING;
++  SET_NETDEV_DEV(dev, pcmcia_lookup_device(handle));
+ 
+   i = register_netdev(dev);
+   if (i != 0) {
+diff -puN drivers/net/pcmcia/pcnet_cs.c~update-drivers-net-pcmcia-2-3 drivers/net/pcmcia/pcnet_cs.c
+--- 25/drivers/net/pcmcia/pcnet_cs.c~update-drivers-net-pcmcia-2-3	2004-06-28 17:56:13.007537600 -0700
++++ 25-akpm/drivers/net/pcmcia/pcnet_cs.c	2004-06-28 17:56:13.024535016 -0700
+@@ -721,6 +721,7 @@ static void pcnet_config(dev_link_t *lin
+ 
+     link->dev = &info->node;
+     link->state &= ~DEV_CONFIG_PENDING;
++    SET_NETDEV_DEV(dev, pcmcia_lookup_device(handle));
+ 
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+     dev->poll_controller = ei_poll;
+diff -puN drivers/net/pcmcia/smc91c92_cs.c~update-drivers-net-pcmcia-2-3 drivers/net/pcmcia/smc91c92_cs.c
+--- 25/drivers/net/pcmcia/smc91c92_cs.c~update-drivers-net-pcmcia-2-3	2004-06-28 17:56:13.009537296 -0700
++++ 25-akpm/drivers/net/pcmcia/smc91c92_cs.c	2004-06-28 17:56:13.026534712 -0700
+@@ -1021,6 +1021,7 @@ static void smc91c92_config(dev_link_t *
+ 
+     link->dev = &smc->node;
+     link->state &= ~DEV_CONFIG_PENDING;
++    SET_NETDEV_DEV(dev, pcmcia_lookup_device(handle));
+ 
+     if (register_netdev(dev) != 0) {
+ 	printk(KERN_ERR "smc91c92_cs: register_netdev() failed\n");
+diff -puN drivers/net/pcmcia/xirc2ps_cs.c~update-drivers-net-pcmcia-2-3 drivers/net/pcmcia/xirc2ps_cs.c
+--- 25/drivers/net/pcmcia/xirc2ps_cs.c~update-drivers-net-pcmcia-2-3	2004-06-28 17:56:13.011536992 -0700
++++ 25-akpm/drivers/net/pcmcia/xirc2ps_cs.c	2004-06-28 17:56:13.028534408 -0700
+@@ -1120,6 +1120,7 @@ xirc2ps_config(dev_link_t * link)
+ 
+     link->dev = &local->node;
+     link->state &= ~DEV_CONFIG_PENDING;
++    SET_NETDEV_DEV(dev, pcmcia_lookup_device(handle));
+ 
+     if ((err=register_netdev(dev))) {
+ 	printk(KNOT_XIRC "register_netdev() failed\n");
+_

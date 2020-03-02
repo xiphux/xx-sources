@@ -1,0 +1,74 @@
+
+From: Mikael Pettersson <mikpe@csd.uu.se>
+
+- s/perfctr_copy_thread(&p->thread)/perfctr_copy_task(p, regs)/g
+  Needed to access to the task struct (for setting owner in new
+  perfctr state) and for accessing regs (for checking user_mode(regs))
+- Add perfctr_release_task() callback in kernel/exit.c
+
+Signed-off-by: Mikael Pettersson <mikpe@csd.uu.se>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/process.c   |    2 +-
+ 25-akpm/arch/ppc/kernel/process.c    |    2 +-
+ 25-akpm/arch/x86_64/kernel/process.c |    2 +-
+ 25-akpm/kernel/exit.c                |    2 ++
+ 4 files changed, 5 insertions(+), 3 deletions(-)
+
+diff -puN arch/i386/kernel/process.c~perfctr-inheritance-2-3-kernel-updates arch/i386/kernel/process.c
+--- 25/arch/i386/kernel/process.c~perfctr-inheritance-2-3-kernel-updates	2004-09-20 10:47:57.382176072 -0700
++++ 25-akpm/arch/i386/kernel/process.c	2004-09-20 10:47:57.390174856 -0700
+@@ -380,7 +380,7 @@ int copy_thread(int nr, unsigned long cl
+ 	savesegment(fs,p->thread.fs);
+ 	savesegment(gs,p->thread.gs);
+ 
+-	perfctr_copy_thread(&p->thread);
++	perfctr_copy_task(p, regs);
+ 
+ 	tsk = current;
+ 	if (unlikely(NULL != tsk->thread.io_bitmap_ptr)) {
+diff -puN arch/ppc/kernel/process.c~perfctr-inheritance-2-3-kernel-updates arch/ppc/kernel/process.c
+--- 25/arch/ppc/kernel/process.c~perfctr-inheritance-2-3-kernel-updates	2004-09-20 10:47:57.383175920 -0700
++++ 25-akpm/arch/ppc/kernel/process.c	2004-09-20 10:47:57.391174704 -0700
+@@ -464,7 +464,7 @@ copy_thread(int nr, unsigned long clone_
+ 
+ 	p->thread.last_syscall = -1;
+ 
+-	perfctr_copy_thread(&p->thread);
++	perfctr_copy_task(p, regs);
+ 
+ 	return 0;
+ }
+diff -puN arch/x86_64/kernel/process.c~perfctr-inheritance-2-3-kernel-updates arch/x86_64/kernel/process.c
+--- 25/arch/x86_64/kernel/process.c~perfctr-inheritance-2-3-kernel-updates	2004-09-20 10:47:57.385175616 -0700
++++ 25-akpm/arch/x86_64/kernel/process.c	2004-09-20 10:47:57.392174552 -0700
+@@ -377,7 +377,7 @@ int copy_thread(int nr, unsigned long cl
+ 	asm("movl %%es,%0" : "=m" (p->thread.es));
+ 	asm("movl %%ds,%0" : "=m" (p->thread.ds));
+ 
+-	perfctr_copy_thread(&p->thread);
++	perfctr_copy_task(p, regs);
+ 
+ 	if (unlikely(me->thread.io_bitmap_ptr != NULL)) { 
+ 		p->thread.io_bitmap_ptr = kmalloc(IO_BITMAP_BYTES, GFP_KERNEL);
+diff -puN kernel/exit.c~perfctr-inheritance-2-3-kernel-updates kernel/exit.c
+--- 25/kernel/exit.c~perfctr-inheritance-2-3-kernel-updates	2004-09-20 10:47:57.386175464 -0700
++++ 25-akpm/kernel/exit.c	2004-09-20 10:48:17.416130448 -0700
+@@ -24,6 +24,7 @@
+ #include <linux/mount.h>
+ #include <linux/proc_fs.h>
+ #include <linux/mempolicy.h>
++#include <linux/perfctr.h>
+ #include <linux/syscalls.h>
+ 
+ #include <asm/uaccess.h>
+@@ -90,6 +91,7 @@ repeat: 
+ 		zap_leader = (leader->exit_signal == -1);
+ 	}
+ 
++	perfctr_release_task(p);
+ 	sched_exit(p);
+ 	write_unlock_irq(&tasklist_lock);
+ 	spin_unlock(&p->proc_lock);
+_

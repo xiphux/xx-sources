@@ -1,0 +1,242 @@
+
+From: Rik van Riel <riel@redhat.com>
+
+Since various gnupg users have indicated that gpg wants to mlock 32kB of
+memory, I created the patch below that increases the default mlock ulimit
+to 32kB.
+
+This is no security problem because it's trivial for processes to lock way
+more memory than this in page tables, network buffers, etc.  In fact, since
+this patch allows gnupg to mlock to prevent passphrase data from being
+swapped out, the security people will probably like it ;)
+
+This gets the new per-user mlock limit a bit more testing, too.
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/asm-alpha/resource.h   |    2 +-
+ 25-akpm/include/asm-arm/resource.h     |    2 +-
+ 25-akpm/include/asm-arm26/resource.h   |    2 +-
+ 25-akpm/include/asm-cris/resource.h    |    2 +-
+ 25-akpm/include/asm-h8300/resource.h   |    2 +-
+ 25-akpm/include/asm-i386/resource.h    |    2 +-
+ 25-akpm/include/asm-ia64/resource.h    |    2 +-
+ 25-akpm/include/asm-m68k/resource.h    |    2 +-
+ 25-akpm/include/asm-parisc/resource.h  |    2 +-
+ 25-akpm/include/asm-ppc/resource.h     |    2 +-
+ 25-akpm/include/asm-ppc64/resource.h   |    2 +-
+ 25-akpm/include/asm-s390/resource.h    |    2 +-
+ 25-akpm/include/asm-sh/resource.h      |    2 +-
+ 25-akpm/include/asm-sparc/resource.h   |    2 +-
+ 25-akpm/include/asm-sparc64/resource.h |    2 +-
+ 25-akpm/include/asm-v850/resource.h    |    2 +-
+ 25-akpm/include/asm-x86_64/resource.h  |    2 +-
+ 17 files changed, 17 insertions(+), 17 deletions(-)
+
+diff -puN include/asm-alpha/resource.h~increase-mlock-limit-to-32k include/asm-alpha/resource.h
+--- 25/include/asm-alpha/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.693216528 -0700
++++ 25-akpm/include/asm-alpha/resource.h	2004-08-04 22:20:49.806854744 -0700
+@@ -41,7 +41,7 @@
+     {INR_OPEN, INR_OPEN},			/* RLIMIT_NOFILE */	\
+     {LONG_MAX, LONG_MAX},			/* RLIMIT_AS */		\
+     {LONG_MAX, LONG_MAX},			/* RLIMIT_NPROC */	\
+-    {0, 	0	},			/* RLIMIT_MEMLOCK */	\
++    {32768, 	32768	},			/* RLIMIT_MEMLOCK */	\
+     {LONG_MAX, LONG_MAX},			/* RLIMIT_LOCKS */	\
+     {MAX_SIGPENDING, MAX_SIGPENDING},		/* RLIMIT_SIGPENDING */ \
+     {MQ_BYTES_MAX, MQ_BYTES_MAX},		/* RLIMIT_MSGQUEUE */	\
+diff -puN include/asm-arm26/resource.h~increase-mlock-limit-to-32k include/asm-arm26/resource.h
+--- 25/include/asm-arm26/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.694216376 -0700
++++ 25-akpm/include/asm-arm26/resource.h	2004-08-04 22:21:04.972549208 -0700
+@@ -39,7 +39,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },	\
+ 	{ 0,             0             },	\
+ 	{ INR_OPEN,      INR_OPEN      },	\
+-	{ 0,	         0	       },	\
++	{ 32768,	 32768	       },	\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },	\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },	\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING},	\
+diff -puN include/asm-arm/resource.h~increase-mlock-limit-to-32k include/asm-arm/resource.h
+--- 25/include/asm-arm/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.696216072 -0700
++++ 25-akpm/include/asm-arm/resource.h	2004-08-04 22:21:16.874739800 -0700
+@@ -39,7 +39,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },	\
+ 	{ 0,             0             },	\
+ 	{ INR_OPEN,      INR_OPEN      },	\
+-	{ 0,		 0	       },	\
++	{ 32768,	 32768	       },	\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },	\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },	\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING},	\
+diff -puN include/asm-cris/resource.h~increase-mlock-limit-to-32k include/asm-cris/resource.h
+--- 25/include/asm-cris/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.698215768 -0700
++++ 25-akpm/include/asm-cris/resource.h	2004-08-04 22:21:29.351842992 -0700
+@@ -39,7 +39,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{             0,             0 },		\
+ 	{      INR_OPEN,     INR_OPEN  },		\
+-	{             0,             0 },               \
++	{         32768,         32768 },               \
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING },		\
+diff -puN include/asm-h8300/resource.h~increase-mlock-limit-to-32k include/asm-h8300/resource.h
+--- 25/include/asm-h8300/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.699215616 -0700
++++ 25-akpm/include/asm-h8300/resource.h	2004-08-04 22:21:35.974836144 -0700
+@@ -39,7 +39,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{             0,             0 },		\
+ 	{      INR_OPEN,     INR_OPEN  },		\
+-	{             0,             0 },		\
++	{         32768,         32768 },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING },		\
+diff -puN include/asm-i386/resource.h~increase-mlock-limit-to-32k include/asm-i386/resource.h
+--- 25/include/asm-i386/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.701215312 -0700
++++ 25-akpm/include/asm-i386/resource.h	2004-08-04 22:21:43.893632304 -0700
+@@ -40,7 +40,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{             0,             0 },		\
+ 	{      INR_OPEN,     INR_OPEN  },		\
+-	{             0,             0 },		\
++	{         32768,         32768 },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING },		\
+diff -puN include/asm-ia64/resource.h~increase-mlock-limit-to-32k include/asm-ia64/resource.h
+--- 25/include/asm-ia64/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.703215008 -0700
++++ 25-akpm/include/asm-ia64/resource.h	2004-08-04 22:21:51.332501424 -0700
+@@ -46,7 +46,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{             0,             0 },		\
+ 	{      INR_OPEN,     INR_OPEN  },		\
+-	{             0,             0 },		\
++	{         32768,         32768 },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING },		\
+diff -puN include/asm-m68k/resource.h~increase-mlock-limit-to-32k include/asm-m68k/resource.h
+--- 25/include/asm-m68k/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.705214704 -0700
++++ 25-akpm/include/asm-m68k/resource.h	2004-08-04 22:21:58.691382704 -0700
+@@ -39,7 +39,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{             0,             0 },		\
+ 	{      INR_OPEN,     INR_OPEN  },		\
+-	{             0,             0 },		\
++	{         32768,         32768 },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING },		\
+diff -puN include/asm-parisc/resource.h~increase-mlock-limit-to-32k include/asm-parisc/resource.h
+--- 25/include/asm-parisc/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.706214552 -0700
++++ 25-akpm/include/asm-parisc/resource.h	2004-08-04 22:22:04.626480432 -0700
+@@ -39,7 +39,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{             0,             0 },		\
+ 	{      INR_OPEN,     INR_OPEN  },		\
+-	{             0,             0 },		\
++	{         32768,         32768 },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING },		\
+diff -puN include/asm-ppc64/resource.h~increase-mlock-limit-to-32k include/asm-ppc64/resource.h
+--- 25/include/asm-ppc64/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.708214248 -0700
++++ 25-akpm/include/asm-ppc64/resource.h	2004-08-04 22:22:11.329461424 -0700
+@@ -45,7 +45,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{             0,             0 },		\
+ 	{      INR_OPEN,     INR_OPEN  },		\
+-	{             0,             0 },		\
++	{         32768,         32768 },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING },		\
+diff -puN include/asm-ppc/resource.h~increase-mlock-limit-to-32k include/asm-ppc/resource.h
+--- 25/include/asm-ppc/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.710213944 -0700
++++ 25-akpm/include/asm-ppc/resource.h	2004-08-04 22:22:20.496067888 -0700
+@@ -36,7 +36,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{             0,             0 },		\
+ 	{      INR_OPEN,     INR_OPEN  },		\
+-	{             0,             0 },		\
++	{         32768,         32768 },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING },		\
+diff -puN include/asm-s390/resource.h~increase-mlock-limit-to-32k include/asm-s390/resource.h
+--- 25/include/asm-s390/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.711213792 -0700
++++ 25-akpm/include/asm-s390/resource.h	2004-08-04 22:22:26.159206960 -0700
+@@ -47,7 +47,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{             0,             0 },		\
+ 	{ INR_OPEN, INR_OPEN },                         \
+-	{             0,             0 },		\
++	{         32768,         32768 },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING },		\
+diff -puN include/asm-sh/resource.h~increase-mlock-limit-to-32k include/asm-sh/resource.h
+--- 25/include/asm-sh/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.713213488 -0700
++++ 25-akpm/include/asm-sh/resource.h	2004-08-04 22:22:33.630071216 -0700
+@@ -39,7 +39,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{             0,             0 },		\
+ 	{      INR_OPEN,     INR_OPEN  },		\
+-	{             0,             0 },		\
++	{         32768,         32768 },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING },		\
+diff -puN include/asm-sparc64/resource.h~increase-mlock-limit-to-32k include/asm-sparc64/resource.h
+--- 25/include/asm-sparc64/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.714213336 -0700
++++ 25-akpm/include/asm-sparc64/resource.h	2004-08-04 22:22:42.779680264 -0700
+@@ -43,7 +43,7 @@
+     {       0, RLIM_INFINITY},		\
+     {RLIM_INFINITY, RLIM_INFINITY},	\
+     {INR_OPEN, INR_OPEN}, {0, 0},	\
+-    {0, 	     0	          },	\
++    {32768, 	  32768	          },	\
+     {RLIM_INFINITY, RLIM_INFINITY},	\
+     {RLIM_INFINITY, RLIM_INFINITY},	\
+     {MAX_SIGPENDING, MAX_SIGPENDING},	\
+diff -puN include/asm-sparc/resource.h~increase-mlock-limit-to-32k include/asm-sparc/resource.h
+--- 25/include/asm-sparc/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.716213032 -0700
++++ 25-akpm/include/asm-sparc/resource.h	2004-08-04 22:22:48.506809608 -0700
+@@ -44,7 +44,7 @@
+     {       0, RLIM_INFINITY},		\
+     {RLIM_INFINITY, RLIM_INFINITY},	\
+     {INR_OPEN, INR_OPEN}, {0, 0},	\
+-    {0, 	     0},	\
++    {32768, 	     32768},	\
+     {RLIM_INFINITY, RLIM_INFINITY},	\
+     {RLIM_INFINITY, RLIM_INFINITY},	\
+     {MAX_SIGPENDING, MAX_SIGPENDING},	\
+diff -puN include/asm-v850/resource.h~increase-mlock-limit-to-32k include/asm-v850/resource.h
+--- 25/include/asm-v850/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.717212880 -0700
++++ 25-akpm/include/asm-v850/resource.h	2004-08-04 22:22:58.537284744 -0700
+@@ -39,7 +39,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{             0,             0 },		\
+ 	{      INR_OPEN,     INR_OPEN  },		\
+-	{             0,             0 },		\
++	{         32768,         32768 },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING },		\
+diff -puN include/asm-x86_64/resource.h~increase-mlock-limit-to-32k include/asm-x86_64/resource.h
+--- 25/include/asm-x86_64/resource.h~increase-mlock-limit-to-32k	2004-08-04 22:20:27.719212576 -0700
++++ 25-akpm/include/asm-x86_64/resource.h	2004-08-04 22:23:06.856020104 -0700
+@@ -39,7 +39,7 @@
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{             0,             0 },		\
+ 	{      INR_OPEN,     INR_OPEN  },		\
+-	{             0,             0 },		\
++	{         32768,         32768 },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ RLIM_INFINITY, RLIM_INFINITY },		\
+ 	{ MAX_SIGPENDING, MAX_SIGPENDING },		\
+_

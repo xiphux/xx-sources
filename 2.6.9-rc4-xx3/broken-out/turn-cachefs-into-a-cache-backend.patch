@@ -1,0 +1,3251 @@
+
+From: David Howells <dhowells@redhat.com>
+
+The attached patch turns what remains of CacheFS into a caching backend for
+FS-Cache.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ /dev/null                           |  351 ----------
+ 25-akpm/fs/cachefs/block.c          |   21 
+ 25-akpm/fs/cachefs/cachefs-int.h    |   94 --
+ 25-akpm/fs/cachefs/cachefs-layout.h |   20 
+ 25-akpm/fs/cachefs/index.c          |  130 +---
+ 25-akpm/fs/cachefs/indirection-io.c |   40 -
+ 25-akpm/fs/cachefs/inode.c          |   10 
+ 25-akpm/fs/cachefs/interface.c      | 1155 +++---------------------------------
+ 25-akpm/fs/cachefs/journal.c        |    8 
+ 25-akpm/fs/cachefs/linear-io.c      |    8 
+ 25-akpm/fs/cachefs/main.c           |   20 
+ 25-akpm/fs/cachefs/misc.c           |   12 
+ 25-akpm/fs/cachefs/recycling.c      |    2 
+ 25-akpm/fs/cachefs/replay.c         |    2 
+ 25-akpm/fs/cachefs/rootdir.c        |  148 +++-
+ 25-akpm/fs/cachefs/super.c          |   41 -
+ 25-akpm/fs/cachefs/vjournal.c       |   12 
+ 17 files changed, 398 insertions(+), 1676 deletions(-)
+
+diff -puN fs/cachefs/block.c~turn-cachefs-into-a-cache-backend fs/cachefs/block.c
+--- 25/fs/cachefs/block.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/block.c	Wed Oct  6 16:03:22 2004
+@@ -40,12 +40,12 @@ void cachefs_block_init_once(void *_bloc
+  */
+ static int cachefs_block_dummy_filler(void *data, struct page *page)
+ {
+-	struct cachefs_page *pageio;
++	struct fscache_page *pageio;
+ 
+ 	_enter("%p,{%lu}", data, page->index);
+ 
+ 	/* we need somewhere to note journal ACKs that need to be made */
+-	pageio = cachefs_page_get_private(page, GFP_KERNEL);
++	pageio = fscache_page_get_private(page, GFP_KERNEL);
+ 	if (IS_ERR(pageio))
+ 		return PTR_ERR(pageio);
+ 
+@@ -67,7 +67,7 @@ static int cachefs_block_dummy_filler(vo
+ int cachefs_block_set(struct cachefs_super *super,
+ 		      struct cachefs_block *block,
+ 		      struct page *page,
+-		      struct cachefs_page *pageio)
++		      struct fscache_page *pageio)
+ {
+ 	DECLARE_WAITQUEUE(myself,current);
+ 
+@@ -137,7 +137,7 @@ int cachefs_block_set(struct cachefs_sup
+ int cachefs_block_set2(struct cachefs_super *super,
+ 		       cachefs_blockix_t bix,
+ 		       struct page *page,
+-		       struct cachefs_page *pageio,
++		       struct fscache_page *pageio,
+ 		       struct cachefs_block **_block)
+ {
+ 	struct cachefs_block *block;
+@@ -369,7 +369,7 @@ int cachefs_block_cow(struct cachefs_sup
+ 
+ 	/* duplicate the page if it's flagged copy-on-write */
+ 	if (test_bit(CACHEFS_BLOCK_COW, &block->flags)) {
+-		struct cachefs_page *newpageio;
++		struct fscache_page *newpageio;
+ 
+ 		mapping = super->imisc->i_mapping;
+ 
+@@ -378,7 +378,7 @@ int cachefs_block_cow(struct cachefs_sup
+ 		if (!newpage)
+ 			goto error;
+ 
+-		if (cachefs_page_get_private(newpage, &newpageio,
++		if (fscache_page_get_private(newpage, &newpageio,
+ 					     mapping_gfp_mask(mapping)) < 0)
+ 			goto error_page;
+ 
+@@ -614,15 +614,18 @@ void __cachefs_block_put(struct cachefs_
+ /*
+  * withdraw from active service all the blocks residing on a device
+  */
+-void cachefs_block_withdraw(struct cachefs_super *super)
++void cachefs_block_dissociate(struct fscache_cache *cache)
+ {
+ 	struct cachefs_block *block, *xblock;
+-	struct cachefs_page *pageio;
++	struct cachefs_super *super;
++	struct fscache_page *pageio;
+ 	struct rb_node *node;
+ 	unsigned long flags;
+ 
+ 	DECLARE_WAITQUEUE(myself, current);
+ 
++	super = container_of(cache, struct cachefs_super, cache);
++
+ 	_enter("");
+ 
+ 	/* first thing to do is mark all blocks withdrawn
+@@ -705,4 +708,4 @@ void cachefs_block_withdraw(struct cache
+ 
+ 	_leave("");
+ 
+-} /* end cachefs_block_withdraw() */
++} /* end cachefs_block_dissociate() */
+diff -puN fs/cachefs/cachefs-int.h~turn-cachefs-into-a-cache-backend fs/cachefs/cachefs-int.h
+--- 25/fs/cachefs/cachefs-int.h~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/cachefs-int.h	Wed Oct  6 16:03:22 2004
+@@ -12,7 +12,7 @@
+ #ifndef _LINUX_CACHEFS_INT_H
+ #define _LINUX_CACHEFS_INT_H
+ 
+-#include <linux/cachefs.h>
++#include <linux/fscache-cache.h>
+ #include <linux/timer.h>
+ #include <linux/bio.h>
+ #include "cachefs-layout.h"
+@@ -28,9 +28,9 @@ extern int cachefs_debug;
+ struct cachefs_super;
+ struct cachefs_block;
+ struct cachefs_inode;
+-struct cachefs_search_result;
+ struct cachefs_transaction;
+ 
++extern struct fscache_cache_ops cachefs_cache_ops;
+ extern struct address_space_operations cachefs_indr_io_addrspace_operations;
+ extern struct address_space_operations cachefs_linear_io_addrspace_operations;
+ extern struct file_operations cachefs_root_file_operations;
+@@ -46,7 +46,7 @@ extern int kcachefsd(void *_super);
+ extern int cachefs_io_dummy_filler(void *data, struct page *page);
+ 
+ extern int cachefs_indr_io_get_block(struct inode *inode, struct page *page,
+-				     struct cachefs_page *pageio, int create);
++				     struct fscache_page *pageio, int create);
+ 
+ struct cachefs_reclaimable {
+ 	unsigned	ino;
+@@ -59,8 +59,8 @@ struct cachefs_reclaimable {
+  */
+ struct cachefs_super
+ {
++	struct fscache_cache		cache;		/* cache handle */
+ 	struct super_block		*sb;
+-	struct list_head		mnt_link;	/* link in list of mounted caches */
+ 	struct cachefs_inode		*imetadata;	/* the metadata records file */
+ 	struct inode			*imisc;		/* an inode covering the whole blkdev */
+ 
+@@ -70,15 +70,10 @@ struct cachefs_super
+ #define CACHEFS_SUPER_DO_RECLAIM	2		/* T if should do reclamation */
+ #define CACHEFS_SUPER_RCM_IMM_SCAN	3		/* T if should scan for immediately
+ 							 * reclaimable inodes */
+-#define CACHEFS_SUPER_WITHDRAWN		4		/* T if cache has been withdrawn */
+-#define CACHEFS_SUPER_REPLAYING_UJNL	5		/* T if replaying u-journal */
++#define CACHEFS_SUPER_REPLAYING_UJNL	4		/* T if replaying u-journal */
+ 
+ 	int				bio_wr_barrier;	/* command to submit a write barrier BIO */
+ 
+-	/* index management */
+-	struct list_head		ino_list;	/* list of data/index inodes */
+-	spinlock_t			ino_list_lock;
+-
+ 	/* block allocation and recycling management */
+ 	struct rb_root			blk_tree;	/* block mapping tree */
+ 	rwlock_t			blk_tree_lock;
+@@ -191,10 +186,6 @@ struct cachefs_super
+ 	struct cachefs_ondisc_superblock *layout;
+ };
+ 
+-extern void cachefs_add_cache(struct cachefs_super *super,
+-			      struct cachefs_search_result *srch);
+-extern void cachefs_withdraw_cache(struct cachefs_super *super);
+-
+ extern void cachefs_recycle_unready_blocks(struct cachefs_super *super);
+ extern void cachefs_recycle_transfer_stack(struct cachefs_super *super);
+ extern void cachefs_recycle_reclaim(struct cachefs_super *super);
+@@ -235,7 +226,7 @@ struct cachefs_block
+ 	struct list_head		batch_link;	/* link in batch writer's list */
+ 	struct page			*page;		/* current data for this block */
+ 	struct page			*writeback;	/* source of writeback for this block */
+-	struct cachefs_page		*ref;		/* netfs's ref to this page */
++	struct fscache_page		*ref;		/* netfs's ref to this page */
+ 	rwlock_t			ref_lock;	/* lock governing ref pointer */
+ 	struct cachefs_vj_entry		*vjentry;	/* invalid block record */
+ };
+@@ -254,12 +245,12 @@ extern struct cachefs_block * cachefs_bl
+ extern int cachefs_block_set(struct cachefs_super *super,
+ 			     struct cachefs_block *block,
+ 			     struct page *page,
+-			     struct cachefs_page *pageio);
++			     struct fscache_page *pageio);
+ 
+ extern int cachefs_block_set2(struct cachefs_super *super,
+ 			      cachefs_blockix_t bix,
+ 			      struct page *page,
+-			      struct cachefs_page *pageio,
++			      struct fscache_page *pageio,
+ 			      struct cachefs_block **_block);
+ 
+ extern int cachefs_block_read(struct cachefs_super *super,
+@@ -308,7 +299,7 @@ static inline void cachefs_block_put(str
+ static inline struct cachefs_block *__cachefs_get_page_block(struct page *page)
+ {
+ 	BUG_ON(!PagePrivate(page));
+-	return ((struct cachefs_page *) page->private)->mapped_block;
++	return ((struct fscache_page *) page->private)->mapped_block;
+ }
+ 
+ static inline void cachefs_page_modify(struct cachefs_super *super,
+@@ -317,38 +308,10 @@ static inline void cachefs_page_modify(s
+ 	cachefs_block_modify(super, __cachefs_get_page_block(*page), page);
+ }
+ 
+-extern void cachefs_block_withdraw(struct cachefs_super *super);
++extern void cachefs_block_dissociate(struct fscache_cache *cache);
+ 
+-/*****************************************************************************/
+-/*
+- * data file or index object cookie
+- * - a file will only appear in one cache
+- * - a request to cache a file may or may not be honoured, subject to
+- *   constraints such as disc space
+- * - indexes files are created on disc just-in-time
+- */
+-struct cachefs_cookie
+-{
+-	atomic_t			usage;		/* number of users of this cookie */
+-	atomic_t			children;	/* number of children of this cookie */
+-	struct cachefs_index_def	*idef;		/* index definition */
+-	struct cachefs_cookie		*iparent;	/* index holding this entry */
+-	struct list_head		search_results;	/* results of searching iparent */
+-	struct list_head		backing_inodes;	/* inode(s) backing this file/index */
+-	struct rw_semaphore		sem;
+-	struct cachefs_netfs		*netfs;		/* owner network fs definition */
+-	void				*netfs_data;	/* back pointer to netfs */
+-};
+-
+-struct cachefs_search_result {
+-	struct list_head		link;		/* link in search_results */
+-	struct cachefs_super		*super;		/* superblock searched */
+-	unsigned			ino;		/* inode number (or 0 if negative) */
+-};
+-
+-extern kmem_cache_t *cachefs_cookie_jar;
+-
+-extern void cachefs_cookie_init_once(void *_cookie, kmem_cache_t *cachep, unsigned long flags);
++#define cachefs_mapped_block(PGIO) ((struct cachefs_block *) (PGIO)->mapped_block)
++#define cachefs_mapped_bix(PGIO) (((struct cachefs_block *) (PGIO)->mapped_block)->bix)
+ 
+ /*****************************************************************************/
+ /*
+@@ -357,6 +320,7 @@ extern void cachefs_cookie_init_once(voi
+ struct cachefs_inode
+ {
+ 	struct inode			vfs_inode;	/* VFS inode record for this file */
++	struct fscache_node		node;		/* fscache handle */
+ 
+ 	struct cachefs_block		*metadata;	/* block containing metadata */
+ 	struct page			*metadata_page;	/* page mapped to metadata block */
+@@ -366,16 +330,6 @@ struct cachefs_inode
+ 	unsigned short			index_dsize;	/* size of data in each index entry */
+ 	unsigned short			index_esize;	/* size of index entries */
+ 	unsigned short			index_epp;	/* number of index entries per page */
+-
+-	unsigned long			flags;
+-#define CACHEFS_ACTIVE_INODE_ISINDEX	0	/* T if inode is index file (F if file) */
+-#define CACHEFS_ACTIVE_INODE_RELEASING	1	/* T if inode is being released */
+-#define CACHEFS_ACTIVE_INODE_RECYCLING	2	/* T if inode is being retired */
+-#define CACHEFS_ACTIVE_INODE_WITHDRAWN	3	/* T if inode has been withdrawn */
+-
+-	struct list_head		super_link;	/* link in super->ino_list */
+-	struct list_head		cookie_link;	/* link in cookie->backing_inodes */
+-	struct cachefs_cookie		*cookie;	/* netfs's file/index object */
+ };
+ 
+ extern struct inode_operations cachefs_status_inode_operations;
+@@ -466,16 +420,16 @@ void cachefs_metadata_postwrite(struct c
+ 
+ extern void cachefs_withdraw_inode(struct cachefs_inode *inode);
+ 
+-extern int cachefs_index_search(struct cachefs_inode *index,
+-				struct cachefs_cookie *target,
+-				unsigned *_entry,
+-				unsigned *_ino);
+-
+-extern int cachefs_index_add(struct cachefs_inode *index,
+-			     struct cachefs_cookie *cookie,
+-			     unsigned *_newino);
++extern int cachefs_index_search(struct fscache_node *node,
++				struct fscache_cookie *target,
++				struct fscache_search_result *result);
++
++extern int cachefs_index_add(struct fscache_node *node,
++			     struct fscache_cookie *cookie,
++			     struct fscache_search_result *result);
+ 
+-extern int cachefs_index_update(struct cachefs_inode *index);
++extern int cachefs_index_update(struct fscache_node *ixnode,
++				struct fscache_node *node);
+ 
+ extern int cachefs_index_reclaim_one_entry(struct cachefs_super *super,
+ 					   struct cachefs_transaction **_trans);
+@@ -591,7 +545,7 @@ extern void cachefs_trans_affects_block(
+ 
+ static inline
+ void cachefs_trans_affects_page(struct cachefs_transaction *trans,
+-				struct cachefs_page *pageio,
++				struct fscache_page *pageio,
+ 				unsigned offset,
+ 				unsigned size)
+ {
+@@ -614,7 +568,7 @@ static inline void cachefs_trans_affects
+ {
+ 	struct cachefs_super *super = trans->super;
+ 	cachefs_trans_affects_page(trans,
+-				   cachefs_page_grab_private(
++				   fscache_page_grab_private(
+ 					   virt_to_page(super->layout)),
+ 				   0,
+ 				   super->sb->s_blocksize);
+diff -puN fs/cachefs/cachefs-layout.h~turn-cachefs-into-a-cache-backend fs/cachefs/cachefs-layout.h
+--- 25/fs/cachefs/cachefs-layout.h~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/cachefs-layout.h	Wed Oct  6 16:03:22 2004
+@@ -102,9 +102,12 @@ struct cachefs_ondisc_index_def
+ #define CACHEFS_ONDISC_INDEXKEY_TYPE	0xF000	/* type of key segment */
+ #define CACHEFS_ONDISC_INDEXKEY_NOTUSED	0x0000	/* - segment not used */
+ #define CACHEFS_ONDISC_INDEXKEY_BIN	0x1000	/* - binary data */
+-#define CACHEFS_ONDISC_INDEXKEY_ASCIIZ	0x2000	/* - null-terminated string */
+-#define CACHEFS_ONDISC_INDEXKEY_IPV4	0x3000	/* - IPv4 address */
+-#define CACHEFS_ONDISC_INDEXKEY_IPV6	0x4000	/* - IPv6 address */
++#define CACHEFS_ONDISC_INDEXKEY_BIN_SZ1	0x2000	/* - binary data, size in byte 0 */
++#define CACHEFS_ONDISC_INDEXKEY_BIN_SZ2	0x3000	/* - binary data, size in bytes 0 & 1 */
++#define CACHEFS_ONDISC_INDEXKEY_BIN_SZ4	0x4000	/* - binary data, size in bytes 0-3 */
++#define CACHEFS_ONDISC_INDEXKEY_ASCIIZ	0x5000	/* - null-terminated string */
++#define CACHEFS_ONDISC_INDEXKEY_IPV4	0x6000	/* - IPv4 address */
++#define CACHEFS_ONDISC_INDEXKEY_IPV6	0x7000	/* - IPv6 address */
+ 
+ 	uint8_t				data[0];
+ };
+@@ -142,17 +145,6 @@ struct cachefs_ondisc_metadata
+ };
+ 
+ /*****************************************************************************/
+-/*
+- * on-disc cached network filesystem definition record
+- * - each entry resides in its own sector
+- */
+-struct cachefs_ondisc_fsdef
+-{
+-	uint8_t				name[24];	/* name of netfs */
+-	uint32_t			version;	/* version of layout */
+-};
+-
+-/*****************************************************************************/
+ /*
+  * Free blocks are kept in pair of a very one sided trees (more horsetail
+  * plants than trees)
+diff -puN fs/cachefs/index.c~turn-cachefs-into-a-cache-backend fs/cachefs/index.c
+--- 25/fs/cachefs/index.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/index.c	Wed Oct  6 16:03:22 2004
+@@ -20,17 +20,15 @@
+  */
+ 
+ #include <linux/module.h>
+-#include <linux/init.h>
+ #include <linux/sched.h>
+-#include <linux/completion.h>
+ #include <linux/slab.h>
+ #include <linux/bio.h>
+ #include <linux/circ_buf.h>
+ #include "cachefs-int.h"
+ 
+-struct cachefs_index_search_record {
+-	struct cachefs_cookie		*index;
+-	struct cachefs_cookie		*target;
++struct fscache_index_search_record {
++	struct fscache_cookie		*index;
++	struct fscache_cookie		*target;
+ 	struct cachefs_inode		*iinode;
+ 	unsigned			entsize;
+ 	unsigned			ino;
+@@ -42,7 +40,7 @@ struct cachefs_index_search_record {
+  * mark an inode/index entry pair for deletion when so requested by the match
+  * function supplied by the netfs
+  */
+-static void cachefs_index_search_delete(struct cachefs_index_search_record *rec,
++static void cachefs_index_search_delete(struct fscache_index_search_record *rec,
+ 					struct page *ixpage,
+ 					unsigned ixentry,
+ 					unsigned ixoffset,
+@@ -69,7 +67,7 @@ static void cachefs_index_search_delete(
+ 		return;
+ 	}
+ 
+-	BUG_ON(!list_empty(&inode->cookie_link));
++	BUG_ON(!list_empty(&inode->node.cookie_link));
+ 
+ 	/* create a transaction to record the reclamation */
+ 	ret = -ENOMEM;
+@@ -87,7 +85,7 @@ static void cachefs_index_search_delete(
+ 	trans->jentry->auxblock	= inode->metadata->bix;
+ 	trans->jentry->auxentry	= inode->metadata_offset;
+ 
+-	cachefs_trans_affects_page(trans, cachefs_page_grab_private(ixpage),
++	cachefs_trans_affects_page(trans, fscache_page_grab_private(ixpage),
+ 				   ixoffset, sizeof(*xent));
+ 	cachefs_trans_affects_inode(trans, inode);
+ 
+@@ -152,7 +150,7 @@ static void cachefs_index_search_delete(
+  * mark an inode/index entry pair for deletion when so requested by the match
+  * function supplied by the netfs
+  */
+-static void cachefs_index_search_update(struct cachefs_index_search_record *rec,
++static void cachefs_index_search_update(struct fscache_index_search_record *rec,
+ 					struct page *ixpage,
+ 					unsigned ixentry,
+ 					unsigned ixoffset,
+@@ -182,7 +180,7 @@ static void cachefs_index_search_update(
+ 	trans->jentry->entry	= ixoffset;
+ 	trans->jentry->count	= rec->iinode->index_dsize;
+ 
+-	cachefs_trans_affects_page(trans, cachefs_page_grab_private(ixpage),
++	cachefs_trans_affects_page(trans, fscache_page_grab_private(ixpage),
+ 				   ixoffset, sizeof(*xent));
+ 
+ 	/* have the netfs transcribe the update into the transaction */
+@@ -225,14 +223,14 @@ static int cachefs_index_search_actor(re
+ 				      unsigned long offset,
+ 				      unsigned long size)
+ {
+-	struct cachefs_index_search_record *rec;
++	struct fscache_index_search_record *rec;
+ 	unsigned long stop, tmp, esize;
+ 	void *content;
+ 	int ret;
+ 
+ 	_enter(",{%lu},%lu,%lu", page->index, offset, size);
+ 
+-	rec = (struct cachefs_index_search_record *) desc->arg.buf;
++	rec = (struct fscache_index_search_record *) desc->arg.buf;
+ 	ret = size;
+ 
+ 	/* round up to the first record boundary after the offset */
+@@ -257,7 +255,7 @@ static int cachefs_index_search_actor(re
+ 
+ 	for (; offset + esize <= stop; offset += esize) {
+ 		struct cachefs_ondisc_index_entry *xent = content + offset;
+-		cachefs_match_val_t result;
++		fscache_match_val_t result;
+ 		unsigned ixentry;
+ 
+ 		/* ignore invalid entries */
+@@ -273,13 +271,13 @@ static int cachefs_index_search_actor(re
+ 						 xent->u.data);
+ 
+ 		switch (result) {
+-		case CACHEFS_MATCH_SUCCESS_UPDATE:
++		case FSCACHE_MATCH_SUCCESS_UPDATE:
+ 			/* the netfs said that it matched, but needs
+ 			 * updating */
+ 			cachefs_index_search_update(rec, page, ixentry, offset,
+ 						    xent->ino);
+ 
+-		case CACHEFS_MATCH_SUCCESS:
++		case FSCACHE_MATCH_SUCCESS:
+ 			/* the netfs said that it matched */
+ 			rec->entry = tmp;
+ 			rec->ino   = xent->ino;
+@@ -299,13 +297,13 @@ static int cachefs_index_search_actor(re
+ 			ret = 0;
+ 			break;
+ 
+-		case CACHEFS_MATCH_SUCCESS_DELETE:
++		case FSCACHE_MATCH_SUCCESS_DELETE:
+ 			/* the netfs said that it matched, but this entry
+ 			 * should be marked obsolete */
+ 			cachefs_index_search_delete(rec, page, ixentry, offset,
+ 						    xent->ino);
+ 
+-		case CACHEFS_MATCH_FAILED:
++		case FSCACHE_MATCH_FAILED:
+ 			/* the netfs said there wasn't a valid match */
+ 		default:
+ 			break;
+@@ -330,26 +328,23 @@ static int cachefs_index_search_actor(re
+  * - returns 0 if found, and stores the entry number in *_entry and the inode
+  *   number of the backing file in *_ino
+  */
+-int cachefs_index_search(struct cachefs_inode *index,
+-			 struct cachefs_cookie *target,
+-			 unsigned *_entry,
+-			 unsigned *_ino)
++int cachefs_index_search(struct fscache_node *node,
++			 struct fscache_cookie *target,
++			 struct fscache_search_result *result)
+ {
+-	struct cachefs_index_search_record rec;
++	struct fscache_index_search_record rec;
++	struct cachefs_inode *index;
+ 	struct file_ra_state ra;
+ 	read_descriptor_t desc;
+ 	loff_t pos;
+ 	int ret;
+ 
++	index = container_of(node, struct cachefs_inode, node);
++
+ 	_enter("{%s,%lu,%Lu}",
+-	       index->cookie->idef->name,
++	       index->node.cookie->idef->name,
+ 	       index->vfs_inode.i_ino,
+-	       i_size_read(index->vfs_inode));
+-
+-	if (_entry)
+-		*_entry = UINT_MAX;
+-	if (_ino)
+-		*_ino = 0;
++	       i_size_read(&index->vfs_inode));
+ 
+ 	ret = -ENOENT;
+ 	if (i_size_read(&index->vfs_inode) == 0)
+@@ -357,7 +352,7 @@ int cachefs_index_search(struct cachefs_
+ 
+ 	/* prepare a record of what we want to do */
+ 	rec.iinode	= index;
+-	rec.index	= index->cookie;
++	rec.index	= index->node.cookie;
+ 	rec.target	= target;
+ 	rec.entsize	= rec.iinode->index_esize;
+ 	rec.entry	= UINT_MAX;
+@@ -388,11 +383,7 @@ int cachefs_index_search(struct cachefs_
+ 	else {
+ 		/* we found an entry */
+ 		BUG_ON(rec.ino == 0);
+-
+-		if (_entry)
+-			*_entry = rec.entry;
+-		if (_ino)
+-			*_ino = rec.ino;
++		result->ino = rec.ino;
+ 		ret = 0;
+ 	}
+ 
+@@ -408,12 +399,12 @@ int cachefs_index_search(struct cachefs_
+  */
+ static int cachefs_index_preinit_page(void *data, struct page *page)
+ {
+-	struct cachefs_page *pageio;
++	struct fscache_page *pageio;
+ 
+ 	_enter(",%p{%lu}", page, page->index);
+ 
+ 	/* attach a mapping cookie to the page */
+-	pageio = cachefs_page_get_private(page, GFP_KERNEL);
++	pageio = fscache_page_get_private(page, GFP_KERNEL);
+ 	if (IS_ERR(pageio)) {
+ 		_leave(" = %ld", PTR_ERR(pageio));
+ 		return PTR_ERR(pageio);
+@@ -458,7 +449,7 @@ static int cachefs_index_select_free_ent
+ 	cachefs_metadata_postread(iinode, metadata);
+ 
+ 	_debug("free entry: %u [size %Lu]",
+-	       newentry, i_size_read(iinode->vfs_inode));
++	       newentry, i_size_read(&iinode->vfs_inode));
+ 
+ 	/* extend the index file if there are no new entries */
+ 	if (newentry == UINT_MAX) {
+@@ -479,7 +470,7 @@ static int cachefs_index_select_free_ent
+ 			     i_size_read(&iinode->vfs_inode) + PAGE_SIZE);
+ 
+ 		ret = cachefs_indr_io_get_block(&iinode->vfs_inode, page,
+-						cachefs_page_grab_private(page),
++						fscache_page_grab_private(page),
+ 						1);
+ 		if (ret < 0) {
+ 			i_size_write(&iinode->vfs_inode,
+@@ -561,24 +552,27 @@ static int cachefs_index_select_free_ent
+  * - if an inode is successfully allocated *_newino will be set with the inode
+  *   number
+  */
+-int cachefs_index_add(struct cachefs_inode *index,
+-		      struct cachefs_cookie *cookie,
+-		      unsigned *_newino)
++int cachefs_index_add(struct fscache_node *node,
++		      struct fscache_cookie *cookie,
++		      struct fscache_search_result *result)
++//		      unsigned *_newino)
+ {
+ 	struct cachefs_ondisc_index_entry *xent;
+ 	struct cachefs_ondisc_ujnl_index *jindex;
+ 	struct cachefs_ondisc_metadata *metadata;
+-	struct cachefs_search_result *srch;
+ 	struct cachefs_transaction *trans;
+ 	struct cachefs_super *super;
++	struct cachefs_inode *index;
+ 	struct page *inopage, *ixpage;
+ 	unsigned ino, ixentry, offset, inonext, ixnext, ino_offset;
+ 	int ret, loop;
+ 
++	index = container_of(node, struct cachefs_inode, node);
++
+ 	_enter("{%lu},{%s},",
+-	       index->vfs_inode.i_ino, index->cookie->idef->name);
++	       index->vfs_inode.i_ino, index->node.cookie->idef->name);
+ 
+-	*_newino = 0;
++//	*_newino = 0;
+ 
+ 	super	= index->vfs_inode.i_sb->s_fs_info;
+ 	inopage	= NULL;
+@@ -627,9 +621,9 @@ int cachefs_index_add(struct cachefs_ino
+ 	trans->jentry->upblock	= index->metadata->bix;
+ 	trans->jentry->upentry	= index->metadata_offset;
+ 
+-	cachefs_trans_affects_page(trans, cachefs_page_grab_private(ixpage),
++	cachefs_trans_affects_page(trans, fscache_page_grab_private(ixpage),
+ 				   offset, index->index_esize);
+-	cachefs_trans_affects_page(trans, cachefs_page_grab_private(inopage),
++	cachefs_trans_affects_page(trans, fscache_page_grab_private(inopage),
+ 				   ino_offset, super->layout->metadata_size);
+ 
+ 	cachefs_trans_affects_inode(trans, index);
+@@ -642,12 +636,12 @@ int cachefs_index_add(struct cachefs_ino
+ 	jindex->next_ino	= inonext;
+ 	jindex->next_index	= ixnext;
+ 
+-	index->cookie->idef->update(cookie->netfs_data, jindex->data);
++	index->node.cookie->idef->update(cookie->netfs_data, jindex->data);
+ 
+ 	/* if we're adding a new index, we store its definition in the journal
+ 	 * too */
+ 	if (cookie->idef) {
+-		struct cachefs_index_def *definition = cookie->idef;
++		struct fscache_index_def *definition = cookie->idef;
+ 
+ 		jindex->def.dsize = definition->data_size;
+ 		jindex->def.esize = definition->data_size;
+@@ -725,15 +719,8 @@ int cachefs_index_add(struct cachefs_ino
+ 	cachefs_trans_commit(trans);
+ 	trans = NULL;
+ 
+-	/* add the new inode to the cookie's list of search results */
+-	list_for_each_entry(srch, &cookie->search_results, link) {
+-		if (srch->super == super) {
+-			srch->ino = ino;
+-			break;
+-		}
+-	}
+-
+-	*_newino = ino;
++//	*_newino = ino;
++	result->ino = ino;
+ 
+  error:
+ 	cachefs_trans_put(trans);
+@@ -750,38 +737,29 @@ int cachefs_index_add(struct cachefs_ino
+  * update the index entry for an index or data file from the associated netfs
+  * data
+  */
+-int cachefs_index_update(struct cachefs_inode *inode)
++int cachefs_index_update(struct fscache_node *ixnode,
++			 struct fscache_node *node)
+ {
+ 	struct cachefs_ondisc_index_entry *xent;
+ 	struct cachefs_ondisc_metadata *meta;
+-	struct cachefs_cookie *cookie = inode->cookie;
++	struct fscache_cookie *cookie = node->cookie;
+ 	struct cachefs_super *super;
+-	struct cachefs_inode *index;
++	struct cachefs_inode *index, *inode;
+ 	struct cachefs_block *block;
+ 	struct page *ixpage;
+ 	unsigned offs;
+ 	int ret;
+ 
+-	_enter("");
++	index = container_of(ixnode, struct cachefs_inode, node);
++	inode = container_of(node, struct cachefs_inode, node);
++
++	_enter(",");
+ 
+ 	super = inode->vfs_inode.i_sb->s_fs_info;
+ 
+-	if (test_bit(CACHEFS_SUPER_WITHDRAWN, &super->flags))
++	if (fscache_is_cache_withdrawn(&super->cache))
+ 		return 0;
+ 
+-	/* the index entry for this inode lives in the parent index inode */
+-	list_for_each_entry(index,
+-			    &cookie->iparent->backing_inodes,
+-			    cookie_link) {
+-		if (index->vfs_inode.i_sb == inode->vfs_inode.i_sb)
+-			goto found_parent_index_inode;
+-	}
+-
+-	/* hmmm... the parent inode is strangely absent */
+-	BUG();
+-	return -ENOENT;
+-
+- found_parent_index_inode:
+ 	/* find the entry number of this inode's index entry */
+ 	meta = cachefs_metadata_preread(inode);
+ 	offs = meta->pindex_entry;
+diff -puN fs/cachefs/indirection-io.c~turn-cachefs-into-a-cache-backend fs/cachefs/indirection-io.c
+--- 25/fs/cachefs/indirection-io.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/indirection-io.c	Wed Oct  6 16:03:22 2004
+@@ -36,7 +36,7 @@
+ 
+ struct cachefs_io_block_path {
+ 	struct page			*page;
+-	struct cachefs_page		*pageio;	/* page => block mapping */
++	struct fscache_page		*pageio;	/* page => block mapping */
+ 	cachefs_blockix_t		bix;		/* block number for this level */
+ 	unsigned			offset;		/* offset into parent pointer block */
+ 
+@@ -84,7 +84,7 @@ static int cachefs_indr_io_do_readpage(s
+ 				       unsigned nr_pages,
+ 				       sector_t *last_block_in_bio)
+ {
+-	struct cachefs_page *pageio;
++	struct fscache_page *pageio;
+ 	struct inode *inode = page->mapping->host;
+ 	sector_t last_block;
+ 	int ret;
+@@ -92,7 +92,7 @@ static int cachefs_indr_io_do_readpage(s
+ 	_enter("");
+ 
+ 	/* get the page mapping cookie */
+-	pageio = cachefs_page_get_private(page, GFP_KERNEL);
++	pageio = fscache_page_get_private(page, GFP_KERNEL);
+ 	if (IS_ERR(pageio)) {
+ 		ret = PTR_ERR(pageio);
+ 		goto error;
+@@ -128,7 +128,7 @@ static int cachefs_indr_io_do_readpage(s
+ 	 */
+ 	if (!*_bio)
+ 		goto allocate_new_bio;
+-	else if (*last_block_in_bio + 1 != pageio->mapped_block->bix)
++	else if (*last_block_in_bio + 1 != cachefs_mapped_bix(pageio))
+ 		goto dispatch_bio;
+ 
+ 	/* add the page to the current BIO */
+@@ -138,12 +138,12 @@ static int cachefs_indr_io_do_readpage(s
+ 
+ 	/* dispatch the BIO immediately if the current page lives on an
+ 	 * indirection chain boundary */
+-	if (test_bit(CACHEFS_PAGE_BOUNDARY, &pageio->flags)) {
++	if (test_bit(FSCACHE_PAGE_BOUNDARY, &pageio->flags)) {
+ 		submit_bio(READ, *_bio);
+ 		*_bio = NULL;
+ 	}
+ 	else {
+-		*last_block_in_bio = pageio->mapped_block->bix;
++		*last_block_in_bio = cachefs_mapped_bix(pageio);
+ 	}
+ 
+ 	_leave(" = 0");
+@@ -154,7 +154,7 @@ static int cachefs_indr_io_do_readpage(s
+ 	submit_bio(READ, *_bio);
+  allocate_new_bio:
+ 	ret = cachefs_io_alloc(inode->i_sb,
+-			       pageio->mapped_block->bix,
++			       cachefs_mapped_bix(pageio),
+ 			       nr_pages, GFP_KERNEL, _bio);
+ 	if (ret < 0) {
+ 		*_bio = NULL;
+@@ -168,8 +168,7 @@ static int cachefs_indr_io_do_readpage(s
+ 	 */
+  hole:
+ 	ret = -ENODATA;
+-	if (test_bit(CACHEFS_ACTIVE_INODE_ISINDEX,
+-		     &CACHEFS_FS_I(inode)->flags)) {
++	if (test_bit(FSCACHE_NODE_ISINDEX, &CACHEFS_FS_I(inode)->node.flags)) {
+ 		printk("CacheFS: found unexpected hole in index/metadata file:"
+ 		       " ino=%lu pg=%lu\n",
+ 		       inode->i_ino, page->index);
+@@ -395,7 +394,7 @@ static int cachefs_indr_io_get_block_all
+ 						 &block, &step->page);
+ 			if (ret < 0)
+ 				goto error_block;
+-			step->pageio = cachefs_page_grab_private(step->page);
++			step->pageio = fscache_page_grab_private(step->page);
+ 		}
+ 		else {
+ 			ret = cachefs_block_set2(super, jentry->block,
+@@ -581,7 +580,7 @@ static int cachefs_indr_io_get_block_all
+  *   index and must be initialised as part of the final journalling mark
+  */
+ int cachefs_indr_io_get_block(struct inode *vfs_inode, struct page *page,
+-			      struct cachefs_page *pageio, int create)
++			      struct fscache_page *pageio, int create)
+ {
+ 	struct cachefs_io_block_path path[4];
+ 	struct cachefs_inode *inode = CACHEFS_FS_I(vfs_inode);
+@@ -688,10 +687,10 @@ int cachefs_indr_io_get_block(struct ino
+ 	path[pix].offset += inode->metadata_offset;
+ 
+ 	down_read(&inode->metadata_sem);
+-	path[pix + 1].pageio = cachefs_page_grab_private(inode->metadata_page);
++	path[pix + 1].pageio = fscache_page_grab_private(inode->metadata_page);
+ 	up_read(&inode->metadata_sem);
+ 
+-	path[pix + 1].bix = path[pix + 1].pageio->mapped_block->bix;
++	path[pix + 1].bix = cachefs_mapped_bix(path[pix + 1].pageio);
+ 
+ 	ret = 0;
+ 	for (; pix >= 0; pix--) {
+@@ -784,7 +783,7 @@ int cachefs_indr_io_get_block(struct ino
+ 		}
+ 
+ 		if (!step->pageio) {
+-			step->pageio = __cachefs_page_grab_private(step->page);
++			step->pageio = __fscache_page_grab_private(step->page);
+ 			if (!step->pageio) {
+ 				printk("step level %u"
+ 				       " { ptr={%lu}+%u / bix=%u }",
+@@ -812,21 +811,22 @@ int cachefs_indr_io_get_block(struct ino
+ 		return ret;
+ 	}
+ 	else if (path[0].flags & CACHEFS_BLOCK_INIT_NETFSDATA) {
+-		set_bit(CACHEFS_BLOCK_NETFSDATA, &pageio->mapped_block->flags);
++		set_bit(CACHEFS_BLOCK_NETFSDATA,
++			&cachefs_mapped_block(pageio)->flags);
+ 	}
+ 
+ 	/* got the block - set the block offset in the page mapping record */
+ 	if (path[0].flags & CACHEFS_BLOCK_NEW)
+-		set_bit(CACHEFS_PAGE_NEW, &pageio->flags);
++		set_bit(FSCACHE_PAGE_NEW, &pageio->flags);
+ 
+ 	_debug("notboundary = %u", notboundary);
+ 	if (!notboundary)
+-		set_bit(CACHEFS_PAGE_BOUNDARY, &pageio->flags);
++		set_bit(FSCACHE_PAGE_BOUNDARY, &pageio->flags);
+ 
+ 	_leave(" = 0 [bix=%u %c%c]",
+-	       pageio->mapped_block->bix,
+-	       test_bit(CACHEFS_PAGE_BOUNDARY, &pageio->flags)	? 'b' : '-',
+-	       test_bit(CACHEFS_PAGE_NEW, &pageio->flags)	? 'n' : '-'
++	       cachefs_mapped_bix(pageio),
++	       test_bit(FSCACHE_PAGE_BOUNDARY, &pageio->flags)	? 'b' : '-',
++	       test_bit(FSCACHE_PAGE_NEW, &pageio->flags)	? 'n' : '-'
+ 	       );
+ 	return 0;
+ 
+diff -puN fs/cachefs/inode.c~turn-cachefs-into-a-cache-backend fs/cachefs/inode.c
+--- 25/fs/cachefs/inode.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/inode.c	Wed Oct  6 16:03:22 2004
+@@ -125,7 +125,7 @@ static int cachefs_iget_file0(struct cac
+ 	inode->index_esize	= inode->index_dsize;
+ 	inode->index_epp	= PAGE_SIZE / inode->index_esize;
+ 
+-	__set_bit(CACHEFS_ACTIVE_INODE_ISINDEX, &inode->flags);
++	__set_bit(FSCACHE_NODE_ISINDEX, &inode->node.flags);
+ 
+ 	/* read the block containing this inode's meta-data from disc */
+ 	pos = inode->vfs_inode.i_ino << super->layout->metadata_bits;
+@@ -262,7 +262,7 @@ static int cachefs_iget_fileN(struct cac
+ 		inode->vfs_inode.i_op	= &cachefs_root_inode_operations;
+ 		inode->vfs_inode.i_fop	= &cachefs_root_file_operations;
+ 
+-		__set_bit(CACHEFS_ACTIVE_INODE_ISINDEX, &inode->flags);
++		__set_bit(FSCACHE_NODE_ISINDEX, &inode->node.flags);
+ 	}
+ 
+ 	_leave(" = 0");
+@@ -297,10 +297,12 @@ struct cachefs_inode *cachefs_iget(struc
+ 
+ 	/* deal with an existing inode */
+ 	if (!(inode->vfs_inode.i_state & I_NEW)) {
+-		_leave(" = 0 [exist]");
++		_leave(" = %p [exist]", inode);
+ 		return inode;
+ 	}
+ 
++	inode->node.cache = &super->cache;
++
+ 	/* new inode - attempt to find in the on-disc catalogue */
+ 	switch (ino) {
+ 		/* they've asked for the virtual inode that mirrors the
+@@ -346,7 +348,7 @@ struct cachefs_inode *cachefs_iget(struc
+ 	/* success */
+ 	unlock_new_inode(&inode->vfs_inode);
+ 
+-	_leave(" = %p", inode);
++	_leave(" = %p [new]", inode);
+ 	return inode;
+ 
+ 	/* failure */
+diff -puN fs/cachefs/interface.c~turn-cachefs-into-a-cache-backend fs/cachefs/interface.c
+--- 25/fs/cachefs/interface.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/interface.c	Wed Oct  6 16:03:22 2004
+@@ -1,6 +1,6 @@
+-/* interface.c: network FS interface to cache
++/* interface.c: filesystem cache interface
+  *
+- * Copyright (C) 2003 Red Hat, Inc. All Rights Reserved.
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
+  * Written by David Howells (dhowells@redhat.com)
+  *
+  * This program is free software; you can redistribute it and/or
+@@ -10,998 +10,120 @@
+  */
+ 
+ #include <linux/module.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/bio.h>
+ #include "cachefs-int.h"
+ 
+ struct cachefs_io_end {
+-	cachefs_rw_complete_t	func;
++	fscache_rw_complete_t	func;
+ 	void			*data;
+ 	void			*cookie_data;
+ 	struct cachefs_block	*block;
+ };
+ 
+-LIST_HEAD(cachefs_netfs_list);
+-LIST_HEAD(cachefs_cache_list);
+-DECLARE_RWSEM(cachefs_addremove_sem);
+-
+-kmem_cache_t *cachefs_cookie_jar;
+-
+-static cachefs_match_val_t cachefs_fsdef_index_match(void *target,
+-						     const void *entry);
+-
+-static void cachefs_fsdef_index_update(void *source, void *entry);
+-
+-static struct cachefs_index_def cachefs_fsdef_index_def = {
+-	.name		= ".fsdef",
+-	.data_size	= sizeof(struct cachefs_ondisc_fsdef),
+-	.match		= cachefs_fsdef_index_match,
+-	.update		= cachefs_fsdef_index_update
+-};
+-
+-static struct cachefs_cookie cachefs_fsdef_index = {
+-	.usage		= ATOMIC_INIT(1),
+-	.idef		= &cachefs_fsdef_index_def,
+-	.sem		= __RWSEM_INITIALIZER(cachefs_fsdef_index.sem),
+-	.search_results	= LIST_HEAD_INIT(cachefs_fsdef_index.search_results),
+-	.backing_inodes	= LIST_HEAD_INIT(cachefs_fsdef_index.backing_inodes),
+-};
+-
+-static void __cachefs_cookie_put(struct cachefs_cookie *cookie);
+-static inline void cachefs_cookie_put(struct cachefs_cookie *cookie)
+-{
+-	BUG_ON(atomic_read(&cookie->usage) <= 0);
+-
+-	if (atomic_dec_and_test(&cookie->usage))
+-		__cachefs_cookie_put(cookie);
+-
+-}
+-
+ /*****************************************************************************/
+ /*
+- * register a network filesystem for caching
++ * look up the nominated node for this cache
+  */
+-int __cachefs_register_netfs(struct cachefs_netfs *netfs,
+-			     struct cachefs_index_def *primary_idef)
+-{
+-	struct cachefs_netfs *ptr;
+-	int ret;
+-
+-	_enter("{%s}", netfs->name);
+-
+-	INIT_LIST_HEAD(&netfs->link);
+-
+-	/* allocate a cookie for the primary index */
+-	netfs->primary_index =
+-		kmem_cache_alloc(cachefs_cookie_jar, SLAB_KERNEL);
+-
+-	if (!netfs->primary_index) {
+-		_leave(" = -ENOMEM");
+-		return -ENOMEM;
+-	}
+-
+-	/* initialise the primary index cookie */
+-	memset(netfs->primary_index, 0, sizeof(*netfs->primary_index));
+-
+-	atomic_set(&netfs->primary_index->usage, 1);
+-	atomic_set(&netfs->primary_index->children, 0);
+-
+-	netfs->primary_index->idef		= primary_idef;
+-	netfs->primary_index->iparent		= &cachefs_fsdef_index;
+-	netfs->primary_index->netfs		= netfs;
+-	netfs->primary_index->netfs_data	= netfs;
+-
+-	atomic_inc(&netfs->primary_index->iparent->usage);
+-	atomic_inc(&netfs->primary_index->iparent->children);
+-
+-	INIT_LIST_HEAD(&netfs->primary_index->search_results);
+-	INIT_LIST_HEAD(&netfs->primary_index->backing_inodes);
+-	init_rwsem(&netfs->primary_index->sem);
+-
+-	/* check the netfs type is not already present */
+-	down_write(&cachefs_addremove_sem);
+-
+-	ret = -EEXIST;
+-	list_for_each_entry(ptr, &cachefs_netfs_list,link) {
+-		if (strcmp(ptr->name, netfs->name) == 0)
+-			goto already_registered;
+-	}
+-
+-	list_add(&netfs->link, &cachefs_netfs_list);
+-	ret = 0;
+-
+-	printk("CacheFS: netfs '%s' registered for caching\n", netfs->name);
+-
+- already_registered:
+-	up_write(&cachefs_addremove_sem);
+-
+-	if (ret < 0) {
+-		netfs->primary_index->iparent = NULL;
+-		__cachefs_cookie_put(netfs->primary_index);
+-		netfs->primary_index = NULL;
+-	}
+-
+-	_leave(" = %d", ret);
+-	return ret;
+-
+-} /* end __cachefs_register_netfs() */
+-
+-EXPORT_SYMBOL(__cachefs_register_netfs);
+-
+-/*****************************************************************************/
+-/*
+- * unregister a network filesystem from the cache
+- * - all cookies must have been released first
+- */
+-void __cachefs_unregister_netfs(struct cachefs_netfs *netfs)
+-{
+-	_enter("{%s.%u}", netfs->name, netfs->version);
+-
+-	down_write(&cachefs_addremove_sem);
+-
+-	list_del(&netfs->link);
+-	cachefs_relinquish_cookie(netfs->primary_index, 0);
+-
+-	up_write(&cachefs_addremove_sem);
+-
+-	printk("CacheFS: netfs '%s' unregistered from caching\n", netfs->name);
+-
+-	_leave("");
+-
+-} /* end __cachefs_unregister_netfs() */
+-
+-EXPORT_SYMBOL(__cachefs_unregister_netfs);
+-
+-/*****************************************************************************/
+-/*
+- * declare a mounted cache as being open for business
+- * - try not to allocate memory as disposing of the superblock is a pain
+- */
+-void cachefs_add_cache(struct cachefs_super *super,
+-		       struct cachefs_search_result *srch)
+-{
+-	struct cachefs_inode *ifsdef;
+-
+-	_enter("");
+-
+-	/* prepare an active-inode record for the FSDEF index of this cache */
+-	ifsdef = cachefs_iget(super, CACHEFS_INO_FSDEF_CATALOGUE);
+-	if (IS_ERR(ifsdef))
+-		/* there shouldn't be an error as FSDEF is the root dir of the
+-		 * FS and so should already be in core */
+-		BUG();
+-
+-	if (!cachefs_igrab(ifsdef))
+-		BUG();
+-
+-	ifsdef->cookie = &cachefs_fsdef_index;
+-
+-	srch->super	= super;
+-	srch->ino	= CACHEFS_INO_FSDEF_CATALOGUE;
+-
+-	down_write(&cachefs_addremove_sem);
+-
+-	/* add the superblock to the list */
+-	list_add(&super->mnt_link, &cachefs_cache_list);
+-
+-	/* add the cache's netfs definition index inode to the superblock's
+-	 * list */
+-	spin_lock(&super->ino_list_lock);
+-	list_add_tail(&ifsdef->super_link, &super->ino_list);
+-	spin_unlock(&super->ino_list_lock);
+-
+-	/* add the cache's netfs definition index inode to the top level index
+-	 * cookie as a known backing inode */
+-	down_write(&cachefs_fsdef_index.sem);
+-
+-	list_add_tail(&srch->link, &cachefs_fsdef_index.search_results);
+-	list_add_tail(&ifsdef->cookie_link,
+-		      &cachefs_fsdef_index.backing_inodes);
+-	atomic_inc(&cachefs_fsdef_index.usage);
+-
+-	up_write(&cachefs_fsdef_index.sem);
+-
+-	up_write(&cachefs_addremove_sem);
+-
+-	_leave("");
+-
+-} /* end cachefs_add_cache() */
+-
+-/*****************************************************************************/
+-/*
+- * withdraw an unmounted cache from the active service
+- */
+-void cachefs_withdraw_cache(struct cachefs_super *super)
++static struct fscache_node *cachefs_lookup_node(struct fscache_cache *cache,
++						unsigned ino)
+ {
++	struct cachefs_super *super;
+ 	struct cachefs_inode *inode;
+ 
+-	_enter("");
+-
+-	/* make the cache unavailable for cookie acquisition */
+-	set_bit(CACHEFS_SUPER_WITHDRAWN, &super->flags);
+-
+-	down_write(&cachefs_addremove_sem);
+-	list_del_init(&super->mnt_link);
+-	up_write(&cachefs_addremove_sem);
+-
+-	/* mark all inodes as being withdrawn */
+-	spin_lock(&super->ino_list_lock);
+-	list_for_each_entry(inode, &super->ino_list, super_link) {
+-		set_bit(CACHEFS_ACTIVE_INODE_WITHDRAWN, &inode->flags);
+-	}
+-	spin_unlock(&super->ino_list_lock);
+-
+-	/* make sure all pages pinned by operations on behalf of the netfs are
+-	 * written to disc */
+-	cachefs_trans_sync(super, CACHEFS_TRANS_SYNC_WAIT_FOR_ACK);
+-
+-	/* mark all active blocks as being withdrawn */
+-	cachefs_block_withdraw(super);
+-
+-	/* we now have to destroy all the active inodes pertaining to this
+-	 * superblock */
+-	spin_lock(&super->ino_list_lock);
+-
+-	while (!list_empty(&super->ino_list)) {
+-		inode = list_entry(super->ino_list.next, struct cachefs_inode,
+-				   super_link);
+-		list_del(&inode->super_link);
+-		spin_unlock(&super->ino_list_lock);
+-
+-		/* we've extracted an active inode from the tree - now dispose
+-		 * of it */
+-		cachefs_withdraw_inode(inode);
+-		cachefs_iput(inode);
+-
+-		spin_lock(&super->ino_list_lock);
+-	}
+-
+-	spin_unlock(&super->ino_list_lock);
+-
+-	_leave("");
+-
+-} /* end cachefs_withdraw_cache() */
+-
+-/*****************************************************************************/
+-/*
+- * withdraw an inode from active service
+- * - need break the links to a cached object cookie
+- * - called under two situations:
+- *   (1) recycler decides to reclaim an in-use inode
+- *   (2) a cache is unmounted
+- * - have to take care as the cookie can be being relinquished by the netfs
+- *   simultaneously
+- * - the active inode is pinned by the caller holding a refcount on it
+- */
+-void cachefs_withdraw_inode(struct cachefs_inode *inode)
+-{
+-	struct cachefs_search_result *srch;
+-	struct cachefs_cookie *cookie, *xcookie = NULL;
+-
+-	_enter("{ino=%lu cnt=%u ck=%p}",
+-	       inode->vfs_inode.i_ino, atomic_read(&inode->vfs_inode.i_count),
+-	       inode->cookie);
+-
+-	/* first of all we have to break the links between the inode and the
+-	 * cookie
+-	 * - we have to hold both semaphores BUT we have to get the cookie sem
+-	 *   FIRST
+-	 */
+-	down(&inode->vfs_inode.i_sem);
+-
+-	cookie = inode->cookie;
+-	if (cookie) {
+-		/* pin the cookie so that is doesn't escape */
+-		atomic_inc(&cookie->usage);
+-
+-		/* re-order the locks to avoid deadlock */
+-		up(&inode->vfs_inode.i_sem);
+-		down_write(&cookie->sem);
+-		down(&inode->vfs_inode.i_sem);
+-
+-		/* erase references from the inode to the cookie */
+-		list_del_init(&inode->cookie_link);
+-
+-		xcookie = inode->cookie;
+-		inode->cookie = NULL;
+-
+-		/* delete the search result record for this inode from the
+-		 * cookie's list */
+-		list_for_each_entry(srch, &cookie->search_results, link) {
+-			if (srch->super == inode->vfs_inode.i_sb->s_fs_info)
+-				goto found_record;
+-		}
+-		BUG();
+-
+-	found_record:
+-		list_del(&srch->link);
+-		dbgfree(srch);
+-		kfree(srch);
+-
+-		up_write(&cookie->sem);
+-	}
+-
+-	up(&inode->vfs_inode.i_sem);
+-
+-	/* we've broken the links between cookie and inode */
+-	if (xcookie) {
+-		cachefs_cookie_put(xcookie);
+-		cachefs_iput(inode);
+-	}
+-
+-	/* unpin the cookie */
+-	if (cookie)
+-		cachefs_cookie_put(cookie);
+-
+-	_leave("");
+-
+-} /* end cachefs_withdraw_inode() */
+-
+-/*****************************************************************************/
+-/*
+- * search for representation of an object in its parent cache
+- * - the cookie must be locked by the caller
+- * - returns -ENODATA if the object or one of its ancestors doesn't exist
+- */
+-static int cachefs_search_for_object(struct cachefs_cookie *cookie,
+-				     struct cachefs_super *super)
+-{
+-	struct cachefs_search_result *srch;
+-	struct cachefs_cookie *iparent;
+-	struct cachefs_inode *ipinode, *inode;
+-	int ret;
+-
+-	iparent = cookie->iparent;
+-	if (!iparent)
+-		return 0; /* FSDEF entries don't have a parent */
+-
+-	_enter("{%s/%s},",
+-	       iparent->idef->name,
+-	       cookie->idef ? (char *) cookie->idef->name : "<file>");
+-
+-	/* see if there's a search result for this object already */
+-	list_for_each_entry(srch, &cookie->search_results, link) {
+-		_debug("check entry %p x %p [ino %u]",
+-		       cookie, super, srch->ino);
+-
+-		if (srch->super == super) {
+-			_debug("found entry");
+-
+-			if (srch->ino) {
+-				_leave(" = 0 [found ino %u]", srch->ino);
+-				return 0;
+-			}
+-
+-			/* entry is negative */
+-			_leave(" = -ENODATA");
+-			return -ENODATA;
+-		}
+-	}
+-
+-	/* allocate an initially negative entry for this object */
+-	_debug("alloc entry %p x %p", cookie, super);
+-
+-	srch = kmalloc(sizeof(*srch), GFP_KERNEL);
+-	if (!srch) {
+-		_leave(" = -ENOMEM");
+-		return -ENOMEM;
+-	}
+-
+-	memset(srch, 0, sizeof(*srch));
+-
+-	srch->super	= super;
+-	srch->ino	= 0;
+-	INIT_LIST_HEAD(&srch->link);
+-
+- 	/* we need see if there's an entry for this cache in this object's
+-	 * parent index, so the first thing to do is to see if the parent index
+-	 * is represented on disc
+-	 */
+-	down_read(&iparent->sem);
+-
+-	ret = cachefs_search_for_object(iparent, super);
+-	if (ret < 0) {
+-		if (ret != -ENODATA)
+-			goto error;
+-
+-		/* set a negative entry */
+-		list_add_tail(&srch->link, &cookie->search_results);
+-		goto done;
+-	}
+-
+-	/* find the parent's backing inode */
+-	list_for_each_entry(ipinode, &iparent->backing_inodes, cookie_link) {
+-		if (ipinode->vfs_inode.i_sb->s_fs_info == super)
+-			goto found_parent_entry;
+-	}
+-
+-	BUG();
+-
+- found_parent_entry:
+-	_debug("found_parent_entry");
+-
+-	/* search the parent index for a reference compatible with this
+-	 * object */
+-	ret = cachefs_index_search(ipinode, cookie, NULL, &srch->ino);
+-	switch (ret) {
+-	default:
+-		goto error;
+-
+-	case 0:
+-		/* found - allocate an inode */
+-		inode = cachefs_iget(super, srch->ino);
+-		if (IS_ERR(inode)) {
+-			ret = PTR_ERR(inode);
+-			goto error;
+-		}
+-
+-		down(&inode->vfs_inode.i_sem);
+-
+-		BUG_ON(!list_empty(&inode->cookie_link));
+-
+-		/* attach the inode to the superblock's inode list */
+-		if (list_empty(&inode->super_link)) {
+-			if (!cachefs_igrab(inode))
+-				goto igrab_failed_upput;
+-
+-			spin_lock(&super->ino_list_lock);
+-			list_add_tail(&inode->super_link, &super->ino_list);
+-			spin_unlock(&super->ino_list_lock);
+-		}
+-
+-		/* attach the inode to the cookie */
+-		inode->cookie = cookie;
+-		list_add_tail(&srch->link, &cookie->search_results);
+-		list_add_tail(&inode->cookie_link, &cookie->backing_inodes);
+-		atomic_inc(&cookie->usage);
+-
+-		up(&inode->vfs_inode.i_sem);
+-		break;
+-
+-	case -ENOENT:
+-		/* we can at least set a valid negative entry */
+-		list_add_tail(&srch->link, &cookie->search_results);
+-		ret = -ENODATA;
+-		break;
+-	}
+-
+- done:
+-	up_read(&iparent->sem);
+-	_leave(" = %d", ret);
+-	return ret;
+-
+- igrab_failed_upput:
+-	up(&inode->vfs_inode.i_sem);
+-	cachefs_iput(inode);
+-	ret = -ENOENT;
+- error:
+-	up_read(&iparent->sem);
+-	dbgfree(srch);
+-	kfree(srch);
+-	_leave(" = %d", ret);
+-	return ret;
+-
+-} /* end cachefs_search_for_object() */
+-
+-/*****************************************************************************/
+-/*
+- * instantiate the object in the specified cache
+- * - the cookie must be write-locked by the caller
+- * - search must have been performed first (so lists of search results are
+- *   filled out)
+- * - all parent index objects are instantiated if necessary
+- */
+-static int cachefs_instantiate_object(struct cachefs_cookie *cookie,
+-				      struct cachefs_super *super)
+-{
+-	struct cachefs_search_result *srch;
+-	struct cachefs_cookie *iparent;
+-	struct cachefs_inode *ipinode, *inode;
+-	int ret;
+-
+-	iparent = cookie->iparent;
+-	if (!iparent)
+-		return 0; /* FSDEF entries don't have a parent */
+-
+-	_enter("{%s/%s},",
+-	       iparent->idef->name,
+-	       cookie->idef ? (char *) cookie->idef->name : "<file>");
+-
+-	/* find the search result for this object */
+-	list_for_each_entry(srch, &cookie->search_results, link) {
+-		if (srch->super == super)
+-			goto found_search_result;
+-	}
+-
+-	BUG();
+-
+- found_search_result:
+-	if (srch->ino) {
+-		/* it was instantiated already */
+-		_leave(" = 0 [found ino %u]", srch->ino);
+-		return 0;
+-	}
+-
+-	/* we need to insert an entry for this cache in the object's parent
+-	 * index, so the first thing to do is make sure that the parent index
+-	 * is represented on disc
+-	 */
+-	down_write(&iparent->sem);
+-
+-	ret = cachefs_instantiate_object(iparent, super);
+-	if (ret < 0)
+-		goto error;
+-
+-	/* the parent index's inode should now be available */
+-	list_for_each_entry(ipinode, &iparent->backing_inodes, cookie_link) {
+-		if (ipinode->vfs_inode.i_sb->s_fs_info == super)
+-			goto found_parent_inode;
+-	}
+-
+-	BUG();
+-
+- found_parent_inode:
+-	_debug("found_parent_inode: ino=%lu", ipinode->vfs_inode.i_ino);
+-
+-	BUG_ON(ipinode->cookie != iparent);
++	_enter("%p,%d", cache, ino);
+ 
+-	/* allocate an entry within the parent index inode */
+-	ret = cachefs_index_add(ipinode, cookie, &srch->ino);
+-	if (ret < 0)
+-		goto error;
++	super = container_of(cache, struct cachefs_super, cache);
+ 
+-	/* we're going to need an in-memory reflection of the inode too */
+-	inode = cachefs_iget(super, srch->ino);
++	inode = cachefs_iget(super, ino);
+ 	if (IS_ERR(inode)) {
+-		ret = PTR_ERR(inode);
+-		goto error_x; /* uh-oh... our search record is now wrong */
++		_leave(" = %ld [error]", PTR_ERR(inode));
++		return ERR_PTR(PTR_ERR(inode));
+ 	}
+ 
+-	/* keep track of it */
+-	down(&inode->vfs_inode.i_sem);
++	_leave(" = %p", &inode->node);
++	return &inode->node;
+ 
+-	BUG_ON(!list_empty(&inode->cookie_link));
+-
+-	/* attach to the superblock's inode list */
+-	if (list_empty(&inode->super_link)) {
+-		if (!cachefs_igrab(inode))
+-			goto error_xi;
+-
+-		spin_lock(&super->ino_list_lock);
+-		list_add_tail(&inode->super_link, &super->ino_list);
+-		spin_unlock(&super->ino_list_lock);
+-	}
+-
+-	/* attach to the cookie's search result list */
+-	inode->cookie = cookie;
+-	list_add_tail(&inode->cookie_link, &cookie->backing_inodes);
+-	atomic_inc(&cookie->usage);
+-
+-	/* done */
+-	up(&inode->vfs_inode.i_sem);
+-	up_write(&iparent->sem);
+-	_leave(" = 0 [new]");
+-	return 0;
+-
+-	/* if we get an error after having instantiated an inode on disc, just
+-	 * discard the search record so we find it next time */
+- error_xi:
+-	up(&inode->vfs_inode.i_sem);
+-	cachefs_iput(inode);
+-	ret = -ENOENT;
+- error_x:
+-	list_del(&srch->link);
+-	dbgfree(srch);
+-	kfree(srch);
+-	srch = NULL;
+- error:
+-	up_write(&iparent->sem);
+-	_leave(" = %d", ret);
+-	return ret;
+-
+-} /* end cachefs_instantiate_object() */
++} /* end cachefs_lookup_node() */
+ 
+ /*****************************************************************************/
+ /*
+- * select a cache on which to store a file
+- * - the cache addremove semaphore must be at least read-locked by the caller
++ * increment the usage count on this inode (may fail if unmounting)
+  */
+-static struct cachefs_super *cachefs_select_cache_for_file(void)
+-{
+-	struct cachefs_super *super;
+-
+-	_enter("");
+-
+-	/* TODO: make more intelligent than just choosing the first cache */
+-	super = NULL;
+-	if (!list_empty(&cachefs_cache_list))
+-		super = list_entry(cachefs_cache_list.next,
+-				   struct cachefs_super,
+-				   mnt_link);
+-
+-	_leave(" = %p", super);
+-	return super;
+-
+-} /* end cachefs_select_cache_for_file() */
+-
+-/*****************************************************************************/
+-/*
+- * request a cookie to represent a data file or an index
+- * - iparent specifies the parent index to pin in memory
+- *   - the top level index cookie for each netfs is stored in the cachefs_netfs
+- *     struct upon registration
+- * - idef is NULL for a data file
+- * - idef points to the definition for an index
+- * - the netfs_data will be passed to the functions pointed to in *idef
+- * - all attached caches will be searched to see if they contain this object
+- * - index objects aren't stored on disc until there's a dependent file that
+- *   needs storing
+- * - file objects are stored in a selected cache immediately, and all the
+- *   indexes forming the path to it are instantiated if necessary
+- * - we never let on to the netfs about errors
+- *   - we may set a negative cookie pointer, but that's okay
+- */
+-struct cachefs_cookie *__cachefs_acquire_cookie(struct cachefs_cookie *iparent,
+-						struct cachefs_index_def *idef,
+-						void *netfs_data)
+-{
+-	struct cachefs_cookie *cookie;
+-	struct cachefs_super *super;
+-	int ret = 0;
+-
+-	_enter("{%s},{%s},%p",
+-	       iparent ? (char *) iparent->idef->name : "<no-parent>",
+-	       idef ? (char *) idef->name : "<file>",
+-	       netfs_data);
+-
+-	/* if it's going to be an index then validate the index data */
+-	if (idef) {
+-		int dsize;
+-		int loop;
+-
+-		if (!idef->name[0]) {
+-			printk("CacheFS: %s.%s.%p: nameless index\n",
+-			       iparent->netfs->name,
+-			       iparent->idef->name,
+-			       idef);
+-			return CACHEFS_NEGATIVE_COOKIE;
+-		}
+-
+-		dsize = CACHEFS_ONDISC_UJNL_MIN_REC_SIZE -
+-			sizeof(struct cachefs_ondisc_update_journal);
+-
+-		if (idef->data_size > dsize) {
+-			printk("CacheFS: %s.%s.%s:"
+-			       " index data size exceeds maximum %u>%d\n",
+-			       iparent->netfs->name,
+-			       iparent->idef->name,
+-			       idef->name,
+-			       idef->data_size,
+-			       dsize);
+-			return CACHEFS_NEGATIVE_COOKIE;
+-		}
+-
+-		for (loop = 0; loop < 4; loop++) {
+-			if (idef->keys[loop].type >=
+-			    CACHEFS_INDEX_KEYS__LAST) {
+-				printk("CacheFS: %s.%s.%s:"
+-				       " index type %u unsupported\n",
+-				       iparent->netfs->name,
+-				       iparent->idef->name,
+-				       idef->name,
+-				       idef->keys[loop].type);
+-				return CACHEFS_NEGATIVE_COOKIE;
+-			}
+-
+-			dsize -= idef->keys[loop].len;
+-			if (dsize < 0) {
+-				printk("CacheFS: %s.%s.%s:"
+-				       " index key size exceeds data size\n",
+-				       iparent->netfs->name,
+-				       iparent->idef->name,
+-				       idef->name);
+-				return CACHEFS_NEGATIVE_COOKIE;
+-			}
+-		}
+-	}
+-
+-	/* if there's no parent cookie, then we don't create one here either */
+-	if (iparent == CACHEFS_NEGATIVE_COOKIE) {
+-		_leave(" [no parent]");
+-		return CACHEFS_NEGATIVE_COOKIE;
+-	}
+-
+-	/* allocate and initialise a cookie */
+-	cookie = kmem_cache_alloc(cachefs_cookie_jar, SLAB_KERNEL);
+-	if (!cookie) {
+-		_leave(" [ENOMEM]");
+-		return CACHEFS_NEGATIVE_COOKIE;
+-	}
+-
+-	atomic_set(&cookie->usage, 1);
+-	atomic_set(&cookie->children, 0);
+-
+-	atomic_inc(&iparent->usage);
+-	atomic_inc(&iparent->children);
+-
+-	cookie->idef		= idef;
+-	cookie->iparent		= iparent;
+-	cookie->netfs		= iparent->netfs;
+-	cookie->netfs_data	= netfs_data;
+-
+-	/* now we need to see whether the backing objects for this cookie yet
+-	 * exist, if not there'll be nothing to search */
+-	down_read(&cachefs_addremove_sem);
+-
+-	if (list_empty(&cachefs_cache_list)) {
+-		up_read(&cachefs_addremove_sem);
+-		_leave(" [no caches]");
+-		return cookie;
+-	}
+-
+-	down_write(&cookie->sem);
+-
+-	/* search every cache we know about to see if the object is already
+-	 * present */
+-	list_for_each_entry(super, &cachefs_cache_list, mnt_link) {
+-		ret = cachefs_search_for_object(cookie, super);
+-		switch (ret) {
+-		case 0:
+-			if (!cookie->idef)
+-				break;	/* only want the first file entry */
+-		case -ENODATA:
+-			ret = 0;
+-			continue;
+-		default:
+-			goto error;
+-		}
+-	}
+-
+-	/* if the object is a cookie then we need do nothing more here - we
+-	 * create indexes on disc when we need them as an index may exist in
+-	 * multiple caches */
+-	if (cookie->idef)
+-		goto done;
+-
+-	/* the object is a file - we need to select a cache in which to store
+-	 * it */
+-	ret = -ENOMEDIUM;
+-	super = cachefs_select_cache_for_file();
+-	if (!super)
+-		goto error; /* couldn't decide on a cache */
+-
+-	/* create a file index entry on disc, along with all the indexes
+-	 * required to find it again later */
+-	ret = cachefs_instantiate_object(cookie, super);
+-	if (ret == 0)
+-		goto done;
+-
+- error:
+-	printk("CacheFS: error from cache fs: %d\n", ret);
+-	if (cookie) {
+-		__cachefs_cookie_put(cookie);
+-		cookie = CACHEFS_NEGATIVE_COOKIE;
+-		atomic_dec(&iparent->children);
+-	}
+-
+- done:
+-	up_write(&cookie->sem);
+-	up_read(&cachefs_addremove_sem);
+-	_leave(" = %p", cookie);
+-	return cookie;
+-
+-} /* end __cachefs_acquire_cookie() */
+-
+-EXPORT_SYMBOL(__cachefs_acquire_cookie);
+-
+-/*****************************************************************************/
+-/*
+- * release a cookie back to the cache
+- * - the object will be marked as recyclable on disc if retire is true
+- * - all dependents of this cookie must have already been unregistered
+- *   (indexes/files/pages)
+- */
+-void __cachefs_relinquish_cookie(struct cachefs_cookie *cookie, int retire)
++static struct fscache_node *cachefs_grab_node(struct fscache_node *node)
+ {
+ 	struct cachefs_inode *inode;
++	struct fscache_node *ret;
+ 
+-	_enter("%p{%s},%d",
+-	       cookie,
+-	       cookie && cookie->idef ? (char *) cookie->idef->name : "<file>",
+-	       retire);
+-
+-	if (cookie == CACHEFS_NEGATIVE_COOKIE) {
+-		_leave(" [no cookie]");
+-		return;
+-	}
++	_enter("%p", node);
+ 
+-	if (atomic_read(&cookie->children) != 0) {
+-		printk("CacheFS: cookie still has children\n");
+-		BUG();
+-	}
++	inode = container_of(node, struct cachefs_inode, node);
++	inode = cachefs_igrab(inode);
++	ret = (inode ? &inode->node : NULL);
+ 
+-	/* detach pointers back to netfs */
+-	down_write(&cookie->sem);
+-
+-	cookie->netfs_data	= NULL;
+-	cookie->idef		= NULL;
+-
+-	/* queue retired objects for recycling */
+-	if (retire) {
+-		list_for_each_entry(inode,
+-				    &cookie->backing_inodes,
+-				    cookie_link) {
+-			set_bit(CACHEFS_ACTIVE_INODE_RECYCLING, &inode->flags);
+-		}
+-	}
+-
+-	/* break links with all the active inodes */
+-	while (!list_empty(&cookie->backing_inodes)) {
+-		inode = list_entry(cookie->backing_inodes.next,
+-				   struct cachefs_inode,
+-				   cookie_link);
+-
+-		/* detach each cache inode from the object cookie */
+-		set_bit(CACHEFS_ACTIVE_INODE_RELEASING, &inode->flags);
+-
+-		list_del_init(&inode->cookie_link);
+-
+-		down(&inode->vfs_inode.i_sem);
+-		inode->cookie = NULL;
+-		up(&inode->vfs_inode.i_sem);
+-
+-		if (atomic_dec_and_test(&cookie->usage))
+-			/* the cookie refcount shouldn't be reduced to 0 yet */
+-			BUG();
+-
+-		cachefs_iput(inode);
+-	}
+-
+-	up_write(&cookie->sem);
+-
+-	if (cookie->iparent)
+-		atomic_dec(&cookie->iparent->children);
+-
+-	/* finally dispose of the cookie */
+-	cachefs_cookie_put(cookie);
+-
+-	_leave("");
+-
+-} /* end __cachefs_relinquish_cookie() */
++	_leave(" = %p", ret);
++	return ret;
+ 
+-EXPORT_SYMBOL(__cachefs_relinquish_cookie);
++} /* end cachefs_grab_node() */
+ 
+ /*****************************************************************************/
+ /*
+- * update the index entries backing a cookie
++ * lock a semaphore on a node
+  */
+-void __cachefs_update_cookie(struct cachefs_cookie *cookie)
++static void cachefs_lock_node(struct fscache_node *node)
+ {
+ 	struct cachefs_inode *inode;
+ 
+-	_enter("{%s}",
+-	       cookie &&
+-	       cookie->idef ? (char *) cookie->idef->name : "<file>");
+-
+-	if (cookie == CACHEFS_NEGATIVE_COOKIE) {
+-		_leave(" [no cookie]");
+-		return;
+-	}
+-
+-	down_read(&cookie->sem);
+-	down_read(&cookie->iparent->sem);
+-
+-	/* update the index entry on disc in each cache backing this cookie */
+-	list_for_each_entry(inode, &cookie->backing_inodes, cookie_link) {
+-		cachefs_index_update(inode);
+-	}
+-
+-	up_read(&cookie->iparent->sem);
+-	up_read(&cookie->sem);
+-	_leave("");
+-
+-} /* end __cachefs_update_cookie() */
+-
+-EXPORT_SYMBOL(__cachefs_update_cookie);
+-
+-/*****************************************************************************/
+-/*
+- * see if the netfs definition matches
+- */
+-static cachefs_match_val_t cachefs_fsdef_index_match(void *target,
+-						     const void *entry)
+-{
+-	const struct cachefs_ondisc_fsdef *fsdef = entry;
+-	struct cachefs_netfs *netfs = target;
++	_enter("%p", node);
+ 
+-	_enter("%p,%p", target, entry);
+-
+-	/* name and version must both match with what's on disc */
+-	_debug("{%s.%u},{%s.%u}",
+-	       netfs->name, netfs->version, fsdef->name, fsdef->version);
+-
+-	if (strncmp(netfs->name, fsdef->name, sizeof(fsdef->name)) != 0) {
+-		_leave(" = FAILED");
+-		return CACHEFS_MATCH_FAILED;
+-	}
+-
+-	if (netfs->version == fsdef->version) {
+-		_leave(" = SUCCESS");
+-		return CACHEFS_MATCH_SUCCESS;
+-	}
+-
+-	/* an entry of the same name but different version is scheduled for
+-	 * deletion */
+-	_leave(" = SUCCESS_DELETE");
+-	return CACHEFS_MATCH_SUCCESS_DELETE;
++	inode = container_of(node, struct cachefs_inode, node);
++	down(&inode->vfs_inode.i_sem);
+ 
+-} /* end cachefs_fsdef_index_match() */
++} /* end cachefs_lock_node() */
+ 
+ /*****************************************************************************/
+ /*
+- * update the netfs definition to be stored on disc
++ * unlock a semaphore on a node
+  */
+-static void cachefs_fsdef_index_update(void *source, void *entry)
++static void cachefs_unlock_node(struct fscache_node *node)
+ {
+-	struct cachefs_ondisc_fsdef *fsdef = entry;
+-	struct cachefs_netfs *netfs = source;
+-
+-	_enter("{%s.%u},", netfs->name, netfs->version);
++	struct cachefs_inode *inode;
+ 
+-	/* install the netfs name and version in the top-level index entry */
+-	strncpy(fsdef->name, netfs->name, sizeof(fsdef->name));
++	_enter("%p", node);
+ 
+-	fsdef->version = netfs->version;
++	inode = container_of(node, struct cachefs_inode, node);
++	up(&inode->vfs_inode.i_sem);
+ 
+-} /* end cachefs_fsdef_index_update() */
++} /* end cachefs_unlock_node() */
+ 
+ /*****************************************************************************/
+ /*
+- * destroy a cookie
++ * dispose of a reference to a node
+  */
+-static void __cachefs_cookie_put(struct cachefs_cookie *cookie)
++static void cachefs_put_node(struct fscache_node *node)
+ {
+-	struct cachefs_search_result *srch;
++	_enter("%p", node);
+ 
+-	_enter("%p", cookie);
++	if (node)
++		cachefs_iput(container_of(node, struct cachefs_inode, node));
+ 
+-	if (cookie->iparent)
+-		cachefs_cookie_put(cookie->iparent);
+-
+-	/* dispose of any cached search results */
+-	while (!list_empty(&cookie->search_results)) {
+-		srch = list_entry(cookie->search_results.next,
+-				  struct cachefs_search_result,
+-				  link);
+-
+-		list_del(&srch->link);
+-		kfree(srch);
+-	}
+-
+-	BUG_ON(!list_empty(&cookie->search_results));
+-	BUG_ON(!list_empty(&cookie->backing_inodes));
+-	kmem_cache_free(cachefs_cookie_jar, cookie);
+-
+-	_leave("");
+-
+-} /* end __cachefs_cookie_put() */
++} /* end cachefs_put_node() */
+ 
+ /*****************************************************************************/
+ /*
+- * initialise an cookie jar slab element prior to any use
++ * sync a cache
+  */
+-void cachefs_cookie_init_once(void *_cookie, kmem_cache_t *cachep,
+-			      unsigned long flags)
++static void cachefs_sync(struct fscache_cache *cache)
+ {
+-	struct cachefs_cookie *cookie = _cookie;
++	_enter("%p", cache);
+ 
+-	if ((flags & (SLAB_CTOR_VERIFY|SLAB_CTOR_CONSTRUCTOR)) ==
+-	    SLAB_CTOR_CONSTRUCTOR) {
+-		memset(cookie, 0, sizeof(*cookie));
+-		INIT_LIST_HEAD(&cookie->search_results);
+-		INIT_LIST_HEAD(&cookie->backing_inodes);
+-		init_rwsem(&cookie->sem);
+-	}
++	/* make sure all pages pinned by operations on behalf of the netfs are
++	 * written to disc */
++	cachefs_trans_sync(container_of(cache, struct cachefs_super, cache),
++			   CACHEFS_TRANS_SYNC_WAIT_FOR_ACK);
+ 
+-} /* end cachefs_cookie_init_once() */
++} /* end cachefs_sync() */
+ 
+ /*****************************************************************************/
+ /*
+@@ -1042,9 +164,7 @@ static int cachefs_page_read_endio(struc
+ /*****************************************************************************/
+ /*
+  * read a page from the cache or allocate a block in which to store it
+- * - if the cookie is not backed by a file:
+- *   - -ENOBUFS will be returned and nothing more will be done
+- * - else if the page is backed by a block in the cache:
++ * - if the page is backed by a block in the cache:
+  *   - a read will be started which will call end_io_func on completion
+  *   - the wb-journal will be searched for an entry pertaining to this block
+  *     - if an entry is found:
+@@ -1056,44 +176,22 @@ static int cachefs_page_read_endio(struc
+  *   - the v-journal will be marked to note the block contains invalid data
+  *   - -ENODATA will be returned
+  */
+-int __cachefs_read_or_alloc_page(struct cachefs_cookie *cookie,
+-				 struct page *page,
+-				 cachefs_rw_complete_t end_io_func,
+-				 void *end_io_data,
+-				 unsigned long gfp)
++static int cachefs_read_or_alloc_page(struct fscache_node *node,
++				      struct page *page,
++				      struct fscache_page *pageio,
++				      fscache_rw_complete_t end_io_func,
++				      void *end_io_data,
++				      unsigned long gfp)
+ {
+ 	struct cachefs_io_end *end_io = NULL;
+ 	struct cachefs_inode *inode;
+-	struct cachefs_block *block;
+-	struct cachefs_page *pageio;
++	struct cachefs_block *block = NULL;
+ 	struct bio *bio = NULL;
+ 	int ret;
+ 
+-	_enter("%p,{%lu},", cookie, page->index);
+-
+-	if (cookie == CACHEFS_NEGATIVE_COOKIE) {
+-		_leave(" -ENOBUFS [no cookie]");
+-		return -ENOBUFS; /* no actual cookie */
+-	}
+-
+-	BUG_ON(cookie->idef); /* not supposed to use this for indexes */
+-
+-	/* get the cache-cookie for this page */
+-	pageio = cookie->netfs->ops->get_page_cookie(page);
+-	if (IS_ERR(pageio)) {
+-		_leave(" = %ld", PTR_ERR(pageio));
+-		return PTR_ERR(pageio);
+-	}
+-
+-	/* prevent the file from being uncached whilst we access it */
+-	block = NULL;
+-	down_read(&cookie->sem);
++	_enter("");
+ 
+-	/* if there's no disc space whatsoever backing this file, then leave
+-	 * now */
+-	ret = -ENOBUFS;
+-	if (list_empty(&cookie->backing_inodes))
+-		goto error;
++	inode = container_of(node, struct cachefs_inode, node);
+ 
+ 	/* handle the case of there already being a mapping,
+ 	 * - must protect against cache removal
+@@ -1102,22 +200,14 @@ int __cachefs_read_or_alloc_page(struct 
+ 	read_lock(&pageio->lock);
+ 
+ 	block = pageio->mapped_block;
+-	if (block && !test_bit(CACHEFS_SUPER_WITHDRAWN, &block->super->flags))
++	if (block && !fscache_is_cache_withdrawn(&block->super->cache))
+ 		goto available_on_disc; /* already mapped */
+ 
+ 	read_unlock(&pageio->lock);
+ 	block = NULL;
+ 
+ 	/* we don't know of a backing page, but there may be one recorded on
+-	 * disc... and if there isn't we'll request one be allocated */
+-	_debug("igrab");
+-	inode = cachefs_igrab(list_entry(cookie->backing_inodes.next,
+-					 struct cachefs_inode,
+-					 cookie_link));
+-	ret = -ENOBUFS;
+-	if (!inode)
+-		goto error;
+-
++	 * disc... and if there isn't we'll request that one be allocated */
+ 	_debug("get block");
+ 	down(&inode->vfs_inode.i_sem);
+ 
+@@ -1127,13 +217,13 @@ int __cachefs_read_or_alloc_page(struct 
+ 	if (ret < 0)
+ 		goto error_i;
+ 
+-	if (!test_and_clear_bit(CACHEFS_PAGE_NEW, &pageio->flags)) {
++	if (!test_and_clear_bit(FSCACHE_PAGE_NEW, &pageio->flags)) {
+ 		/* there was data - pin the block underlying it and read */
+ 		read_lock(&pageio->lock);
+ 
+ 		block = pageio->mapped_block;
+ 		if (block &&
+-		    !test_bit(CACHEFS_SUPER_WITHDRAWN, &block->super->flags))
++		    !fscache_is_cache_withdrawn(&block->super->cache))
+ 			goto available_on_disc_i;
+ 
+ 		/* it went out of service for some reason */
+@@ -1145,15 +235,13 @@ int __cachefs_read_or_alloc_page(struct 
+ 
+ 	/* we allocated a new block, but didn't assign any data to it */
+ 	up(&inode->vfs_inode.i_sem);
+-	cachefs_iput(inode);
+ 
+ 	/* point the mapped block at its referencer */
+-	write_lock(&pageio->mapped_block->ref_lock);
+-	pageio->mapped_block->ref = pageio;
+-	write_unlock(&pageio->mapped_block->ref_lock);
++	write_lock(&cachefs_mapped_block(pageio)->ref_lock);
++	cachefs_mapped_block(pageio)->ref = pageio;
++	write_unlock(&cachefs_mapped_block(pageio)->ref_lock);
+ 
+-	_debug("no data [bix=%u ref=%p]", pageio->mapped_block->bix, pageio);
+-	up_read(&cookie->sem);
++	_debug("no data [bix=%u ref=%p]", cachefs_mapped_bix(pageio), pageio);
+ 
+ 	/* tell the caller we've allocated a block, but we don't have any data
+ 	 * for them */
+@@ -1165,7 +253,6 @@ int __cachefs_read_or_alloc_page(struct 
+  available_on_disc_i:
+ 	_debug("available_i");
+ 	up(&inode->vfs_inode.i_sem);
+-	cachefs_iput(inode);
+ 
+  available_on_disc:
+ 	_debug("available");
+@@ -1184,7 +271,7 @@ int __cachefs_read_or_alloc_page(struct 
+ 
+ 	end_io->func		= end_io_func;
+ 	end_io->data		= end_io_data;
+-	end_io->cookie_data	= cookie->netfs_data;
++	end_io->cookie_data	= node->cookie->netfs_data;
+ 	end_io->block		= block;
+ 
+ 	/* dispatch an operation to the block device */
+@@ -1205,7 +292,6 @@ int __cachefs_read_or_alloc_page(struct 
+ 	submit_bio(READ, bio);
+ 
+ 	_debug("done");
+-	up_read(&cookie->sem);
+ 
+ 	/* point the mapped block at its referencer */
+ 	write_lock(&block->ref_lock);
+@@ -1223,10 +309,8 @@ int __cachefs_read_or_alloc_page(struct 
+  error_i:
+ 	_debug("error_i");
+ 	up(&inode->vfs_inode.i_sem);
+-	cachefs_iput(inode);
+  error:
+ 	_debug("error");
+-	up_read(&cookie->sem);
+ 	cachefs_block_put(block);
+ 	if (bio)
+ 		bio_put(bio);
+@@ -1237,9 +321,7 @@ int __cachefs_read_or_alloc_page(struct 
+ 	_leave(" = %d", ret);
+ 	return ret;
+ 
+-} /* end __cachefs_read_or_alloc_page() */
+-
+-EXPORT_SYMBOL(__cachefs_read_or_alloc_page);
++} /* end cachefs_read_or_alloc_page() */
+ 
+ /*****************************************************************************/
+ /*
+@@ -1300,41 +382,25 @@ static int cachefs_page_written(struct b
+  *     be erased
+  *   - returns 0
+  */
+-int __cachefs_write_page(struct cachefs_cookie *cookie,
+-			 struct page *page,
+-			 cachefs_rw_complete_t end_io_func,
+-			 void *end_io_data,
+-			 unsigned long gfp)
++static int cachefs_write_page(struct fscache_node *node,
++			      struct page *page,
++			      struct fscache_page *pageio,
++			      fscache_rw_complete_t end_io_func,
++			      void *end_io_data,
++			      unsigned long gfp)
+ {
+ 	struct cachefs_io_end *end_io = NULL;
+ 	struct cachefs_block *block;
+-	struct cachefs_page *pageio;
+ 	struct bio *bio = NULL;
+ 	int ret;
+ 
+-	_enter("%p,{%lu},", cookie, page->index);
+-
+-	if (cookie == CACHEFS_NEGATIVE_COOKIE) {
+-		_leave(" -ENOBUFS [no cookie]");
+-		return -ENOBUFS; /* no actual cookie */
+-	}
+-
+-	BUG_ON(cookie->idef); /* not supposed to use this for indexes */
+-
+-	/* get the cache-cookie for this page */
+-	pageio = cookie->netfs->ops->get_page_cookie(page);
+-	if (IS_ERR(pageio)) {
+-		_leave(" = %ld", PTR_ERR(pageio));
+-		return PTR_ERR(pageio);
+-	}
++	_enter("");
+ 
+-	/* prevent the file from been uncached whilst we deal with it */
+-	down_read(&cookie->sem);
+ 	read_lock(&pageio->lock);
+ 
+ 	/* only write if there's somewhere to write to */
+-	block = pageio->mapped_block;
+-	if (!block || test_bit(CACHEFS_SUPER_WITHDRAWN, &block->super->flags))
++	block = cachefs_mapped_block(pageio);
++	if (!block || fscache_is_cache_withdrawn(&block->super->cache))
+ 		goto no_block;
+ 
+ 	/* pin the block and drop the lock */
+@@ -1352,7 +418,7 @@ int __cachefs_write_page(struct cachefs_
+ 
+ 	end_io->func		= end_io_func;
+ 	end_io->data		= end_io_data;
+-	end_io->cookie_data	= cookie->netfs_data;
++	end_io->cookie_data	= node->cookie->netfs_data;
+ 	end_io->block		= block;
+ 
+ 	/* dispatch an operation to the block device */
+@@ -1373,11 +439,10 @@ int __cachefs_write_page(struct cachefs_
+ 	if (!bio_add_page(bio, page, PAGE_SIZE, 0))
+ 		BUG();
+ 
+-	//dump_bio(bio,1);
++	//dump_bio(bio, 1);
+ 	submit_bio(WRITE, bio);
+ 
+ 	/* tell the caller it's in progress */
+-	up_read(&cookie->sem);
+ 	_leave(" = 0");
+ 	return 0;
+ 
+@@ -1386,7 +451,6 @@ int __cachefs_write_page(struct cachefs_
+ 	clear_bit(CACHEFS_BLOCK_NETFSBUSY, &block->flags);
+ 	wake_up(&block->writewq);
+ 	cachefs_block_put(block);
+-	up_read(&cookie->sem);
+ 	if (bio)
+ 		bio_put(bio);
+ 	if (end_io) {
+@@ -1399,40 +463,23 @@ int __cachefs_write_page(struct cachefs_
+ 	/* tell the caller there wasn't a block to write into */
+  no_block:
+ 	read_unlock(&pageio->lock);
+-	up_read(&cookie->sem);
+ 	_leave(" = -ENOBUFS");
+ 	return -ENOBUFS;
+ 
+-} /* end __cachefs_write_page() */
+-
+-EXPORT_SYMBOL(__cachefs_write_page);
++} /* end cachefs_write_page() */
+ 
+ /*****************************************************************************/
+ /*
+- * remove a page from the cache
++ * detach a backing block from a page
+  * - if the block backing the page still has a vjentry then the block will be
+  *   recycled
+  */
+-void __cachefs_uncache_page(struct cachefs_cookie *cookie, struct page *page)
++static void cachefs_uncache_page(struct fscache_node *node,
++				 struct fscache_page *pageio)
+ {
+ 	struct cachefs_block *block, *xblock;
+-	struct cachefs_page *pageio;
+-
+-	_enter(",{%lu}", page->index);
+-
+-	if (cookie == CACHEFS_NEGATIVE_COOKIE) {
+-		_leave(" [no cookie]");
+-		return;
+-	}
+ 
+-	BUG_ON(cookie->idef); /* not supposed to use this for indexes */
+-
+-	/* get the cache-cookie for this page */
+-	pageio = cookie->netfs->ops->get_page_cookie(page);
+-	if (IS_ERR(pageio)) {
+-		_leave(" [get_page_cookie() = %ld]", PTR_ERR(pageio));
+-		return;
+-	}
++	_enter("");
+ 
+ 	/* un-cross-link the page cookie and the block */
+ 	xblock = NULL;
+@@ -1466,8 +513,22 @@ void __cachefs_uncache_page(struct cache
+ 	}
+ 
+ 	_leave("");
+-	return;
+ 
+-} /* end __cachefs_uncache_page() */
++} /* end cachefs_uncache_page() */
+ 
+-EXPORT_SYMBOL(__cachefs_uncache_page);
++struct fscache_cache_ops cachefs_cache_ops = {
++	.name			= "cachefs",
++	.lookup_node		= cachefs_lookup_node,
++	.grab_node		= cachefs_grab_node,
++	.lock_node		= cachefs_lock_node,
++	.unlock_node		= cachefs_unlock_node,
++	.put_node		= cachefs_put_node,
++	.index_search		= cachefs_index_search,
++	.index_add		= cachefs_index_add,
++	.index_update		= cachefs_index_update,
++	.sync			= cachefs_sync,
++	.dissociate_pages	= cachefs_block_dissociate,
++	.read_or_alloc_page	= cachefs_read_or_alloc_page,
++	.write_page		= cachefs_write_page,
++	.uncache_page		= cachefs_uncache_page,
++};
+diff -puN fs/cachefs/journal.c~turn-cachefs-into-a-cache-backend fs/cachefs/journal.c
+--- 25/fs/cachefs/journal.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/journal.c	Wed Oct  6 16:03:22 2004
+@@ -430,7 +430,7 @@ int cachefs_trans_mark(struct cachefs_tr
+ 	offset = (trans->index << super->sb->s_blocksize_bits) & ~PAGE_MASK;
+ 	jentry = kmap_atomic(trans->jpage, KM_USER0) + offset;
+ 	memcpy(jentry, trans->jentry, super->sb->s_blocksize);
+-	kunmap_atomic(trans->jpage, KM_USER0);
++	kunmap_atomic(jentry, KM_USER0);
+ 
+ 	SetPageWriteback(trans->jpage);
+ 
+@@ -1678,11 +1678,11 @@ static int cachefs_ujnl_barrier_cap_chec
+ 					    unsigned int bytes_done,
+ 					    int error)
+ {
+-	kenter("%p{%lx},%u,%d", bio, bio->bi_flags, bytes_done, error);
++	_enter("%p{%lx},%u,%d", bio, bio->bi_flags, bytes_done, error);
+ 
+ 	/* we're only interested in completion */
+ 	if (bio->bi_size > 0) {
+-		kleave(" = 1");
++		_leave(" = 1");
+ 		return 1;
+ 	}
+ 
+@@ -1690,7 +1690,7 @@ static int cachefs_ujnl_barrier_cap_chec
+ 	end_page_writeback(bio->bi_io_vec[0].bv_page);
+ 
+ 	bio_put(bio);
+-	kleave(" = 0");
++	_leave(" = 0");
+ 	return 0;
+ 
+ } /* end cachefs_trans_ack_written() */
+diff -puN fs/cachefs/linear-io.c~turn-cachefs-into-a-cache-backend fs/cachefs/linear-io.c
+--- 25/fs/cachefs/linear-io.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/linear-io.c	Wed Oct  6 16:03:22 2004
+@@ -57,14 +57,14 @@ static int cachefs_linear_io_do_readpage
+ 					 cachefs_blockix_t *last_block_in_bio)
+ {
+ 	struct cachefs_block *block;
+-	struct cachefs_page *pageio;
++	struct fscache_page *pageio;
+ 	struct inode *inode = page->mapping->host;
+ 	int ret;
+ 
+ 	_enter("");
+ 
+ 	/* get the page mapping cookie */
+-	pageio = cachefs_page_get_private(page, GFP_KERNEL);
++	pageio = fscache_page_get_private(page, GFP_KERNEL);
+ 	if (IS_ERR(pageio)) {
+ 		ret = PTR_ERR(pageio);
+ 		goto error;
+@@ -176,7 +176,7 @@ int cachefs_linear_io_readpages(struct f
+ int cachefs_linear_io_readpage(struct file *file, struct page *page)
+ {
+ 	struct cachefs_block *block;
+-	struct cachefs_page *pageio;
++	struct fscache_page *pageio;
+ 	struct inode *inode = page->mapping->host;
+ 	struct bio *bio;
+ 	int ret;
+@@ -184,7 +184,7 @@ int cachefs_linear_io_readpage(struct fi
+ 	_enter(",{%lu}", page->index);
+ 
+ 	/* get the page mapping cookie */
+-	pageio = cachefs_page_get_private(page, GFP_KERNEL);
++	pageio = fscache_page_get_private(page, GFP_KERNEL);
+ 	if (IS_ERR(pageio)) {
+ 		_leave(" = %ld [pgp]", PTR_ERR(pageio));
+ 		return PTR_ERR(pageio);
+diff -puN fs/cachefs/main.c~turn-cachefs-into-a-cache-backend fs/cachefs/main.c
+--- 25/fs/cachefs/main.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/main.c	Wed Oct  6 16:03:22 2004
+@@ -36,21 +36,8 @@ static int cachefs_init(void)
+ {
+ 	int ret;
+ 
+-	/* create ourselves a cookie jar and a block jar */
++	/* create a block jar */
+ 	ret = -ENOMEM;
+-	cachefs_cookie_jar =
+-		kmem_cache_create("cachefs_cookie_jar",
+-				  sizeof(struct cachefs_cookie),
+-				  0,
+-				  SLAB_HWCACHE_ALIGN,
+-				  cachefs_cookie_init_once,
+-				  NULL);
+-	if (!cachefs_cookie_jar) {
+-		printk(KERN_NOTICE
+-		       "CacheFS: Failed to allocate a cookie jar\n");
+-		goto error;
+-	}
+-
+ 	cachefs_block_jar =
+ 		kmem_cache_create("cachefs_block_jar",
+ 				  sizeof(struct cachefs_block),
+@@ -61,7 +48,7 @@ static int cachefs_init(void)
+ 	if (!cachefs_block_jar) {
+ 		printk(KERN_NOTICE
+ 		       "CacheFS: Failed to allocate a block jar\n");
+-		goto error_cookie_jar;
++		goto error;
+ 	}
+ 
+ 	/* initialise the filesystem */
+@@ -75,8 +62,6 @@ static int cachefs_init(void)
+ 
+  error_block_jar:
+ 	kmem_cache_destroy(cachefs_block_jar);
+- error_cookie_jar:
+-	kmem_cache_destroy(cachefs_cookie_jar);
+  error:
+ 	printk(KERN_ERR "CacheFS: failed to register: %d\n", ret);
+ 	return ret;
+@@ -92,7 +77,6 @@ static void __exit cachefs_exit(void)
+ 
+ 	cachefs_fs_exit();
+ 	kmem_cache_destroy(cachefs_block_jar);
+-	kmem_cache_destroy(cachefs_cookie_jar);
+ 
+ } /* end cachefs_exit() */
+ 
+diff -puN fs/cachefs/misc.c~turn-cachefs-into-a-cache-backend fs/cachefs/misc.c
+--- 25/fs/cachefs/misc.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/misc.c	Wed Oct  6 16:03:22 2004
+@@ -30,10 +30,10 @@
+  * get a page caching token from for a page, allocating it and attaching it to
+  * the page's private pointer if it doesn't exist
+  */
+-struct cachefs_page * __cachefs_page_get_private(struct page *page,
++struct fscache_page * __cachefs_page_get_private(struct page *page,
+ 						 unsigned gfp_flags)
+ {
+-	struct cachefs_page *pageio = (struct cachefs_page *) page->private;
++	struct fscache_page *pageio = (struct fscache_page *) page->private;
+ 
+ 	if (!pageio) {
+ 		pageio = kmalloc(sizeof(*pageio), gfp_flags);
+@@ -145,7 +145,7 @@ int cachefs_sync_page(struct page *page)
+  */
+ int cachefs_invalidatepage(struct page *page, unsigned long offset)
+ {
+-	struct cachefs_page *pageio;
++	struct fscache_page *pageio;
+ 	int ret = 1;
+ 
+ 	_enter("{%lu},%lu", page->index, offset);
+@@ -153,7 +153,7 @@ int cachefs_invalidatepage(struct page *
+ 	BUG_ON(!PageLocked(page));
+ 
+ 	if (PagePrivate(page)) {
+-		pageio = (struct cachefs_page *) page->private;
++		pageio = (struct fscache_page *) page->private;
+ 		pageio->flags = 0;
+ 
+ 		/* we release page attachments only if the entire page is being
+@@ -179,14 +179,14 @@ int cachefs_invalidatepage(struct page *
+ int cachefs_releasepage(struct page *page, int gfp_flags)
+ {
+ 	struct cachefs_block *block;
+-	struct cachefs_page *pageio;
++	struct fscache_page *pageio;
+ 
+ 	_enter("{%lu},%x", page->index, gfp_flags);
+ 
+ 	/* detach the page mapping cookie and mapped block */
+ 	if (PagePrivate(page)) {
+ 		/* detach the mapped block from the page if there is one */
+-		pageio = (struct cachefs_page *) page->private;
++		pageio = (struct fscache_page *) page->private;
+ 		page->private = 0;
+ 		ClearPagePrivate(page);
+ 
+diff -puN fs/cachefs/recycling.c~turn-cachefs-into-a-cache-backend fs/cachefs/recycling.c
+--- 25/fs/cachefs/recycling.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/recycling.c	Wed Oct  6 16:03:22 2004
+@@ -561,7 +561,7 @@ static int cachefs_recycle_reclaim_inode
+ 		cachefs_metadata_postread(iinode, metadata);
+ 
+ 		cachefs_trans_affects_page(trans,
+-					   cachefs_page_grab_private(ixpage),
++					   fscache_page_grab_private(ixpage),
+ 					   trans->jentry->entry,
+ 					   trans->jentry->count);
+ 
+diff -puN fs/cachefs/replay.c~turn-cachefs-into-a-cache-backend fs/cachefs/replay.c
+--- 25/fs/cachefs/replay.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/replay.c	Wed Oct  6 16:03:22 2004
+@@ -1638,7 +1638,7 @@ static int cachefs_replay_ujnl_data_unal
+ 
+ 			cachefs_trans_replays_effect(trans, ptrblock, "ptr");
+ 		}
+-		kunmap_atomic(ptrpage, KM_USER0);
++		kunmap_atomic(pbix, KM_USER0);
+ 	}
+ 
+ 	/* make sure the vjournal entry is cleared */
+diff -puN fs/cachefs/rootdir.c~turn-cachefs-into-a-cache-backend fs/cachefs/rootdir.c
+--- 25/fs/cachefs/rootdir.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/rootdir.c	Wed Oct  6 16:03:22 2004
+@@ -70,6 +70,7 @@ int cachefs_readdir_actor_cons_name(stru
+ {
+ 	unsigned char *ptr;
+ 	unsigned long tmp;
++	unsigned nsize;
+ 	char *name;
+ 	int ksize, loop;
+ 
+@@ -89,10 +90,38 @@ int cachefs_readdir_actor_cons_name(stru
+ 		/* add in the appropriate bit of key */
+ 		switch (rec->keys[loop] & CACHEFS_ONDISC_INDEXKEY_TYPE) {
+ 		case CACHEFS_ONDISC_INDEXKEY_BIN:
+-			for (tmp = 0; tmp < ksize; tmp++) {
+-				sprintf(name, "%02x", ptr[tmp]);
+-				name += 2;
+-			}
++			for (tmp = 0; tmp < ksize; tmp++)
++				name += sprintf(name, "%02x", ptr[tmp]);
++			break;
++
++		case CACHEFS_ONDISC_INDEXKEY_BIN_SZ1:
++			nsize = ptr[0];
++			name += sprintf(name, "%u:", nsize);
++			nsize += 1;
++			if (nsize > ksize)
++				nsize = ksize;
++			for (tmp = 1; tmp < nsize; tmp++)
++				name += sprintf(name, "%02x", ptr[tmp]);
++			break;
++
++		case CACHEFS_ONDISC_INDEXKEY_BIN_SZ2:
++			nsize = (ptr[0] << 8) | ptr[1];
++			name += sprintf(name, "%u:", nsize);
++			nsize += 2;
++			if (nsize > ksize)
++				nsize = ksize;
++			for (tmp = 2; tmp < nsize; tmp++)
++				name += sprintf(name, "%02x", ptr[tmp]);
++			break;
++
++		case CACHEFS_ONDISC_INDEXKEY_BIN_SZ4:
++			nsize = (ptr[0] << 24) | (ptr[1] << 16) | (ptr[2] << 8) | ptr[3];
++			name += sprintf(name, "%u:", nsize);
++			nsize += 4;
++			if (nsize > ksize)
++				nsize = ksize;
++			for (tmp = 4; tmp < nsize; tmp++)
++				name += sprintf(name, "%02x", ptr[tmp]);
+ 			break;
+ 
+ 		case CACHEFS_ONDISC_INDEXKEY_ASCIIZ:
+@@ -108,13 +137,15 @@ int cachefs_readdir_actor_cons_name(stru
+ 			break;
+ 
+ 		case CACHEFS_ONDISC_INDEXKEY_IPV6:
+-			tmp = sprintf(name, "%02x%02x:%02x%02x:%02x%02x:%02x%02x:",
+-				      ptr[0], ptr[1], ptr[2], ptr[3],
+-				      ptr[4], ptr[5], ptr[6], ptr[7]);
+-			name += tmp;
+-			tmp = sprintf(name, "%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+-				      ptr[8], ptr[9], ptr[10], ptr[11],
+-				      ptr[12], ptr[13], ptr[14], ptr[15]);
++			tmp = sprintf(name, "%hx:%hx:%hx:%hx:%hx:%hx:%hx:%hx",
++				      ntohs(*(uint16_t *)(ptr + 0)),
++				      ntohs(*(uint16_t *)(ptr + 2)),
++				      ntohs(*(uint16_t *)(ptr + 4)),
++				      ntohs(*(uint16_t *)(ptr + 6)),
++				      ntohs(*(uint16_t *)(ptr + 8)),
++				      ntohs(*(uint16_t *)(ptr + 10)),
++				      ntohs(*(uint16_t *)(ptr + 12)),
++				      ntohs(*(uint16_t *)(ptr + 14)));
+ 			name += tmp;
+ 			break;
+ 		default:
+@@ -335,8 +366,9 @@ static int cachefs_root_readdir(struct f
+ 		desc.arg.buf	= (char *) &rec;
+ 		desc.error	= 0;
+ 
+-		_debug("do read: isz=%llu pos=%llu count=%u",
+-		       i_size_read(inode->vfs_inode), pos, desc.count);
++		_debug("do read: isz=%lu pos=%llu count=%u",
++		       (unsigned long) i_size_read(&inode->vfs_inode),
++		       pos, desc.count);
+ 
+ 		/* use the pagecache to do readahead and stuff  */
+ 		do_generic_file_read(file, &pos, &desc, cachefs_readdir_actor);
+@@ -452,7 +484,7 @@ static struct dentry *cachefs_root_looku
+ 	ino_t ino;
+ 	short ip[8];
+ 	char *ptr;
+-	int loop, loop2, ret;
++	int loop, loop2, tmp, ret;
+ 
+ 	dir = CACHEFS_FS_I(_dir);
+ 	name = dentry->d_name.name;
+@@ -522,19 +554,70 @@ static struct dentry *cachefs_root_looku
+ 	ptr = rec.key;
+ 	for (loop = 0; loop < 4; loop++) {
+ 		char x;
+-		int ksize = rec.keys[loop] & CACHEFS_ONDISC_INDEXKEY_KLEN;
++		unsigned ksize = rec.keys[loop] & CACHEFS_ONDISC_INDEXKEY_KLEN;
++		unsigned nsize = ksize;
+ 
+ 		if (ksize == 0)
+ 			continue;
+ 
+-		stop = memchr(name, ',', nend - name) ?: nend;
++		stop = memchr(name, ',', nend - name);
++		stop = stop ?: nend;
+ 
+ 		_debug("- key %04hx [%*.*s]",
+-		       rec.keys[loop], nend - name, nend - name, name);
++		       rec.keys[loop], stop - name, stop - name, name);
+ 
+ 		switch (rec.keys[loop] & CACHEFS_ONDISC_INDEXKEY_TYPE) {
++		case CACHEFS_ONDISC_INDEXKEY_BIN_SZ1:
++			if (ksize < 2)
++				goto not_found;
++			if (sscanf(name, "%u:%n", &nsize, &tmp) != 1)
++				goto not_found;
++
++			name += tmp;
++			*ptr++ = nsize;
++			ksize -= 1;
++			if (nsize > ksize)
++				goto not_found;
++			goto do_binary;
++
++		case CACHEFS_ONDISC_INDEXKEY_BIN_SZ2:
++			if (ksize < 2)
++				goto not_found;
++			if (sscanf(name, "%u:%n", &nsize, &tmp) != 1) {
++				printk("sscanf failed\n");
++				goto not_found;
++			}
++
++			name += tmp;
++			*ptr++ = nsize >> 8;
++			*ptr++ = nsize;
++			ksize -= 2;
++			if (nsize > ksize)
++				goto not_found;
++			goto do_binary;
++
++		case CACHEFS_ONDISC_INDEXKEY_BIN_SZ4:
++			if (ksize < 2)
++				goto not_found;
++			if (sscanf(name, "%u:%n", &nsize, &tmp) != 1)
++				goto not_found;
++
++			name += tmp;
++			*ptr++ = nsize >> 24;
++			*ptr++ = nsize >> 16;
++			*ptr++ = nsize >> 8;
++			*ptr++ = nsize;
++			ksize -= 4;
++			if (nsize > ksize)
++				goto not_found;
++			goto do_binary;
++
+ 		case CACHEFS_ONDISC_INDEXKEY_BIN:
+-			if (stop - name != ksize * 2 || ksize == 0)
++			if (nsize == 0)
++				goto not_found;
++
++		do_binary:
++			if (stop - name != nsize * 2)
+ 				goto not_found;
+ 
+ 			do {
+@@ -562,14 +645,14 @@ static struct dentry *cachefs_root_looku
+ 			break;
+ 
+ 		case CACHEFS_ONDISC_INDEXKEY_ASCIIZ:
+-			if (nend - name > ksize || ksize == 0)
++			if (stop - name > ksize || ksize == 0)
+ 				goto not_found;
+ 			memcpy(ptr, name, stop - name);
+ 			ptr += ksize;
+ 			break;
+ 
+ 		case CACHEFS_ONDISC_INDEXKEY_IPV4:
+-			if (sscanf(ptr, "%hu.%hu.%hu.%hu",
++			if (sscanf(name, "%hu.%hu.%hu.%hu",
+ 				   &ip[0], &ip[1], &ip[2], &ip[3]) != 4)
+ 				goto not_found;
+ 			*ptr++ = ip[0];
+@@ -579,17 +662,32 @@ static struct dentry *cachefs_root_looku
+ 			break;
+ 
+ 		case CACHEFS_ONDISC_INDEXKEY_IPV6:
+-			if (sscanf(ptr, "%hx:%hx:%hx:%hx:%hx:%hx:%hx:%hx",
+-				   &ip[0], &ip[1], &ip[2], &ip[3],
+-				   &ip[4], &ip[5], &ip[6], &ip[7]) != 8)
++			tmp = sscanf(name, "%hx:%hx:%hx:%hx:%hx:%hx:%hx:%hx",
++				     &ip[0], &ip[1], &ip[2], &ip[3],
++				     &ip[4], &ip[5], &ip[6], &ip[7]);
++			if (tmp != 8) {
++				_debug("ipv6key: sscanf failed (%d)", tmp);
+ 				goto not_found;
++			}
+ 			for (loop2 = 0; loop2 < 8; loop2++) {
+ 				*ptr++ = ip[loop2] >> 8;
+ 				*ptr++ = ip[loop2];
+ 			}
+ 			break;
++
++		default:
++			printk("CacheFS: Unknown key type %x in index\n",
++			       rec.keys[loop] & CACHEFS_ONDISC_INDEXKEY_TYPE);
++			ret = -EIO;
++			goto error;
+ 		}
+ 
++		if (nsize != ksize) {
++			BUG_ON(nsize > ksize);
++			memset(ptr, FSCACHE_INDEX_DEADFILL_PATTERN,
++			       ksize - nsize);
++			ptr += ksize - nsize;
++		}
+ 		name = stop + 1;
+ 	}
+ 
+@@ -610,7 +708,7 @@ static struct dentry *cachefs_root_looku
+ 	{ /* dump the key */
+ 		int loop;
+ 		for (loop = 0; loop < rec.ksize; loop++)
+-			printk("%02x", rec.key[loop]);
++			printk("%02x", (uint8_t) rec.key[loop]);
+ 		printk("\n");
+ 	}
+ #endif
+@@ -722,7 +820,7 @@ static int cachefs_root_rmdir_unlink(str
+ 	trans->jentry->block = __cachefs_get_page_block(ixpage)->bix;
+ 
+ 	cachefs_trans_affects_inode(trans, inode);
+-	cachefs_trans_affects_page(trans, cachefs_page_grab_private(ixpage),
++	cachefs_trans_affects_page(trans, fscache_page_grab_private(ixpage),
+ 				   trans->jentry->entry, sizeof(*xent));
+ 
+ 	/* write the transaction mark to the journal */
+diff -puN fs/cachefs/super.c~turn-cachefs-into-a-cache-backend fs/cachefs/super.c
+--- 25/fs/cachefs/super.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/super.c	Wed Oct  6 16:03:22 2004
+@@ -133,6 +133,13 @@ static struct super_block *cachefs_get_s
+ 	sb = get_sb_bdev(fs_type, flags, dev_name, options,
+ 			 cachefs_fill_super);
+ 
++	_debug("backing nodes %p: %p,%p -> %p,%p",
++	       &fscache_fsdef_index.backing_nodes,
++	       fscache_fsdef_index.backing_nodes.next,
++	       fscache_fsdef_index.backing_nodes.prev,
++	       fscache_fsdef_index.backing_nodes.next->next,
++	       fscache_fsdef_index.backing_nodes.next->prev);
++
+ 	_leave(" = %p", sb);
+ 	return sb;
+ 
+@@ -222,7 +229,6 @@ static int cachefs_bio_submit(struct sup
+  */
+ static int cachefs_fill_super(struct super_block *sb, void *_data, int silent)
+ {
+-	struct cachefs_search_result *srch = NULL;
+ 	struct cachefs_super *super = NULL;
+ 	struct cachefs_inode *inode = NULL, *inode2;
+ 	struct dentry *root = NULL;
+@@ -267,10 +273,6 @@ static int cachefs_fill_super(struct sup
+ 
+ 	super->vjnl_count = CACHEFS_ONDISC_VJNL_ENTS;
+ 
+-	srch = kmalloc(sizeof(*srch), GFP_KERNEL);
+-	if (!srch)
+-		goto error;
+-
+ 	/* initialise the superblock */
+ 	sb->s_magic		= CACHEFS_FS_MAGIC;
+ 	sb->s_op		= &cachefs_super_ops;
+@@ -278,10 +280,13 @@ static int cachefs_fill_super(struct sup
+ 	super->sb		= sb;
+ 	super->ujnl_step	= bdev_hardsect_size(super->sb->s_bdev);
+ 
+-	INIT_LIST_HEAD(&super->mnt_link);
+-
+-	INIT_LIST_HEAD(&super->ino_list);
+-	spin_lock_init(&super->ino_list_lock);
++	fscache_init_cache(&super->cache,
++			   &cachefs_cache_ops,
++			   CACHEFS_INO_FSDEF_CATALOGUE,
++			   "%02x:%02x",
++			   MAJOR(sb->s_dev),
++			   MINOR(sb->s_dev)
++			   );
+ 
+ 	rwlock_init(&super->blk_tree_lock);
+ 
+@@ -455,17 +460,12 @@ static int cachefs_fill_super(struct sup
+ 			goto error;
+ 	}
+ 
+-	cachefs_add_cache((struct cachefs_super *) sb->s_fs_info, srch);
++	fscache_add_cache(&super->cache);
+ 
+ 	_leave(" = 0 [super=%p]", super);
+ 	return 0;
+ 
+  error:
+-	if (srch) {
+-		dbgfree(srch);
+-		kfree(srch);
+-	}
+-
+ 	if (super) {
+ 		if (super->dmn_task) {
+ 			super->dmn_die = 1;
+@@ -628,7 +628,7 @@ static int cachefs_initialise_blockdev(s
+ 	metadata->mtime		= CURRENT_TIME.tv_sec;
+ 	metadata->atime		= CURRENT_TIME.tv_sec;
+ 
+-	metadata->index.dsize	= sizeof(struct cachefs_ondisc_fsdef);
++	metadata->index.dsize	= sizeof(struct fscache_fsdef_index_entry);
+ 	metadata->index.esize	= sizeof(struct cachefs_ondisc_index_entry);
+ 	metadata->index.esize	+= metadata->index.dsize;
+ 	metadata->index.keys[0]	= CACHEFS_ONDISC_INDEXKEY_ASCIIZ | 24;
+@@ -805,7 +805,7 @@ static void cachefs_put_super(struct sup
+ 	BUG_ON(!super);
+ 
+ 	/* detach the cache from all cookies that reference it */
+-	cachefs_withdraw_cache(super);
++	fscache_withdraw_cache(&super->cache);
+ 
+ 	/* wait for validity journalling to be sorted */
+ 	if (!list_empty(&super->vjnl_unallocq) ||
+@@ -897,14 +897,14 @@ static void cachefs_i_init_once(void *_i
+ {
+ 	struct cachefs_inode *inode = _inode;
+ 
++	_enter("%p,,1", _inode);
++
+ 	if ((flags & (SLAB_CTOR_VERIFY|SLAB_CTOR_CONSTRUCTOR)) ==
+ 	    SLAB_CTOR_CONSTRUCTOR) {
+ 		memset(inode, 0, sizeof(*inode));
+ 		inode_init_once(&inode->vfs_inode);
+ 		init_rwsem(&inode->metadata_sem);
+-
+-		INIT_LIST_HEAD(&inode->cookie_link);
+-		INIT_LIST_HEAD(&inode->super_link);
++		fscache_node_init(&inode->node);
+ 	}
+ 
+ } /* end cachefs_i_init_once() */
+@@ -922,6 +922,7 @@ static struct inode *cachefs_alloc_inode
+ 	if (!inode)
+ 		return NULL;
+ 
++	_leave(" = %p", &inode->vfs_inode);
+ 	return &inode->vfs_inode;
+ 
+ } /* end cachefs_alloc_inode() */
+diff -puN fs/cachefs/vjournal.c~turn-cachefs-into-a-cache-backend fs/cachefs/vjournal.c
+--- 25/fs/cachefs/vjournal.c~turn-cachefs-into-a-cache-backend	Wed Oct  6 16:03:22 2004
++++ 25-akpm/fs/cachefs/vjournal.c	Wed Oct  6 16:03:22 2004
+@@ -307,7 +307,7 @@ void cachefs_vj_note_write_completion(st
+ 	ptr = kmap_atomic(vjentry->vpage, KM_USER0);
+ 	memset(ptr + vjentry->ventry, 0,
+ 	       sizeof(struct cachefs_ondisc_validity_journal));
+-	kunmap_atomic(vjentry->vpage, KM_USER0);
++	kunmap_atomic(ptr, KM_USER0);
+ 
+ 	/* queue the transaction to be written to disc */
+ 	cachefs_trans_commit(trans);
+@@ -380,7 +380,7 @@ static int cachefs_vj_replay_actor(read_
+ 	struct cachefs_ondisc_validity_journal *vjmark;
+ 	struct cachefs_vj_entry *vjentry;
+ 	struct cachefs_super *super = (struct cachefs_super *) desc->arg.buf;
+-	struct cachefs_page *pageio;
++	struct fscache_page *pageio;
+ 	unsigned long stop;
+ 	void *data;
+ 	int ret;
+@@ -395,7 +395,7 @@ static int cachefs_vj_replay_actor(read_
+ 
+ 	stop = offset + size;
+ 
+-	pageio = cachefs_page_grab_private(page);
++	pageio = fscache_page_grab_private(page);
+ 	cachefs_block_set(super, pageio->mapped_block, page, pageio);
+ 
+ 	data = kmap(page);
+@@ -483,7 +483,7 @@ static int cachefs_vj_replay_entry(struc
+ 
+ 	/* validate it */
+ 	ret = -EINVAL;
+-	if (inode->flags & CACHEFS_ACTIVE_INODE_ISINDEX) {
++	if (inode->node.flags & FSCACHE_NODE_ISINDEX) {
+ 		printk("CacheFS: Index inode %x has block in v-journal\n",
+ 		       vjentry->ino);
+ 		goto error2;
+@@ -606,10 +606,10 @@ static int cachefs_vj_walk_indirection_c
+ 
+ 		/* get the block number for this level */
+ 		if (!step->bix) {
+-			u8 *data = kmap(step[1].page);
++			u8 *data = kmap_atomic(step[1].page, KM_USER0);
+ 			step->bix =
+ 				*(cachefs_blockix_t *)(data + step->offset);
+-			kunmap(step[1].page);
++			kunmap_atomic(data, KM_USER0);
+ 		}
+ 
+ 		/* allocate this block if necessary */
+diff -L include/linux/cachefs.h -puN include/linux/cachefs.h~turn-cachefs-into-a-cache-backend /dev/null
+--- 25/include/linux/cachefs.h
++++ /dev/null	Thu Apr 11 07:25:15 2002
+@@ -1,351 +0,0 @@
+-/* cachefs.h: general filesystem caching interface
+- *
+- * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
+- * Written by David Howells (dhowells@redhat.com)
+- *
+- * This program is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU General Public License
+- * as published by the Free Software Foundation; either version
+- * 2 of the License, or (at your option) any later version.
+- */
+-
+-#ifndef _LINUX_CACHEFS_H
+-#define _LINUX_CACHEFS_H
+-
+-#include <linux/config.h>
+-#include <linux/fs.h>
+-#include <linux/list.h>
+-#include <linux/pagemap.h>
+-
+-#ifdef CONFIG_CACHEFS_MODULE
+-#define CONFIG_CACHEFS
+-#endif
+-
+-struct cachefs_cookie;
+-struct cachefs_netfs;
+-struct cachefs_netfs_operations;
+-struct cachefs_page;
+-
+-#define CACHEFS_NEGATIVE_COOKIE		NULL
+-
+-typedef void (*cachefs_rw_complete_t)(void *cookie_data,
+-				      struct page *page,
+-				      void *data,
+-				      int error);
+-
+-/* result of index entry comparison */
+-typedef enum {
+-	/* no match */
+-	CACHEFS_MATCH_FAILED,
+-
+-	/* successful match */
+-	CACHEFS_MATCH_SUCCESS,
+-
+-	/* successful match, entry requires update */
+-	CACHEFS_MATCH_SUCCESS_UPDATE,
+-
+-	/* successful match, entry requires deletion */
+-	CACHEFS_MATCH_SUCCESS_DELETE,
+-} cachefs_match_val_t;
+-
+-/*****************************************************************************/
+-/*
+- * cachefs index definition
+- * - each index file contains a number of fixed size entries
+- *   - they don't have to fit exactly into a page, but if they don't, the gap
+- *     at the end of the page will not be used
+- */
+-struct cachefs_index_def
+-{
+-	/* name of index */
+-	uint8_t			name[8];
+-
+-	/* size of data to be stored in index */
+-	uint16_t		data_size;
+-
+-	/* key description (for displaying in cache mountpoint) */
+-	struct {
+-		uint8_t		type;
+-		uint16_t	len;
+-	} keys[4];
+-
+-#define CACHEFS_INDEX_KEYS_NOTUSED	0
+-#define CACHEFS_INDEX_KEYS_BIN		1
+-#define CACHEFS_INDEX_KEYS_ASCIIZ	2
+-#define CACHEFS_INDEX_KEYS_IPV4ADDR	3
+-#define CACHEFS_INDEX_KEYS_IPV6ADDR	4
+-#define CACHEFS_INDEX_KEYS__LAST	CACHEFS_INDEX_KEYS_IPV6ADDR
+-
+-	/* see if entry matches the specified key
+-	 * - the netfs data from the cookie being used as the target is
+-	 *   presented
+-	 * - entries that aren't in use will not be presented for matching
+-	 */
+-	cachefs_match_val_t (*match)(void *target_netfs_data,
+-				     const void *entry);
+-
+-	/* update entry from key
+-	 * - the netfs data from the cookie being used as the source is
+-	 *   presented
+-	 */
+-	void (*update)(void *source_netfs_data, void *entry);
+-};
+-
+-#ifdef CONFIG_CACHEFS
+-extern struct cachefs_cookie *__cachefs_acquire_cookie(struct cachefs_cookie *iparent,
+-						       struct cachefs_index_def *idef,
+-						       void *netfs_data);
+-
+-extern void __cachefs_relinquish_cookie(struct cachefs_cookie *cookie,
+-					int retire);
+-
+-extern void __cachefs_update_cookie(struct cachefs_cookie *cookie);
+-#endif
+-
+-static inline
+-struct cachefs_cookie *cachefs_acquire_cookie(struct cachefs_cookie *iparent,
+-					      struct cachefs_index_def *idef,
+-					      void *netfs_data)
+-{
+-#ifdef CONFIG_CACHEFS
+-	if (iparent != CACHEFS_NEGATIVE_COOKIE)
+-		return __cachefs_acquire_cookie(iparent, idef, netfs_data);
+-#endif
+-	return CACHEFS_NEGATIVE_COOKIE;
+-}
+-
+-static inline
+-void cachefs_relinquish_cookie(struct cachefs_cookie *cookie,
+-			       int retire)
+-{
+-#ifdef CONFIG_CACHEFS
+-	if (cookie != CACHEFS_NEGATIVE_COOKIE)
+-		__cachefs_relinquish_cookie(cookie, retire);
+-#endif
+-}
+-
+-static inline
+-void cachefs_update_cookie(struct cachefs_cookie *cookie)
+-{
+-#ifdef CONFIG_CACHEFS
+-	if (cookie != CACHEFS_NEGATIVE_COOKIE)
+-		__cachefs_update_cookie(cookie);
+-#endif
+-}
+-
+-/*****************************************************************************/
+-/*
+- * cachefs cached network filesystem type
+- * - name, version and ops must be filled in before registration
+- * - all other fields will be set during registration
+- */
+-struct cachefs_netfs
+-{
+-	const char			*name;		/* filesystem name */
+-	unsigned			version;	/* indexing version */
+-	struct cachefs_cookie		*primary_index;
+-	struct cachefs_netfs_operations	*ops;
+-	struct list_head		link;		/* internal link */
+-};
+-
+-struct cachefs_netfs_operations
+-{
+-	/* get page-to-block mapping cookie for a page
+-	 * - one should be allocated if it doesn't exist
+-	 * - returning -ENODATA will cause this page to be ignored
+-	 * - typically, the struct will be attached to page->private
+-	 */
+-	struct cachefs_page *(*get_page_cookie)(struct page *page);
+-};
+-
+-#ifdef CONFIG_CACHEFS
+-extern int __cachefs_register_netfs(struct cachefs_netfs *netfs,
+-				    struct cachefs_index_def *primary_idef);
+-extern void __cachefs_unregister_netfs(struct cachefs_netfs *netfs);
+-#endif
+-
+-static inline
+-int cachefs_register_netfs(struct cachefs_netfs *netfs,
+-			   struct cachefs_index_def *primary_idef)
+-{
+-#ifdef CONFIG_CACHEFS
+-	return __cachefs_register_netfs(netfs, primary_idef);
+-#else
+-	return 0;
+-#endif
+-}
+-
+-static inline
+-void cachefs_unregister_netfs(struct cachefs_netfs *netfs)
+-{
+-#ifdef CONFIG_CACHEFS
+-	__cachefs_unregister_netfs(netfs);
+-#endif
+-}
+-
+-/*****************************************************************************/
+-/*
+- * page mapping cookie
+- * - stores the mapping of a page to a block in the cache (may also be null)
+- * - note that the mapping may be removed without notice if a cache is removed
+- */
+-struct cachefs_page
+-{
+-	struct cachefs_block	*mapped_block;	/* block mirroring this page */
+-	rwlock_t		lock;
+-
+-	unsigned long		flags;
+-#define CACHEFS_PAGE_BOUNDARY	0	/* next block has a different
+-					 * indirection chain */
+-#define CACHEFS_PAGE_NEW	1	/* this is a newly allocated block */
+-};
+-
+-/*
+- * read a page from the cache or allocate a block in which to store it
+- * - if the cookie is not backed by a file:
+- *   - -ENOBUFS will be returned and nothing more will be done
+- * - else if the page is backed by a block in the cache:
+- *   - a read will be started which will call end_io_func on completion
+- *   - the wb-journal will be searched for an entry pertaining to this block
+- *     - if an entry is found:
+- *       - 1 will be returned [not yet supported]
+- *       else
+- *       - 0 will be returned
+- * - else if the page is unbacked:
+- *   - a block will be allocated and attached
+- *   - the validity journal will be marked to note the block does not yet
+- *     contain valid data
+- *   - -ENODATA will be returned
+- */
+-#ifdef CONFIG_CACHEFS
+-extern int __cachefs_read_or_alloc_page(struct cachefs_cookie *cookie,
+-					struct page *page,
+-					cachefs_rw_complete_t end_io_func,
+-					void *end_io_data,
+-					unsigned long gfp);
+-#endif
+-
+-static inline
+-int cachefs_read_or_alloc_page(struct cachefs_cookie *cookie,
+-			       struct page *page,
+-			       cachefs_rw_complete_t end_io_func,
+-			       void *end_io_data,
+-			       unsigned long gfp)
+-{
+-#ifdef CONFIG_CACHEFS
+-	if (cookie != CACHEFS_NEGATIVE_COOKIE)
+-		return __cachefs_read_or_alloc_page(cookie, page, end_io_func,
+-						    end_io_data, gfp);
+-#endif
+-	return -ENOBUFS;
+-}
+-
+-/*
+- * request a page be stored in the cache
+- * - this request may be ignored if no cache block is currently attached, in
+- *   which case it:
+- *   - returns -ENOBUFS
+- * - if a cache block was already allocated:
+- *   - the page cookie will be updated to reflect the block selected
+- *   - a BIO will be dispatched to write the page (end_io_func will be called
+- *     from the completion function)
+- *     - end_io_func can be NULL, in which case a default function will just
+- *       clear the writeback bit on the page
+- *   - any associated validity journal entry will be cleared
+- *   - returns 0
+- */
+-#ifdef CONFIG_CACHEFS
+-extern int __cachefs_write_page(struct cachefs_cookie *cookie,
+-				struct page *page,
+-				cachefs_rw_complete_t end_io_func,
+-				void *end_io_data,
+-				unsigned long gfp);
+-#endif
+-
+-static inline
+-int cachefs_write_page(struct cachefs_cookie *cookie,
+-		       struct page *page,
+-		       cachefs_rw_complete_t end_io_func,
+-		       void *end_io_data,
+-		       unsigned long gfp)
+-{
+-#ifdef CONFIG_CACHEFS
+-	if (cookie != CACHEFS_NEGATIVE_COOKIE)
+-		return __cachefs_write_page(cookie, page, end_io_func,
+-					    end_io_data, gfp);
+-#endif
+-	return -ENOBUFS;
+-}
+-
+-/*
+- * indicate that caching is no longer required on a page
+- * - note: cannot cancel any outstanding BIOs between this page and the cache
+- */
+-#ifdef CONFIG_CACHEFS
+-extern void __cachefs_uncache_page(struct cachefs_cookie *cookie,
+-				   struct page *page);
+-#endif
+-
+-static inline
+-void cachefs_uncache_page(struct cachefs_cookie *cookie,
+-			  struct page *page)
+-{
+-#ifdef CONFIG_CACHEFS
+-	__cachefs_uncache_page(cookie, page);
+-#endif
+-}
+-
+-/*
+- * keep track of pages changed locally but not yet committed
+- */
+-#if 0 /* TODO */
+-extern void cachefs_writeback_prepare(struct cachefs_cookie *cookie,
+-				      struct page *page,
+-				      unsigned short from,
+-				      unsigned short to);
+-
+-extern void cachefs_writeback_committed(struct cachefs_cookie *cookie,
+-					struct page *page,
+-					unsigned short from,
+-					unsigned short to);
+-
+-extern void cachefs_writeback_aborted(struct cachefs_cookie *cookie,
+-				      struct page *page,
+-				      unsigned short from,
+-				      unsigned short to);
+-#endif
+-
+-/*
+- * convenience routines for mapping page->private directly to a struct
+- * cachefs_page
+- */
+-static inline
+-struct cachefs_page *__cachefs_page_grab_private(struct page *page)
+-{
+-	return (struct cachefs_page *) (PagePrivate(page) ? page->private : 0);
+-}
+-
+-#define cachefs_page_grab_private(X)		\
+-({						\
+-	BUG_ON(!PagePrivate(X));		\
+-	__cachefs_page_grab_private(X);		\
+-})
+-
+-
+-#ifdef CONFIG_CACHEFS
+-extern struct cachefs_page *__cachefs_page_get_private(struct page *page,
+-						       unsigned gfp);
+-#endif
+-
+-static inline
+-struct cachefs_page *cachefs_page_get_private(struct page *page,
+-					      unsigned gfp)
+-{
+-#ifdef CONFIG_CACHEFS
+-	return __cachefs_page_get_private(page, gfp);
+-#else
+-	return ERR_PTR(-EIO);
+-#endif
+-}
+-
+-#endif /* _LINUX_CACHEFS_H */
+_

@@ -1,0 +1,226 @@
+
+
+perfctr-2.7.3 for 2.6.7-rc1-mm1, part 3/6:
+
+- x86_64 arch changes
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/x86_64/Kconfig              |    2 ++
+ 25-akpm/arch/x86_64/ia32/ia32entry.S     |    6 ++++++
+ 25-akpm/arch/x86_64/kernel/entry.S       |    5 +++++
+ 25-akpm/arch/x86_64/kernel/i8259.c       |    3 +++
+ 25-akpm/arch/x86_64/kernel/process.c     |    8 ++++++++
+ 25-akpm/include/asm-x86_64/hw_irq.h      |    5 +++--
+ 25-akpm/include/asm-x86_64/ia32_unistd.h |    8 +++++++-
+ 25-akpm/include/asm-x86_64/irq.h         |    2 +-
+ 25-akpm/include/asm-x86_64/perfctr.h     |    1 +
+ 25-akpm/include/asm-x86_64/processor.h   |    2 ++
+ 25-akpm/include/asm-x86_64/unistd.h      |   14 +++++++++++++-
+ 11 files changed, 51 insertions(+), 5 deletions(-)
+
+diff -puN arch/x86_64/ia32/ia32entry.S~perfctr-x86_64 arch/x86_64/ia32/ia32entry.S
+--- 25/arch/x86_64/ia32/ia32entry.S~perfctr-x86_64	2004-08-30 00:50:26.212779456 -0700
++++ 25-akpm/arch/x86_64/ia32/ia32entry.S	2004-08-30 00:50:26.230776720 -0700
+@@ -586,6 +586,12 @@ ia32_sys_call_table:
+ 	.quad compat_sys_mq_notify
+ 	.quad compat_sys_mq_getsetattr
+ 	.quad quiet_ni_syscall		/* reserved for kexec */
++	.quad sys_perfctr_info
++	.quad sys_vperfctr_open
++	.quad sys_vperfctr_control
++	.quad sys_vperfctr_unlink
++	.quad sys_vperfctr_iresume
++	.quad sys_vperfctr_read
+ 	/* don't forget to change IA32_NR_syscalls */
+ ia32_syscall_end:		
+ 	.rept IA32_NR_syscalls-(ia32_syscall_end-ia32_sys_call_table)/8
+diff -puN arch/x86_64/Kconfig~perfctr-x86_64 arch/x86_64/Kconfig
+--- 25/arch/x86_64/Kconfig~perfctr-x86_64	2004-08-30 00:50:26.213779304 -0700
++++ 25-akpm/arch/x86_64/Kconfig	2004-08-30 00:50:26.231776568 -0700
+@@ -331,6 +331,8 @@ config X86_MCE
+ 	bool
+ 	default y
+ 
++source "drivers/perfctr/Kconfig"
++
+ endmenu
+ 
+ 
+diff -puN arch/x86_64/kernel/entry.S~perfctr-x86_64 arch/x86_64/kernel/entry.S
+--- 25/arch/x86_64/kernel/entry.S~perfctr-x86_64	2004-08-30 00:50:26.215779000 -0700
++++ 25-akpm/arch/x86_64/kernel/entry.S	2004-08-30 00:50:26.232776416 -0700
+@@ -560,6 +560,11 @@ ENTRY(spurious_interrupt)
+ 	apicinterrupt SPURIOUS_APIC_VECTOR,smp_spurious_interrupt
+ #endif
+ 				
++#if defined(CONFIG_X86_LOCAL_APIC) && defined(CONFIG_PERFCTR)
++ENTRY(perfctr_interrupt)
++	apicinterrupt LOCAL_PERFCTR_VECTOR,smp_perfctr_interrupt
++#endif
++
+ /*
+  * Exception entry points.
+  */ 		
+diff -puN arch/x86_64/kernel/i8259.c~perfctr-x86_64 arch/x86_64/kernel/i8259.c
+--- 25/arch/x86_64/kernel/i8259.c~perfctr-x86_64	2004-08-30 00:50:26.217778696 -0700
++++ 25-akpm/arch/x86_64/kernel/i8259.c	2004-08-30 00:50:26.232776416 -0700
+@@ -24,6 +24,7 @@
+ #include <asm/delay.h>
+ #include <asm/desc.h>
+ #include <asm/apic.h>
++#include <asm/perfctr.h>
+ 
+ #include <linux/irq.h>
+ 
+@@ -560,6 +561,8 @@ void __init init_IRQ(void)
+ 	set_intr_gate(ERROR_APIC_VECTOR, error_interrupt);
+ #endif
+ 
++	perfctr_vector_init();
++
+ 	/*
+ 	 * Set the clock to HZ Hz, we already have a valid
+ 	 * vector now:
+diff -puN arch/x86_64/kernel/process.c~perfctr-x86_64 arch/x86_64/kernel/process.c
+--- 25/arch/x86_64/kernel/process.c~perfctr-x86_64	2004-08-30 00:50:26.219778392 -0700
++++ 25-akpm/arch/x86_64/kernel/process.c	2004-08-30 00:50:26.233776264 -0700
+@@ -32,6 +32,7 @@
+ #include <linux/delay.h>
+ #include <linux/irq.h>
+ #include <linux/ptrace.h>
++#include <linux/perfctr.h>
+ #include <linux/version.h>
+ 
+ #include <asm/uaccess.h>
+@@ -257,6 +258,7 @@ void exit_thread(void)
+ 		tss->io_bitmap_base = INVALID_IO_BITMAP_OFFSET;
+ 		put_cpu();
+ 	}
++	perfctr_exit_thread(&me->thread);
+ }
+ 
+ void flush_thread(void)
+@@ -360,6 +362,8 @@ int copy_thread(int nr, unsigned long cl
+ 	asm("movl %%es,%0" : "=m" (p->thread.es));
+ 	asm("movl %%ds,%0" : "=m" (p->thread.ds));
+ 
++	perfctr_copy_thread(&p->thread);
++
+ 	if (unlikely(me->thread.io_bitmap_ptr != NULL)) { 
+ 		p->thread.io_bitmap_ptr = kmalloc(IO_BITMAP_BYTES, GFP_KERNEL);
+ 		if (!p->thread.io_bitmap_ptr) 
+@@ -406,6 +410,8 @@ struct task_struct *__switch_to(struct t
+ 	int cpu = smp_processor_id();  
+ 	struct tss_struct *tss = init_tss + cpu;
+ 
++	perfctr_suspend_thread(prev);
++
+ 	unlazy_fpu(prev_p);
+ 
+ 	/*
+@@ -509,6 +515,8 @@ struct task_struct *__switch_to(struct t
+ 		}
+ 	}
+ 
++	perfctr_resume_thread(next);
++
+ 	return prev_p;
+ }
+ 
+diff -puN include/asm-x86_64/hw_irq.h~perfctr-x86_64 include/asm-x86_64/hw_irq.h
+--- 25/include/asm-x86_64/hw_irq.h~perfctr-x86_64	2004-08-30 00:50:26.221778088 -0700
++++ 25-akpm/include/asm-x86_64/hw_irq.h	2004-08-30 00:50:26.234776112 -0700
+@@ -65,14 +65,15 @@ struct hw_interrupt_type;
+  * sources per level' errata.
+  */
+ #define LOCAL_TIMER_VECTOR	0xef
++#define LOCAL_PERFCTR_VECTOR	0xee
+ 
+ /*
+- * First APIC vector available to drivers: (vectors 0x30-0xee)
++ * First APIC vector available to drivers: (vectors 0x30-0xed)
+  * we start at 0x31 to spread out vectors evenly between priority
+  * levels. (0x80 is the syscall vector)
+  */
+ #define FIRST_DEVICE_VECTOR	0x31
+-#define FIRST_SYSTEM_VECTOR	0xef   /* duplicated in irq.h */
++#define FIRST_SYSTEM_VECTOR	0xee   /* duplicated in irq.h */
+ 
+ 
+ #ifndef __ASSEMBLY__
+diff -puN include/asm-x86_64/ia32_unistd.h~perfctr-x86_64 include/asm-x86_64/ia32_unistd.h
+--- 25/include/asm-x86_64/ia32_unistd.h~perfctr-x86_64	2004-08-30 00:50:26.222777936 -0700
++++ 25-akpm/include/asm-x86_64/ia32_unistd.h	2004-08-30 00:50:26.234776112 -0700
+@@ -289,7 +289,13 @@
+ #define __NR_ia32_mq_notify		(__NR_ia32_mq_open+4)
+ #define __NR_ia32_mq_getsetattr	(__NR_ia32_mq_open+5)
+ #define __NR_ia32_kexec		283
++#define __NR_ia32_perfctr_info		284
++#define __NR_ia32_vperfctr_open		(__NR_ia32_perfctr_info+1)
++#define __NR_ia32_vperfctr_control	(__NR_ia32_perfctr_info+2)
++#define __NR_ia32_vperfctr_unlink	(__NR_ia32_perfctr_info+3)
++#define __NR_ia32_vperfctr_iresume	(__NR_ia32_perfctr_info+4)
++#define __NR_ia32_vperfctr_read		(__NR_ia32_perfctr_info+5)
+ 
+-#define IA32_NR_syscalls 287	/* must be > than biggest syscall! */
++#define IA32_NR_syscalls 290	/* must be > than biggest syscall! */
+ 
+ #endif /* _ASM_X86_64_IA32_UNISTD_H_ */
+diff -puN include/asm-x86_64/irq.h~perfctr-x86_64 include/asm-x86_64/irq.h
+--- 25/include/asm-x86_64/irq.h~perfctr-x86_64	2004-08-30 00:50:26.223777784 -0700
++++ 25-akpm/include/asm-x86_64/irq.h	2004-08-30 00:50:26.234776112 -0700
+@@ -29,7 +29,7 @@
+  */
+ #define NR_VECTORS 256
+ 
+-#define FIRST_SYSTEM_VECTOR	0xef   /* duplicated in hw_irq.h */
++#define FIRST_SYSTEM_VECTOR	0xee   /* duplicated in hw_irq.h */
+ 
+ #ifdef CONFIG_PCI_MSI
+ #define NR_IRQS FIRST_SYSTEM_VECTOR
+diff -puN /dev/null include/asm-x86_64/perfctr.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-x86_64/perfctr.h	2004-08-30 00:50:26.235775960 -0700
+@@ -0,0 +1 @@
++#include <asm-i386/perfctr.h>
+diff -puN include/asm-x86_64/processor.h~perfctr-x86_64 include/asm-x86_64/processor.h
+--- 25/include/asm-x86_64/processor.h~perfctr-x86_64	2004-08-30 00:50:26.225777480 -0700
++++ 25-akpm/include/asm-x86_64/processor.h	2004-08-30 00:50:26.235775960 -0700
+@@ -253,6 +253,8 @@ struct thread_struct {
+ 	unsigned long	*io_bitmap_ptr;
+ /* cached TLS descriptors. */
+ 	u64 tls_array[GDT_ENTRY_TLS_ENTRIES];
++/* performance counters */
++	struct vperfctr *perfctr;
+ } __attribute__((aligned(16)));
+ 
+ #define INIT_THREAD  {}
+diff -puN include/asm-x86_64/unistd.h~perfctr-x86_64 include/asm-x86_64/unistd.h
+--- 25/include/asm-x86_64/unistd.h~perfctr-x86_64	2004-08-30 00:50:26.227777176 -0700
++++ 25-akpm/include/asm-x86_64/unistd.h	2004-08-30 00:50:26.236775808 -0700
+@@ -554,8 +554,20 @@ __SYSCALL(__NR_mq_notify, sys_mq_notify)
+ __SYSCALL(__NR_mq_getsetattr, sys_mq_getsetattr)
+ #define __NR_kexec_load 	246
+ __SYSCALL(__NR_kexec_load, sys_ni_syscall)
++#define __NR_perfctr_info	247
++__SYSCALL(__NR_perfctr_info, sys_perfctr_info)
++#define __NR_vperfctr_open	(__NR_perfctr_info+1)
++__SYSCALL(__NR_vperfctr_open, sys_vperfctr_open)
++#define __NR_vperfctr_control	(__NR_perfctr_info+2)
++__SYSCALL(__NR_vperfctr_control, sys_vperfctr_control)
++#define __NR_vperfctr_unlink	(__NR_perfctr_info+3)
++__SYSCALL(__NR_vperfctr_unlink, sys_vperfctr_unlink)
++#define __NR_vperfctr_iresume	(__NR_perfctr_info+4)
++__SYSCALL(__NR_vperfctr_iresume, sys_vperfctr_iresume)
++#define __NR_vperfctr_read	(__NR_perfctr_info+5)
++__SYSCALL(__NR_vperfctr_read, sys_vperfctr_read)
+ 
+-#define __NR_syscall_max __NR_kexec_load
++#define __NR_syscall_max __NR_vperfctr_read
+ #ifndef __NO_STUBS
+ 
+ /* user-visible error numbers are in the range -1 - -4095 */
+_

@@ -1,0 +1,151 @@
+
+
+mmaps of /dev/mem can cover regions which are not described by pageframes. 
+But get_user_pages() expects to be able to resolve virtual addresses into
+pageframes.  So get_user_pages() against a mapping of (say) an I/O region
+does bad things.
+
+Fix that up by marking all mappings of /dev/mem as VM_IO.  And change
+get_user_pages() so that it understands that is _is_ still legal to call
+get_user_pages() against a VM_IO region, as long as the user hsan't actually
+requested the retrieval of pageframe information.
+
+(q: who calls get_user_pages() against a VM_IO region with `pages == NULL'
+anyway?  a: mlock()->make_pages_present()).
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/mem.c |   29 ++++++++++++++---------------
+ 25-akpm/mm/memory.c        |   19 +++++++++++++++----
+ 2 files changed, 29 insertions(+), 19 deletions(-)
+
+diff -puN drivers/char/mem.c~get_user_pages-handle-VM_IO drivers/char/mem.c
+--- 25/drivers/char/mem.c~get_user_pages-handle-VM_IO	2004-09-26 17:17:58.364907024 -0700
++++ 25-akpm/drivers/char/mem.c	2004-09-26 17:17:58.371905960 -0700
+@@ -35,6 +35,7 @@
+ extern void tapechar_init(void);
+ #endif
+ 
++#ifdef pgprot_noncached
+ /*
+  * Architectures vary in how they handle caching for addresses
+  * outside of main memory.
+@@ -73,7 +74,8 @@ static inline int uncached_access(struct
+ 	return 0;
+ #elif defined(CONFIG_IA64)
+ 	/*
+-	 * On ia64, we ignore O_SYNC because we cannot tolerate memory attribute aliases.
++	 * On ia64, we ignore O_SYNC because we cannot tolerate memory
++	 * attribute aliases.
+ 	 */
+ 	return !(efi_mem_attributes(addr) & EFI_MEMORY_WB);
+ #elif defined(CONFIG_PPC64)
+@@ -86,14 +88,15 @@ static inline int uncached_access(struct
+ 	return !page_is_ram(addr >> PAGE_SHIFT);
+ #else
+ 	/*
+-	 * Accessing memory above the top the kernel knows about or through a file pointer
+-	 * that was marked O_SYNC will be done non-cached.
++	 * Accessing memory above the top the kernel knows about or through a
++	 * file pointer that was marked O_SYNC will be done non-cached.
+ 	 */
+ 	if (file->f_flags & O_SYNC)
+ 		return 1;
+ 	return addr >= __pa(high_memory);
+ #endif
+ }
++#endif
+ 
+ #ifndef ARCH_HAS_VALID_PHYS_ADDR_RANGE
+ static inline int valid_phys_addr_range(unsigned long addr, size_t *count)
+@@ -204,28 +207,24 @@ static ssize_t write_mem(struct file * f
+ 	return do_write_mem(__va(p), p, buf, count, ppos);
+ }
+ 
+-static int mmap_mem(struct file * file, struct vm_area_struct * vma)
++static int mmap_mem(struct file *file, struct vm_area_struct *vma)
+ {
+ 	unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
+-	int uncached;
+ 
+-	uncached = uncached_access(file, offset);
+ #ifdef pgprot_noncached
+-	if (uncached)
++	if (uncached_access(file, offset))
+ 		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+ #endif
+ 
+-	/* Don't try to swap out physical pages.. */
+-	vma->vm_flags |= VM_RESERVED;
+-
+ 	/*
+-	 * Don't dump addresses that are not real memory to a core file.
++	 * Don't try to swap out physical pages..
++	 * And treat /dev/mem mappings as "IO" regions: they may not
++	 * describe valid pageframes.
+ 	 */
+-	if (uncached)
+-		vma->vm_flags |= VM_IO;
++	vma->vm_flags |= VM_RESERVED|VM_IO;
+ 
+-	if (remap_page_range(vma, vma->vm_start, offset, vma->vm_end-vma->vm_start,
+-			     vma->vm_page_prot))
++	if (remap_page_range(vma, vma->vm_start, offset,
++			vma->vm_end-vma->vm_start, vma->vm_page_prot))
+ 		return -EAGAIN;
+ 	return 0;
+ }
+diff -puN mm/memory.c~get_user_pages-handle-VM_IO mm/memory.c
+--- 25/mm/memory.c~get_user_pages-handle-VM_IO	2004-09-26 17:17:58.366906720 -0700
++++ 25-akpm/mm/memory.c	2004-09-26 17:17:58.372905808 -0700
+@@ -705,6 +705,7 @@ int get_user_pages(struct task_struct *t
+ 		struct page **pages, struct vm_area_struct **vmas)
+ {
+ 	int i;
++	int vm_io;
+ 	unsigned int flags;
+ 
+ 	/* 
+@@ -753,9 +754,11 @@ int get_user_pages(struct task_struct *t
+ 			continue;
+ 		}
+ 
+-		if (!vma || (pages && (vma->vm_flags & VM_IO))
+-				|| !(flags & vma->vm_flags))
+-			return i ? : -EFAULT;
++		if (!vma)
++			return i ? i : -EFAULT;
++		vm_io = vma->vm_flags & VM_IO;
++		if ((pages && vm_io) || !(flags & vma->vm_flags))
++			return i ? i : -EFAULT;
+ 
+ 		if (is_vm_hugetlb_page(vma)) {
+ 			i = follow_hugetlb_page(mm, vma, pages, vmas,
+@@ -764,8 +767,15 @@ int get_user_pages(struct task_struct *t
+ 		}
+ 		spin_lock(&mm->page_table_lock);
+ 		do {
+-			struct page *map;
++			struct page *map = NULL;
+ 			int lookup_write = write;
++
++			/*
++			 * We don't follow pagetables for VM_IO regions - they
++			 * may have no pageframes.
++			 */
++			if (vm_io)
++				goto no_follow;
+ 			while (!(map = follow_page(mm, start, lookup_write))) {
+ 				/*
+ 				 * Shortcut for anonymous pages. We don't want
+@@ -817,6 +827,7 @@ int get_user_pages(struct task_struct *t
+ 				if (!PageReserved(pages[i]))
+ 					page_cache_get(pages[i]);
+ 			}
++no_follow:
+ 			if (vmas)
+ 				vmas[i] = vma;
+ 			i++;
+_

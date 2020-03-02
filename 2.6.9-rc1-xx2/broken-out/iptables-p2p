@@ -1,0 +1,1201 @@
+Index: xx-sources/include/linux/netfilter_ipv4/ipt_ipp2p.h
+===================================================================
+--- xx-sources.orig/include/linux/netfilter_ipv4/ipt_ipp2p.h	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/include/linux/netfilter_ipv4/ipt_ipp2p.h	2004-08-24 01:58:32.974581320 -0400
+@@ -0,0 +1,9 @@
++#ifndef __IPT_IPP2P_H
++#define __IPT_IPP2P_H
++#define IPP2P_VERSION "0.6"
++
++struct ipt_p2p_info {
++    int cmd;    
++};
++
++#endif //__IPT_IPP2P_H
+Index: xx-sources/net/ipv4/netfilter/Kconfig
+===================================================================
+--- xx-sources.orig/net/ipv4/netfilter/Kconfig	2004-08-24 01:58:32.000000000 -0400
++++ xx-sources/net/ipv4/netfilter/Kconfig	2004-08-24 01:58:32.992578584 -0400
+@@ -19,6 +19,8 @@
+ 
+ 	  To compile it as a module, choose M here.  If unsure, say N.
+ 
++source "net/ipv4/netfilter/iptables-p2p/Kconfig"
++
+ config IP_NF_FTP
+ 	tristate "FTP protocol support"
+ 	depends on IP_NF_CONNTRACK
+@@ -302,6 +304,13 @@
+ 	  If you want to compile it as a module, say M here and read
+ 	  Documentation/modules.txt.  If unsure, say `N'.
+ 
++config IP_NF_MATCH_IPP2P
++	tristate  'IPP2P match support'
++	depends on IP_NF_IPTABLES
++	help
++	  IPP2P, an extension to iptables to identify P2P traffic written by
++	  Eicke Friedrich.
++
+ config IP_NF_MATCH_PHYSDEV
+ 	tristate "Physdev match support"
+ 	depends on IP_NF_IPTABLES && BRIDGE_NETFILTER
+Index: xx-sources/net/ipv4/netfilter/Makefile
+===================================================================
+--- xx-sources.orig/net/ipv4/netfilter/Makefile	2004-08-24 01:58:32.000000000 -0400
++++ xx-sources/net/ipv4/netfilter/Makefile	2004-08-24 01:58:32.993578432 -0400
+@@ -93,6 +93,10 @@
+ 
+ obj-$(CONFIG_IP_NF_MATCH_LAYER7) += ipt_layer7.o
+ 
++obj-$(CONFIG_IP_NF_MATCH_IPTABLES_P2P) += iptables-p2p/
++
++obj-$(CONFIG_IP_NF_MATCH_IPP2P) += ipt_ipp2p.o
++
+ # targets
+ obj-$(CONFIG_IP_NF_TARGET_REJECT) += ipt_REJECT.o
+ obj-$(CONFIG_IP_NF_TARGET_TARPIT) += ipt_TARPIT.o
+Index: xx-sources/net/ipv4/netfilter/ipt_ipp2p.c
+===================================================================
+--- xx-sources.orig/net/ipv4/netfilter/ipt_ipp2p.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/net/ipv4/netfilter/ipt_ipp2p.c	2004-08-24 01:58:32.995578128 -0400
+@@ -0,0 +1,464 @@
++#include <linux/module.h>
++#include <linux/netfilter_ipv4/ip_tables.h>
++#include <linux/version.h>
++#include <linux/netfilter_ipv4/ipt_ipp2p.h>
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0)
++
++#if defined(MODVERSIONS)
++    #include <linux/modversions.h>
++#endif
++#endif
++
++#define get_u16(X,O)  (*(__u16 *)(X + O))
++
++MODULE_AUTHOR("Eicke Friedrich <tady at gmx dot net>");
++MODULE_DESCRIPTION("An extension to iptables to identify P2P traffic.");
++MODULE_LICENSE("GPL");
++
++
++/*Search for SoulSeek commands*/
++int
++search_soul (unsigned char *haystack, int packet_len, int head_len)
++{
++    unsigned char *t = haystack;
++    int cmd;    
++    t += head_len;
++
++    cmd = get_u16(t, 0);	
++    if (cmd == (packet_len - head_len - 4))
++    {
++	if ((t[2] == 0x00) && (t[3] == 0x00) && (t[4] == 0x01)) return 1; //CONNECT: 		xx xx 00 00 01
++	if ((t[2] == 0x00) && (t[3] == 0x00) && (t[4] == 0x28)) return 1; //TRANSFER REQUEST: 	xx xx 00 00 28	
++    }
++    return 0;
++
++}
++
++
++/*Search for appleJuice commands*/
++int
++search_apple (unsigned char *haystack, int packet_len, int head_len)
++{
++    unsigned char *t = haystack;
++    t += head_len;
++    
++    if ((memcmp(t, "ajprot", 6) == 0) && (t[6] == 0x0d) && (t[7] == 0x0a))  return 1;
++    
++    return 0;
++}
++
++
++/*Search for BitTorrent commands*/
++int
++search_bittorrent (unsigned char *haystack, int packet_len, int head_len)
++{
++
++    unsigned char *t = haystack;
++    if (*(haystack+head_len) != 0x13) return 0; //Bail out of first byte != 0x13
++    
++    t += head_len + 1;
++    
++    if (memcmp(t, "BitTorrent protocol", 19) == 0) return 1;        
++    return 0;
++}
++
++
++
++/*check for Kazaa get command*/
++int
++search_kazaa (unsigned char *haystack, int packet_len, int head_len)
++{
++    unsigned char *t = haystack;
++
++    if (!((*(haystack + packet_len - 2) == 0x0d) && (*(haystack + packet_len - 1) == 0x0a))) return 0;    
++
++    t += head_len;
++    if (memcmp(t, "GET /.hash=", 11) == 0)
++	return 1;
++    else
++	return 0;
++}
++
++
++/*check for gnutella get command*/
++int
++search_gnu (unsigned char *haystack, int packet_len, int head_len)
++{
++    unsigned char *t = haystack;
++
++    if (!((*(haystack + packet_len - 2) == 0x0d) && (*(haystack + packet_len - 1) == 0x0a))) return 0;    
++
++    t += head_len;
++    if (memcmp(t, "GET /get/", 9) == 0)	return 1;
++    if (memcmp(t, "GET /uri-res/", 13) == 0) return 1; 
++    
++    return 0;
++}
++
++
++/*check for gnutella get commands and other typical data*/
++int
++search_all_gnu (unsigned char *haystack, int packet_len, int head_len)
++{
++    unsigned char *t = haystack;
++    int c;    
++
++    if (!((*(haystack + packet_len - 2) == 0x0d) && (*(haystack + packet_len - 1) == 0x0a))) return 0;
++
++    t += head_len;
++
++    if (memcmp(t, "GNUTELLA CONNECT/", 17) == 0) return 1;        
++    if (memcmp(t, "GNUTELLA/", 9) == 0) return 1;    
++
++    if ((memcmp(t, "GET /get/", 9) == 0) || (memcmp(t, "GET /uri-res/", 13) == 0))
++    {        
++        c = head_len + 8;
++	t += 8;
++	while (c < packet_len - 22)
++	{
++	    if (t[0] == 0x0d)
++	    {
++		t++;
++		c++;
++		if (t[0] == 0x0a)
++		{
++		    t++;
++		    c++;
++		    if ((memcmp(t, "X-Gnutella-", 11) == 0) || (memcmp(t, "X-Queue:", 8) == 0)) return 1;
++		}
++	    }
++	    else
++	    {
++		t++;
++		c++;
++	    }    
++	}
++    }
++    return 0;
++}
++
++
++/*check for KaZaA download commands and other typical data*/
++int
++search_all_kazaa (unsigned char *haystack, int packet_len, int head_len)
++{
++    unsigned char *t = haystack;
++    int c;    
++
++    if (!((*(haystack + packet_len - 2) == 0x0d) && (*(haystack + packet_len - 1) == 0x0a))) return 0;
++
++    t += head_len;
++    if (memcmp(t, "GIVE ", 5) == 0) return 1;    
++    
++    if (memcmp(t, "GET /", 5) == 0)
++    {
++        c = head_len + 8;
++	t += 8;
++	while (c < packet_len - 22)
++	{
++	    if (t[0] == 0x0d)
++	    {
++		t++;
++		c++;
++		if (t[0] == 0x0a)
++		{
++		    t++;
++		    c++;
++    		    if ( memcmp(t, "X-Kazaa-Username: ", 18) == 0 ) return 1;
++		}
++	    }
++	    else
++	    {
++		t++;
++		c++;
++	    }    
++	}
++    }
++    
++    return 0;
++}
++
++/*fast check for edonkey file segment transfer command*/
++int
++search_edk (unsigned char *haystack, int packet_len, int head_len)
++{
++    if (*(haystack+head_len) != 0xe3) 
++	return 0;
++    else
++    {
++	if (*(haystack+head_len+5) == 0x47) 
++	    return 1;
++	else 	
++	    return 0;
++    }
++}
++
++
++
++/*intensive but slower search for some edonkey packets including size-check*/
++int
++search_all_edk (unsigned char *haystack, int packet_len, int head_len)
++{
++    unsigned char *t = haystack;
++    int cmd;
++    
++    if (*(haystack+head_len) == 0xd4)
++    {
++	t += head_len;	
++	cmd = get_u16(t, 1);	
++	if (cmd == (packet_len - head_len - 5))
++	{
++	    if (t[5] == 0x82) return 1;
++	    if (t[5] == 0x15) return 1;	    
++	}
++	return 0;    
++    }
++    
++    
++    if (*(haystack+head_len) == 0xc5) //search for additional eMule packets
++    {
++	t += head_len;	
++	cmd = get_u16(t, 1);	
++
++	if (cmd == (packet_len - head_len - 5))
++	{
++	    if (t[5] == 0x01) return 1;	
++	    if (t[5] == 0x02) return 1;		    	    
++	    if (t[5] == 0x60) return 1;
++	    if (t[5] == 0x81) return 1;
++	    if (t[5] == 0x82) return 1;	    
++	    if (t[5] == 0x85) return 1;	    
++	    if (t[5] == 0x86) return 1;
++	    if (t[5] == 0x87) return 1;
++	    if (t[5] == 0x40) return 1;
++	    if (t[5] == 0x92) return 1;
++	    if (t[5] == 0x93) return 1;	
++	    if (t[5] == 0x12) return 1;		    
++	    return 0;
++	}
++	
++	return 0;
++    }
++
++
++    if (*(haystack+head_len) != 0xe3) 
++	return 0;
++    else
++    {
++	t += head_len;	
++	cmd = get_u16(t, 1);	
++	if (cmd == (packet_len - head_len - 5)) 
++	{
++	    if (t[5] == 0x01) return 1;	//Client: hello or Server:hello
++	    if (t[5] == 0x50) return 1;	//Client: file status
++	    if (t[5] == 0x16) return 1;	//Client: search
++	    if (t[5] == 0x58) return 1;	//Client: file request
++	    if (t[5] == 0x48) return 1;	//???
++	    if (t[5] == 0x54) return 1;	//???	    	    
++	    if (t[5] == 0x47) return 1;	//Client: file segment request
++	    if (t[5] == 0x46) return 1; //Client: download segment	    
++	    if (t[5] == 0x4c) return 1;	//Client: Hello-Answer
++	    if (t[5] == 0x4f) return 1;	//Client: file status request
++	    if (t[5] == 0x59) return 1;	//Client: file request answer
++	    if (t[5] == 0x65) return 1;	//Client: ???
++	    if (t[5] == 0x66) return 1;	//Client: ??? 	    
++	    if (t[5] == 0x51) return 1;	//Client: ??? 	    	    
++	    if (t[5] == 0x52) return 1;	//Client: ??? 	    	        
++	    if (t[5] == 0x4d) return 1;	//Client: ??? 	    
++	    if (t[5] == 0x5c) return 1;	//Client: ??? 	    
++	    if (t[5] == 0x38) return 1;	//Client: ??? 	    
++	    if (t[5] == 0x69) return 1;	//Client: ??? 	    	    
++	    if (t[5] == 0x19) return 1;	//Client: ??? 	    	    
++	    if (t[5] == 0x42) return 1;	//Client: ??? 	    
++	    if (t[5] == 0x34) return 1;	//Client: ???
++	    if (t[5] == 0x94) return 1;	//Client: ???	    
++	    if (t[5] == 0x1c) return 1;	//Client: ???	    	    
++	    if (t[5] == 0x6a) return 1;	//Client: ???	    
++	    return 0;	
++	}
++	else
++	{
++	    if (cmd > packet_len - head_len - 5) 
++	    {
++		if ((t[3] == 0x00) && (t[4] == 0x00))
++		{
++		    if (t[5] == 0x01) return 1;
++		    if (t[5] == 0x4c) return 1;
++		} 
++		return 0;
++		
++	    }	//non edk packet
++	    if (t[cmd+5] == 0xe3) return 1;		//found another edk-command
++	    if (t[cmd+5] == 0xc5) return 1;		//found an emule-command	    
++	    return 0;
++	}
++    }
++}
++
++
++/*fast check for Direct Connect send command*/
++int
++search_dc (unsigned char *haystack, int packet_len, int head_len)
++{
++    unsigned char *t = haystack;
++
++    if (*(haystack+head_len) != 0x24 ) 
++	return 0;
++    else
++    {
++	t += head_len + 1;
++        if (memcmp(t, "Send|", 5) == 0)
++	    return 1;
++	else
++	    return 0;
++    }	
++
++}
++
++
++/*intensive but slower check for all direct connect packets*/
++int
++search_all_dc (unsigned char *haystack, int packet_len, int head_len)
++{
++    unsigned char *t = haystack;
++
++    if ((*(haystack + head_len) == 0x24) && (*(haystack + packet_len - 1) == 0x7c)) 
++    {
++    	t += head_len + 1;
++	if (memcmp(t, "Lock ", 5) == 0)	 return 1;	//hub: hello
++	if (memcmp(t, "Key ", 4) == 0)	 return 1;	//client: hello
++	if (memcmp(t, "Hello ", 6) == 0) return 1;	//hub:connected
++	if (memcmp(t, "MyNick ", 7) == 0) return 1;	//client-client: hello
++	if (memcmp(t, "Search ", 7) == 0) return 1;	//client: search
++	if (memcmp(t, "Send", 4) == 0)	 return 1;	//client: start download
++	return 0;
++    }
++    else
++	return 0;
++	
++
++}
++
++
++//typedef int (*p2p_function) (unsigned char *, int, int);
++
++static struct {
++    int command;
++    int short_hand;			/*1=ipp2p; 4=ipp2p-data; 5=none*/
++    int packet_len;
++    int (*function_name) (unsigned char *, int, int);
++} matchlist[] = {
++    {2,1,40, &search_all_edk}, 		/*edk || ipp2p */
++    {8,4,200, &search_kazaa}, 		/*kazaa-data || ipp2p-data */    
++    {16,4,60, &search_edk},		/*edk-data || ipp2p-data*/
++    {32,4,26, &search_dc},		/*dc-data || ipp2p-data*/    
++    {64,1,25, search_all_dc}, 		/*dc || ipp2p */
++    {128,4,40, &search_gnu},		/*gnu-data || ipp2p-data*/    
++    {256,1,35, &search_all_gnu}, 	/*gnu || ipp2p */
++    {512,1,35, &search_all_kazaa}, 	/*kazaa || ipp2p */
++    {1024,5,40, &search_bittorrent},	/*bit */    
++    {2048,5,20, &search_apple},		/*apple */    
++    {4096,5,20, &search_soul},		/*soul */    
++    {0,0,0,NULL}
++};
++
++
++static int
++match(const struct sk_buff *skb,
++      const struct net_device *in,
++      const struct net_device *out,
++      const void *matchinfo,
++      int offset,
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0)
++      const void *hdr,
++      u_int16_t datalen,
++#endif
++
++      int *hotdrop)
++{
++    const struct ipt_p2p_info *info = matchinfo;
++    unsigned char  *haystack;
++    struct iphdr *ip = skb->nh.iph;
++    int p2p_result = 0, i = 0;
++    int head_len;
++
++
++    int hlen = ntohs(ip->tot_len)-(ip->ihl*4);	//hlen = packet-data length    
++    haystack=(char *)ip+(ip->ihl*4);		//haystack = packet data    
++
++
++    if (((*(haystack+13)) & 1) == 1) return 0;  //if FIN bit is set bail out
++    if (((*(haystack+13)) & 2) == 2) return 0;  //if SYN bit is set bail out
++    if (((*(haystack+13)) & 4) == 4) return 0;  //if RST bit is set bail out
++	    
++
++    head_len = (*(haystack+12))/4; //get TCP-Header-Size
++
++    while (matchlist[i].command) {
++	if ((((info->cmd & matchlist[i].command) == matchlist[i].command) || ((info->cmd & matchlist[i].short_hand) == matchlist[i].short_hand)) && (hlen > matchlist[i].packet_len)) {
++	    p2p_result = matchlist[i].function_name(haystack, hlen, head_len);
++	    if (p2p_result) return p2p_result;
++	}
++	i++;
++    }
++    return p2p_result;
++}
++
++
++
++static int
++checkentry(const char *tablename,
++            const struct ipt_ip *ip,
++	    void *matchinfo,
++	    unsigned int matchsize,
++	    unsigned int hook_mask)
++{
++        /* Must specify -p tcp */
++    if (ip->proto != IPPROTO_TCP || (ip->invflags & IPT_INV_PROTO)) {
++	printk("ipp2p: Only works on TCP packets, use -p tcp\n");
++	return 0;
++    }
++							
++
++    return 1;
++}
++									    
++
++
++
++static struct ipt_match ipp2p_match = { 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0)
++	{ NULL, NULL }, 
++	"ipp2p", 
++	&match, 
++	&checkentry, 
++	NULL, 
++	THIS_MODULE
++#endif
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
++	.name		= "ipp2p",
++	.match		= &match,
++	.checkentry	= &checkentry,
++	.me		= THIS_MODULE,
++#endif
++};
++
++
++static int __init init(void)
++{
++    printk(KERN_INFO "IPP2P v%s loading\n", IPP2P_VERSION);
++    return ipt_register_match(&ipp2p_match);
++}
++	
++static void __exit fini(void)
++{
++    ipt_unregister_match(&ipp2p_match);
++    printk(KERN_INFO "IPP2P v%s unloaded\n", IPP2P_VERSION);    
++}
++	
++module_init(init);
++module_exit(fini);
++
++
+Index: xx-sources/net/ipv4/netfilter/iptables-p2p/Kconfig
+===================================================================
+--- xx-sources.orig/net/ipv4/netfilter/iptables-p2p/Kconfig	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/net/ipv4/netfilter/iptables-p2p/Kconfig	2004-08-24 01:58:32.996577976 -0400
+@@ -0,0 +1,5 @@
++config IP_NF_MATCH_IPTABLES_P2P
++	tristate  'iptables-p2p support'
++	depends on IP_NF_IPTABLES
++	help
++		Filters p2p traffic.
+Index: xx-sources/net/ipv4/netfilter/iptables-p2p/Makefile
+===================================================================
+--- xx-sources.orig/net/ipv4/netfilter/iptables-p2p/Makefile	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/net/ipv4/netfilter/iptables-p2p/Makefile	2004-08-24 01:58:32.997577824 -0400
+@@ -0,0 +1,3 @@
++ipt_p2p-objs	:= main.o match_bittorrent.o match_dc.o match_edonkey.o match_http.o
++
++obj-$(CONFIG_IP_NF_MATCH_IPTABLES_P2P) += ipt_p2p.o
+Index: xx-sources/net/ipv4/netfilter/iptables-p2p/ipt_p2p.h
+===================================================================
+--- xx-sources.orig/net/ipv4/netfilter/iptables-p2p/ipt_p2p.h	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/net/ipv4/netfilter/iptables-p2p/ipt_p2p.h	2004-08-24 02:59:36.000000000 -0400
+@@ -0,0 +1,40 @@
++/*
++ * $Id: iptables-p2p,v 1.1 2004/08/26 12:31:19 xiphux Exp $
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version 2, or (at your option) any
++ * later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ */
++
++#ifndef __IPT_P2P_H
++#define __IPT_P2P_H
++
++#define IPT_P2P_VERSION "0.3.0a"
++
++/*****************************************************************************/
++
++#define IPT_P2P_PROTO_FASTTRACK        (0x01)  /* Minimum value for proto */
++#define IPT_P2P_PROTO_GNUTELLA         (0x02)
++#define IPT_P2P_PROTO_EDONKEY          (0x04)
++#define IPT_P2P_PROTO_DIRECT_CONNECT   (0x08)
++#define IPT_P2P_PROTO_BITTORRENT       (0x10)
++#define IPT_P2P_PROTO_OPENFT           (0x20)
++#define IPT_P2P_PROTO_ALL              (0xffff) /* Maximum value for proto */
++
++/* Structure shared between the iptables_match module and the kernel's
++   ipt_match module. */
++struct ipt_p2p_info
++{
++	/* Application-layer peer-to-peer protocol(s) to match. */
++	int proto;
++};
++
++/*****************************************************************************/
++
++#endif /* __IPT_P2P_H */
+Index: xx-sources/net/ipv4/netfilter/iptables-p2p/main.c
+===================================================================
+--- xx-sources.orig/net/ipv4/netfilter/iptables-p2p/main.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/net/ipv4/netfilter/iptables-p2p/main.c	2004-08-24 02:59:36.000000000 -0400
+@@ -0,0 +1,152 @@
++/*
++ * $Id: iptables-p2p,v 1.1 2004/08/26 12:31:19 xiphux Exp $
++ *
++ * ipt_p2p kernel match module.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version 2, or (at your option) any
++ * later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ */
++
++#include <linux/module.h>
++#include <linux/skbuff.h>
++#include <linux/tcp.h>
++
++#include <linux/netfilter_ipv4/ip_tables.h>
++#include <linux/version.h>
++
++#ifdef CONFIG_MODVERSIONS
++	#include <linux/modversions.h>
++#endif
++
++#include "ipt_p2p.h"
++
++MODULE_AUTHOR("Filipe Almeida <filipe@rnl.ist.utl.pt>");
++MODULE_DESCRIPTION("IP tables P2P match module");
++MODULE_LICENSE("GPL");
++
++/* WARNING: The return value differs from the rest of the match_ functions. */
++int match_http(const unsigned char *data,
++               const unsigned char *end);
++
++int match_edonkey(const unsigned char *data,
++                  const unsigned char *end);
++
++int match_dc(const unsigned char *data,
++             const unsigned char *end);
++
++int match_bittorrent(const unsigned char *data,
++                     const unsigned char *end);
++
++static int
++match_selected(const struct ipt_p2p_info *pinfo,
++               const unsigned char *data,
++               const unsigned char *end)
++{
++	if (pinfo->proto & IPT_P2P_PROTO_FASTTRACK ||
++		pinfo->proto & IPT_P2P_PROTO_GNUTELLA ||
++		pinfo->proto & IPT_P2P_PROTO_OPENFT)
++	{
++		int proto;
++
++		/* Returns the protocol that matched, or zero if none of the
++		   supported protocols were matched. */
++		proto = match_http(data, end);
++
++		if (proto != 0)
++		{
++			if ((pinfo->proto & proto) != 0)
++				return 1;
++		}
++	}
++
++	if (pinfo->proto & IPT_P2P_PROTO_EDONKEY)
++		if (match_edonkey(data, end)) return 1;
++
++	if (pinfo->proto & IPT_P2P_PROTO_BITTORRENT)
++		if (match_bittorrent(data, end)) return 1;
++
++	if (pinfo->proto & IPT_P2P_PROTO_DIRECT_CONNECT)
++		if (match_dc(data, end)) return 1;
++
++	return 0;
++}
++
++static int
++match(const struct sk_buff *skb,
++      const struct net_device *in,
++      const struct net_device *out,
++      const void *matchinfo,
++      int offset,
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0)
++      const void *hdr,
++      u_int16_t datalen,
++#endif /* Linux < 2.6.0 */
++
++      int *hotdrop)
++{
++	const struct ipt_p2p_info *pinfo = matchinfo;
++	const struct iphdr *iph = skb->nh.iph;
++	const struct tcphdr *tcph;
++	const unsigned char *data;
++	const unsigned char *end;
++	int ret;
++
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
++	int datalen;
++	datalen = skb->len - (iph->ihl<<2);
++#endif /* Linux >= 2.6.0 */
++
++	/* We only support TCP-based matches currently. */
++	if (!iph || iph->protocol != IPPROTO_TCP) return 0;
++
++	/* Access the application-layer data from the packet */
++	tcph = (void *)skb->nh.iph + skb->nh.iph->ihl*4;
++	data = (const unsigned char *) tcph + tcph->doff * 4;
++	end = data + datalen - tcph->doff * 4;
++
++	/* Handle the requested protocol(s). */
++	return match_selected(pinfo, data, end);
++}
++
++static int
++checkentry(const char *tablename,
++           const struct ipt_ip *ip,
++           void *matchinfo,
++           unsigned int matchsize,
++           unsigned int hook_mask)
++{
++	if (matchsize != IPT_ALIGN(sizeof(struct ipt_p2p_info)))
++		return 0;
++
++	return 1;
++}
++
++static struct ipt_match p2p_match = {
++	.name        = "p2p",
++	.match       = &match,
++	.checkentry  = &checkentry,
++	.me          = THIS_MODULE,
++};
++
++static int __init init(void)
++{
++	printk(KERN_INFO "iptables-p2p %s initialized\n", IPT_P2P_VERSION);
++	return ipt_register_match(&p2p_match);
++}
++
++static void __exit fini(void)
++{
++	ipt_unregister_match(&p2p_match);
++	printk(KERN_INFO "iptables-p2p %s removed\n", IPT_P2P_VERSION);
++}
++
++module_init(init);
++module_exit(fini);
+Index: xx-sources/net/ipv4/netfilter/iptables-p2p/match_bittorrent.c
+===================================================================
+--- xx-sources.orig/net/ipv4/netfilter/iptables-p2p/match_bittorrent.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/net/ipv4/netfilter/iptables-p2p/match_bittorrent.c	2004-08-24 02:59:36.000000000 -0400
+@@ -0,0 +1,42 @@
++/*
++ * $Id: iptables-p2p,v 1.1 2004/08/26 12:31:19 xiphux Exp $
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version 2, or (at your option) any
++ * later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ */
++
++#define __NO_VERSION__
++
++#include <linux/config.h>
++#include <linux/module.h>
++
++
++#define SIZE_MIN    (20)
++#define SIZE_MAX    (500)
++
++const unsigned char bittorrent_string[] =
++    "\x13"
++    "BitTorrent protocol"
++    "\x0\x0\x0\x0\x0\x0\x0\x0";
++
++int
++match_bittorrent(const unsigned char *data,
++                 const unsigned char *end)
++{
++	/* Only match if the header is within a certain size range, for
++	   efficiency purposes. */
++	if (end - data < SIZE_MIN || end - data > SIZE_MAX)
++		return 0;
++
++	if (memcmp(data, bittorrent_string, sizeof(bittorrent_string) - 1) == 0)
++		return 1;
++
++	return 0;
++}
+Index: xx-sources/net/ipv4/netfilter/iptables-p2p/match_dc.c
+===================================================================
+--- xx-sources.orig/net/ipv4/netfilter/iptables-p2p/match_dc.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/net/ipv4/netfilter/iptables-p2p/match_dc.c	2004-08-24 02:59:36.000000000 -0400
+@@ -0,0 +1,72 @@
++/*
++ * $Id: iptables-p2p,v 1.1 2004/08/26 12:31:19 xiphux Exp $
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version 2, or (at your option) any
++ * later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ */
++
++#define __NO_VERSION__
++
++#include <linux/config.h>
++#include <linux/module.h>
++
++#include <linux/netfilter_ipv4/ip_tables.h>
++
++
++#define SIZE_MIN    (30)
++#define SIZE_MAX    (200)
++
++static const unsigned char *dc_cmd[] =
++{
++	"MyNick",
++	"Lock",
++	NULL
++};
++
++static const unsigned char *next_cmd(const unsigned char *data,
++                                     const unsigned char *end)
++{
++	while (data <= end)
++	{
++		if (*data++ == '|')
++			return data;
++	}
++
++	return NULL;
++}
++
++int
++match_dc(const unsigned char *data,
++         const unsigned char *end)
++{
++	int count=0;
++
++	if (end - data < SIZE_MIN || end - data > SIZE_MAX) return 0;
++
++	while (dc_cmd[count])
++	{
++		/* Quick exit. */
++		if (*data != '$')
++			return 0;
++
++		if (end - data < strlen(dc_cmd[count]))
++			return 0;
++
++		if (memcmp(data + 1, dc_cmd[count], strlen(dc_cmd[count])) != 0)
++			return 0;
++
++		if (!(data = next_cmd(data, end)))
++			return 0;
++
++		count++;
++	}
++
++	return 1;
++}
+Index: xx-sources/net/ipv4/netfilter/iptables-p2p/match_edonkey.c
+===================================================================
+--- xx-sources.orig/net/ipv4/netfilter/iptables-p2p/match_edonkey.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/net/ipv4/netfilter/iptables-p2p/match_edonkey.c	2004-08-24 02:59:36.000000000 -0400
+@@ -0,0 +1,100 @@
++/*
++ * $Id: iptables-p2p,v 1.1 2004/08/26 12:31:19 xiphux Exp $
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version 2, or (at your option) any
++ * later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ */
++
++#define __NO_VERSION__
++
++#include <linux/config.h>
++#include <linux/module.h>
++
++#define get_u8(X,O)   (*(__u8  *)(X + O))
++#define get_u16(X,O)  (*(__u16 *)(X + O))
++#define get_u32(X,O)  (*(__u32 *)(X + O))
++
++#define EDONKEY_PACKET   (0xe3)
++
++#define TYPE_HELLO       (0x01)
++#define TYPE_HELLOANSWER (0x4c)
++
++#define TYPE_HASH        (1)
++#define TYPE_STRING      (2)
++#define TYPE_DWORD       (3)
++#define TYPE_FLOAT       (4)
++#define TYPE_BOOL        (5)
++#define TYPE_BOOLARRAY   (6)
++#define TYPE_BLOB        (7)
++
++#define POS_MAGIC        (0)
++#define POS_LEN          (1)
++#define POS_TYPE         (5)
++#define POS_TAGCOUNT     (27)
++#define POS_FIRSTTAG     (31)
++
++#define SIZE_MIN         (30)
++#define SIZE_MAX         (400)
++
++int
++match_edonkey(const unsigned char *data,
++              const unsigned char *end)
++{
++	int packet_len;
++	int tag_count;
++	int type;
++
++	if (end - data < POS_FIRSTTAG) return 0;
++	if (get_u8(data, POS_MAGIC) != EDONKEY_PACKET) return 0;
++	packet_len = get_u32(data, POS_LEN);
++
++	if (packet_len < SIZE_MIN || packet_len > SIZE_MAX) return 0;
++
++	type = get_u8(data, POS_TYPE);
++
++	if (get_u8(data, POS_TYPE) == TYPE_HELLO)
++		data++; /* Skip hash size */
++	else if (get_u8(data, POS_TYPE) != TYPE_HELLOANSWER)
++		return 0;
++
++	tag_count = get_u32(data, POS_TAGCOUNT);
++	if (tag_count < 2 || tag_count >= 6) {
++		data++;
++		tag_count = get_u32(data, POS_TAGCOUNT);
++		if(tag_count < 2 || tag_count >= 6) return 0;
++	}
++
++	data += POS_FIRSTTAG;
++
++	while(tag_count--) {
++		int tag_type = get_u8(data, 0);
++		int tag_len = get_u16(data, 1);
++		data += 3 + tag_len;
++
++		if (data > end) return 0;
++
++		switch(tag_type) {
++		 case TYPE_STRING:
++			data += 2 + get_u16(data, 0);
++			break;
++		 case TYPE_DWORD:
++		 case TYPE_FLOAT:
++			data += 4;
++			if (data > end) return 0;
++			break;
++		 default:
++			return 0;
++		}
++
++		if (data > end) return 0;
++	}
++
++	return 1;
++}
+Index: xx-sources/net/ipv4/netfilter/iptables-p2p/match_http.c
+===================================================================
+--- xx-sources.orig/net/ipv4/netfilter/iptables-p2p/match_http.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/net/ipv4/netfilter/iptables-p2p/match_http.c	2004-08-24 02:59:36.000000000 -0400
+@@ -0,0 +1,222 @@
++/*
++ * $Id: iptables-p2p,v 1.1 2004/08/26 12:31:19 xiphux Exp $
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version 2, or (at your option) any
++ * later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ */
++
++
++#define __NO_VERSION__
++
++#include <linux/config.h>
++#include <linux/module.h>
++#include <linux/skbuff.h>
++#include <linux/file.h>
++#include <net/sock.h>
++
++#include "ipt_p2p.h"
++
++/*****************************************************************************/
++
++/* Ugly short-hand to avoid costly initialization */
++#define STRING_MATCH(strobj) (strobj), (sizeof (strobj) - 1)
++
++#define EOH -2 /* End of Headers */
++
++struct string_match
++{
++	const char *name;
++	size_t      len;
++};
++
++static struct string_match methods[] =
++{
++#define MM_GET_GET      0
++	{ STRING_MATCH("GET /get/")               },
++
++#define MM_GET_URIRES   1
++	{ STRING_MATCH("GET /uri-res/")           },
++
++#define MM_GET_HASH     2
++	{ STRING_MATCH("GET /.hash=")             },
++
++#define MM_GET_FILE     3
++	{ STRING_MATCH("GET /.file")             },
++
++#define MM_GET_SIG      4
++	{ STRING_MATCH("GET /.sig")             },
++
++#define MM_GET_SHA1		5
++	{ STRING_MATCH("GET sha1:")             },
++
++#define MM_GET_POISONED 6
++	{ STRING_MATCH("GET /PoisonedDownloads/") },
++
++#define MM_GET          7
++	{ STRING_MATCH("GET /")                   },
++
++#define MM_GIVE         8
++	{ STRING_MATCH("GIVE ")                   },
++
++#define MM_HTTP11       9
++	{ STRING_MATCH("HTTP/1.1")                },
++
++	{ NULL, 0                                 }
++};
++
++#define METHODS_LEN (((sizeof(methods))/(sizeof(methods[0]))) - 1)
++
++struct string_match headers[] =
++{
++#define HM_X_KAZAA          0
++	{ STRING_MATCH("X-Kazaa-")       },
++
++#define HM_X_GNUTELLA       1
++	{ STRING_MATCH("X-Gnutella-")    },
++
++#define HM_X_P2P_MESSAGE    2
++	{ STRING_MATCH("X-P2P-Message:") },
++
++#define HM_X_OPENFTALIAS    3
++	{ STRING_MATCH("X-OpenftAlias:") },
++
++#define HM_CONTENT_URN      4
++	{ STRING_MATCH("Content-URN:")   },
++
++#define HM_X_QUEUE          5
++	{ STRING_MATCH("X-Queue:")       },
++
++#define HM_X_TIGER_THREE    6
++	{ STRING_MATCH("X-TigerTree")    },
++
++#define HM_X_MYLIP          7
++	{ STRING_MATCH("X-MyLIP:")    },
++
++	{ NULL, 0                        }
++};
++
++#define HEADERS_LEN (((sizeof(headers))/(sizeof(headers[0]))) - 1)
++
++/*****************************************************************************/
++
++static inline const unsigned char *
++next_line(const unsigned char *data,
++          const unsigned char *end)
++{
++	while (data <= end)
++	{
++	 	if (*data++ == '\n')
++			return data;
++	}
++
++	return NULL;
++}
++
++static inline int
++string_matchlist(const unsigned char *data,
++                 const unsigned char *end,
++                 const struct string_match *strings)
++{
++	int i;
++
++	if(*data == '\r' || *data == '\n')
++			return EOH;
++
++	for (i = 0; strings[i].name != NULL; i++)
++	{
++		/* avoid overflow */
++		if (data + strings[i].len > end)
++			continue;
++
++		if (memcmp(data, strings[i].name, strings[i].len) == 0)
++			return i;
++	}
++
++	return -1;
++}
++
++#define MM(x) (method_matched == x)
++#define HM(x) headers_matched[x]
++
++int
++match_http(const unsigned char *data,
++           const unsigned char *end)
++{
++	unsigned int method_matched;               /* Methods matched */
++	unsigned int headers_matched[HEADERS_LEN]; /* Headers matched */
++
++	/* Match method */
++	method_matched = string_matchlist(data, end, methods);
++
++	if (method_matched == -1)
++		return 0;
++
++	memset(headers_matched, 0, sizeof(headers_matched));
++
++	/* Match in headers */
++	while ((data = next_line(data, end)))
++	{
++		int header;
++
++		header = string_matchlist(data, end, headers);
++
++		if (header == EOH)
++				break;
++
++		if (header != -1)
++			headers_matched[header] = 1;
++	}
++
++
++/*
++ * FastTrack
++ */
++	/* KaZaa < 2.6 */
++	if ((MM(MM_GET_HASH) || MM(MM_HTTP11)) && HM(HM_X_KAZAA))
++		return IPT_P2P_PROTO_FASTTRACK;
++
++	/* KaZaa >= 2.6 (TODO: needs testing) */
++	if ((MM(MM_GET_FILE) || MM(MM_GET_SIG) || MM(MM_HTTP11)) &&
++		HM(HM_X_P2P_MESSAGE))
++		return IPT_P2P_PROTO_FASTTRACK;
++
++	/* KaZaa passive mode (TODO: Check if methos GIVE is used anywhere else) */
++	if (MM(MM_GIVE))
++		return IPT_P2P_PROTO_FASTTRACK;
++
++	/* warez.com client (TODO: I don't think this is kazaa) */
++/*	if ((MM(MM_GET_SHA1) || MM(MM_HTTP11)) && HM(HM_X_MYLIP))
++		return IPT_P2P_PROTO_FASTTRACK;
++*/ /* TODO: Needs further testing */
++
++/*
++ * Gnutella
++ */
++	/* Gnutella 1 */
++	if ((MM(MM_GET_GET) || MM(MM_GET_URIRES) || MM(MM_HTTP11)) &&
++	    (HM(HM_X_GNUTELLA)))
++		return IPT_P2P_PROTO_GNUTELLA;
++
++	/* Shareaza/Gnutella 2 */
++	if ((MM(MM_GET_URIRES) && (HM(HM_CONTENT_URN) || HM(HM_X_QUEUE))))
++		return IPT_P2P_PROTO_GNUTELLA;
++
++	if (MM(MM_HTTP11) && HM(HM_X_TIGER_THREE))
++		return IPT_P2P_PROTO_GNUTELLA;
++
++	/* OpenFT */
++	if ((MM(MM_GET) || MM(MM_HTTP11)) && (HM(HM_X_OPENFTALIAS)))
++		return IPT_P2P_PROTO_OPENFT;
++
++	if (MM(MM_GET_POISONED))
++		return IPT_P2P_PROTO_OPENFT;
++
++	return 0;
++}

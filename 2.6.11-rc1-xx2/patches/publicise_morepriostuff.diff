@@ -1,0 +1,116 @@
+Make priority min/max public by moving it to scheduler.c
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+
+Index: linux-2.6.10-rc1-mm4/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc1-mm4.orig/kernel/sched.c	2004-11-10 09:20:57.127166699 +1100
++++ linux-2.6.10-rc1-mm4/kernel/sched.c	2004-11-10 09:20:58.918878851 +1100
+@@ -3276,51 +3276,6 @@ long __sched io_schedule_timeout(long ti
+ }
+ 
+ /**
+- * sys_sched_get_priority_max - return maximum RT priority.
+- * @policy: scheduling class.
+- *
+- * this syscall returns the maximum rt_priority that can be used
+- * by a given scheduling class.
+- */
+-asmlinkage long sys_sched_get_priority_max(int policy)
+-{
+-	int ret = -EINVAL;
+-
+-	switch (policy) {
+-	case SCHED_FIFO:
+-	case SCHED_RR:
+-		ret = MAX_USER_RT_PRIO-1;
+-		break;
+-	case SCHED_NORMAL:
+-		ret = 0;
+-		break;
+-	}
+-	return ret;
+-}
+-
+-/**
+- * sys_sched_get_priority_min - return minimum RT priority.
+- * @policy: scheduling class.
+- *
+- * this syscall returns the minimum rt_priority that can be used
+- * by a given scheduling class.
+- */
+-asmlinkage long sys_sched_get_priority_min(int policy)
+-{
+-	int ret = -EINVAL;
+-
+-	switch (policy) {
+-	case SCHED_FIFO:
+-	case SCHED_RR:
+-		ret = 1;
+-		break;
+-	case SCHED_NORMAL:
+-		ret = 0;
+-	}
+-	return ret;
+-}
+-
+-/**
+  * sys_sched_rr_get_interval - return the default timeslice of a process.
+  * @pid: pid of the process.
+  * @interval: userspace pointer to the timeslice value.
+Index: linux-2.6.10-rc1-mm4/kernel/scheduler.c
+===================================================================
+--- linux-2.6.10-rc1-mm4.orig/kernel/scheduler.c	2004-11-10 09:20:57.129166378 +1100
++++ linux-2.6.10-rc1-mm4/kernel/scheduler.c	2004-11-10 09:20:58.919878691 +1100
+@@ -511,6 +511,50 @@ asmlinkage long sys_sched_getaffinity(pi
+ 	return sizeof(cpumask_t);
+ }
+ 
++/**
++ * sys_sched_get_priority_max - return maximum RT priority.
++ * @policy: scheduling class.
++ *
++ * this syscall returns the maximum rt_priority that can be used
++ * by a given scheduling class.
++ */
++asmlinkage long sys_sched_get_priority_max(int policy)
++{
++	int ret = -EINVAL;
++
++	switch (policy) {
++	case SCHED_FIFO:
++	case SCHED_RR:
++		ret = MAX_USER_RT_PRIO-1;
++		break;
++	case SCHED_NORMAL:
++		ret = 0;
++		break;
++	}
++	return ret;
++}
++
++/**
++ * sys_sched_get_priority_min - return minimum RT priority.
++ * @policy: scheduling class.
++ *
++ * this syscall returns the minimum rt_priority that can be used
++ * by a given scheduling class.
++ */
++asmlinkage long sys_sched_get_priority_min(int policy)
++{
++	int ret = -EINVAL;
++
++	switch (policy) {
++	case SCHED_FIFO:
++	case SCHED_RR:
++		ret = 1;
++		break;
++	case SCHED_NORMAL:
++		ret = 0;
++	}
++	return ret;
++}
+ 
+ extern struct sched_drv ingo_sched_drv;
+ static const struct sched_drv *scheduler = &ingo_sched_drv;

@@ -1,0 +1,60 @@
+Take the MAX_PRIO macro and comments out of sched.h to allow more
+flexible range of dynamic priorities and scheduler designs.
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+
+Index: linux-2.6.10-rc1-mm5/include/linux/sched.h
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/include/linux/sched.h	2004-11-11 21:50:20.336924074 +1100
++++ linux-2.6.10-rc1-mm5/include/linux/sched.h	2004-11-11 21:52:35.707061966 +1100
+@@ -332,11 +332,6 @@ struct signal_struct {
+ };
+ 
+ /*
+- * Priority of a process goes from 0..MAX_PRIO-1, valid RT
+- * priority is 0..MAX_RT_PRIO-1, and SCHED_NORMAL tasks are
+- * in the range MAX_RT_PRIO..MAX_PRIO-1. Priority values
+- * are inverted: lower p->prio value means higher priority.
+- *
+  * The MAX_USER_RT_PRIO value allows the actual maximum
+  * RT priority to be separate from the value exported to
+  * user-space.  This allows kernel threads to set their
+@@ -347,8 +342,6 @@ struct signal_struct {
+ #define MAX_USER_RT_PRIO	100
+ #define MAX_RT_PRIO		MAX_USER_RT_PRIO
+ 
+-#define MAX_PRIO		(MAX_RT_PRIO + 40)
+-
+ extern int rt_task(task_t *p);
+ 
+ /*
+@@ -519,6 +512,8 @@ struct mempolicy;
+ 
+ #include <linux/scheduler.h>
+ 
++extern struct sched_drv *scheduler;
++
+ struct task_struct {
+ 	volatile long state;	/* -1 unrunnable, 0 runnable, >0 stopped */
+ 	struct thread_info *thread_info;
+Index: linux-2.6.10-rc1-mm5/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/kernel/sched.c	2004-11-11 21:51:59.065708967 +1100
++++ linux-2.6.10-rc1-mm5/kernel/sched.c	2004-11-11 21:52:35.709061658 +1100
+@@ -59,6 +59,15 @@
+ #endif
+ 
+ /*
++ * Priority of a process goes from 0..MAX_PRIO-1, valid RT
++ * priority is 0..MAX_RT_PRIO-1, and SCHED_NORMAL tasks are
++ * in the range MAX_RT_PRIO..MAX_PRIO-1. Priority values
++ * are inverted: lower p->prio value means higher priority.
++ */
++
++#define MAX_PRIO		(MAX_RT_PRIO + 40)
++
++/*
+  * Convert user-nice values [ -20 ... 0 ... 19 ]
+  * to static priority [ MAX_RT_PRIO..MAX_PRIO-1 ],
+  * and back.

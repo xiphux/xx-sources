@@ -1,0 +1,98 @@
+
+From: brking@us.ibm.com
+
+This is a resend of three ll_rw_blk patches related to tagged queuing.
+
+Currently blk_queue_free_tags cannot be called with ops outstanding.  The
+scsi_tcq API defined to LLD scsi drivers allows for scsi_deactivate_tcq to
+be called (which calls blk_queue_free_tags) with ops outstanding.  Change
+blk_queue_free_tags to no longer free the tags, but rather just disable
+tagged queuing and also modify blk_queue_init_tags to handle re-enabling
+tagged queuing after it has been disabled.
+
+Signed-off-by: Jens Axboe <axboe@suse.de>
+Signed-off-by: Brian King <brking@us.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/ll_rw_blk.c |   35 ++++++++++++++++++++++++++++-------
+ 1 files changed, 28 insertions(+), 7 deletions(-)
+
+diff -puN drivers/block/ll_rw_blk.c~blk_queue_free_tags-fix drivers/block/ll_rw_blk.c
+--- 25/drivers/block/ll_rw_blk.c~blk_queue_free_tags-fix	2004-08-09 21:59:29.945440808 -0700
++++ 25-akpm/drivers/block/ll_rw_blk.c	2004-08-09 21:59:29.951439896 -0700
+@@ -521,15 +521,14 @@ struct request *blk_queue_find_tag(reque
+ EXPORT_SYMBOL(blk_queue_find_tag);
+ 
+ /**
+- * blk_queue_free_tags - release tag maintenance info
++ * __blk_queue_free_tags - release tag maintenance info
+  * @q:  the request queue for the device
+  *
+  *  Notes:
+  *    blk_cleanup_queue() will take care of calling this function, if tagging
+- *    has been used. So there's usually no need to call this directly, unless
+- *    tagging is just being disabled but the queue remains in function.
++ *    has been used. So there's no need to call this directly.
+  **/
+-void blk_queue_free_tags(request_queue_t *q)
++static void __blk_queue_free_tags(request_queue_t *q)
+ {
+ 	struct blk_queue_tag *bqt = q->queue_tags;
+ 
+@@ -553,6 +552,19 @@ void blk_queue_free_tags(request_queue_t
+ 	q->queue_flags &= ~(1 << QUEUE_FLAG_QUEUED);
+ }
+ 
++/**
++ * blk_queue_free_tags - release tag maintenance info
++ * @q:  the request queue for the device
++ *
++ *  Notes:
++ *	This is used to disabled tagged queuing to a device, yet leave
++ *	queue in function.
++ **/
++void blk_queue_free_tags(request_queue_t *q)
++{
++	clear_bit(QUEUE_FLAG_QUEUED, &q->queue_flags);
++}
++
+ EXPORT_SYMBOL(blk_queue_free_tags);
+ 
+ static int
+@@ -603,13 +615,22 @@ fail:
+ int blk_queue_init_tags(request_queue_t *q, int depth,
+ 			struct blk_queue_tag *tags)
+ {
+-	if (!tags) {
++	int rc;
++
++	BUG_ON(tags && q->queue_tags && tags != q->queue_tags);
++
++	if (!tags && !q->queue_tags) {
+ 		tags = kmalloc(sizeof(struct blk_queue_tag), GFP_ATOMIC);
+ 		if (!tags)
+ 			goto fail;
+ 
+ 		if (init_tag_map(q, tags, depth))
+ 			goto fail;
++	} else if (q->queue_tags) {
++		if ((rc = blk_queue_resize_tags(q, depth)))
++			return rc;
++		set_bit(QUEUE_FLAG_QUEUED, &q->queue_flags);
++		return 0;
+ 	} else
+ 		atomic_inc(&tags->refcnt);
+ 
+@@ -1375,8 +1396,8 @@ void blk_cleanup_queue(request_queue_t *
+ 	if (rl->rq_pool)
+ 		mempool_destroy(rl->rq_pool);
+ 
+-	if (blk_queue_tagged(q))
+-		blk_queue_free_tags(q);
++	if (q->queue_tags)
++		__blk_queue_free_tags(q);
+ 
+ 	kmem_cache_free(requestq_cachep, q);
+ }
+_

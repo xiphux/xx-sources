@@ -1,0 +1,57 @@
+
+From: Andrea Arcangeli <andrea@suse.de>
+
+There's some minor bug in the d_path handling (the nfsd one may not the the
+correct fix, there's no failure path for it, so I just terminate the
+string, and the last one in the audit subsystem is just a robustness
+cleanup if somebody will extend d_path in the future, right now it's a
+noop).
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/compat.c      |    2 ++
+ 25-akpm/fs/nfsd/export.c |    5 +++++
+ 25-akpm/kernel/audit.c   |    2 +-
+ 3 files changed, 8 insertions(+), 1 deletion(-)
+
+diff -puN fs/compat.c~fix-d_path-errors fs/compat.c
+--- 25/fs/compat.c~fix-d_path-errors	Fri Aug  6 14:56:40 2004
++++ 25-akpm/fs/compat.c	Fri Aug  6 14:56:40 2004
+@@ -429,6 +429,8 @@ asmlinkage long compat_sys_ioctl(unsigne
+ 			       		fn = d_path(filp->f_dentry,
+ 						filp->f_vfsmnt, path,
+ 						PAGE_SIZE);
++					if (IS_ERR(fn))
++						fn = "?";
+ 				}
+ 
+ 				sprintf(buf,"'%c'", (cmd>>24) & 0x3f);
+diff -puN fs/nfsd/export.c~fix-d_path-errors fs/nfsd/export.c
+--- 25/fs/nfsd/export.c~fix-d_path-errors	Fri Aug  6 14:56:40 2004
++++ 25-akpm/fs/nfsd/export.c	Fri Aug  6 14:56:40 2004
+@@ -294,6 +294,11 @@ void svc_export_request(struct cache_det
+ 
+ 	qword_add(bpp, blen, exp->ex_client->name);
+ 	pth = d_path(exp->ex_dentry, exp->ex_mnt, *bpp, *blen);
++	if (IS_ERR(pth)) {
++		/* is this correct? */
++		(*bpp)[0] = '\n';
++		return;
++	}
+ 	qword_add(bpp, blen, pth);
+ 	(*bpp)[-1] = '\n';
+ }
+diff -puN kernel/audit.c~fix-d_path-errors kernel/audit.c
+--- 25/kernel/audit.c~fix-d_path-errors	Fri Aug  6 14:56:40 2004
++++ 25-akpm/kernel/audit.c	Fri Aug  6 14:56:40 2004
+@@ -708,7 +708,7 @@ void audit_log_d_path(struct audit_buffe
+ 		audit_log_move(ab);
+ 	avail = sizeof(ab->tmp) - ab->len;
+ 	p = d_path(dentry, vfsmnt, ab->tmp + ab->len, avail);
+-	if (p == ERR_PTR(-ENAMETOOLONG)) {
++	if (IS_ERR(p)) {
+ 		/* FIXME: can we save some information here? */
+ 		audit_log_format(ab, "<toolong>");
+ 	} else {
+_

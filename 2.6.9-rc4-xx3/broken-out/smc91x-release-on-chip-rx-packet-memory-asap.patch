@@ -1,0 +1,59 @@
+
+From: Nicolas Pitre <nico@cam.org>
+
+We are desperately in need of on-chip memory so free it as soon as we have
+fetched its content.  Suggested by Marc Singer.
+
+Signed-off-by: Nicolas Pitre <nico@cam.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/smc91x.c |   13 ++++++++-----
+ 1 files changed, 8 insertions(+), 5 deletions(-)
+
+diff -puN drivers/net/smc91x.c~smc91x-release-on-chip-rx-packet-memory-asap drivers/net/smc91x.c
+--- 25/drivers/net/smc91x.c~smc91x-release-on-chip-rx-packet-memory-asap	Wed Oct  6 16:08:36 2004
++++ 25-akpm/drivers/net/smc91x.c	Wed Oct  6 16:08:36 2004
+@@ -481,6 +481,8 @@ static inline void  smc_rcv(struct net_d
+ 		packet_len, packet_len);
+ 
+ 	if (unlikely(status & RS_ERRORS)) {
++		SMC_WAIT_MMU_BUSY();
++		SMC_SET_MMU_CMD(MC_RELEASE);
+ 		lp->stats.rx_errors++;
+ 		if (status & RS_ALGNERR)
+ 			lp->stats.rx_frame_errors++;
+@@ -509,8 +511,10 @@ static inline void  smc_rcv(struct net_d
+ 		if (unlikely(skb == NULL)) {
+ 			printk(KERN_NOTICE "%s: Low memory, packet dropped.\n",
+ 				dev->name);
++			SMC_WAIT_MMU_BUSY();
++			SMC_SET_MMU_CMD(MC_RELEASE);
+ 			lp->stats.rx_dropped++;
+-			goto done;
++			return;
+ 		}
+ 
+ 		/* Align IP header to 32 bits */
+@@ -529,6 +533,9 @@ static inline void  smc_rcv(struct net_d
+ 		data = skb_put(skb, data_len);
+ 		SMC_PULL_DATA(data, packet_len - 4);
+ 
++		SMC_WAIT_MMU_BUSY();
++		SMC_SET_MMU_CMD(MC_RELEASE);
++
+ 		PRINT_PKT(data, packet_len - 4);
+ 
+ 		dev->last_rx = jiffies;
+@@ -538,10 +545,6 @@ static inline void  smc_rcv(struct net_d
+ 		lp->stats.rx_packets++;
+ 		lp->stats.rx_bytes += data_len;
+ 	}
+-
+-done:
+-	SMC_WAIT_MMU_BUSY();
+-	SMC_SET_MMU_CMD(MC_RELEASE);
+ }
+ 
+ #ifdef CONFIG_SMP
+_

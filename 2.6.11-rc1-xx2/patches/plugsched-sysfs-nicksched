@@ -1,0 +1,41 @@
+Index: xx-sources/kernel/nicksched.c
+===================================================================
+--- xx-sources.orig/kernel/nicksched.c	2004-11-18 02:11:42.564295296 -0500
++++ xx-sources/kernel/nicksched.c	2004-11-18 02:14:14.832147064 -0500
+@@ -3828,6 +3828,28 @@
+ }
+ #endif /* CONFIG_MAGIC_SYSRQ */
+  
++/*
++ * sysfs stuff
++ */
++#ifdef CONFIG_SYSFS
++
++ SCHED_SHOW_FUNCTION(nick_base_timeslice_show, nick_sched_base_timeslice);
++
++SCHED_STORE_FUNCTION(nick_base_timeslice_store, &nick_sched_base_timeslice, nick_sched_min_base, nick_sched_max_base);
++
++SCHED_SYSFS_ENTRY(nick_base_timeslice_entry, "base_timeslice", nick_base_timeslice_show, nick_base_timeslice_store);
++
++static struct attribute *default_attrs[] = {
++	&nick_base_timeslice_entry.attr,
++	NULL,
++};
++
++static struct kobj_type nick_ktype = {
++	.sysfs_ops = &sched_sysfs_ops,
++	.default_attrs = default_attrs,
++};
++#endif
++
+ struct sched_drv nick_sched_drv = {
+ 	.task_cpu		= common_task_cpu,
+ 	.set_task_cpu		= common_set_task_cpu,
+@@ -3881,4 +3903,7 @@
+ #ifdef CONFIG_MAGIC_SYSRQ
+ 	.normalize_rt_tasks 	= nick_normalize_rt_tasks,
+ #endif
++#ifdef CONFIG_SYSFS
++	.kobj.ktype 		= &nick_ktype,
++#endif
+ };

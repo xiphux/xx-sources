@@ -1,0 +1,58 @@
+
+From: "Mika Kukkonen" <mika@osdl.org>
+
+  CHECK   net/irda/irlmp.c
+net/irda/irlmp.c:1494:10: warning: Using plain integer as NULL pointer
+net/irda/irlmp.c:1564:2: warning: Using plain integer as NULL pointer
+net/irda/irlmp.c:1570:10: warning: Using plain integer as NULL pointer
+  CHECK   net/irda/irlan/irlan_client.c
+net/irda/irlan/irlan_client.c:237:14: warning: assignment expression in
+conditional
+  CHECK   net/irda/ircomm/ircomm_tty.c
+net/irda/ircomm/ircomm_tty.c:564:14: warning: Using plain integer as NULL pointer
+net/irda/ircomm/ircomm_tty.c:724:28: warning: incorrect type in argument 2
+(different address spaces)
+net/irda/ircomm/ircomm_tty.c:724:28:    expected void const [noderef]
+*from<asn:1>
+net/irda/ircomm/ircomm_tty.c:724:28:    got unsigned char const *ubuf
+net/irda/ircomm/ircomm_tty.c:1048:14: warning: Using plain integer as NULL
+pointer
+  CC [M]  net/irda/ircomm/ircomm_tty.o
+net/irda/ircomm/ircomm_tty.c:1272: warning: `ircomm_tty_line_info' defined but
+not used
+
+Last one (net/irda/ircomm/ircomm_tty.c) requires some explaining:
+
+- I added __user cast to line 724, as
+
+  a) The code is obviously correct
+
+  b) If the interface needs to be fixed, then that means rewriting the
+     whole TTY-layer code (i.e.  include/linux/tty_driver.h), so I do not
+     think I am hiding here anything
+
+- The GCC warning (line 1272) comes from !CONFIG_PROC_FS (an accidental
+  finding, I had not done 'make allmodconfig').  I fixed this simply by
+  moving the existing '#ifdef CONFIG_PROC_FS' upwards.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/net/irda/irlan/irlan_client.c |    2 +-
+ net/irda/irlmp.c                      |    0 
+ 2 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN net/irda/irlan/irlan_client.c~fix-warnings-in-net-irda net/irda/irlan/irlan_client.c
+--- 25/net/irda/irlan/irlan_client.c~fix-warnings-in-net-irda	2004-07-13 13:18:06.824275696 -0700
++++ 25-akpm/net/irda/irlan/irlan_client.c	2004-07-13 13:18:06.830274784 -0700
+@@ -234,7 +234,7 @@ static void irlan_client_ctrl_disconnect
+ 	ASSERT(tsap == self->client.tsap_ctrl, return;);
+ 
+        	/* Remove frames queued on the control channel */
+-	while ((skb = skb_dequeue(&self->client.txq))) {
++	while ((skb = skb_dequeue(&self->client.txq)) != NULL) {
+ 		dev_kfree_skb(skb);
+ 	}
+ 	self->client.tx_busy = FALSE;
+diff -puN net/irda/irlmp.c~fix-warnings-in-net-irda net/irda/irlmp.c
+_

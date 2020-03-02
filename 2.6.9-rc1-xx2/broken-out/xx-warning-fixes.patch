@@ -1,0 +1,37 @@
+Index: xx-sources/drivers/block/compressloop.c
+===================================================================
+--- xx-sources.orig/drivers/block/compressloop.c	2004-08-31 06:58:42.649601536 -0400
++++ xx-sources/drivers/block/compressloop.c	2004-08-31 07:15:36.311501504 -0400
+@@ -141,7 +141,7 @@
+ 	/* then load the offset */
+ 
+ 	for (i = 0, offsets_read = 0; offsets_read < total_offsets; i++) {
+-		int toread=min(bsize,(total_offsets-offsets_read)*sizeof(uint32_t));
++		int toread=min(bsize, (ssize_t)((total_offsets-offsets_read)*sizeof(uint32_t)));
+ 		if(cloop_file_io(file, buf, bsize, &pos)) {
+ 			printk(KERN_ERR "%s: can't read the image\n",
+ 				CLOOP_NAME);
+Index: xx-sources/fs/reiserfs/xattr.c
+===================================================================
+--- xx-sources.orig/fs/reiserfs/xattr.c	2004-08-31 06:26:13.081980864 -0400
++++ xx-sources/fs/reiserfs/xattr.c	2004-08-31 07:15:36.388489800 -0400
+@@ -1404,7 +1404,9 @@
+                 }
+ #endif
+ 	} else {
++#ifdef CONFIG_REISERFS_FS_POSIX_ACL
+ check_groups:
++#endif
+ 		if (in_group_p(inode->i_gid))
+ 			mode >>= 3;
+ 	}
+@@ -1415,7 +1417,9 @@
+ 	if (((mode & mask & (MAY_READ|MAY_WRITE|MAY_EXEC)) == mask))
+ 		return 0;
+ 
++#ifdef CONFIG_REISERFS_FS_POSIX_ACL
+ check_capabilities:
++#endif
+ 	/*
+ 	 * Read/write DACs are always overridable.
+ 	 * Executable DACs are overridable if at least one exec bit is set.

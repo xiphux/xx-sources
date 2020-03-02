@@ -1,0 +1,54 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/msync.c |   28 ++++++++++++++++++++++++++--
+ 1 files changed, 26 insertions(+), 2 deletions(-)
+
+diff -puN mm/msync.c~filemap_sync-latency-fix mm/msync.c
+--- 25/mm/msync.c~filemap_sync-latency-fix	2004-07-13 02:45:35.753715376 -0700
++++ 25-akpm/mm/msync.c	2004-07-13 02:57:12.095855280 -0700
+@@ -92,8 +92,8 @@ static inline int filemap_sync_pmd_range
+ 	return error;
+ }
+ 
+-static int filemap_sync(struct vm_area_struct * vma, unsigned long address,
+-	size_t size, unsigned int flags)
++static int __filemap_sync(struct vm_area_struct *vma, unsigned long address,
++			size_t size, unsigned int flags)
+ {
+ 	pgd_t * dir;
+ 	unsigned long end = address + size;
+@@ -131,6 +131,30 @@ static int filemap_sync(struct vm_area_s
+ 	return error;
+ }
+ 
++#ifdef CONFIG_PREEMPT
++static int filemap_sync(struct vm_area_struct *vma, unsigned long address,
++			size_t size, unsigned int flags)
++{
++	const size_t chunk = 64 * 1024;	/* bytes */
++	int error = 0;
++
++	while (size) {
++		size_t sz = min(size, chunk);
++
++		error |= __filemap_sync(vma, address, sz, flags);
++		address += sz;
++		size -= sz;
++	}
++	return error;
++}
++#else
++static int filemap_sync(struct vm_area_struct *vma, unsigned long address,
++			size_t size, unsigned int flags)
++{
++	return __filemap_sync(vma, address, size, flags);
++}
++#endif
++
+ /*
+  * MS_SYNC syncs the entire file - including mappings.
+  *
+_

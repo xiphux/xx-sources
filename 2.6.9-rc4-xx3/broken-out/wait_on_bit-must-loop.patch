@@ -1,0 +1,30 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+Coz we can get wakeups from unexpected sources (eg: timers)
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/wait.c |    8 +++++---
+ 1 files changed, 5 insertions(+), 3 deletions(-)
+
+diff -puN kernel/wait.c~wait_on_bit-must-loop kernel/wait.c
+--- 25/kernel/wait.c~wait_on_bit-must-loop	2004-09-21 01:57:14.000000000 -0700
++++ 25-akpm/kernel/wait.c	2004-09-21 03:07:03.769367736 -0700
+@@ -156,9 +156,11 @@ __wait_on_bit(wait_queue_head_t *wq, str
+ {
+ 	int ret = 0;
+ 
+-	prepare_to_wait(wq, &q->wait, mode);
+-	if (test_bit(q->key.bit_nr, q->key.flags))
+-		ret = (*action)(q->key.flags);
++	do {
++		prepare_to_wait(wq, &q->wait, mode);
++		if (test_bit(q->key.bit_nr, q->key.flags))
++			ret = (*action)(q->key.flags);
++	} while (test_bit(q->key.bit_nr, q->key.flags) && !ret);
+ 	finish_wait(wq, &q->wait);
+ 	return ret;
+ }
+_

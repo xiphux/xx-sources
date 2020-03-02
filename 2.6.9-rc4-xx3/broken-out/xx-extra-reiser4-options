@@ -1,0 +1,69 @@
+Index: xx-sources/fs/reiser4/plugin/pseudo/pseudo.c
+===================================================================
+--- xx-sources.orig/fs/reiser4/plugin/pseudo/pseudo.c	2004-09-27 18:07:17.000000000 -0400
++++ xx-sources/fs/reiser4/plugin/pseudo/pseudo.c	2004-09-27 19:35:59.253337744 -0400
+@@ -264,7 +264,9 @@
+ 	assert("nikita-2999", parent != NULL);
+ 	assert("nikita-3000", dentry != NULL);
+ 
++#if !defined(CONFIG_R4_PSEUDO)
+ 	return RETERR(-ENOENT);
++#endif
+ 	/* if pseudo files are disabled for this file system bail out */
+ 	if (reiser4_is_set(parent->i_sb, REISER4_NO_PSEUDO))
+ 		return RETERR(-ENOENT);
+Index: xx-sources/fs/reiser4/repacker.c
+===================================================================
+--- xx-sources.orig/fs/reiser4/repacker.c	2004-09-27 15:48:04.000000000 -0400
++++ xx-sources/fs/reiser4/repacker.c	2004-09-27 19:42:04.344835400 -0400
+@@ -624,7 +624,7 @@
+ 
+ reiser4_internal int init_reiser4_repacker (struct super_block *super)
+ {
+-#if defined(REISER4_REPACKER)
++#if defined(CONFIG_R4_REPACKER)
+ 	reiser4_super_info_data * sinfo = get_super_private(super);
+ 
+ 	assert ("zam-946", sinfo->repacker == NULL);
+@@ -648,7 +648,7 @@
+ 
+ reiser4_internal void done_reiser4_repacker (struct super_block *super)
+ {
+-#if defined(REISER4_REPACKER)
++#if defined(CONFIG_R4_REPACKER)
+ 	reiser4_super_info_data * sinfo = get_super_private(super);
+ 	struct repacker * repacker;
+ 
+Index: xx-sources/kernel/Kconfig-extra.xx
+===================================================================
+--- xx-sources.orig/kernel/Kconfig-extra.xx	2004-09-27 18:07:18.000000000 -0400
++++ xx-sources/kernel/Kconfig-extra.xx	2004-09-27 19:47:58.019068744 -0400
+@@ -254,4 +254,28 @@
+ 
+ 	  If unsure, leave at default of 50.
+ 
++config R4_PSEUDO
++	bool "Enable Reiser4 pseudo files"
++	depends on REISER4_FS
++	default n
++	help
++	  This will enable pseudo files for Reiser4.  These have been disabled
++	  for the time being in the -mm tree, probably for a good reason.
++	  (File tools aren't ready for pseudofiles, metafile directory is
++	  intrusive, etc)
++
++	  Enable at your own risk.
++
++config R4_REPACKER
++	bool "Enable Reiser4 online repacker"
++	depends on REISER4_FS
++	default n
++	help
++	  This will enable the online repacker for Reiser4.  This has been
++	  disabled for the time being in the -mm tree, probably for a good
++	  reason.  (Code is not perfected yet, online manipulation of 
++	  filesystem data is dangerous, etc)
++
++	  Enable at your own risk.
++
+ endmenu

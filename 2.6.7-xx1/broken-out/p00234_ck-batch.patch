@@ -1,0 +1,241 @@
+---
+
+ linux-2.6.7-rc3-xx5-xiphux/include/linux/init_task.h |    7 ++
+ linux-2.6.7-rc3-xx5-xiphux/include/linux/sched.h     |   10 ++-
+ linux-2.6.7-rc3-xx5-xiphux/kernel/sched.c            |   61 +++++++++++++++----
+ 3 files changed, 65 insertions(+), 13 deletions(-)
+
+diff -puN include/linux/init_task.h~ck-batch include/linux/init_task.h
+--- linux-2.6.7-rc3-xx5/include/linux/init_task.h~ck-batch	2004-06-16 22:53:08.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/include/linux/init_task.h	2004-06-16 22:54:14.000000000 -0400
+@@ -66,11 +66,18 @@ extern struct group_info init_groups;
+  */
+ #ifdef CONFIG_SPA
+ #define SCHED_PRIO
++#elif defined(CONFIG_STAIRCASE)
++#define SCHED_PRIO .prio = MAX_PRIO-21,
+ #else
+ #define SCHED_PRIO .prio = MAX_PRIO-20,
+ #endif
+ 
++#ifdef CONFIG_STAIRCASE
++#define SCHED_STATIC_PRIO .static_prio = MAX_PRIO-21,
++#else
+ #define SCHED_STATIC_PRIO .static_prio = MAX_PRIO-20,
++#endif
++
+ #define SCHED_TIME_SLICE .time_slice = HZ,
+ 
+ #ifdef CONFIG_SPA
+diff -puN include/linux/sched.h~ck-batch include/linux/sched.h
+--- linux-2.6.7-rc3-xx5/include/linux/sched.h~ck-batch	2004-06-16 22:53:13.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/include/linux/sched.h	2004-06-16 22:55:20.000000000 -0400
+@@ -136,8 +136,9 @@ extern unsigned long nr_iowait(void);
+ #define SCHED_RR		2
+ 
+ #ifdef CONFIG_STAIRCASE
++#define SCHED_BATCH		3
+ #define SCHED_MIN		0
+-#define SCHED_MAX		2
++#define SCHED_MAX		3
+ 
+ #define SCHED_RANGE(policy)	((policy) >= SCHED_MIN && \
+ 					(policy) <= SCHED_MAX)
+@@ -322,13 +323,20 @@ struct signal_struct {
+ #define MAX_USER_RT_PRIO	100
+ #define MAX_RT_PRIO		MAX_USER_RT_PRIO
+ 
++#ifdef CONFIG_STAIRCASE
++#define MAX_PRIO		(MAX_RT_PRIO + 41)
++#else
+ #define MAX_PRIO		(MAX_RT_PRIO + 40)
++#endif
+ 
+ #ifdef CONFIG_SPA
+ #define rt_task(p)		((p)->policy != SCHED_NORMAL)
+ #else
+ #define rt_task(p)		((p)->prio < MAX_RT_PRIO)
+ #endif
++#ifdef CONFIG_STAIRCASE
++#define batch_task(p)		((p)->policy == SCHED_BATCH)
++#endif
+ 
+ /*
+  * Some day this will be a full-fledged user tracking system..
+diff -puN kernel/sched.c~ck-batch kernel/sched.c
+--- linux-2.6.7-rc3-xx5/kernel/sched.c~ck-batch	2004-06-16 22:53:17.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/kernel/sched.c	2004-06-16 23:03:22.122335408 -0400
+@@ -587,7 +587,8 @@ static int task_preempts_curr(struct tas
+ 	if (p->prio >= rq->curr->prio)
+ 		return 0;
+ 	if (!compute || rq->cache_ticks >= cache_decay_ticks ||
+-		rt_task(p) || !p->mm || rq->curr == rq->idle)
++		rt_task(p) || !p->mm || rq->curr == rq->idle ||
++		(batch_task(rq->curr) && !batch_task(p)))
+ 			return 1;
+ 	rq->preempted = 1;
+ 		return 0;
+@@ -824,6 +825,8 @@ static unsigned int slice(task_t *p)
+ 	unsigned int slice = RR_INTERVAL;
+ 	if (!rt_task(p))
+ 		slice += burst(p) * RR_INTERVAL;
++	if (batch_task(p))
++		slice *= 10;
+ 	return slice;
+ }
+ 
+@@ -845,6 +848,8 @@ static int effective_prio(task_t *p)
+ 	unsigned int best_burst;
+ 	if (rt_task(p))
+ 		return p->prio;
++	if (batch_task(p))
++		return MAX_PRIO - 1;
+ 
+ 	best_burst = burst(p);
+ 	full_slice = slice(p);
+@@ -854,14 +859,14 @@ static int effective_prio(task_t *p)
+ 	first_slice = RR_INTERVAL;
+ 	if (interactive && !compute)
+ 		first_slice *= (p->burst + 1);
+-	prio = MAX_PRIO - 1 - best_burst;
++	prio = MAX_PRIO - 2 - best_burst;
+ 
+ 	if (used_slice < first_slice)
+ 		return prio;
+ 	if (p->mm)
+ 		prio += 1 + (used_slice - first_slice) / RR_INTERVAL;
+-	if (prio > MAX_PRIO - 1)
+-		prio = MAX_PRIO - 1;
++	if (prio > MAX_PRIO - 2)
++		prio = MAX_PRIO - 2;
+ 	return prio;
+ }
+ 
+@@ -870,7 +875,8 @@ static void recalc_task_prio(task_t *p, 
+ 	unsigned long sleep_time = now - p->timestamp;
+ 	unsigned long run_time = NS_TO_JIFFIES(p->runtime);
+ 	unsigned long total_run = NS_TO_JIFFIES(p->totalrun) + run_time;
+-	if (!run_time && NS_TO_JIFFIES(p->runtime + sleep_time) < RR_INTERVAL) {
++	if (!run_time && NS_TO_JIFFIES(p->runtime + sleep_time) < RR_INTERVAL &&
++		!batch_task(p)) {
+ 		if (p->slice - total_run < 1) {
+ 			p->totalrun = 0;
+ 			dec_burst(p);
+@@ -1104,6 +1110,8 @@ activate_task(task_t *p, runqueue_t *rq,
+ #ifdef CONFIG_STAIRCASE
+ 	p->prio = effective_prio(p);
+ 	p->time_slice = RR_INTERVAL;
++	if (batch_task(p))
++		p->time_slice *= 10;
+ #else
+ 	/*
+ 	 * This checks to make sure it's not an uninterruptible task
+@@ -2981,7 +2989,11 @@ void scheduler_tick(int user_ticks, int 
+ 		rebalance_tick(cpu, rq, IDLE);
+ 		return;
+ 	}
+-	if (TASK_NICE(p) > 0)
++	if (TASK_NICE(p) > 0
++#ifdef CONFIG_STAIRCASE
++		|| batch_task(p)
++#endif
++			)
+ 		cpustat->nice += user_ticks;
+ 	else
+ 		cpustat->user += user_ticks;
+@@ -3208,12 +3220,16 @@ static inline int dependent_sleeper(int 
+ 		if (
+ #ifdef CONFIG_STAIRCASE
+ 			((smt_curr->slice * (100 - sd->per_cpu_gain) / 100) >
+-			slice(p) || rt_task(smt_curr)) &&
++			slice(p) || rt_task(smt_curr) || batch_task(p)) &&
+ #else
+ 			((smt_curr->time_slice * (100 - sd->per_cpu_gain) / 100) >
+ 			task_timeslice(p) || rt_task(smt_curr)) &&
+ #endif
+-			p->mm && smt_curr->mm && !rt_task(p))
++			p->mm && smt_curr->mm && !rt_task(p)
++#ifdef CONFIG_STAIRCASE
++			&& !batch_task(smt_curr)
++#endif
++			)
+ 				ret = 1;
+ 
+ 		/*
+@@ -3224,12 +3240,16 @@ static inline int dependent_sleeper(int 
+ 		if ((
+ #ifdef CONFIG_STAIRCASE
+ 			((p->slice * (100 - sd->per_cpu_gain) / 100) >
+-			slice(smt_curr) || rt_task(p)) &&
++			slice(smt_curr) || rt_task(p) || batch_task(smt_curr)) &&
+ #else
+ 			((p->time_slice * (100 - sd->per_cpu_gain) / 100) >
+ 			task_timeslice(smt_curr) || rt_task(p)) &&
+ #endif
+-			smt_curr->mm && p->mm && !rt_task(smt_curr)) ||
++			smt_curr->mm && p->mm && !rt_task(smt_curr)
++#ifdef CONFIG_STAIRCASE
++			&& !batch_task(p)
++#endif
++			) ||
+ 			(smt_curr == smt_rq->idle && smt_rq->nr_running))
+ 				resched_task(smt_curr);
+ 	}
+@@ -3788,6 +3808,9 @@ void set_user_nice(task_t *p, long nice)
+ 		 */
+ #ifdef CONFIG_SPA
+ 		if ((delta > 0) || ((delta < 0) && task_running(rq, p)))
++#elif defined(CONFIG_STAIRCASE)
++		if (delta < 0 || ((delta > 0 || batch_task(p)) &&
++			task_running(rq, p)))
+ #else
+ 		if (delta < 0 || (delta > 0 && task_running(rq, p)))
+ #endif
+@@ -4005,6 +4028,14 @@ static int setscheduler(pid_t pid, int p
+ 	    !capable(CAP_SYS_NICE))
+ 		goto out_unlock;
+ 
++#ifdef CONFIG_STAIRCASE
++	if (!(p->mm) && policy == SCHED_BATCH)
++		/*
++		 * Don't allow kernel threads to be SCHED_BATCH.
++		 */
++		goto out_unlock;
++#endif
++
+ 	retval = security_task_setscheduler(p, policy, &lp);
+ 	if (retval)
+ 		goto out_unlock;
+@@ -4324,8 +4355,8 @@ asmlinkage long sys_sched_yield(void)
+ 	dequeue_task(current, rq);
+ 	current->slice = RR_INTERVAL;
+ 	current->time_slice = current->slice;
+-	if (!rt_task(current))
+-		current->prio = MAX_PRIO - 1;
++	if (!rt_task(current) && !batch_task(current))
++		current->prio = MAX_PRIO - 2;
+ 	inc_burst(current);
+ 	enqueue_task(current, rq);
+ #else
+@@ -4442,6 +4473,9 @@ asmlinkage long sys_sched_get_priority_m
+ 		ret = MAX_USER_RT_PRIO-1;
+ 		break;
+ 	case SCHED_NORMAL:
++#ifdef CONFIG_STAIRCASE
++	case SCHED_BATCH:
++#endif
+ 		ret = 0;
+ 		break;
+ 	}
+@@ -4465,6 +4499,9 @@ asmlinkage long sys_sched_get_priority_m
+ 		ret = 1;
+ 		break;
+ 	case SCHED_NORMAL:
++#ifdef CONFIG_STAIRCASE
++	case SCHED_BATCH:
++#endif
+ 		ret = 0;
+ 	}
+ 	return ret;
+
+_

@@ -1,0 +1,97 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+The ->nr_pending counted should always be decremented with rdev_dec_pending,
+as this need to do things when the count hits zero.  There were a few places
+where it was being decremented directly.
+
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/md/multipath.c |    2 +-
+ 25-akpm/drivers/md/raid1.c     |    4 ++--
+ 25-akpm/drivers/md/raid10.c    |    4 ++--
+ 25-akpm/drivers/md/raid5.c     |    2 +-
+ 25-akpm/drivers/md/raid6main.c |    2 +-
+ 5 files changed, 7 insertions(+), 7 deletions(-)
+
+diff -puN drivers/md/multipath.c~md-make-sure-md-always-uses-rdev_dec_pending-properly drivers/md/multipath.c
+--- 25/drivers/md/multipath.c~md-make-sure-md-always-uses-rdev_dec_pending-properly	2004-09-07 19:59:07.972036592 -0700
++++ 25-akpm/drivers/md/multipath.c	2004-09-07 19:59:07.984034768 -0700
+@@ -169,7 +169,7 @@ static void unplug_slaves(mddev_t *mddev
+ 				r_queue->unplug_fn(r_queue);
+ 
+ 			spin_lock_irqsave(&conf->device_lock, flags);
+-			atomic_dec(&rdev->nr_pending);
++			rdev_dec_pending(rdev, mddev);
+ 		}
+ 	}
+ 	spin_unlock_irqrestore(&conf->device_lock, flags);
+diff -puN drivers/md/raid10.c~md-make-sure-md-always-uses-rdev_dec_pending-properly drivers/md/raid10.c
+--- 25/drivers/md/raid10.c~md-make-sure-md-always-uses-rdev_dec_pending-properly	2004-09-07 19:59:07.974036288 -0700
++++ 25-akpm/drivers/md/raid10.c	2004-09-07 19:59:07.986034464 -0700
+@@ -594,7 +594,7 @@ static void unplug_slaves(mddev_t *mddev
+ 				r_queue->unplug_fn(r_queue);
+ 
+ 			spin_lock_irqsave(&conf->device_lock, flags);
+-			atomic_dec(&rdev->nr_pending);
++			rdev_dec_pending(rdev, mddev);
+ 		}
+ 	}
+ 	spin_unlock_irqrestore(&conf->device_lock, flags);
+@@ -1493,7 +1493,7 @@ static int sync_request(mddev_t *mddev, 
+ 			for (i=0; i<conf->copies; i++) {
+ 				int d = r10_bio->devs[i].devnum;
+ 				if (r10_bio->devs[i].bio->bi_end_io)
+-					atomic_dec(&conf->mirrors[d].rdev->nr_pending);
++					rdev_dec_pending(conf->mirrors[d].rdev, mddev);
+ 			}
+ 			put_buf(r10_bio);
+ 			goto giveup;
+diff -puN drivers/md/raid1.c~md-make-sure-md-always-uses-rdev_dec_pending-properly drivers/md/raid1.c
+--- 25/drivers/md/raid1.c~md-make-sure-md-always-uses-rdev_dec_pending-properly	2004-09-07 19:59:07.976035984 -0700
++++ 25-akpm/drivers/md/raid1.c	2004-09-07 19:59:07.985034616 -0700
+@@ -440,7 +440,7 @@ static void unplug_slaves(mddev_t *mddev
+ 				r_queue->unplug_fn(r_queue);
+ 
+ 			spin_lock_irqsave(&conf->device_lock, flags);
+-			atomic_dec(&rdev->nr_pending);
++			rdev_dec_pending(rdev, mddev);
+ 		}
+ 	}
+ 	spin_unlock_irqrestore(&conf->device_lock, flags);
+@@ -1086,7 +1086,7 @@ static int sync_request(mddev_t *mddev, 
+ 		int rv = max_sector - sector_nr;
+ 		md_done_sync(mddev, rv, 1);
+ 		put_buf(r1_bio);
+-		atomic_dec(&conf->mirrors[disk].rdev->nr_pending);
++		rdev_dec_pending(conf->mirrors[disk].rdev, mddev);
+ 		return rv;
+ 	}
+ 
+diff -puN drivers/md/raid5.c~md-make-sure-md-always-uses-rdev_dec_pending-properly drivers/md/raid5.c
+--- 25/drivers/md/raid5.c~md-make-sure-md-always-uses-rdev_dec_pending-properly	2004-09-07 19:59:07.978035680 -0700
++++ 25-akpm/drivers/md/raid5.c	2004-09-07 19:59:07.988034160 -0700
+@@ -1317,7 +1317,7 @@ static void unplug_slaves(mddev_t *mddev
+ 				r_queue->unplug_fn(r_queue);
+ 
+ 			spin_lock_irqsave(&conf->device_lock, flags);
+-			atomic_dec(&rdev->nr_pending);
++			rdev_dec_pending(rdev, mddev);
+ 		}
+ 	}
+ 	spin_unlock_irqrestore(&conf->device_lock, flags);
+diff -puN drivers/md/raid6main.c~md-make-sure-md-always-uses-rdev_dec_pending-properly drivers/md/raid6main.c
+--- 25/drivers/md/raid6main.c~md-make-sure-md-always-uses-rdev_dec_pending-properly	2004-09-07 19:59:07.980035376 -0700
++++ 25-akpm/drivers/md/raid6main.c	2004-09-07 19:59:07.989034008 -0700
+@@ -1479,7 +1479,7 @@ static void unplug_slaves(mddev_t *mddev
+ 				r_queue->unplug_fn(r_queue);
+ 
+ 			spin_lock_irqsave(&conf->device_lock, flags);
+-			atomic_dec(&rdev->nr_pending);
++			rdev_dec_pending(rdev, mddev);
+ 		}
+ 	}
+ 	spin_unlock_irqrestore(&conf->device_lock, flags);
+_

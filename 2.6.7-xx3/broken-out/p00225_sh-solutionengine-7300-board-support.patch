@@ -1,0 +1,1045 @@
+
+From: Paul Mundt <lethal@Linux-SH.ORG>
+
+This adds support for the SH7300 solution engine board (a forward port of the
+2.4 code).
+
+Signed-off-by: Hiroshi DOYU <Hiroshi_DOYU@montavista.co.jp>
+Signed-off-by: Paul Mundt <lethal@linux-sh.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/sh/boards/se/7300/Makefile  |    7 
+ 25-akpm/arch/sh/boards/se/7300/io.c      |  261 +++++++++++++++++
+ 25-akpm/arch/sh/boards/se/7300/irq.c     |   37 ++
+ 25-akpm/arch/sh/boards/se/7300/led.c     |   69 ++++
+ 25-akpm/arch/sh/boards/se/7300/setup.c   |   66 ++++
+ 25-akpm/arch/sh/configs/se7300_defconfig |  461 +++++++++++++++++++++++++++++++
+ 25-akpm/include/asm-sh/se7300/io.h       |   29 +
+ 25-akpm/include/asm-sh/se7300/se7300.h   |   61 ++++
+ 8 files changed, 991 insertions(+)
+
+diff -puN /dev/null arch/sh/boards/se/7300/io.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/se/7300/io.c	2004-06-23 20:00:18.463883088 -0700
+@@ -0,0 +1,261 @@
++/*
++ * linux/arch/sh/boards/se/7300/io.c
++ *
++ * Copyright (C) 2003 YOSHII Takashi <yoshii-takashi@hitachi-ul.co.jp>
++ */
++
++#include <linux/config.h>
++#include <linux/kernel.h>
++#include <asm/se7300/se7300.h>
++#include <asm/io.h>
++
++#define badio(fn, a) panic("bad i/o operation %s for %08lx.", #fn, a)
++
++struct iop {
++	unsigned long start, end;
++	unsigned long base;
++	struct iop *(*check) (struct iop * p, unsigned long port);
++	unsigned char (*inb) (struct iop * p, unsigned long port);
++	unsigned short (*inw) (struct iop * p, unsigned long port);
++	void (*outb) (struct iop * p, unsigned char value, unsigned long port);
++	void (*outw) (struct iop * p, unsigned short value, unsigned long port);
++};
++
++struct iop *
++simple_check(struct iop *p, unsigned long port)
++{
++	if ((p->start <= port) && (port <= p->end))
++		return p;
++	else
++		badio(check, port);
++}
++
++struct iop *
++ide_check(struct iop *p, unsigned long port)
++{
++	if (((0x1f0 <= port) && (port <= 0x1f7)) || (port == 0x3f7))
++		return p;
++	return NULL;
++}
++
++unsigned char
++simple_inb(struct iop *p, unsigned long port)
++{
++	return *(unsigned char *) (p->base + port);
++}
++
++unsigned short
++simple_inw(struct iop *p, unsigned long port)
++{
++	return *(unsigned short *) (p->base + port);
++}
++
++void
++simple_outb(struct iop *p, unsigned char value, unsigned long port)
++{
++	*(unsigned char *) (p->base + port) = value;
++}
++
++void
++simple_outw(struct iop *p, unsigned short value, unsigned long port)
++{
++	*(unsigned short *) (p->base + port) = value;
++}
++
++unsigned char
++pcc_inb(struct iop *p, unsigned long port)
++{
++	unsigned long addr = p->base + port + 0x40000;
++	unsigned long v;
++
++	if (port & 1)
++		addr += 0x00400000;
++	v = *(volatile unsigned char *) addr;
++	return v;
++}
++
++void
++pcc_outb(struct iop *p, unsigned char value, unsigned long port)
++{
++	unsigned long addr = p->base + port + 0x40000;
++
++	if (port & 1)
++		addr += 0x00400000;
++	*(volatile unsigned char *) addr = value;
++}
++
++unsigned char
++bad_inb(struct iop *p, unsigned long port)
++{
++	badio(inb, port);
++}
++
++void
++bad_outb(struct iop *p, unsigned char value, unsigned long port)
++{
++	badio(inw, port);
++}
++
++/* MSTLANEX01 LAN at 0xb400:0000 */
++static struct iop laniop = {
++	.start = 0x300,
++	.end = 0x30f,
++	.base = 0xb4000000,
++	.check = simple_check,
++	.inb = simple_inb,
++	.inw = simple_inw,
++	.outb = simple_outb,
++	.outw = simple_outw,
++};
++
++/* NE2000 pc card NIC */
++static struct iop neiop = {
++	.start = 0x280,
++	.end = 0x29f,
++	.base = 0xb0600000 + 0x80,	/* soft 0x280 -> hard 0x300 */
++	.check = simple_check,
++	.inb = pcc_inb,
++	.inw = simple_inw,
++	.outb = pcc_outb,
++	.outw = simple_outw,
++};
++
++/* CF in CF slot */
++static struct iop cfiop = {
++	.base = 0xb0600000,
++	.check = ide_check,
++	.inb = pcc_inb,
++	.inw = simple_inw,
++	.outb = pcc_outb,
++	.outw = simple_outw,
++};
++
++static __inline__ struct iop *
++port2iop(unsigned long port)
++{
++	if (0) ;
++#if defined(CONFIG_SMC91111)
++	else if (laniop.check(&laniop, port))
++		return &laniop;
++#endif
++#if defined(CONFIG_NE2000)
++	else if (neiop.check(&neiop, port))
++		return &neiop;
++#endif
++#if defined(CONFIG_IDE)
++	else if (cfiop.check(&cfiop, port))
++		return &cfiop;
++#endif
++	else
++		return &neiop;	/* fallback */
++}
++
++static inline void
++delay(void)
++{
++	ctrl_inw(0xac000000);
++	ctrl_inw(0xac000000);
++}
++
++unsigned char
++sh7300se_inb(unsigned long port)
++{
++	struct iop *p = port2iop(port);
++	return (p->inb) (p, port);
++}
++
++unsigned char
++sh7300se_inb_p(unsigned long port)
++{
++	unsigned char v = sh7300se_inb(port);
++	delay();
++	return v;
++}
++
++unsigned short
++sh7300se_inw(unsigned long port)
++{
++	struct iop *p = port2iop(port);
++	return (p->inw) (p, port);
++}
++
++unsigned int
++sh7300se_inl(unsigned long port)
++{
++	badio(inl, port);
++}
++
++void
++sh7300se_outb(unsigned char value, unsigned long port)
++{
++	struct iop *p = port2iop(port);
++	(p->outb) (p, value, port);
++}
++
++void
++sh7300se_outb_p(unsigned char value, unsigned long port)
++{
++	sh7300se_outb(value, port);
++	delay();
++}
++
++void
++sh7300se_outw(unsigned short value, unsigned long port)
++{
++	struct iop *p = port2iop(port);
++	(p->outw) (p, value, port);
++}
++
++void
++sh7300se_outl(unsigned int value, unsigned long port)
++{
++	badio(outl, port);
++}
++
++void
++sh7300se_insb(unsigned long port, void *addr, unsigned long count)
++{
++	unsigned char *a = addr;
++	struct iop *p = port2iop(port);
++	while (count--)
++		*a++ = (p->inb) (p, port);
++}
++
++void
++sh7300se_insw(unsigned long port, void *addr, unsigned long count)
++{
++	unsigned short *a = addr;
++	struct iop *p = port2iop(port);
++	while (count--)
++		*a++ = (p->inw) (p, port);
++}
++
++void
++sh7300se_insl(unsigned long port, void *addr, unsigned long count)
++{
++	badio(insl, port);
++}
++
++void
++sh7300se_outsb(unsigned long port, const void *addr, unsigned long count)
++{
++	unsigned char *a = (unsigned char *) addr;
++	struct iop *p = port2iop(port);
++	while (count--)
++		(p->outb) (p, *a++, port);
++}
++
++void
++sh7300se_outsw(unsigned long port, const void *addr, unsigned long count)
++{
++	unsigned short *a = (unsigned short *) addr;
++	struct iop *p = port2iop(port);
++	while (count--)
++		(p->outw) (p, *a++, port);
++}
++
++void
++sh7300se_outsl(unsigned long port, const void *addr, unsigned long count)
++{
++	badio(outsw, port);
++}
+diff -puN /dev/null arch/sh/boards/se/7300/irq.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/se/7300/irq.c	2004-06-23 20:00:18.463883088 -0700
+@@ -0,0 +1,37 @@
++/*
++ * linux/arch/sh/boards/se/7300/irq.c
++ *
++ * Copyright (C) 2003 Takashi Kusuda <kusuda-takashi@hitachi-ul.co.jp>
++ *
++ * SH-Mobile SolutionEngine 7300 Support.
++ *
++ */
++
++#include <linux/config.h>
++#include <linux/init.h>
++#include <linux/irq.h>
++#include <asm/irq.h>
++#include <asm/io.h>
++#include <asm/mach/se7300.h>
++
++/*
++ * Initialize IRQ setting
++ */
++void __init
++init_7300se_IRQ(void)
++{
++	ctrl_outw(0x0028, PA_EPLD_MODESET);	/* mode set IRQ0,1 active low. */
++	ctrl_outw(0xa000, INTC_ICR1);	        /* IRQ mode; IRQ0,1 enable.    */
++	ctrl_outw(0x0000, PORT_PFCR);	        /* use F for IRQ[3:0] and SIU. */
++
++	/* PC_IRQ[0-3] -> IRQ0 (32) */
++	make_ipr_irq(IRQ0_IRQ, IRQ0_IPR_ADDR, IRQ0_IPR_POS, 0x0f - IRQ0_IRQ);
++	/* A_IRQ[0-3] -> IRQ1 (33) */
++	make_ipr_irq(IRQ1_IRQ, IRQ1_IPR_ADDR, IRQ1_IPR_POS, 0x0f - IRQ1_IRQ);
++	make_ipr_irq(SIOF0_IRQ, SIOF0_IPR_ADDR, SIOF0_IPR_POS, SIOF0_PRIORITY);
++	make_ipr_irq(DMTE2_IRQ, DMA1_IPR_ADDR, DMA1_IPR_POS, DMA1_PRIORITY);
++	make_ipr_irq(DMTE3_IRQ, DMA1_IPR_ADDR, DMA1_IPR_POS, DMA1_PRIORITY);
++	make_ipr_irq(VIO_IRQ, VIO_IPR_ADDR, VIO_IPR_POS, VIO_PRIORITY);
++
++	ctrl_outw(0x2000, PA_MRSHPC + 0x0c);	/* mrshpc irq enable */
++}
+diff -puN /dev/null arch/sh/boards/se/7300/led.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/se/7300/led.c	2004-06-23 20:00:18.464882936 -0700
+@@ -0,0 +1,69 @@
++/*
++ * linux/arch/sh/boards/se/7300/led.c
++ *
++ * Derived from linux/arch/sh/boards/se/770x/led.c
++ *
++ * Copyright (C) 2000 Stuart Menefy <stuart.menefy@st.com>
++ *
++ * May be copied or modified under the terms of the GNU General Public
++ * License.  See linux/COPYING for more information.
++ *
++ * This file contains Solution Engine specific LED code.
++ */
++
++#include <linux/config.h>
++#include <linux/sched.h>
++#include <asm/mach/se7300.h>
++
++static void
++mach_led(int position, int value)
++{
++	volatile unsigned short *p = (volatile unsigned short *) PA_LED;
++
++	if (value) {
++		*p |= (1 << 8);
++	} else {
++		*p &= ~(1 << 8);
++	}
++}
++
++
++/* Cycle the LED's in the clasic Knightrider/Sun pattern */
++void
++heartbeat_7300se(void)
++{
++	static unsigned int cnt = 0, period = 0;
++	volatile unsigned short *p = (volatile unsigned short *) PA_LED;
++	static unsigned bit = 0, up = 1;
++
++	cnt += 1;
++	if (cnt < period) {
++		return;
++	}
++
++	cnt = 0;
++
++	/* Go through the points (roughly!):
++	 * f(0)=10, f(1)=16, f(2)=20, f(5)=35,f(inf)->110
++	 */
++	period = 110 - ((300 << FSHIFT) / ((avenrun[0] / 5) + (3 << FSHIFT)));
++
++	if (up) {
++		if (bit == 7) {
++			bit--;
++			up = 0;
++		} else {
++			bit++;
++		}
++	} else {
++		if (bit == 0) {
++			bit++;
++			up = 1;
++		} else {
++			bit--;
++		}
++	}
++	*p = 1 << (bit + 8);
++
++}
++
+diff -puN /dev/null arch/sh/boards/se/7300/Makefile
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/se/7300/Makefile	2004-06-23 20:00:18.466882632 -0700
+@@ -0,0 +1,7 @@
++#
++# Makefile for the 7300 SolutionEngine specific parts of the kernel
++#
++
++obj-y	 := setup.o io.o irq.o
++
++obj-$(CONFIG_HEARTBEAT) += led.o
+diff -puN /dev/null arch/sh/boards/se/7300/setup.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/se/7300/setup.c	2004-06-23 20:00:18.467882480 -0700
+@@ -0,0 +1,66 @@
++/*
++ * linux/arch/sh/boards/se/7300/setup.c
++ *
++ * Copyright (C) 2003 Takashi Kusuda <kusuda-takashi@hitachi-ul.co.jp>
++ *
++ * SH-Mobile SolutionEngine 7300 Support.
++ *
++ */
++
++#include <linux/config.h>
++#include <linux/init.h>
++#include <asm/machvec.h>
++#include <asm/machvec_init.h>
++#include <asm/mach/io.h>
++
++void heartbeat_7300se(void);
++void init_7300se_IRQ(void);
++
++const char *
++get_system_type(void)
++{
++	return "SolutionEngine 7300";
++}
++
++/*
++ * The Machine Vector
++ */
++
++struct sh_machine_vector mv_7300se __initmv = {
++	.mv_nr_irqs = 109,
++	.mv_inb = sh7300se_inb,
++	.mv_inw = sh7300se_inw,
++	.mv_inl = sh7300se_inl,
++	.mv_outb = sh7300se_outb,
++	.mv_outw = sh7300se_outw,
++	.mv_outl = sh7300se_outl,
++
++	.mv_inb_p = sh7300se_inb_p,
++	.mv_inw_p = sh7300se_inw,
++	.mv_inl_p = sh7300se_inl,
++	.mv_outb_p = sh7300se_outb_p,
++	.mv_outw_p = sh7300se_outw,
++	.mv_outl_p = sh7300se_outl,
++
++	.mv_insb = sh7300se_insb,
++	.mv_insw = sh7300se_insw,
++	.mv_insl = sh7300se_insl,
++	.mv_outsb = sh7300se_outsb,
++	.mv_outsw = sh7300se_outsw,
++	.mv_outsl = sh7300se_outsl,
++
++	.mv_init_irq = init_7300se_IRQ,
++#ifdef CONFIG_HEARTBEAT
++	.mv_heartbeat = heartbeat_7300se,
++#endif
++};
++
++ALIAS_MV(7300se)
++/*
++ * Initialize the board
++ */
++void __init
++platform_setup(void)
++{
++
++}
+diff -puN /dev/null arch/sh/configs/se7300_defconfig
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/configs/se7300_defconfig	2004-06-23 20:00:18.469882176 -0700
+@@ -0,0 +1,461 @@
++#
++# Automatically generated make config: don't edit
++#
++CONFIG_SUPERH=y
++CONFIG_UID16=y
++CONFIG_RWSEM_GENERIC_SPINLOCK=y
++
++#
++# Code maturity level options
++#
++CONFIG_EXPERIMENTAL=y
++CONFIG_CLEAN_COMPILE=y
++CONFIG_STANDALONE=y
++CONFIG_BROKEN_ON_SMP=y
++
++#
++# General setup
++#
++# CONFIG_SWAP is not set
++# CONFIG_SYSVIPC is not set
++# CONFIG_POSIX_MQUEUE is not set
++# CONFIG_BSD_PROCESS_ACCT is not set
++CONFIG_SYSCTL=y
++# CONFIG_AUDIT is not set
++CONFIG_LOG_BUF_SHIFT=14
++# CONFIG_HOTPLUG is not set
++# CONFIG_IKCONFIG is not set
++CONFIG_EMBEDDED=y
++# CONFIG_KALLSYMS is not set
++# CONFIG_FUTEX is not set
++# CONFIG_EPOLL is not set
++CONFIG_IOSCHED_NOOP=y
++# CONFIG_IOSCHED_AS is not set
++# CONFIG_IOSCHED_DEADLINE is not set
++# CONFIG_IOSCHED_CFQ is not set
++# CONFIG_CC_OPTIMIZE_FOR_SIZE is not set
++
++#
++# Loadable module support
++#
++# CONFIG_MODULES is not set
++
++#
++# System type
++#
++# CONFIG_SH_SOLUTION_ENGINE is not set
++# CONFIG_SH_7751_SOLUTION_ENGINE is not set
++CONFIG_SH_7300_SOLUTION_ENGINE=y
++# CONFIG_SH_7751_SYSTEMH is not set
++# CONFIG_SH_STB1_HARP is not set
++# CONFIG_SH_STB1_OVERDRIVE is not set
++# CONFIG_SH_HP620 is not set
++# CONFIG_SH_HP680 is not set
++# CONFIG_SH_HP690 is not set
++# CONFIG_SH_CQREEK is not set
++# CONFIG_SH_DMIDA is not set
++# CONFIG_SH_EC3104 is not set
++# CONFIG_SH_SATURN is not set
++# CONFIG_SH_DREAMCAST is not set
++# CONFIG_SH_CAT68701 is not set
++# CONFIG_SH_BIGSUR is not set
++# CONFIG_SH_SH2000 is not set
++# CONFIG_SH_ADX is not set
++# CONFIG_SH_MPC1211 is not set
++# CONFIG_SH_SECUREEDGE5410 is not set
++# CONFIG_SH_HS7751RVOIP is not set
++# CONFIG_SH_RTS7751R2D is not set
++# CONFIG_SH_UNKNOWN is not set
++# CONFIG_CPU_SH2 is not set
++CONFIG_CPU_SH3=y
++# CONFIG_CPU_SH4 is not set
++# CONFIG_CPU_SUBTYPE_SH7604 is not set
++CONFIG_CPU_SUBTYPE_SH7300=y
++# CONFIG_CPU_SUBTYPE_SH7707 is not set
++# CONFIG_CPU_SUBTYPE_SH7708 is not set
++# CONFIG_CPU_SUBTYPE_SH7709 is not set
++# CONFIG_CPU_SUBTYPE_SH7750 is not set
++# CONFIG_CPU_SUBTYPE_SH7751 is not set
++# CONFIG_CPU_SUBTYPE_SH7760 is not set
++# CONFIG_CPU_SUBTYPE_ST40STB1 is not set
++# CONFIG_CPU_SUBTYPE_ST40GX1 is not set
++CONFIG_MMU=y
++CONFIG_CMDLINE_BOOL=y
++CONFIG_CMDLINE="console=ttySC0,38400 root=/dev/ram0"
++CONFIG_MEMORY_START=0x0c000000
++CONFIG_MEMORY_SIZE=0x04000000
++# CONFIG_MEMORY_OVERRIDE is not set
++CONFIG_SH_DSP=y
++# CONFIG_SH_ADC is not set
++CONFIG_ZERO_PAGE_OFFSET=0x00001000
++CONFIG_BOOT_LINK_OFFSET=0x00210000
++CONFIG_CPU_LITTLE_ENDIAN=y
++# CONFIG_PREEMPT is not set
++# CONFIG_UBC_WAKEUP is not set
++# CONFIG_SH_WRITETHROUGH is not set
++# CONFIG_SH_OCRAM is not set
++# CONFIG_SMP is not set
++# CONFIG_SH_PCLK_CALC is not set
++CONFIG_SH_PCLK_FREQ=33333333
++
++#
++# CPU Frequency scaling
++#
++# CONFIG_CPU_FREQ is not set
++
++#
++# DMA support
++#
++# CONFIG_SH_DMA is not set
++
++#
++# Companion Chips
++#
++# CONFIG_HD6446X_SERIES is not set
++CONFIG_HEARTBEAT=y
++
++#
++# Bus options (PCI, PCMCIA, EISA, MCA, ISA)
++#
++# CONFIG_PCI is not set
++
++#
++# Executable file formats
++#
++CONFIG_BINFMT_ELF=y
++# CONFIG_BINFMT_FLAT is not set
++# CONFIG_BINFMT_MISC is not set
++
++#
++# SH initrd options
++#
++CONFIG_EMBEDDED_RAMDISK=y
++CONFIG_EMBEDDED_RAMDISK_IMAGE="ramdisk.gz"
++
++#
++# Device Drivers
++#
++
++#
++# Generic Driver Options
++#
++
++#
++# Memory Technology Devices (MTD)
++#
++# CONFIG_MTD is not set
++
++#
++# Parallel port support
++#
++# CONFIG_PARPORT is not set
++
++#
++# Plug and Play support
++#
++
++#
++# Block devices
++#
++# CONFIG_BLK_DEV_FD is not set
++# CONFIG_BLK_DEV_LOOP is not set
++CONFIG_BLK_DEV_RAM=y
++CONFIG_BLK_DEV_RAM_SIZE=4096
++CONFIG_BLK_DEV_INITRD=y
++# CONFIG_LBD is not set
++
++#
++# ATA/ATAPI/MFM/RLL support
++#
++# CONFIG_IDE is not set
++
++#
++# SCSI device support
++#
++# CONFIG_SCSI is not set
++
++#
++# Multi-device support (RAID and LVM)
++#
++# CONFIG_MD is not set
++
++#
++# Fusion MPT device support
++#
++
++#
++# IEEE 1394 (FireWire) support
++#
++# CONFIG_IEEE1394 is not set
++
++#
++# I2O device support
++#
++
++#
++# Networking support
++#
++# CONFIG_NET is not set
++# CONFIG_NETPOLL is not set
++# CONFIG_NET_POLL_CONTROLLER is not set
++
++#
++# ISDN subsystem
++#
++
++#
++# Telephony Support
++#
++# CONFIG_PHONE is not set
++
++#
++# Input device support
++#
++CONFIG_INPUT=y
++
++#
++# Userland interfaces
++#
++CONFIG_INPUT_MOUSEDEV=y
++CONFIG_INPUT_MOUSEDEV_PSAUX=y
++CONFIG_INPUT_MOUSEDEV_SCREEN_X=1024
++CONFIG_INPUT_MOUSEDEV_SCREEN_Y=768
++# CONFIG_INPUT_JOYDEV is not set
++# CONFIG_INPUT_TSDEV is not set
++# CONFIG_INPUT_EVDEV is not set
++# CONFIG_INPUT_EVBUG is not set
++
++#
++# Input I/O drivers
++#
++# CONFIG_GAMEPORT is not set
++CONFIG_SOUND_GAMEPORT=y
++CONFIG_SERIO=y
++# CONFIG_SERIO_I8042 is not set
++# CONFIG_SERIO_SERPORT is not set
++# CONFIG_SERIO_CT82C710 is not set
++
++#
++# Input Device Drivers
++#
++# CONFIG_INPUT_KEYBOARD is not set
++# CONFIG_INPUT_MOUSE is not set
++# CONFIG_INPUT_JOYSTICK is not set
++# CONFIG_INPUT_TOUCHSCREEN is not set
++# CONFIG_INPUT_MISC is not set
++
++#
++# Character devices
++#
++# CONFIG_VT is not set
++# CONFIG_SERIAL_NONSTANDARD is not set
++
++#
++# Serial drivers
++#
++# CONFIG_SERIAL_8250 is not set
++
++#
++# Non-8250 serial port support
++#
++CONFIG_SERIAL_SH_SCI=y
++CONFIG_SERIAL_SH_SCI_CONSOLE=y
++CONFIG_SERIAL_CORE=y
++CONFIG_SERIAL_CORE_CONSOLE=y
++# CONFIG_UNIX98_PTYS is not set
++# CONFIG_LEGACY_PTYS is not set
++# CONFIG_QIC02_TAPE is not set
++
++#
++# IPMI
++#
++CONFIG_IPMI_HANDLER=y
++# CONFIG_IPMI_PANIC_EVENT is not set
++CONFIG_IPMI_DEVICE_INTERFACE=y
++# CONFIG_IPMI_SI is not set
++CONFIG_IPMI_WATCHDOG=y
++
++#
++# Watchdog Cards
++#
++CONFIG_WATCHDOG=y
++# CONFIG_WATCHDOG_NOWAYOUT is not set
++
++#
++# Watchdog Device Drivers
++#
++CONFIG_SOFT_WATCHDOG=y
++# CONFIG_SH_WDT is not set
++# CONFIG_RTC is not set
++# CONFIG_GEN_RTC is not set
++# CONFIG_DTLK is not set
++# CONFIG_R3964 is not set
++# CONFIG_APPLICOM is not set
++
++#
++# Ftape, the floppy tape device driver
++#
++# CONFIG_FTAPE is not set
++# CONFIG_AGP is not set
++# CONFIG_DRM is not set
++# CONFIG_RAW_DRIVER is not set
++
++#
++# I2C support
++#
++# CONFIG_I2C is not set
++
++#
++# Misc devices
++#
++
++#
++# Multimedia devices
++#
++# CONFIG_VIDEO_DEV is not set
++
++#
++# Digital Video Broadcasting Devices
++#
++
++#
++# Graphics support
++#
++# CONFIG_FB is not set
++
++#
++# Sound
++#
++# CONFIG_SOUND is not set
++
++#
++# USB support
++#
++
++#
++# USB Gadget Support
++#
++# CONFIG_USB_GADGET is not set
++
++#
++# File systems
++#
++CONFIG_EXT2_FS=y
++# CONFIG_EXT2_FS_XATTR is not set
++# CONFIG_EXT3_FS is not set
++# CONFIG_JBD is not set
++# CONFIG_REISERFS_FS is not set
++# CONFIG_JFS_FS is not set
++# CONFIG_XFS_FS is not set
++# CONFIG_MINIX_FS is not set
++# CONFIG_ROMFS_FS is not set
++# CONFIG_QUOTA is not set
++# CONFIG_AUTOFS_FS is not set
++# CONFIG_AUTOFS4_FS is not set
++
++#
++# CD-ROM/DVD Filesystems
++#
++# CONFIG_ISO9660_FS is not set
++# CONFIG_UDF_FS is not set
++
++#
++# DOS/FAT/NT Filesystems
++#
++# CONFIG_FAT_FS is not set
++# CONFIG_NTFS_FS is not set
++
++#
++# Pseudo filesystems
++#
++CONFIG_PROC_FS=y
++CONFIG_PROC_KCORE=y
++CONFIG_SYSFS=y
++CONFIG_DEVFS_FS=y
++CONFIG_DEVFS_MOUNT=y
++# CONFIG_DEVFS_DEBUG is not set
++# CONFIG_TMPFS is not set
++# CONFIG_HUGETLBFS is not set
++# CONFIG_HUGETLB_PAGE is not set
++CONFIG_RAMFS=y
++
++#
++# Miscellaneous filesystems
++#
++# CONFIG_ADFS_FS is not set
++# CONFIG_AFFS_FS is not set
++# CONFIG_HFS_FS is not set
++# CONFIG_HFSPLUS_FS is not set
++# CONFIG_BEFS_FS is not set
++# CONFIG_BFS_FS is not set
++# CONFIG_EFS_FS is not set
++# CONFIG_CRAMFS is not set
++# CONFIG_VXFS_FS is not set
++# CONFIG_HPFS_FS is not set
++# CONFIG_QNX4FS_FS is not set
++# CONFIG_SYSV_FS is not set
++# CONFIG_UFS_FS is not set
++
++#
++# Partition Types
++#
++# CONFIG_PARTITION_ADVANCED is not set
++CONFIG_MSDOS_PARTITION=y
++
++#
++# Native Language Support
++#
++# CONFIG_NLS is not set
++
++#
++# Profiling support
++#
++# CONFIG_PROFILING is not set
++
++#
++# Kernel hacking
++#
++# CONFIG_MAGIC_SYSRQ is not set
++# CONFIG_DEBUG_SPINLOCK is not set
++# CONFIG_DEBUG_INFO is not set
++CONFIG_SH_STANDARD_BIOS=y
++CONFIG_EARLY_PRINTK=y
++CONFIG_KGDB=y
++
++#
++# KGDB configuration options
++#
++# CONFIG_MORE_COMPILE_OPTIONS is not set
++# CONFIG_KGDB_NMI is not set
++# CONFIG_KGDB_THREAD is not set
++# CONFIG_SH_KGDB_CONSOLE is not set
++# CONFIG_KGDB_SYSRQ is not set
++# CONFIG_KGDB_KERNEL_ASSERTS is not set
++
++#
++# Serial port setup
++#
++CONFIG_KGDB_DEFPORT=1
++CONFIG_KGDB_DEFBAUD=115200
++CONFIG_KGDB_DEFPARITY_N=y
++# CONFIG_KGDB_DEFPARITY_E is not set
++# CONFIG_KGDB_DEFPARITY_O is not set
++CONFIG_KGDB_DEFBITS_8=y
++# CONFIG_KGDB_DEFBITS_7 is not set
++# CONFIG_FRAME_POINTER is not set
++
++#
++# Security options
++#
++# CONFIG_SECURITY is not set
++
++#
++# Cryptographic options
++#
++# CONFIG_CRYPTO is not set
++
++#
++# Library routines
++#
++CONFIG_CRC32=y
++# CONFIG_LIBCRC32C is not set
+diff -puN /dev/null include/asm-sh/se7300/io.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/se7300/io.h	2004-06-23 20:00:18.470882024 -0700
+@@ -0,0 +1,29 @@
++/*
++ * include/asm-sh/se7300/io.h
++ *
++ * Copyright (C) 2003 Takashi Kusuda <kusuda-takashi@hitachi-ul.co.jp>
++ * IO functions for SH-Mobile(SH7300) SolutionEngine
++ */
++
++#ifndef _ASM_SH_IO_7300SE_H
++#define _ASM_SH_IO_7300SE_H
++
++extern unsigned char sh7300se_inb(unsigned long port);
++extern unsigned short sh7300se_inw(unsigned long port);
++extern unsigned int sh7300se_inl(unsigned long port);
++
++extern void sh7300se_outb(unsigned char value, unsigned long port);
++extern void sh7300se_outw(unsigned short value, unsigned long port);
++extern void sh7300se_outl(unsigned int value, unsigned long port);
++
++extern unsigned char sh7300se_inb_p(unsigned long port);
++extern void sh7300se_outb_p(unsigned char value, unsigned long port);
++
++extern void sh7300se_insb(unsigned long port, void *addr, unsigned long count);
++extern void sh7300se_insw(unsigned long port, void *addr, unsigned long count);
++extern void sh7300se_insl(unsigned long port, void *addr, unsigned long count);
++extern void sh7300se_outsb(unsigned long port, const void *addr, unsigned long count);
++extern void sh7300se_outsw(unsigned long port, const void *addr, unsigned long count);
++extern void sh7300se_outsl(unsigned long port, const void *addr, unsigned long count);
++
++#endif /* _ASM_SH_IO_7300SE_H */
+diff -puN /dev/null include/asm-sh/se7300/se7300.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/se7300/se7300.h	2004-06-23 20:00:18.471881872 -0700
+@@ -0,0 +1,61 @@
++#ifndef __ASM_SH_HITACHI_SE7300_H
++#define __ASM_SH_HITACHI_SE7300_H
++
++/*
++ * linux/include/asm-sh/se/se7300.h
++ *
++ * Copyright (C) 2003 Takashi Kusuda <kusuda-takashi@hitachi-ul.co.jp>
++ *
++ * SH-Mobile SolutionEngine 7300 support
++ */
++
++/* Box specific addresses.  */
++
++/* Area 0 */
++#define PA_ROM		0x00000000	/* EPROM */
++#define PA_ROM_SIZE	0x00400000	/* EPROM size 4M byte(Actually 2MB) */
++#define PA_FROM		0x00400000	/* Flash ROM */
++#define PA_FROM_SIZE	0x00400000	/* Flash size 4M byte */
++#define PA_SRAM		0x00800000	/* SRAM */
++#define PA_FROM_SIZE	0x00400000	/* SRAM size 4M byte */
++/* Area 1 */
++#define PA_EXT1		0x04000000
++#define PA_EXT1_SIZE	0x04000000
++/* Area 2 */
++#define PA_EXT2		0x08000000
++#define PA_EXT2_SIZE	0x04000000
++/* Area 3 */
++#define PA_SDRAM	0x0c000000
++#define PA_SDRAM_SIZE	0x04000000
++/* Area 4 */
++#define PA_PCIC		0x10000000	/* MR-SHPC-01 PCMCIA */
++#define PA_MRSHPC       0xb03fffe0      /* MR-SHPC-01 PCMCIA controller */
++#define PA_MRSHPC_MW1   0xb0400000      /* MR-SHPC-01 memory window base */
++#define PA_MRSHPC_MW2   0xb0500000      /* MR-SHPC-01 attribute window base */
++#define PA_MRSHPC_IO    0xb0600000      /* MR-SHPC-01 I/O window base */
++#define MRSHPC_OPTION   (PA_MRSHPC + 6)
++#define MRSHPC_CSR      (PA_MRSHPC + 8)
++#define MRSHPC_ISR      (PA_MRSHPC + 10)
++#define MRSHPC_ICR      (PA_MRSHPC + 12)
++#define MRSHPC_CPWCR    (PA_MRSHPC + 14)
++#define MRSHPC_MW0CR1   (PA_MRSHPC + 16)
++#define MRSHPC_MW1CR1   (PA_MRSHPC + 18)
++#define MRSHPC_IOWCR1   (PA_MRSHPC + 20)
++#define MRSHPC_MW0CR2   (PA_MRSHPC + 22)
++#define MRSHPC_MW1CR2   (PA_MRSHPC + 24)
++#define MRSHPC_IOWCR2   (PA_MRSHPC + 26)
++#define MRSHPC_CDCR     (PA_MRSHPC + 28)
++#define MRSHPC_PCIC_INFO (PA_MRSHPC + 30)
++#define PA_LED		0xb0800000	/* LED */
++#define PA_DIPSW	0xb0900000	/* Dip switch 31 */
++#define PA_EPLD_MODESET	0xb0a00000	/* FPGA Mode set register */
++#define PA_EPLD_ST1	0xb0a80000	/* FPGA Interrupt status register1 */
++#define PA_EPLD_ST2	0xb0ac0000	/* FPGA Interrupt status register2 */
++/* Area 5 */
++#define PA_EXT5		0x14000000
++#define PA_EXT5_SIZE	0x04000000
++/* Area 6 */
++#define PA_LCD1		0xb8000000
++#define PA_LCD2		0xb8800000
++
++#endif  /* __ASM_SH_HITACHI_SE7300_H */
+_

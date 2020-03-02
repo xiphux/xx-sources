@@ -1,0 +1,185 @@
+
+From: Dipankar Sarma <dipankar@in.ibm.com>
+
+This reduces the RCU head size by using a singly linked to maintain them. 
+The ordering of the callbacks is still maintained as before by using a tail
+pointer for the next list.
+
+Signed-Off-By : Dipankar Sarma <dipankar@in.ibm.com>
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/rcupdate.h |   24 ++++++++++++----------
+ 25-akpm/kernel/rcupdate.c        |   42 +++++++++++++++++++--------------------
+ 2 files changed, 34 insertions(+), 32 deletions(-)
+
+diff -puN include/linux/rcupdate.h~singly-linked-rcu include/linux/rcupdate.h
+--- 25/include/linux/rcupdate.h~singly-linked-rcu	2004-06-16 20:08:36.000000000 -0700
++++ 25-akpm/include/linux/rcupdate.h	2004-06-16 20:50:47.205019872 -0700
+@@ -36,7 +36,6 @@
+ #ifdef __KERNEL__
+ 
+ #include <linux/cache.h>
+-#include <linux/list.h>
+ #include <linux/spinlock.h>
+ #include <linux/threads.h>
+ #include <linux/percpu.h>
+@@ -45,21 +44,20 @@
+ 
+ /**
+  * struct rcu_head - callback structure for use with RCU
+- * @list: list_head to queue the update requests
++ * @next: next update requests in a list
+  * @func: actual update function to call after the grace period.
+  * @arg: argument to be passed to the actual update function.
+  */
+ struct rcu_head {
+-	struct list_head list;
++	struct rcu_head *next;
+ 	void (*func)(void *obj);
+ 	void *arg;
+ };
+ 
+-#define RCU_HEAD_INIT(head) \
+-		{ .list = LIST_HEAD_INIT(head.list), .func = NULL, .arg = NULL }
++#define RCU_HEAD_INIT(head) { .next = NULL, .func = NULL, .arg = NULL }
+ #define RCU_HEAD(head) struct rcu_head head = RCU_HEAD_INIT(head)
+ #define INIT_RCU_HEAD(ptr) do { \
+-       INIT_LIST_HEAD(&(ptr)->list); (ptr)->func = NULL; (ptr)->arg = NULL; \
++       (ptr)->next = NULL; (ptr)->func = NULL; (ptr)->arg = NULL; \
+ } while (0)
+ 
+ 
+@@ -99,8 +97,9 @@ struct rcu_data {
+ 
+ 	/* 2) batch handling */
+         long  	       	batch;           /* Batch # for current RCU batch */
+-        struct list_head  nxtlist;
+-        struct list_head  curlist;
++        struct rcu_head *nxtlist;
++	struct rcu_head **nxttail;
++        struct rcu_head *curlist;
+ };
+ 
+ DECLARE_PER_CPU(struct rcu_data, rcu_data);
+@@ -113,22 +112,25 @@ extern struct rcu_ctrlblk rcu_ctrlblk;
+ #define RCU_batch(cpu) 		(per_cpu(rcu_data, (cpu)).batch)
+ #define RCU_nxtlist(cpu) 	(per_cpu(rcu_data, (cpu)).nxtlist)
+ #define RCU_curlist(cpu) 	(per_cpu(rcu_data, (cpu)).curlist)
++#define RCU_nxttail(cpu) 	(per_cpu(rcu_data, (cpu)).nxttail)
+ 
+ static inline int rcu_pending(int cpu) 
+ {
+ 	/* This cpu has pending rcu entries and the grace period
+ 	 * for them has completed.
+ 	 */
+-	if (!list_empty(&RCU_curlist(cpu)) &&
++	if (RCU_curlist(cpu) &&
+ 		  !rcu_batch_before(rcu_ctrlblk.completed,RCU_batch(cpu)))
+ 		return 1;
++
+ 	/* This cpu has no pending entries, but there are new entries */
+-	if (list_empty(&RCU_curlist(cpu)) &&
+-			 !list_empty(&RCU_nxtlist(cpu)))
++	if (!RCU_curlist(cpu) && RCU_nxtlist(cpu))
+ 		return 1;
++
+ 	/* The rcu core waits for a quiescent state from the cpu */
+ 	if (RCU_quiescbatch(cpu) != rcu_ctrlblk.cur || RCU_qs_pending(cpu))
+ 		return 1;
++
+ 	/* nothing to do */
+ 	return 0;
+ }
+diff -puN kernel/rcupdate.c~singly-linked-rcu kernel/rcupdate.c
+--- 25/kernel/rcupdate.c~singly-linked-rcu	2004-06-16 20:08:36.225787200 -0700
++++ 25-akpm/kernel/rcupdate.c	2004-06-16 20:50:47.208019416 -0700
+@@ -82,9 +82,11 @@ void fastcall call_rcu(struct rcu_head *
+ 
+ 	head->func = func;
+ 	head->arg = arg;
++	head->next = NULL;
+ 	local_irq_save(flags);
+ 	cpu = smp_processor_id();
+-	list_add_tail(&head->list, &RCU_nxtlist(cpu));
++	*RCU_nxttail(cpu) = head;
++	RCU_nxttail(cpu) = &head->next;
+ 	local_irq_restore(flags);
+ }
+ 
+@@ -92,16 +94,14 @@ void fastcall call_rcu(struct rcu_head *
+  * Invoke the completed RCU callbacks. They are expected to be in
+  * a per-cpu list.
+  */
+-static void rcu_do_batch(struct list_head *list)
++static void rcu_do_batch(struct rcu_head *list)
+ {
+-	struct list_head *entry;
+-	struct rcu_head *head;
++	struct rcu_head *next;
+ 
+-	while (!list_empty(list)) {
+-		entry = list->next;
+-		list_del(entry);
+-		head = list_entry(entry, struct rcu_head, list);
+-		head->func(head->arg);
++	while (list) {
++		next = list->next;
++		list->func(list->arg);
++		list = next;
+ 	}
+ }
+ 
+@@ -262,20 +262,21 @@ void rcu_restart_cpu(int cpu)
+ static void rcu_process_callbacks(unsigned long unused)
+ {
+ 	int cpu = smp_processor_id();
+-	LIST_HEAD(list);
++	struct rcu_head *rcu_list = NULL;
+ 
+-	if (!list_empty(&RCU_curlist(cpu)) &&
+-			!rcu_batch_before(rcu_ctrlblk.completed,RCU_batch(cpu))) {
+-		__list_splice(&RCU_curlist(cpu), &list);
+-		INIT_LIST_HEAD(&RCU_curlist(cpu));
++	if (RCU_curlist(cpu) &&
++	    !rcu_batch_before(rcu_ctrlblk.completed, RCU_batch(cpu))) {
++		rcu_list = RCU_curlist(cpu);
++		RCU_curlist(cpu) = NULL;
+ 	}
+ 
+ 	local_irq_disable();
+-	if (!list_empty(&RCU_nxtlist(cpu)) && list_empty(&RCU_curlist(cpu))) {
++	if (RCU_nxtlist(cpu) && !RCU_curlist(cpu)) {
+ 		int next_pending, seq;
+ 
+-		__list_splice(&RCU_nxtlist(cpu), &RCU_curlist(cpu));
+-		INIT_LIST_HEAD(&RCU_nxtlist(cpu));
++		RCU_curlist(cpu) = RCU_nxtlist(cpu);
++		RCU_nxtlist(cpu) = NULL;
++		RCU_nxttail(cpu) = &RCU_nxtlist(cpu);
+ 		local_irq_enable();
+ 
+ 		/*
+@@ -298,8 +299,8 @@ static void rcu_process_callbacks(unsign
+ 		local_irq_enable();
+ 	}
+ 	rcu_check_quiescent_state();
+-	if (!list_empty(&list))
+-		rcu_do_batch(&list);
++	if (rcu_list)
++		rcu_do_batch(rcu_list);
+ }
+ 
+ void rcu_check_callbacks(int cpu, int user)
+@@ -315,8 +316,7 @@ static void __devinit rcu_online_cpu(int
+ {
+ 	memset(&per_cpu(rcu_data, cpu), 0, sizeof(struct rcu_data));
+ 	tasklet_init(&RCU_tasklet(cpu), rcu_process_callbacks, 0UL);
+-	INIT_LIST_HEAD(&RCU_nxtlist(cpu));
+-	INIT_LIST_HEAD(&RCU_curlist(cpu));
++	RCU_nxttail(cpu) = &RCU_nxtlist(cpu);
+ 	RCU_quiescbatch(cpu) = rcu_ctrlblk.completed;
+ 	RCU_qs_pending(cpu) = 0;
+ }
+_

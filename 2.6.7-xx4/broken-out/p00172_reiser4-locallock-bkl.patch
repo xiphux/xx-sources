@@ -1,0 +1,59 @@
+
+
+Change Big-Kernel-Lock to be locallock_t rather than spinlock_t
+
+
+
+
+---
+
+ linux-2.6.5-xx21-xiphux/include/linux/smp_lock.h |    8 ++++----
+ linux-2.6.5-xx21-xiphux/kernel/sched.c           |    3 ++-
+ 2 files changed, 6 insertions(+), 5 deletions(-)
+
+diff -puN include/linux/smp_lock.h~reiser4-locallock-bkl include/linux/smp_lock.h
+--- linux-2.6.5-xx21/include/linux/smp_lock.h~reiser4-locallock-bkl	2004-05-09 23:39:12.140506672 -0400
++++ linux-2.6.5-xx21-xiphux/include/linux/smp_lock.h	2004-05-09 23:39:12.193498616 -0400
+@@ -3,16 +3,16 @@
+ 
+ #include <linux/config.h>
+ #include <linux/sched.h>
+-#include <linux/spinlock.h>
++#include <linux/locallock.h>
+ 
+ #if defined(CONFIG_SMP) || defined(CONFIG_PREEMPT)
+ 
+-extern spinlock_t kernel_flag;
++extern locallock_t kernel_flag;
+ 
+ #define kernel_locked()		(current->lock_depth >= 0)
+ 
+-#define get_kernel_lock()	spin_lock(&kernel_flag)
+-#define put_kernel_lock()	spin_unlock(&kernel_flag)
++#define get_kernel_lock()	local_lock(&kernel_flag)
++#define put_kernel_lock()	local_unlock(&kernel_flag)
+ 
+ /*
+  * Release global kernel lock.
+diff -puN kernel/sched.c~reiser4-locallock-bkl kernel/sched.c
+--- linux-2.6.5-xx21/kernel/sched.c~reiser4-locallock-bkl	2004-05-09 23:39:12.188499376 -0400
++++ linux-2.6.5-xx21-xiphux/kernel/sched.c	2004-05-09 23:39:59.422318744 -0400
+@@ -47,6 +47,7 @@
+ #include <linux/seq_file.h>
+ #include <linux/times.h>
+ #endif
++#include <linux/locallock.h>
+ 
+ 
+ #ifdef CONFIG_NUMA
+@@ -4131,7 +4132,7 @@ int __init migration_init(void)
+  *
+  * Note: spinlock debugging needs this even on !CONFIG_SMP.
+  */
+-spinlock_t kernel_flag __cacheline_aligned_in_smp = SPIN_LOCK_UNLOCKED;
++locallock_t kernel_flag __cacheline_aligned_in_smp = LOCAL_LOCK_UNLOCKED;
+ EXPORT_SYMBOL(kernel_flag);
+ 
+ #ifdef CONFIG_SMP
+
+_

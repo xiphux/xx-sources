@@ -1,0 +1,386 @@
+Take the functions that will be unique to each scheduler, make them static
+and add entries to the task struct for the identity of that scheduler.
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2005-01-14 23:14:25.703146656 +0000
++++ xx-sources/kernel/sched.c	2005-01-14 23:17:54.056472136 +0000
+@@ -602,6 +602,11 @@
+ 	p->array = array;
+ }
+ 
++static void ingo_set_oom_timeslice(task_t *p)
++{
++	p->time_slice = HZ;
++}
++
+ /*
+  * effective_prio - return the priority that is based on the static
+  * priority but is modified by bonuses/penalties.
+@@ -804,7 +809,7 @@
+  * task_curr - is this task currently executing on a CPU?
+  * @p: the task in question.
+  */
+-inline int task_curr(const task_t *p)
++static int ingo_task_curr(const task_t *p)
+ {
+ 	return cpu_curr(task_cpu(p)) == p;
+ }
+@@ -863,7 +868,7 @@
+  * smp_call_function() if an IPI is sent by the same process we are
+  * waiting to become inactive.
+  */
+-void wait_task_inactive(task_t * p)
++static void ingo_wait_task_inactive(task_t * p)
+ {
+ 	unsigned long flags;
+ 	runqueue_t *rq;
+@@ -981,7 +986,7 @@
+  *
+  * returns failure only if the task is already active.
+  */
+-static int try_to_wake_up(task_t * p, unsigned int state, int sync)
++static int ingo_try_to_wake_up(task_t * p, unsigned int state, int sync)
+ {
+ 	int cpu, this_cpu, success = 0;
+ 	unsigned long flags;
+@@ -1141,7 +1146,7 @@
+  * Perform scheduler related setup for a newly forked process p.
+  * p is forked by current.
+  */
+-void fastcall sched_fork(task_t *p)
++static void ingo_sched_fork(task_t *p)
+ {
+ 	/*
+ 	 * We mark the process as running here, but have not actually
+@@ -1201,7 +1206,7 @@
+  * that must be done for every newly created context, then puts the task
+  * on the runqueue and wakes it.
+  */
+-void fastcall wake_up_new_task(task_t * p, unsigned long clone_flags)
++static void ingo_wake_up_new_task(task_t * p, unsigned long clone_flags)
+ {
+ 	unsigned long flags;
+ 	int this_cpu, cpu;
+@@ -1287,7 +1292,7 @@
+  * artificially, because any timeslice recovered here
+  * was given away by the parent in the first place.)
+  */
+-void fastcall sched_exit(task_t * p)
++static void ingo_sched_exit(task_t * p)
+ {
+ 	unsigned long flags;
+ 	runqueue_t *rq;
+@@ -1354,7 +1359,7 @@
+  * schedule_tail - first thing a freshly forked thread must call.
+  * @prev: the thread we just switched away from.
+  */
+-asmlinkage void schedule_tail(task_t *prev)
++static void ingo_schedule_tail(task_t *prev)
+ 	__releases(rq->lock)
+ {
+ 	finish_task_switch(prev);
+@@ -1399,7 +1404,7 @@
+  * threads, current number of uninterruptible-sleeping threads, total
+  * number of context switches performed since bootup.
+  */
+-unsigned long nr_running(void)
++static unsigned long ingo_nr_running(void)
+ {
+ 	unsigned long i, sum = 0;
+ 
+@@ -1409,7 +1414,7 @@
+ 	return sum;
+ }
+ 
+-unsigned long nr_uninterruptible(void)
++static unsigned long ingo_nr_uninterruptible(void)
+ {
+ 	unsigned long i, sum = 0;
+ 
+@@ -1426,7 +1431,7 @@
+ 	return sum;
+ }
+ 
+-unsigned long long nr_context_switches(void)
++static unsigned long long ingo_nr_context_switches(void)
+ {
+ 	unsigned long long i, sum = 0;
+ 
+@@ -1436,7 +1441,7 @@
+ 	return sum;
+ }
+ 
+-unsigned long nr_iowait(void)
++static unsigned long ingo_nr_iowait(void)
+ {
+ 	unsigned long i, sum = 0;
+ 
+@@ -1592,7 +1597,7 @@
+  * execve() is a valuable balancing opportunity, because at this point
+  * the task has the smallest effective memory and cache footprint.
+  */
+-void sched_exec(void)
++static void ingo_sched_exec(void)
+ {
+ 	struct sched_domain *tmp, *sd = NULL;
+ 	int new_cpu, this_cpu = get_cpu();
+@@ -2235,10 +2240,6 @@
+ 	return ret;
+ }
+ 
+-DEFINE_PER_CPU(struct kernel_stat, kstat);
+-
+-EXPORT_PER_CPU_SYMBOL(kstat);
+-
+ /*
+  * We place interactive tasks back into the active array, if possible.
+  *
+@@ -2404,7 +2405,7 @@
+  * It also gets called by the fork code, when changing the parent's
+  * timeslices.
+  */
+-void scheduler_tick(void)
++static void ingo_scheduler_tick(void)
+ {
+ 	int cpu = smp_processor_id();
+ 	runqueue_t *rq = this_rq();
+@@ -2654,7 +2655,7 @@
+ /*
+  * schedule() is the main scheduler function.
+  */
+-asmlinkage void __sched schedule(void)
++static void __sched ingo_schedule(void)
+ {
+ 	long *switch_count;
+ 	task_t *prev, *next;
+@@ -2823,8 +2824,6 @@
+ 		goto need_resched;
+ }
+ 
+-EXPORT_SYMBOL(schedule);
+-
+ #ifdef CONFIG_PREEMPT
+ /*
+  * this is is the entry point to schedule() from in-kernel preemption
+@@ -3120,7 +3119,7 @@
+ 
+ EXPORT_SYMBOL(sleep_on_timeout);
+ 
+-void set_user_nice(task_t *p, long nice)
++static void ingo_set_user_nice(task_t *p, long nice)
+ {
+ 	unsigned long flags;
+ 	prio_array_t *array;
+@@ -3167,8 +3166,6 @@
+ 	task_rq_unlock(rq, &flags);
+ }
+ 
+-EXPORT_SYMBOL(set_user_nice);
+-
+ #ifdef __ARCH_WANT_SYS_NICE
+ 
+ /*
+@@ -3221,7 +3218,7 @@
+  * RT tasks are offset by -200. Normal tasks are centered
+  * around 0, value goes from -16 to +15.
+  */
+-int task_prio(const task_t *p)
++static int ingo_task_prio(const task_t *p)
+ {
+ 	return p->prio - MAX_RT_PRIO;
+ }
+@@ -3230,7 +3227,7 @@
+  * task_nice - return the nice value of a given task.
+  * @p: the task in question.
+  */
+-int task_nice(const task_t *p)
++static int ingo_task_nice(const task_t *p)
+ {
+ 	return TASK_NICE(p);
+ }
+@@ -3248,13 +3245,11 @@
+  * idle_cpu - is a given cpu idle currently?
+  * @cpu: the processor in question.
+  */
+-int idle_cpu(int cpu)
++static int ingo_idle_cpu(int cpu)
+ {
+ 	return cpu_curr(cpu) == cpu_rq(cpu)->idle;
+ }
+ 
+-EXPORT_SYMBOL_GPL(idle_cpu);
+-
+ /**
+  * find_process_by_pid - find a process with a matching PID value.
+  * @pid: the pid in question.
+@@ -3283,7 +3278,7 @@
+  * @policy: new policy.
+  * @param: structure containing the new RT priority.
+  */
+-int sched_setscheduler(struct task_struct *p, int policy, struct sched_param *param)
++static int ingo_sched_setscheduler(struct task_struct *p, int policy, struct sched_param *param)
+ {
+ 	int retval;
+ 	int oldprio, oldpolicy = -1;
+@@ -3350,9 +3345,8 @@
+ 	task_rq_unlock(rq, &flags);
+ 	return 0;
+ }
+-EXPORT_SYMBOL_GPL(sched_setscheduler);
+ 
+-static int do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
++static int ingo_do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
+ {
+ 	int retval;
+ 	struct sched_param lparam;
+@@ -3602,7 +3596,7 @@
+  * to the expired array. If there are no other threads running on this
+  * CPU then this function will return.
+  */
+-asmlinkage long sys_sched_yield(void)
++static long ingo_sys_sched_yield(void)
+ {
+ 	runqueue_t *rq = this_rq_lock();
+ 	prio_array_t *array = current->array;
+@@ -3810,8 +3804,8 @@
+  * this syscall writes the default timeslice value of a given process
+  * into the user-space timespec buffer. A value of '0' means infinity.
+  */
+-asmlinkage
+-long sys_sched_rr_get_interval(pid_t pid, struct timespec __user *interval)
++static long
++ingo_sys_sched_rr_get_interval(pid_t pid, struct timespec __user *interval)
+ {
+ 	int retval = -EINVAL;
+ 	struct timespec t;
+@@ -3939,7 +3933,7 @@
+ 	read_unlock(&tasklist_lock);
+ }
+ 
+-void __devinit init_idle(task_t *idle, int cpu)
++static void __devinit ingo_init_idle(task_t *idle, int cpu)
+ {
+ 	runqueue_t *rq = cpu_rq(cpu);
+ 	unsigned long flags;
+@@ -3998,7 +3992,7 @@
+  * task must not exit() & deallocate itself prematurely.  The
+  * call is not atomic; no spinlocks may be held.
+  */
+-int set_cpus_allowed(task_t *p, cpumask_t new_mask)
++static int ingo_set_cpus_allowed(task_t *p, cpumask_t new_mask)
+ {
+ 	unsigned long flags;
+ 	int ret = 0;
+@@ -4226,7 +4220,7 @@
+  * It does so by boosting its priority to highest possible and adding it to
+  * the _front_ of runqueue. Used by CPU offline code.
+  */
+-void sched_idle_next(void)
++static void ingo_sched_idle_next(void)
+ {
+ 	int cpu = smp_processor_id();
+ 	runqueue_t *rq = this_rq();
+@@ -4382,7 +4376,7 @@
+ 	.priority = 10
+ };
+ 
+-int __init migration_init(void)
++static int __init ingo_migration_init(void)
+ {
+ 	void *cpu = (void *)(long)smp_processor_id();
+ 	/* Start one for boot CPU. */
+@@ -4486,7 +4480,7 @@
+  * Attach the domain 'sd' to 'cpu' as its base domain.  Callers must
+  * hold the hotplug lock.
+  */
+-void __devinit cpu_attach_domain(struct sched_domain *sd, int cpu)
++static void __devinit ingo_cpu_attach_domain(struct sched_domain *sd, int cpu)
+ {
+ 	migration_req_t req;
+ 	unsigned long flags;
+@@ -4817,7 +4811,7 @@
+ }
+ #endif
+ 
+-void __init sched_init_smp(void)
++static void __init ingo_sched_init_smp(void)
+ {
+ 	lock_cpu_hotplug();
+ 	arch_init_sched_domains();
+@@ -4826,7 +4820,7 @@
+ 	hotcpu_notifier(update_sched_domains, 0);
+ }
+ #else
+-void __init sched_init_smp(void)
++static void __init ingo_sched_init_smp(void)
+ {
+ }
+ #endif /* CONFIG_SMP */
+@@ -4840,7 +4834,7 @@
+ 		&& addr < (unsigned long)__sched_text_end);
+ }
+ 
+-void __init sched_init(void)
++static void __init ingo_sched_init(void)
+ {
+ 	runqueue_t *rq;
+ 	int i, j, k;
+@@ -5079,3 +5073,40 @@
+ }
+ 
+ #endif /* CONFIG_MAGIC_SYSRQ */
++
++struct sched_drv ingo_sched_drv = {
++	.set_oom_timeslice	= ingo_set_oom_timeslice,
++	.nr_running		= ingo_nr_running,
++	.nr_uninterruptible	= ingo_nr_uninterruptible,
++	.nr_context_switches	= ingo_nr_context_switches,
++	.nr_iowait		= ingo_nr_iowait,
++	.idle_cpu		= ingo_idle_cpu,
++	.init_idle		= ingo_init_idle,
++	.exit			= ingo_sched_exit,
++	.fork			= ingo_sched_fork,
++	.init			= ingo_sched_init,
++	.init_smp		= ingo_sched_init_smp,
++	.schedule		= ingo_schedule,
++	.tick			= ingo_scheduler_tick,
++	.tail			= ingo_schedule_tail,
++	.do_sched_setscheduler	= ingo_do_sched_setscheduler,
++	.sched_setscheduler	= ingo_sched_setscheduler,
++	.set_user_nice		= ingo_set_user_nice,
++	.rr_get_interval	= ingo_sys_sched_rr_get_interval,
++	.yield			= ingo_sys_sched_yield,
++	.task_curr		= ingo_task_curr,
++	.task_nice		= ingo_task_nice,
++	.task_prio		= ingo_task_prio,
++	.try_to_wake_up		= ingo_try_to_wake_up,
++	.wake_up_new_task	= ingo_wake_up_new_task,
++#ifdef CONFIG_SMP
++	.migration_init		= ingo_migration_init,
++	.exec			= ingo_sched_exec,
++	.set_cpus_allowed	= ingo_set_cpus_allowed,
++	.wait_task_inactive	= ingo_wait_task_inactive,
++	.cpu_attach_domain	= ingo_cpu_attach_domain,
++#ifdef CONFIG_HOTPLUG_CPU
++	.sched_idle_next	= ingo_sched_idle_next,
++#endif	
++#endif
++};
+Index: xx-sources/kernel/scheduler.c
+===================================================================
+--- xx-sources.orig/kernel/scheduler.c	2005-01-14 23:17:02.135365344 +0000
++++ xx-sources/kernel/scheduler.c	2005-01-14 23:17:09.104305904 +0000
+@@ -40,6 +40,9 @@
+ 
+ #include <asm/unistd.h>
+ 
++DEFINE_PER_CPU(struct kernel_stat, kstat);
++EXPORT_PER_CPU_SYMBOL(kstat);
++
+ extern struct sched_drv ingo_sched_drv;
+ static const struct sched_drv *scheduler = &ingo_sched_drv;
+ 

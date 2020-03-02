@@ -1,0 +1,235 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+This patch converts uses of remap_page_range() via io_remap_page_range() in
+include/asm-*/ to use remap_pfn_range().  io_remap_page_range() has a similar
+physical address overflow issue that needs to be addressed later.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/asm-alpha/pgtable.h     |    2 +-
+ 25-akpm/include/asm-arm/pgtable.h       |    2 +-
+ 25-akpm/include/asm-arm26/pgtable.h     |    2 +-
+ 25-akpm/include/asm-h8300/pgtable.h     |    3 ++-
+ 25-akpm/include/asm-i386/pgtable.h      |    3 ++-
+ 25-akpm/include/asm-ia64/pgtable.h      |    4 +++-
+ 25-akpm/include/asm-m32r/pgtable.h      |    3 ++-
+ 25-akpm/include/asm-m68k/pgtable.h      |    3 ++-
+ 25-akpm/include/asm-m68knommu/pgtable.h |    3 ++-
+ 25-akpm/include/asm-mips/pgtable.h      |    3 ++-
+ 25-akpm/include/asm-parisc/pgtable.h    |    3 ++-
+ 25-akpm/include/asm-ppc/pgtable.h       |    3 ++-
+ 25-akpm/include/asm-ppc64/pgtable.h     |    3 ++-
+ 25-akpm/include/asm-sh/pgtable.h        |    3 ++-
+ 25-akpm/include/asm-sh64/pgtable.h      |    3 ++-
+ 25-akpm/include/asm-x86_64/pgtable.h    |    3 ++-
+ 16 files changed, 30 insertions(+), 16 deletions(-)
+
+diff -puN include/asm-alpha/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-alpha/pgtable.h
+--- 25/include/asm-alpha/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.088390296 -0700
++++ 25-akpm/include/asm-alpha/pgtable.h	2004-09-25 22:03:03.115386192 -0700
+@@ -328,7 +328,7 @@ extern inline pte_t mk_swap_pte(unsigned
+ #endif
+ 
+ #define io_remap_page_range(vma, start, busaddr, size, prot) \
+-    remap_page_range(vma, start, virt_to_phys((void *)__ioremap(busaddr, size)), size, prot)
++    remap_pfn_range(vma, start, virt_to_phys((void *)__ioremap(busaddr, size)) >> PAGE_SHIFT, size, prot)
+ 
+ #define pte_ERROR(e) \
+ 	printk("%s:%d: bad pte %016lx.\n", __FILE__, __LINE__, pte_val(e))
+diff -puN include/asm-arm26/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-arm26/pgtable.h
+--- 25/include/asm-arm26/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.090389992 -0700
++++ 25-akpm/include/asm-arm26/pgtable.h	2004-09-25 22:03:03.116386040 -0700
+@@ -288,7 +288,7 @@ static inline pte_t mk_pte_phys(unsigned
+  * into virtual address `from'
+  */
+ #define io_remap_page_range(vma,from,phys,size,prot) \
+-		remap_page_range(vma,from,phys,size,prot)
++		remap_pfn_range(vma, from, (phys) >> PAGE_SHIFT, size, prot)
+ 
+ #endif /* !__ASSEMBLY__ */
+ 
+diff -puN include/asm-arm/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-arm/pgtable.h
+--- 25/include/asm-arm/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.091389840 -0700
++++ 25-akpm/include/asm-arm/pgtable.h	2004-09-25 22:03:03.115386192 -0700
+@@ -412,7 +412,7 @@ extern pgd_t swapper_pg_dir[PTRS_PER_PGD
+  * into virtual address `from'
+  */
+ #define io_remap_page_range(vma,from,phys,size,prot) \
+-		remap_page_range(vma,from,phys,size,prot)
++		remap_pfn_range(vma, from, (phys) >> PAGE_SHIFT, size, prot)
+ 
+ #define pgtable_cache_init() do { } while (0)
+ 
+diff -puN include/asm-h8300/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-h8300/pgtable.h
+--- 25/include/asm-h8300/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.093389536 -0700
++++ 25-akpm/include/asm-h8300/pgtable.h	2004-09-25 22:03:03.116386040 -0700
+@@ -50,7 +50,8 @@ extern int is_in_rom(unsigned long);
+  * No page table caches to initialise
+  */
+ #define pgtable_cache_init()   do { } while (0)
+-#define io_remap_page_range	remap_page_range
++#define io_remap_page_range(vma, vaddr, paddr, size, prot)		\
++		remap_pfn_range(vma, vaddr, (paddr) >> PAGE_SHIFT, size, prot)
+ 
+ /*
+  * All 32bit addresses are effectively valid for vmalloc...
+diff -puN include/asm-i386/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-i386/pgtable.h
+--- 25/include/asm-i386/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.094389384 -0700
++++ 25-akpm/include/asm-i386/pgtable.h	2004-09-25 22:03:03.117385888 -0700
+@@ -404,7 +404,8 @@ extern pte_t *lookup_address(unsigned lo
+ #define kern_addr_valid(addr)	(1)
+ #endif /* !CONFIG_DISCONTIGMEM */
+ 
+-#define io_remap_page_range remap_page_range
++#define io_remap_page_range(vma, vaddr, paddr, size, prot)		\
++		remap_pfn_range(vma, vaddr, (paddr) >> PAGE_SHIFT, size, prot)
+ 
+ #define __HAVE_ARCH_PTEP_TEST_AND_CLEAR_YOUNG
+ #define __HAVE_ARCH_PTEP_TEST_AND_CLEAR_DIRTY
+diff -puN include/asm-ia64/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-ia64/pgtable.h
+--- 25/include/asm-ia64/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.096389080 -0700
++++ 25-akpm/include/asm-ia64/pgtable.h	2004-09-25 22:03:03.117385888 -0700
+@@ -452,7 +452,9 @@ extern void paging_init (void);
+ #define pte_to_pgoff(pte)		((pte_val(pte) << 1) >> 3)
+ #define pgoff_to_pte(off)		((pte_t) { ((off) << 2) | _PAGE_FILE })
+ 
+-#define io_remap_page_range remap_page_range	/* XXX is this right? */
++/* XXX is this right? */
++#define io_remap_page_range(vma, vaddr, paddr, size, prot)		\
++		remap_pfn_range(vma, vaddr, (paddr) >> PAGE_SHIFT, size, prot)
+ 
+ /*
+  * ZERO_PAGE is a global shared page that is always zero: used
+diff -puN include/asm-m32r/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-m32r/pgtable.h
+--- 25/include/asm-m32r/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.097388928 -0700
++++ 25-akpm/include/asm-m32r/pgtable.h	2004-09-25 22:03:03.118385736 -0700
+@@ -408,7 +408,8 @@ static __inline__ void pmd_set(pmd_t * p
+ /* Needs to be defined here and not in linux/mm.h, as it is arch dependent */
+ #define kern_addr_valid(addr)	(1)
+ 
+-#define io_remap_page_range	remap_page_range
++#define io_remap_page_range(vma, vaddr, paddr, size, prot)		\
++		remap_pfn_range(vma, vaddr, (paddr) >> PAGE_SHIFT, size, prot)
+ 
+ #define __HAVE_ARCH_PTEP_TEST_AND_CLEAR_YOUNG
+ #define __HAVE_ARCH_PTEP_TEST_AND_CLEAR_DIRTY
+diff -puN include/asm-m68knommu/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-m68knommu/pgtable.h
+--- 25/include/asm-m68knommu/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.099388624 -0700
++++ 25-akpm/include/asm-m68knommu/pgtable.h	2004-09-25 22:03:03.119385584 -0700
+@@ -54,7 +54,8 @@ extern int is_in_rom(unsigned long);
+  * No page table caches to initialise.
+  */
+ #define pgtable_cache_init()	do { } while (0)
+-#define io_remap_page_range	remap_page_range
++#define io_remap_page_range(vma, vaddr, paddr, size, prot)		\
++		remap_pfn_range(vma, vaddr, (paddr) >> PAGE_SHIFT, size, prot)
+ 
+ /*
+  * All 32bit addresses are effectively valid for vmalloc...
+diff -puN include/asm-m68k/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-m68k/pgtable.h
+--- 25/include/asm-m68k/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.100388472 -0700
++++ 25-akpm/include/asm-m68k/pgtable.h	2004-09-25 22:03:03.118385736 -0700
+@@ -138,7 +138,8 @@ static inline void update_mmu_cache(stru
+ 
+ #define kern_addr_valid(addr)	(1)
+ 
+-#define io_remap_page_range remap_page_range
++#define io_remap_page_range(vma, vaddr, paddr, size, prot)		\
++		remap_pfn_range(vma, vaddr, (paddr) >> PAGE_SHIFT, size, prot)
+ 
+ /* MMU-specific headers */
+ 
+diff -puN include/asm-mips/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-mips/pgtable.h
+--- 25/include/asm-mips/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.102388168 -0700
++++ 25-akpm/include/asm-mips/pgtable.h	2004-09-25 22:03:03.119385584 -0700
+@@ -245,7 +245,8 @@ static inline void update_mmu_cache(stru
+  */
+ #define HAVE_ARCH_UNMAPPED_AREA
+ 
+-#define io_remap_page_range remap_page_range
++#define io_remap_page_range(vma, vaddr, paddr, size, prot)		\
++		remap_pfn_range(vma, vaddr, (paddr) >> PAGE_SHIFT, size, prot)
+ 
+ /*
+  * No page table caches to initialise
+diff -puN include/asm-parisc/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-parisc/pgtable.h
+--- 25/include/asm-parisc/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.103388016 -0700
++++ 25-akpm/include/asm-parisc/pgtable.h	2004-09-25 22:03:03.120385432 -0700
+@@ -505,7 +505,8 @@ static inline void ptep_mkdirty(pte_t *p
+ 
+ #endif /* !__ASSEMBLY__ */
+ 
+-#define io_remap_page_range remap_page_range
++#define io_remap_page_range(vma, vaddr, paddr, size, prot)
++		remap_pfn_range(vma, vaddr, (paddr) >> PAGE_SHIFT, size, prot)
+ 
+ /* We provide our own get_unmapped_area to provide cache coherency */
+ 
+diff -puN include/asm-ppc64/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-ppc64/pgtable.h
+--- 25/include/asm-ppc64/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.105387712 -0700
++++ 25-akpm/include/asm-ppc64/pgtable.h	2004-09-25 22:03:03.121385280 -0700
+@@ -492,7 +492,8 @@ extern void update_mmu_cache(struct vm_a
+  */
+ #define kern_addr_valid(addr)	(1)
+ 
+-#define io_remap_page_range remap_page_range 
++#define io_remap_page_range(vma, vaddr, paddr, size, prot)		\
++		remap_pfn_range(vma, vaddr, (paddr) >> PAGE_SHIFT, size, prot)
+ 
+ void pgtable_cache_init(void);
+ 
+diff -puN include/asm-ppc/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-ppc/pgtable.h
+--- 25/include/asm-ppc/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.106387560 -0700
++++ 25-akpm/include/asm-ppc/pgtable.h	2004-09-25 22:03:03.120385432 -0700
+@@ -714,7 +714,8 @@ extern void kernel_set_cachemode (unsign
+ /* Needs to be defined here and not in linux/mm.h, as it is arch dependent */
+ #define kern_addr_valid(addr)	(1)
+ 
+-#define io_remap_page_range remap_page_range
++#define io_remap_page_range(vma, vaddr, paddr, size, prot)		\
++		remap_pfn_range(vma, vaddr, (paddr) >> PAGE_SHIFT, size, prot)
+ 
+ /*
+  * No page table caches to initialise
+diff -puN include/asm-sh64/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-sh64/pgtable.h
+--- 25/include/asm-sh64/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.107387408 -0700
++++ 25-akpm/include/asm-sh64/pgtable.h	2004-09-25 22:03:03.122385128 -0700
+@@ -479,7 +479,8 @@ extern void update_mmu_cache(struct vm_a
+ #define PageSkip(page)		(0)
+ #define kern_addr_valid(addr)	(1)
+ 
+-#define io_remap_page_range remap_page_range
++#define io_remap_page_range(vma, vaddr, paddr, size, prot)		\
++		remap_pfn_range(vma, vaddr, (paddr) >> PAGE_SHIFT, size, prot)
+ #endif /* !__ASSEMBLY__ */
+ 
+ /*
+diff -puN include/asm-sh/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-sh/pgtable.h
+--- 25/include/asm-sh/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.109387104 -0700
++++ 25-akpm/include/asm-sh/pgtable.h	2004-09-25 22:03:03.122385128 -0700
+@@ -274,7 +274,8 @@ typedef pte_t *pte_addr_t;
+ 
+ #define kern_addr_valid(addr)	(1)
+ 
+-#define io_remap_page_range remap_page_range
++#define io_remap_page_range(vma, vaddr, paddr, size, prot)		\
++		remap_pfn_range(vma, vaddr, (paddr) >> PAGE_SHIFT, size, prot)
+ 
+ /*
+  * No page table caches to initialise
+diff -puN include/asm-x86_64/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range include/asm-x86_64/pgtable.h
+--- 25/include/asm-x86_64/pgtable.h~convert-users-of-remap_page_range-under-include-asm--to-use-remap_pfn_range	2004-09-25 22:03:03.111386800 -0700
++++ 25-akpm/include/asm-x86_64/pgtable.h	2004-09-25 22:03:03.123384976 -0700
+@@ -421,7 +421,8 @@ extern inline pte_t pte_modify(pte_t pte
+ 
+ extern int kern_addr_valid(unsigned long addr); 
+ 
+-#define io_remap_page_range remap_page_range
++#define io_remap_page_range(vma, vaddr, paddr, size, prot)		\
++		remap_pfn_range(vma, vaddr, (paddr) >> PAGE_SHIFT, size, prot)
+ 
+ #define HAVE_ARCH_UNMAPPED_AREA
+ 
+_

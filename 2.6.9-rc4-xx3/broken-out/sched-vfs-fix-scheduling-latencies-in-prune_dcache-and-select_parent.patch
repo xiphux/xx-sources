@@ -1,0 +1,54 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+The attached patch fixes long scheduling latencies in select_parent() and
+prune_dcache().  The prune_dcache() lock-break is easy, but for
+select_parent() the only viable solution i found was to break out if
+there's a resched necessary - the reordering is not necessary and the
+dcache scanning/shrinking will later on do it anyway.
+
+This patch has been in the -VP patchset for weeks.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/dcache.c |   11 +++++++++++
+ 1 files changed, 11 insertions(+)
+
+diff -puN fs/dcache.c~sched-vfs-fix-scheduling-latencies-in-prune_dcache-and-select_parent fs/dcache.c
+--- 25/fs/dcache.c~sched-vfs-fix-scheduling-latencies-in-prune_dcache-and-select_parent	2004-09-30 22:36:07.108790904 -0700
++++ 25-akpm/fs/dcache.c	2004-09-30 22:36:07.113790144 -0700
+@@ -388,6 +388,8 @@ static void prune_dcache(int count)
+ 		struct dentry *dentry;
+ 		struct list_head *tmp;
+ 
++		cond_resched_lock(&dcache_lock);
++
+ 		tmp = dentry_unused.prev;
+ 		if (tmp == &dentry_unused)
+ 			break;
+@@ -560,6 +562,14 @@ resume:
+ 		struct dentry *dentry = list_entry(tmp, struct dentry, d_child);
+ 		next = tmp->next;
+ 
++		/*
++		 * select_parent() is a performance optimization, it is
++		 * not necessary to complete it. Abort if a reschedule is
++		 * pending:
++		 */
++		if (need_resched())
++			goto out;
++
+ 		if (!list_empty(&dentry->d_lru)) {
+ 			dentry_stat.nr_unused--;
+ 			list_del_init(&dentry->d_lru);
+@@ -597,6 +607,7 @@ this_parent->d_parent->d_name.name, this
+ #endif
+ 		goto resume;
+ 	}
++out:
+ 	spin_unlock(&dcache_lock);
+ 	return found;
+ }
+_

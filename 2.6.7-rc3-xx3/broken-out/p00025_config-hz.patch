@@ -1,0 +1,73 @@
+
+Configurable jiffies
+
+
+---
+
+ linux-2.6.6-xx2-xiphux/arch/i386/Kconfig        |   19 +++++++++++++++++++
+ linux-2.6.6-xx2-xiphux/include/asm-i386/param.h |    9 ++++++++-
+ linux-2.6.6-xx2-xiphux/include/linux/timex.h    |    2 +-
+ 3 files changed, 28 insertions(+), 2 deletions(-)
+
+diff -puN arch/i386/Kconfig~config-hz arch/i386/Kconfig
+--- linux-2.6.6-xx2/arch/i386/Kconfig~config-hz	2004-05-28 03:08:01.264378256 -0400
++++ linux-2.6.6-xx2-xiphux/arch/i386/Kconfig	2004-05-28 03:08:01.356364272 -0400
+@@ -837,6 +837,25 @@ config IRQBALANCE
+  	  The default yes will allow the kernel to do irq load balancing.
+ 	  Saying no will keep the kernel from doing irq load balancing.
+ 
++choice
++	help
++	  This is unrelated to your processor's speed.  This variable alters
++	  how often the system is asked to generate timer interrupts.  A larger
++	  value can lead to a more responsive system, but also causes extra
++	  overhead from the increased number of context switches.
++
++	  If in doubt, leave it at the default of 1000.
++
++	prompt "Kernel HZ"
++	default 1000HZ
++
++config	100HZ
++	bool "100 Hz"
++
++config	1000HZ
++	bool "1000 Hz"
++endchoice
++
+ config HAVE_DEC_LOCK
+ 	bool
+ 	depends on (SMP || PREEMPT) && X86_CMPXCHG
+diff -puN include/asm-i386/param.h~config-hz include/asm-i386/param.h
+--- linux-2.6.6-xx2/include/asm-i386/param.h~config-hz	2004-05-28 03:08:01.349365336 -0400
++++ linux-2.6.6-xx2-xiphux/include/asm-i386/param.h	2004-05-28 03:08:48.675170720 -0400
+@@ -2,7 +2,14 @@
+ #define _ASMi386_PARAM_H
+ 
+ #ifdef __KERNEL__
+-# define HZ		1000		/* Internal kernel timer frequency */
++ #include <linux/config.h>
++
++ #ifdef CONFIG_1000HZ
++  #define HZ	1000		/* Internal kernel timer frequency */
++ #else
++  #define HZ	100
++ #endif
++
+ # define USER_HZ	100		/* .. some user interfaces are in "ticks" */
+ # define CLOCKS_PER_SEC		(USER_HZ)	/* like times() */
+ #endif
+diff -puN include/linux/timex.h~config-hz include/linux/timex.h
+--- linux-2.6.6-xx2/include/linux/timex.h~config-hz	2004-05-28 03:08:01.352364880 -0400
++++ linux-2.6.6-xx2-xiphux/include/linux/timex.h	2004-05-28 03:08:01.374361536 -0400
+@@ -78,7 +78,7 @@
+ #elif HZ >= 768 && HZ < 1536
+ # define SHIFT_HZ	10
+ #else
+-# error You lose.
++# error Please use a HZ value which is between 12 and 1536
+ #endif
+ 
+ /*
+
+_

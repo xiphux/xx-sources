@@ -1,0 +1,110 @@
+
+From: Matt Porter <mporter@kernel.crashing.org>
+
+This patch enables/disables the PPC440GX L2 cache based on errata which
+prevents reliable operation on certain CPU revisions and speed grades.
+
+Signed-off-by: Eugene Surovegin <ebs@ebshome.net>
+Signed-off-by: Matt Porter <mporter@kernel.crashing.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc/platforms/4xx/ocotea.c   |   24 ++++++++++++------------
+ 25-akpm/arch/ppc/syslib/ibm440gx_common.c |   13 +++++++++++++
+ 25-akpm/arch/ppc/syslib/ibm440gx_common.h |    5 ++++-
+ 3 files changed, 29 insertions(+), 13 deletions(-)
+
+diff -puN arch/ppc/platforms/4xx/ocotea.c~ppc32-configure-ppc440gx-l2-cache-based-on-cpu-rev arch/ppc/platforms/4xx/ocotea.c
+--- 25/arch/ppc/platforms/4xx/ocotea.c~ppc32-configure-ppc440gx-l2-cache-based-on-cpu-rev	2004-10-09 20:33:12.302959432 -0700
++++ 25-akpm/arch/ppc/platforms/4xx/ocotea.c	2004-10-09 20:33:12.309958368 -0700
+@@ -81,7 +81,7 @@ ocotea_show_cpuinfo(struct seq_file *m)
+ {
+ 	seq_printf(m, "vendor\t\t: IBM\n");
+ 	seq_printf(m, "machine\t\t: PPC440GX EVB (Ocotea)\n");
+-
++	ibm440gx_show_cpuinfo(m);
+ 	return 0;
+ }
+ 
+@@ -299,15 +299,6 @@ ocotea_setup_arch(void)
+         mtspr(SPRN_DBCR0, (DBCR0_TDE | DBCR0_IDM));
+ #endif
+ 
+-	/*
+-	 * Determine various clocks.
+-	 * To be completely correct we should get SysClk
+-	 * from FPGA, because it can be changed by on-board switches
+-	 * --ebs
+-	 */
+-	ibm440gx_get_clocks(&clocks, 33333333, 6 * 1843200);
+-	ocp_sys_info.opb_bus_freq = clocks.opb;
+-
+ 	/* Setup TODC access */
+ 	TODC_INIT(TODC_TYPE_DS1743,
+ 			0,
+@@ -350,8 +341,17 @@ void __init platform_init(unsigned long 
+ 	if (r3)
+ 		__res = *(bd_t *)(r3 + KERNELBASE);
+ 
+-	/* Disable L2-Cache due to hardware issues */
+-	ibm440gx_l2c_disable();
++	/*
++	 * Determine various clocks.
++	 * To be completely correct we should get SysClk
++	 * from FPGA, because it can be changed by on-board switches
++	 * --ebs
++	 */
++	ibm440gx_get_clocks(&clocks, 33333333, 6 * 1843200);
++	ocp_sys_info.opb_bus_freq = clocks.opb;
++
++	/* Disable L2-Cache on broken hardware, enable it otherwise */
++	ibm440gx_l2c_setup(&clocks);
+ 
+ 	ibm44x_platform_init();
+ 
+diff -puN arch/ppc/syslib/ibm440gx_common.c~ppc32-configure-ppc440gx-l2-cache-based-on-cpu-rev arch/ppc/syslib/ibm440gx_common.c
+--- 25/arch/ppc/syslib/ibm440gx_common.c~ppc32-configure-ppc440gx-l2-cache-based-on-cpu-rev	2004-10-09 20:33:12.304959128 -0700
++++ 25-akpm/arch/ppc/syslib/ibm440gx_common.c	2004-10-09 20:33:12.309958368 -0700
+@@ -171,6 +171,19 @@ void __init ibm440gx_l2c_disable(void){
+ 	asm volatile ("sync; isync" ::: "memory");
+ }
+ 
++void __init ibm440gx_l2c_setup(struct ibm44x_clocks* p)
++{
++	/* Disable L2C on rev.A, rev.B and 800MHz version of rev.C,
++	   enable it on all other revisions
++	 */
++	u32 pvr = mfspr(PVR);
++	if (pvr == PVR_440GX_RA || pvr == PVR_440GX_RB ||
++	    (pvr == PVR_440GX_RC && p->cpu > 667000000))
++		ibm440gx_l2c_disable();
++	else
++		ibm440gx_l2c_enable();
++}
++
+ int __init ibm440gx_get_eth_grp(void)
+ {
+ 	return (SDR_READ(DCRN_SDR_PFC1) & DCRN_SDR_PFC1_EPS) >> DCRN_SDR_PFC1_EPS_SHIFT;
+diff -puN arch/ppc/syslib/ibm440gx_common.h~ppc32-configure-ppc440gx-l2-cache-based-on-cpu-rev arch/ppc/syslib/ibm440gx_common.h
+--- 25/arch/ppc/syslib/ibm440gx_common.h~ppc32-configure-ppc440gx-l2-cache-based-on-cpu-rev	2004-10-09 20:33:12.305958976 -0700
++++ 25-akpm/arch/ppc/syslib/ibm440gx_common.h	2004-10-09 20:33:12.309958368 -0700
+@@ -4,7 +4,7 @@
+  * PPC440GX system library
+  *
+  * Eugene Surovegin <eugene.surovegin@zultys.com> or <ebs@ebshome.net>
+- * Copyright (c) 2003 Zultys Technologies
++ * Copyright (c) 2003, 2004 Zultys Technologies
+  *
+  * This program is free software; you can redistribute  it and/or modify it
+  * under  the terms of  the GNU General  Public License as published by the
+@@ -37,6 +37,9 @@ void ibm440gx_l2c_enable(void) __init;
+ /* Disable L2 cache */
+ void ibm440gx_l2c_disable(void) __init;
+ 
++/* Enable/disable L2 cache for a particular chip revision */
++void ibm440gx_l2c_setup(struct ibm44x_clocks*) __init;
++
+ /* Get Ethernet Group */
+ int ibm440gx_get_eth_grp(void) __init;
+ 
+_

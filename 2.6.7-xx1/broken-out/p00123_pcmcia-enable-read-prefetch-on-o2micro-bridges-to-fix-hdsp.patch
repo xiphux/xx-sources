@@ -1,0 +1,103 @@
+
+From: Daniel Ritz <daniel.ritz@gmx.ch>
+
+enable read prefetching on O2micro bridges. It fixes the problems
+seen with the RME Hammerfall DSP.
+Thanks to Eric Still from O2micro for the input.
+
+Signed-off-by: Daniel Ritz <daniel.ritz@gmx.ch>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/pcmcia/i82365.c       |    1 -
+ 25-akpm/drivers/pcmcia/o2micro.h      |   26 ++++++++++++++++++++++++++
+ 25-akpm/drivers/pcmcia/yenta_socket.c |   10 +++++++++-
+ 3 files changed, 35 insertions(+), 2 deletions(-)
+
+diff -puN drivers/pcmcia/i82365.c~pcmcia-enable-read-prefetch-on-o2micro-bridges-to-fix-hdsp drivers/pcmcia/i82365.c
+--- 25/drivers/pcmcia/i82365.c~pcmcia-enable-read-prefetch-on-o2micro-bridges-to-fix-hdsp	2004-06-16 00:10:50.438047576 -0700
++++ 25-akpm/drivers/pcmcia/i82365.c	2004-06-16 00:10:50.445046512 -0700
+@@ -65,7 +65,6 @@
+ #include "cirrus.h"
+ #include "vg468.h"
+ #include "ricoh.h"
+-#include "o2micro.h"
+ 
+ #ifdef DEBUG
+ static const char version[] =
+diff -puN drivers/pcmcia/o2micro.h~pcmcia-enable-read-prefetch-on-o2micro-bridges-to-fix-hdsp drivers/pcmcia/o2micro.h
+--- 25/drivers/pcmcia/o2micro.h~pcmcia-enable-read-prefetch-on-o2micro-bridges-to-fix-hdsp	2004-06-16 00:10:50.439047424 -0700
++++ 25-akpm/drivers/pcmcia/o2micro.h	2004-06-16 00:10:50.445046512 -0700
+@@ -120,4 +120,30 @@
+ #define  O2_MODE_E_LED_OUT	0x08
+ #define  O2_MODE_E_SKTA_ACTV	0x10
+ 
++static int o2micro_override(struct yenta_socket *socket)
++{
++	/*
++	 * 'reserved' register at 0x94/D4. chaning it to 0xCA (8 bit) enables
++	 * read prefetching which for example makes the RME Hammerfall DSP
++	 * working. for some bridges it is at 0x94, for others at 0xD4. it's
++	 * ok to write to both registers on all O2 bridges.
++	 * from Eric Still, 02Micro.
++	 */
++	if (PCI_FUNC(socket->dev->devfn) == 0) {
++		config_writeb(socket, 0x94, 0xCA);
++		config_writeb(socket, 0xD4, 0xCA);
++	}
++
++	return 0;
++}
++
++static void o2micro_restore_state(struct yenta_socket *socket)
++{
++	/*
++	 * as long as read prefetch is the only thing in
++	 * o2micro_override, it's safe to call it from here
++	 */
++	o2micro_override(socket);
++}
++
+ #endif /* _LINUX_O2MICRO_H */
+diff -puN drivers/pcmcia/yenta_socket.c~pcmcia-enable-read-prefetch-on-o2micro-bridges-to-fix-hdsp drivers/pcmcia/yenta_socket.c
+--- 25/drivers/pcmcia/yenta_socket.c~pcmcia-enable-read-prefetch-on-o2micro-bridges-to-fix-hdsp	2004-06-16 00:10:50.441047120 -0700
++++ 25-akpm/drivers/pcmcia/yenta_socket.c	2004-06-16 00:10:50.447046208 -0700
+@@ -668,6 +668,7 @@ static struct pccard_operations yenta_so
+ #include "ti113x.h"
+ #include "ricoh.h"
+ #include "topic.h"
++#include "o2micro.h"
+ 
+ enum {
+ 	CARDBUS_TYPE_DEFAULT = -1,
+@@ -676,7 +677,8 @@ enum {
+ 	CARDBUS_TYPE_TI12XX,
+ 	CARDBUS_TYPE_TI1250,
+ 	CARDBUS_TYPE_RICOH,
+-	CARDBUS_TYPE_TOPIC97
++	CARDBUS_TYPE_TOPIC97,
++	CARDBUS_TYPE_O2MICRO,
+ };
+ 
+ /*
+@@ -716,6 +718,10 @@ struct cardbus_type cardbus_type[] = {
+ 	[CARDBUS_TYPE_TOPIC97]	= {
+ 		.override	= topic97_override,
+ 	},
++	[CARDBUS_TYPE_O2MICRO]	= {
++		.override	= o2micro_override,
++		.restore_state	= o2micro_restore_state,
++	},
+ };
+ 
+ 
+@@ -1100,6 +1106,8 @@ static struct pci_device_id yenta_table 
+ 	CB_ID(PCI_VENDOR_ID_TOSHIBA, PCI_DEVICE_ID_TOSHIBA_TOPIC97, TOPIC97),
+ 	CB_ID(PCI_VENDOR_ID_TOSHIBA, PCI_DEVICE_ID_TOSHIBA_TOPIC100, TOPIC97),
+ 
++	CB_ID(PCI_VENDOR_ID_O2, PCI_ANY_ID, O2MICRO),
++
+ 	/* match any cardbus bridge */
+ 	CB_ID(PCI_ANY_ID, PCI_ANY_ID, DEFAULT),
+ 	{ /* all zeroes */ }
+_

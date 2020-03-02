@@ -1,0 +1,1631 @@
+
+Runtime selectable I/O schedulers, by Nick Piggin.
+
+
+---
+
+ linux-2.6.7-xx1-xiphux/Documentation/block/biodoc.txt   |   17 +
+ linux-2.6.7-xx1-xiphux/drivers/block/as-iosched.c       |  139 +++++++++
+ linux-2.6.7-xx1-xiphux/drivers/block/cfq-iosched.c      |   88 ++++++
+ linux-2.6.7-xx1-xiphux/drivers/block/deadline-iosched.c |   78 +++++
+ linux-2.6.7-xx1-xiphux/drivers/block/elevator.c         |  132 +++++++++
+ linux-2.6.7-xx1-xiphux/drivers/block/ll_rw_blk.c        |  229 +++++++++++++++-
+ linux-2.6.7-xx1-xiphux/include/linux/blkdev.h           |   31 ++
+ linux-2.6.7-xx1-xiphux/include/linux/elevator.h         |   20 +
+ linux-2.6.7-xx1-xiphux/kernel/Kconfig-extra.xx          |   20 +
+ 9 files changed, 734 insertions(+), 20 deletions(-)
+
+diff -puN Documentation/block/biodoc.txt~elv-select-xx Documentation/block/biodoc.txt
+--- linux-2.6.7-xx1/Documentation/block/biodoc.txt~elv-select-xx	2004-06-20 22:21:52.965212928 -0400
++++ linux-2.6.7-xx1-xiphux/Documentation/block/biodoc.txt	2004-06-20 22:21:53.116189976 -0400
+@@ -969,10 +969,23 @@ elevator_set_req_fn
+ elevator_put_req_fn		Must be used to allocate and free any elevator
+ 				specific storate for a request.
+ 
+-elevator_init_fn
+-elevator_exit_fn		Allocate and free any elevator specific storage
++elevator_alloc_fn
++elevator_release_fn		Allocate and free any elevator specific storage
+ 				for a queue.
+ 
++elevator_init_fn
++elevator_exit_fn		Initialise and shutdown and elevator with an
++				associated queue. init must not fail - failing
++				routines must be performed in elevator_alloc.
++				Queue will be empty before exit is called and
++				no future requests will be inserted.
++
++4.1a Calling order for startup and shutdown functions.
++elevator_alloc_fn
++elevator_init_fn
++elevator_exit_fn
++elevator_release_fn
++
+ 4.2 I/O scheduler implementation
+ The generic i/o scheduler algorithm attempts to sort/merge/batch requests for
+ optimal disk scan and request servicing performance (based on generic
+diff -puN drivers/block/as-iosched.c~elv-select-xx drivers/block/as-iosched.c
+--- linux-2.6.7-xx1/drivers/block/as-iosched.c~elv-select-xx	2004-06-20 22:21:53.000207608 -0400
++++ linux-2.6.7-xx1-xiphux/drivers/block/as-iosched.c	2004-06-20 22:21:53.125188608 -0400
+@@ -614,7 +614,11 @@ static void as_antic_stop(struct as_data
+ static void as_antic_timeout(unsigned long data)
+ {
+ 	struct request_queue *q = (struct request_queue *)data;
++#ifdef CONFIG_ELV_SELECT
++	struct as_data *ad = q->elevator->elevator_data;
++#else
+ 	struct as_data *ad = q->elevator.elevator_data;
++#endif
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(q->queue_lock, flags);
+@@ -945,7 +949,11 @@ static void update_write_batch(struct as
+  */
+ static void as_completed_request(request_queue_t *q, struct request *rq)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct as_data *ad = q->elevator->elevator_data;
++#else
+ 	struct as_data *ad = q->elevator.elevator_data;
++#endif
+ 	struct as_rq *arq = RQ_DATA(rq);
+ 
+ 	WARN_ON(!list_empty(&rq->queuelist));
+@@ -1030,7 +1038,11 @@ static void as_remove_queued_request(req
+ {
+ 	struct as_rq *arq = RQ_DATA(rq);
+ 	const int data_dir = arq->is_sync;
++#ifdef CONFIG_ELV_SELECT
++	struct as_data *ad = q->elevator->elevator_data;
++#else
+ 	struct as_data *ad = q->elevator.elevator_data;
++#endif
+ 
+ 	WARN_ON(arq->state != AS_RQ_QUEUED);
+ 
+@@ -1361,7 +1373,11 @@ fifo_expired:
+ 
+ static struct request *as_next_request(request_queue_t *q)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct as_data *ad = q->elevator->elevator_data;
++#else
+ 	struct as_data *ad = q->elevator.elevator_data;
++#endif
+ 	struct request *rq = NULL;
+ 
+ 	/*
+@@ -1469,7 +1485,11 @@ static void as_add_request(struct as_dat
+  */
+ static void as_requeue_request(request_queue_t *q, struct request *rq)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct as_data *ad = q->elevator->elevator_data;
++#else
+ 	struct as_data *ad = q->elevator.elevator_data;
++#endif
+ 	struct as_rq *arq = RQ_DATA(rq);
+ 
+ 	if (arq) {
+@@ -1509,7 +1529,11 @@ static void as_account_queued_request(st
+ static void
+ as_insert_request(request_queue_t *q, struct request *rq, int where)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct as_data *ad = q->elevator->elevator_data;
++#else
+ 	struct as_data *ad = q->elevator.elevator_data;
++#endif
+ 	struct as_rq *arq = RQ_DATA(rq);
+ 
+ 	if (arq) {
+@@ -1562,7 +1586,11 @@ as_insert_request(request_queue_t *q, st
+  */
+ static int as_queue_empty(request_queue_t *q)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct as_data *ad = q->elevator->elevator_data;
++#else
+ 	struct as_data *ad = q->elevator.elevator_data;
++#endif
+ 
+ 	if (!list_empty(&ad->fifo_list[REQ_ASYNC])
+ 		|| !list_empty(&ad->fifo_list[REQ_SYNC])
+@@ -1601,7 +1629,11 @@ as_latter_request(request_queue_t *q, st
+ static int
+ as_merge(request_queue_t *q, struct request **req, struct bio *bio)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct as_data *ad = q->elevator->elevator_data;
++#else
+ 	struct as_data *ad = q->elevator.elevator_data;
++#endif
+ 	sector_t rb_key = bio->bi_sector + bio_sectors(bio);
+ 	struct request *__rq;
+ 	int ret;
+@@ -1656,7 +1688,11 @@ out_insert:
+ 
+ static void as_merged_request(request_queue_t *q, struct request *req)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct as_data *ad = q->elevator->elevator_data;
++#else
+ 	struct as_data *ad = q->elevator.elevator_data;
++#endif
+ 	struct as_rq *arq = RQ_DATA(req);
+ 
+ 	/*
+@@ -1701,7 +1737,11 @@ static void
+ as_merged_requests(request_queue_t *q, struct request *req,
+ 			 struct request *next)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct as_data *ad = q->elevator->elevator_data;
++#else
+ 	struct as_data *ad = q->elevator.elevator_data;
++#endif
+ 	struct as_rq *arq = RQ_DATA(req);
+ 	struct as_rq *anext = RQ_DATA(next);
+ 
+@@ -1788,7 +1828,11 @@ static void as_work_handler(void *data)
+ 
+ static void as_put_request(request_queue_t *q, struct request *rq)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct as_data *ad = q->elevator->elevator_data;
++#else
+ 	struct as_data *ad = q->elevator.elevator_data;
++#endif
+ 	struct as_rq *arq = RQ_DATA(rq);
+ 
+ 	if (!arq) {
+@@ -1807,7 +1851,11 @@ static void as_put_request(request_queue
+ 
+ static int as_set_request(request_queue_t *q, struct request *rq, int gfp_mask)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct as_data *ad = q->elevator->elevator_data;
++#else
+ 	struct as_data *ad = q->elevator.elevator_data;
++#endif
+ 	struct as_rq *arq = mempool_alloc(ad->arq_pool, gfp_mask);
+ 
+ 	if (arq) {
+@@ -1829,7 +1877,11 @@ static int as_set_request(request_queue_
+ static int as_may_queue(request_queue_t *q, int rw)
+ {
+ 	int ret = 0;
++#ifdef CONFIG_ELV_SELECT
++	struct as_data *ad = q->elevator->elevator_data;
++#else
+ 	struct as_data *ad = q->elevator.elevator_data;
++#endif
+ 	struct io_context *ioc;
+ 	if (ad->antic_status == ANTIC_WAIT_REQ ||
+ 			ad->antic_status == ANTIC_WAIT_NEXT) {
+@@ -1842,10 +1894,55 @@ static int as_may_queue(request_queue_t 
+ 	return ret;
+ }
+ 
++#ifdef CONFIG_ELV_SELECT
++/*
++ * initialize elevator private data (as_data), and alloc a arq for
++ * each request on the free lists
++ */
++static void as_init(request_queue_t *q, elevator_t *e)
++#else
+ static void as_exit(request_queue_t *q, elevator_t *e)
++#endif
+ {
+ 	struct as_data *ad = e->elevator_data;
++#ifdef CONFIG_ELV_SELECT
++	int i;
++
++	q->elevator = e;
++	ad->q = q; /* Identify what queue the data belongs to */
++
++	/* anticipatory scheduling helpers */
++	ad->antic_timer.function = as_antic_timeout;
++	ad->antic_timer.data = (unsigned long)q;
++	init_timer(&ad->antic_timer);
++	INIT_WORK(&ad->antic_work, as_work_handler, q);
+ 
++	for (i = 0; i < AS_HASH_ENTRIES; i++)
++		INIT_LIST_HEAD(&ad->hash[i]);
++
++	INIT_LIST_HEAD(&ad->fifo_list[REQ_SYNC]);
++	INIT_LIST_HEAD(&ad->fifo_list[REQ_ASYNC]);
++	ad->sort_list[REQ_SYNC] = RB_ROOT;
++	ad->sort_list[REQ_ASYNC] = RB_ROOT;
++	ad->dispatch = &q->queue_head;
++	ad->fifo_expire[REQ_SYNC] = default_read_expire;
++	ad->fifo_expire[REQ_ASYNC] = default_write_expire;
++	ad->antic_expire = default_antic_expire;
++	ad->batch_expire[REQ_SYNC] = default_read_batch_expire;
++	ad->batch_expire[REQ_ASYNC] = default_write_batch_expire;
++
++	ad->current_batch_expires = jiffies + ad->batch_expire[REQ_SYNC];
++	ad->write_batch_count = ad->batch_expire[REQ_ASYNC] / 10;
++	if (ad->write_batch_count < 2)
++		ad->write_batch_count = 2;
++}
++
++static void as_exit(request_queue_t *q, elevator_t *e)
++{
++	struct as_data *ad = e->elevator_data;
++
++	BUG_ON(!as_queue_empty(ad->q));
++#else
+ 	del_timer_sync(&ad->antic_timer);
+ 	kblockd_flush();
+ 
+@@ -1853,19 +1950,28 @@ static void as_exit(request_queue_t *q, 
+ 	BUG_ON(!list_empty(&ad->fifo_list[REQ_ASYNC]));
+ 
+ 	mempool_destroy(ad->arq_pool);
++#endif
+ 	put_io_context(ad->io_context);
++#ifndef CONFIG_ELV_SELECT
+ 	kfree(ad->hash);
+ 	kfree(ad);
++#endif
+ }
+ 
++#ifdef CONFIG_ELV_SELECT
++static int as_alloc(elevator_t *e)
++#else
+ /*
+  * initialize elevator private data (as_data), and alloc a arq for
+  * each request on the free lists
+  */
+ static int as_init(request_queue_t *q, elevator_t *e)
++#endif
+ {
+ 	struct as_data *ad;
++#ifndef CONFIG_ELV_SELECT
+ 	int i;
++#endif
+ 
+ 	if (!arq_pool)
+ 		return -ENOMEM;
+@@ -1875,7 +1981,9 @@ static int as_init(request_queue_t *q, e
+ 		return -ENOMEM;
+ 	memset(ad, 0, sizeof(*ad));
+ 
++#ifndef CONFIG_ELV_SELECT
+ 	ad->q = q; /* Identify what queue the data belongs to */
++#endif
+ 
+ 	ad->hash = kmalloc(sizeof(struct list_head)*AS_HASH_ENTRIES,GFP_KERNEL);
+ 	if (!ad->hash) {
+@@ -1883,13 +1991,17 @@ static int as_init(request_queue_t *q, e
+ 		return -ENOMEM;
+ 	}
+ 
+-	ad->arq_pool = mempool_create(BLKDEV_MIN_RQ, mempool_alloc_slab, mempool_free_slab, arq_pool);
++	ad->arq_pool = mempool_create(BLKDEV_MIN_RQ, mempool_alloc_slab,
++						mempool_free_slab, arq_pool);
+ 	if (!ad->arq_pool) {
+ 		kfree(ad->hash);
+ 		kfree(ad);
+ 		return -ENOMEM;
+ 	}
+ 
++#ifdef CONFIG_ELV_SELECT
++	e->elevator_data = ad;
++#else
+ 	/* anticipatory scheduling helpers */
+ 	ad->antic_timer.function = as_antic_timeout;
+ 	ad->antic_timer.data = (unsigned long)q;
+@@ -1915,10 +2027,25 @@ static int as_init(request_queue_t *q, e
+ 	ad->write_batch_count = ad->batch_expire[REQ_ASYNC] / 10;
+ 	if (ad->write_batch_count < 2)
+ 		ad->write_batch_count = 2;
+-
++#endif
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_ELV_SELECT
++static void as_release(elevator_t *e)
++{
++	struct as_data *ad = e->elevator_data;
++
++	del_timer_sync(&ad->antic_timer);
++	kblockd_flush();
++
++	mempool_destroy(ad->arq_pool);
++	kfree(ad->hash);
++
++	kfree(ad);
++}
++#endif
++
+ /*
+  * sysfs parts below
+  */
+@@ -2033,7 +2160,11 @@ static struct attribute *default_attrs[]
+ 	NULL,
+ };
+ 
++#ifdef CONFIG_ELV_SELECT
++#define to_as(ATR) container_of((ATR), struct as_fs_entry, ATR)
++#else
+ #define to_as(atr) container_of((atr), struct as_fs_entry, attr)
++#endif
+ 
+ static ssize_t
+ as_attr_show(struct kobject *kobj, struct attribute *attr, char *page)
+@@ -2100,6 +2231,10 @@ elevator_t iosched_as = {
+ 	.elevator_may_queue_fn =	as_may_queue,
+ 	.elevator_init_fn =		as_init,
+ 	.elevator_exit_fn =		as_exit,
++#ifdef CONFIG_ELV_SELECT
++	.elevator_alloc_fn =		as_alloc,
++	.elevator_release_fn =		as_release,
++#endif
+ 
+ 	.elevator_ktype =		&as_ktype,
+ 	.elevator_name =		"anticipatory",
+diff -puN drivers/block/cfq-iosched.c~elv-select-xx drivers/block/cfq-iosched.c
+--- linux-2.6.7-xx1/drivers/block/cfq-iosched.c~elv-select-xx	2004-06-20 22:21:53.002207304 -0400
++++ linux-2.6.7-xx1-xiphux/drivers/block/cfq-iosched.c	2004-06-20 22:22:21.414887920 -0400
+@@ -379,7 +379,11 @@ out:
+ 
+ static void cfq_remove_request(request_queue_t *q, struct request *rq)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct cfq_data *cfqd = q->elevator->elevator_data;
++#else
+ 	struct cfq_data *cfqd = q->elevator.elevator_data;
++#endif
+ 	struct cfq_rq *crq = RQ_DATA(rq);
+ 
+ 	if (crq) {
+@@ -423,7 +427,11 @@ static void cfq_remove_request(request_q
+ static int
+ cfq_merge(request_queue_t *q, struct request **req, struct bio *bio)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct cfq_data *cfqd = q->elevator->elevator_data;
++#else
+ 	struct cfq_data *cfqd = q->elevator.elevator_data;
++#endif
+ 	struct request *__rq;
+ 	int ret;
+ 
+@@ -461,7 +469,11 @@ out_insert:
+ 
+ static void cfq_merged_request(request_queue_t *q, struct request *req)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct cfq_data *cfqd = q->elevator->elevator_data;
++#else
+ 	struct cfq_data *cfqd = q->elevator.elevator_data;
++#endif
+ 	struct cfq_rq *crq = RQ_DATA(req);
+ 
+ 	cfq_del_crq_hash(crq);
+@@ -708,7 +720,11 @@ static int cfq_select_requests(request_q
+ 
+ static struct request *cfq_next_request(request_queue_t *q)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct cfq_data *cfqd = q->elevator->elevator_data;
++#else
+ 	struct cfq_data *cfqd = q->elevator.elevator_data;
++#endif
+ 	struct request *rq;
+ 
+ 	if (!list_empty(cfqd->dispatch)) {
+@@ -943,7 +959,11 @@ cfq_enqueue(request_queue_t *q, struct c
+ static void
+ cfq_insert_request(request_queue_t *q, struct request *rq, int where)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct cfq_data *cfqd = q->elevator->elevator_data;
++#else
+ 	struct cfq_data *cfqd = q->elevator.elevator_data;
++#endif
+ 	struct cfq_rq *crq = RQ_DATA(rq);
+ 
+ 	switch (where) {
+@@ -982,7 +1002,11 @@ cfq_insert_request(request_queue_t *q, s
+ 
+ static int cfq_queue_empty(request_queue_t *q)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct cfq_data *cfqd = q->elevator->elevator_data;
++#else
+ 	struct cfq_data *cfqd = q->elevator.elevator_data;
++#endif
+ 
+ 	if (list_empty(cfqd->dispatch) &&
+ #ifdef CONFIG_CFQIONICE
+@@ -1031,7 +1055,11 @@ static void cfq_queue_congested(request_
+ 
+ static int cfq_may_queue(request_queue_t *q, int rw)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct cfq_data *cfqd = q->elevator->elevator_data;
++#else
+ 	struct cfq_data *cfqd = q->elevator.elevator_data;
++#endif
+ 	struct cfq_queue *cfqq;
+ #ifdef CONFIG_CFQIONICE
+ 	const int prio = cfq_ioprio(current);
+@@ -1086,7 +1114,11 @@ out:
+ 
+ static void cfq_put_request(request_queue_t *q, struct request *rq)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct cfq_data *cfqd = q->elevator->elevator_data;
++#else
+ 	struct cfq_data *cfqd = q->elevator.elevator_data;
++#endif
+ 	struct cfq_rq *crq = RQ_DATA(rq);
+ 	struct request_list *rl;
+ 	int other_rw;
+@@ -1119,7 +1151,11 @@ static void cfq_put_request(request_queu
+ 
+ static int cfq_set_request(request_queue_t *q, struct request *rq, int gfp_mask)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct cfq_data *cfqd = q->elevator->elevator_data;
++#else
+ 	struct cfq_data *cfqd = q->elevator.elevator_data;
++#endif
+ 	struct cfq_rq *crq = mempool_alloc(cfqd->crq_pool, gfp_mask);
+ 
+ 	if (crq) {
+@@ -1147,6 +1183,7 @@ static int cfq_set_request(request_queue
+ 	return 1;
+ }
+ 
++#ifndef CONFIG_ELV_SELECT
+ static void cfq_exit(request_queue_t *q, elevator_t *e)
+ {
+ 	struct cfq_data *cfqd = e->elevator_data;
+@@ -1157,6 +1194,7 @@ static void cfq_exit(request_queue_t *q,
+ 	kfree(cfqd->cfq_hash);
+ 	kfree(cfqd);
+ }
++#endif
+ 
+ #ifdef CONFIG_CFQIONICE
+ static void cfq_timer(unsigned long data)
+@@ -1180,10 +1218,16 @@ static void cfq_work(void *data)
+ }
+ #endif
+ 
++#ifdef CONFIG_ELV_SELECT
++static int cfq_alloc(elevator_t *e)
++#else
+ static int cfq_init(request_queue_t *q, elevator_t *e)
++#endif
+ {
+ 	struct cfq_data *cfqd;
++#ifndef CONFIG_ELV_SELECT
+ 	int i;
++#endif
+ 
+ 	cfqd = kmalloc(sizeof(*cfqd), GFP_KERNEL);
+ 	if (!cfqd)
+@@ -1206,8 +1250,10 @@ static int cfq_init(request_queue_t *q, 
+ 		cid->last_queued = -1;
+ 	}
+ #else
++#ifndef CONFIG_ELV_SELECT
+ 	INIT_LIST_HEAD(&cfqd->rr_list);
+ #endif
++#endif
+ 
+ 	cfqd->crq_hash = kmalloc(sizeof(struct list_head) * CFQ_MHASH_ENTRIES, GFP_KERNEL);
+ 	if (!cfqd->crq_hash)
+@@ -1221,6 +1267,39 @@ static int cfq_init(request_queue_t *q, 
+ 	if (!cfqd->crq_pool)
+ 		goto out_crqpool;
+ 
++#ifdef CONFIG_ELV_SELECT
++	e->elevator_data = cfqd;
++
++	return 0;
++out_crqpool:
++	kfree(cfqd->cfq_hash);
++out_cfqhash:
++	kfree(cfqd->crq_hash);
++out_crqhash:
++	kfree(cfqd);
++	return -ENOMEM;
++
++}
++
++static void cfq_release(elevator_t *e)
++{
++	struct cfq_data *cfqd = e->elevator_data;
++
++	e->elevator_data = NULL;
++	mempool_destroy(cfqd->crq_pool);
++	kfree(cfqd->crq_hash);
++	kfree(cfqd->cfq_hash);
++	kfree(cfqd);
++}
++
++static void cfq_init(request_queue_t *q, elevator_t *e)
++{
++	struct cfq_data *cfqd = e->elevator_data;
++	int i;
++
++	INIT_LIST_HEAD(&cfqd->rr_list);
++#endif
++
+ 	for (i = 0; i < CFQ_MHASH_ENTRIES; i++)
+ 		INIT_LIST_HEAD(&cfqd->crq_hash[i]);
+ 	for (i = 0; i < CFQ_QHASH_ENTRIES; i++)
+@@ -1237,7 +1316,9 @@ static int cfq_init(request_queue_t *q, 
+ #endif
+ 
+ 	cfqd->dispatch = &q->queue_head;
++#ifndef CONFIG_ELV_SELECT
+ 	e->elevator_data = cfqd;
++#endif
+ 	cfqd->queue = q;
+ 
+ #ifndef CONFIG_CFQIONICE
+@@ -1252,6 +1333,7 @@ static int cfq_init(request_queue_t *q, 
+ 	cfqd->cfq_queued = cfq_queued;
+ 	cfqd->cfq_quantum = cfq_quantum;
+ 
++#ifndef CONFIG_ELV_SELECT
+ 	return 0;
+ out_crqpool:
+ 	kfree(cfqd->cfq_hash);
+@@ -1260,6 +1342,7 @@ out_cfqhash:
+ out_crqhash:
+ 	kfree(cfqd);
+ 	return -ENOMEM;
++#endif
+ }
+ 
+ static int __init cfq_slab_setup(void)
+@@ -1442,7 +1525,12 @@ elevator_t iosched_cfq = {
+ 	.elevator_set_congested_fn =	cfq_queue_congested,
+ #endif
+ 	.elevator_init_fn =		cfq_init,
++#ifdef CONFIG_ELV_SELECT
++	.elevator_alloc_fn =		cfq_alloc,
++	.elevator_release_fn =		cfq_release,
++#else
+ 	.elevator_exit_fn =		cfq_exit,
++#endif
+ };
+ 
+ EXPORT_SYMBOL(iosched_cfq);
+diff -puN drivers/block/deadline-iosched.c~elv-select-xx drivers/block/deadline-iosched.c
+--- linux-2.6.7-xx1/drivers/block/deadline-iosched.c~elv-select-xx	2004-06-20 22:21:53.004207000 -0400
++++ linux-2.6.7-xx1-xiphux/drivers/block/deadline-iosched.c	2004-06-20 22:21:53.160183288 -0400
+@@ -289,7 +289,11 @@ deadline_find_first_drq(struct deadline_
+ static inline void
+ deadline_add_request(struct request_queue *q, struct request *rq)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct deadline_data *dd = q->elevator->elevator_data;
++#else
+ 	struct deadline_data *dd = q->elevator.elevator_data;
++#endif
+ 	struct deadline_rq *drq = RQ_DATA(rq);
+ 
+ 	const int data_dir = rq_data_dir(drq->request);
+@@ -317,7 +321,11 @@ static void deadline_remove_request(requ
+ 	struct deadline_rq *drq = RQ_DATA(rq);
+ 
+ 	if (drq) {
++#ifdef CONFIG_ELV_SELECT
++		struct deadline_data *dd = q->elevator->elevator_data;
++#else
+ 		struct deadline_data *dd = q->elevator.elevator_data;
++#endif
+ 
+ 		list_del_init(&drq->fifo);
+ 		deadline_remove_merge_hints(q, drq);
+@@ -328,7 +336,11 @@ static void deadline_remove_request(requ
+ static int
+ deadline_merge(request_queue_t *q, struct request **req, struct bio *bio)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct deadline_data *dd = q->elevator->elevator_data;
++#else
+ 	struct deadline_data *dd = q->elevator.elevator_data;
++#endif
+ 	struct request *__rq;
+ 	int ret;
+ 
+@@ -383,7 +395,11 @@ out_insert:
+ 
+ static void deadline_merged_request(request_queue_t *q, struct request *req)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct deadline_data *dd = q->elevator->elevator_data;
++#else
+ 	struct deadline_data *dd = q->elevator.elevator_data;
++#endif
+ 	struct deadline_rq *drq = RQ_DATA(req);
+ 
+ 	/*
+@@ -407,7 +423,11 @@ static void
+ deadline_merged_requests(request_queue_t *q, struct request *req,
+ 			 struct request *next)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct deadline_data *dd = q->elevator->elevator_data;
++#else
+ 	struct deadline_data *dd = q->elevator.elevator_data;
++#endif
+ 	struct deadline_rq *drq = RQ_DATA(req);
+ 	struct deadline_rq *dnext = RQ_DATA(next);
+ 
+@@ -604,7 +624,11 @@ dispatch_request:
+ 
+ static struct request *deadline_next_request(request_queue_t *q)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct deadline_data *dd = q->elevator->elevator_data;
++#else
+ 	struct deadline_data *dd = q->elevator.elevator_data;
++#endif
+ 	struct request *rq;
+ 
+ 	/*
+@@ -625,7 +649,11 @@ dispatch:
+ static void
+ deadline_insert_request(request_queue_t *q, struct request *rq, int where)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct deadline_data *dd = q->elevator->elevator_data;
++#else
+ 	struct deadline_data *dd = q->elevator.elevator_data;
++#endif
+ 
+ 	/* barriers must flush the reorder queue */
+ 	if (unlikely(rq->flags & (REQ_SOFTBARRIER | REQ_HARDBARRIER)
+@@ -653,7 +681,11 @@ deadline_insert_request(request_queue_t 
+ 
+ static int deadline_queue_empty(request_queue_t *q)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct deadline_data *dd = q->elevator->elevator_data;
++#else
+ 	struct deadline_data *dd = q->elevator.elevator_data;
++#endif
+ 
+ 	if (!list_empty(&dd->fifo_list[WRITE])
+ 	    || !list_empty(&dd->fifo_list[READ])
+@@ -687,7 +719,11 @@ deadline_latter_request(request_queue_t 
+ 	return NULL;
+ }
+ 
++#ifdef CONFIG_ELV_SELECT
++static void deadline_release(elevator_t *e)
++#else
+ static void deadline_exit(request_queue_t *q, elevator_t *e)
++#endif
+ {
+ 	struct deadline_data *dd = e->elevator_data;
+ 
+@@ -699,14 +735,20 @@ static void deadline_exit(request_queue_
+ 	kfree(dd);
+ }
+ 
++#ifdef CONFIG_ELV_SELECT
++static int deadline_alloc(elevator_t *e)
++#else
+ /*
+  * initialize elevator private data (deadline_data), and alloc a drq for
+  * each request on the free lists
+  */
+ static int deadline_init(request_queue_t *q, elevator_t *e)
++#endif
+ {
+ 	struct deadline_data *dd;
++#ifndef CONFIG_ELV_SELECT
+ 	int i;
++#endif
+ 
+ 	if (!drq_pool)
+ 		return -ENOMEM;
+@@ -722,13 +764,32 @@ static int deadline_init(request_queue_t
+ 		return -ENOMEM;
+ 	}
+ 
+-	dd->drq_pool = mempool_create(BLKDEV_MIN_RQ, mempool_alloc_slab, mempool_free_slab, drq_pool);
++	dd->drq_pool = mempool_create(BLKDEV_MIN_RQ, mempool_alloc_slab,
++						mempool_free_slab, drq_pool);
+ 	if (!dd->drq_pool) {
+ 		kfree(dd->hash);
+ 		kfree(dd);
+ 		return -ENOMEM;
+ 	}
+ 
++#ifdef CONFIG_ELV_SELECT
++	e->elevator_data = dd;
++
++	return 0;
++}
++
++/*
++ * initialize elevator private data (deadline_data), and alloc a drq for
++ * each request on the free lists
++ */
++static void deadline_init(request_queue_t *q, elevator_t *e)
++{
++	struct deadline_data *dd = e->elevator_data;
++	int i;
++
++	q->elevator = e;
++#endif
++
+ 	for (i = 0; i < DL_HASH_ENTRIES; i++)
+ 		INIT_LIST_HEAD(&dd->hash[i]);
+ 
+@@ -742,13 +803,19 @@ static int deadline_init(request_queue_t
+ 	dd->writes_starved = writes_starved;
+ 	dd->front_merges = 1;
+ 	dd->fifo_batch = fifo_batch;
++#ifndef CONFIG_ELV_SELECT
+ 	e->elevator_data = dd;
+ 	return 0;
++#endif
+ }
+ 
+ static void deadline_put_request(request_queue_t *q, struct request *rq)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct deadline_data *dd = q->elevator->elevator_data;
++#else
+ 	struct deadline_data *dd = q->elevator.elevator_data;
++#endif
+ 	struct deadline_rq *drq = RQ_DATA(rq);
+ 
+ 	if (drq) {
+@@ -760,7 +827,11 @@ static void deadline_put_request(request
+ static int
+ deadline_set_request(request_queue_t *q, struct request *rq, int gfp_mask)
+ {
++#ifdef CONFIG_ELV_SELECT
++	struct deadline_data *dd = q->elevator->elevator_data;
++#else
+ 	struct deadline_data *dd = q->elevator.elevator_data;
++#endif
+ 	struct deadline_rq *drq;
+ 
+ 	drq = mempool_alloc(dd->drq_pool, gfp_mask);
+@@ -932,7 +1003,12 @@ elevator_t iosched_deadline = {
+ 	.elevator_set_req_fn =		deadline_set_request,
+ 	.elevator_put_req_fn = 		deadline_put_request,
+ 	.elevator_init_fn =		deadline_init,
++#ifdef CONFIG_ELV_SELECT
++	.elevator_alloc_fn =		deadline_alloc,
++	.elevator_release_fn =		deadline_release,
++#else
+ 	.elevator_exit_fn =		deadline_exit,
++#endif
+ 
+ 	.elevator_ktype =		&deadline_ktype,
+ 	.elevator_name =		"deadline",
+diff -puN drivers/block/elevator.c~elv-select-xx drivers/block/elevator.c
+--- linux-2.6.7-xx1/drivers/block/elevator.c~elv-select-xx	2004-06-20 22:21:53.006206696 -0400
++++ linux-2.6.7-xx1-xiphux/drivers/block/elevator.c	2004-06-20 22:21:53.167182224 -0400
+@@ -89,29 +89,82 @@ inline int elv_try_last_merge(request_qu
+ /*
+  * general block -> elevator interface starts here
+  */
++#ifdef CONFIG_ELV_SELECT
++void elevator_init(request_queue_t *q, elevator_t *e)
++#else
+ int elevator_init(request_queue_t *q, elevator_t *type)
++#endif
+ {
++#ifdef CONFIG_ELV_SELECT
++	q->elevator = e;
++#else
+ 	elevator_t *e = &q->elevator;
+ 
+ 	memcpy(e, type, sizeof(*e));
++#endif
+ 
+ 	INIT_LIST_HEAD(&q->queue_head);
+ 	q->last_merge = NULL;
+ 
+ 	if (e->elevator_init_fn)
++#ifdef CONFIG_ELV_SELECT
++		e->elevator_init_fn(q, e);
++#else
+ 		return e->elevator_init_fn(q, e);
+ 
+ 	return 0;
++#endif
+ }
+ 
+ void elevator_exit(request_queue_t *q)
+ {
++#ifdef CONFIG_ELV_SELECT
++	elevator_t *e = q->elevator;
++
++	BUG_ON(q->rq.count[READ] || q->rq.count[WRITE]);
++#else
+ 	elevator_t *e = &q->elevator;
++#endif
+ 
+ 	if (e->elevator_exit_fn)
+ 		e->elevator_exit_fn(q, e);
+ }
+ 
++#ifdef CONFIG_ELV_SELECT
++elevator_t *elevator_alloc(elevator_t *type)
++{
++	elevator_t *e = kmalloc(sizeof(*type), GFP_KERNEL);
++
++	if (e == NULL)
++		goto out_err;
++
++	memcpy(e, type, sizeof(*e));
++
++	if (e->elevator_alloc_fn)
++		if (e->elevator_alloc_fn(e))
++			goto out_alloc;
++
++	return e;
++
++out_alloc:
++	kfree(e);
++out_err:
++	return NULL;
++}
++
++void elevator_release(struct kobject *kobj)
++{
++	elevator_t *e = container_of(kobj, elevator_t, kobj);
++
++	printk(KERN_INFO "releasing %s io scheduler\n", e->elevator_name);
++
++	if (e->elevator_release_fn)
++		e->elevator_release_fn(e);
++
++	kfree(e);
++}
++#endif
++
+ int elevator_global_init(void)
+ {
+ 	return 0;
+@@ -119,7 +172,11 @@ int elevator_global_init(void)
+ 
+ int elv_merge(request_queue_t *q, struct request **req, struct bio *bio)
+ {
++#ifdef CONFIG_ELV_SELECT
++	elevator_t *e = q->elevator;
++#else
+ 	elevator_t *e = &q->elevator;
++#endif
+ 
+ 	if (e->elevator_merge_fn)
+ 		return e->elevator_merge_fn(q, req, bio);
+@@ -129,7 +186,11 @@ int elv_merge(request_queue_t *q, struct
+ 
+ void elv_merged_request(request_queue_t *q, struct request *rq)
+ {
++#ifdef CONFIG_ELV_SELECT
++	elevator_t *e = q->elevator;
++#else
+ 	elevator_t *e = &q->elevator;
++#endif
+ 
+ 	if (e->elevator_merged_fn)
+ 		e->elevator_merged_fn(q, rq);
+@@ -138,7 +199,11 @@ void elv_merged_request(request_queue_t 
+ void elv_merge_requests(request_queue_t *q, struct request *rq,
+ 			     struct request *next)
+ {
++#ifdef CONFIG_ELV_SELECT
++	elevator_t *e = q->elevator;
++#else
+ 	elevator_t *e = &q->elevator;
++#endif
+ 
+ 	if (q->last_merge == next)
+ 		q->last_merge = NULL;
+@@ -160,8 +225,13 @@ void elv_requeue_request(request_queue_t
+ 	 * if iosched has an explicit requeue hook, then use that. otherwise
+ 	 * just put the request at the front of the queue
+ 	 */
++#ifdef CONFIG_ELV_SELECT
++	if (q->elevator->elevator_requeue_req_fn)
++		q->elevator->elevator_requeue_req_fn(q, rq);
++#else
+ 	if (q->elevator.elevator_requeue_req_fn)
+ 		q->elevator.elevator_requeue_req_fn(q, rq);
++#endif
+ 	else
+ 		__elv_add_request(q, rq, ELEVATOR_INSERT_FRONT, 0);
+ }
+@@ -180,7 +250,11 @@ void __elv_add_request(request_queue_t *
+ 		blk_plug_device(q);
+ 
+ 	rq->q = q;
++#ifdef CONFIG_ELV_SELECT
++	q->elevator->elevator_add_req_fn(q, rq, where);
++#else
+ 	q->elevator.elevator_add_req_fn(q, rq, where);
++#endif
+ 
+ 	if (blk_queue_plugged(q)) {
+ 		int nrq = q->rq.count[READ] + q->rq.count[WRITE] - q->in_flight;
+@@ -203,7 +277,11 @@ void elv_add_request(request_queue_t *q,
+ 
+ static inline struct request *__elv_next_request(request_queue_t *q)
+ {
++#ifdef CONFIG_ELV_SELECT
++	return q->elevator->elevator_next_req_fn(q);
++#else
+ 	return q->elevator.elevator_next_req_fn(q);
++#endif
+ }
+ 
+ struct request *elv_next_request(request_queue_t *q)
+@@ -252,7 +330,11 @@ struct request *elv_next_request(request
+ 
+ void elv_remove_request(request_queue_t *q, struct request *rq)
+ {
++#ifdef CONFIG_ELV_SELECT
++	elevator_t *e = q->elevator;
++#else
+ 	elevator_t *e = &q->elevator;
++#endif
+ 
+ 	/*
+ 	 * the time frame between a request being removed from the lists
+@@ -280,7 +362,11 @@ void elv_remove_request(request_queue_t 
+ 
+ int elv_queue_empty(request_queue_t *q)
+ {
++#ifdef CONFIG_ELV_SELECT
++	elevator_t *e = q->elevator;
++#else
+ 	elevator_t *e = &q->elevator;
++#endif
+ 
+ 	if (e->elevator_queue_empty_fn)
+ 		return e->elevator_queue_empty_fn(q);
+@@ -292,7 +378,11 @@ struct request *elv_latter_request(reque
+ {
+ 	struct list_head *next;
+ 
++#ifdef CONFIG_ELV_SELECT
++	elevator_t *e = q->elevator;
++#else
+ 	elevator_t *e = &q->elevator;
++#endif
+ 
+ 	if (e->elevator_latter_req_fn)
+ 		return e->elevator_latter_req_fn(q, rq);
+@@ -308,7 +398,11 @@ struct request *elv_former_request(reque
+ {
+ 	struct list_head *prev;
+ 
++#ifdef CONFIG_ELV_SELECT
++	elevator_t *e = q->elevator;
++#else
+ 	elevator_t *e = &q->elevator;
++#endif
+ 
+ 	if (e->elevator_former_req_fn)
+ 		return e->elevator_former_req_fn(q, rq);
+@@ -322,7 +416,11 @@ struct request *elv_former_request(reque
+ 
+ int elv_set_request(request_queue_t *q, struct request *rq, int gfp_mask)
+ {
++#ifdef CONFIG_ELV_SELECT
++	elevator_t *e = q->elevator;
++#else
+ 	elevator_t *e = &q->elevator;
++#endif
+ 
+ 	if (e->elevator_set_req_fn)
+ 		return e->elevator_set_req_fn(q, rq, gfp_mask);
+@@ -333,7 +431,11 @@ int elv_set_request(request_queue_t *q, 
+ 
+ void elv_put_request(request_queue_t *q, struct request *rq)
+ {
++#ifdef CONFIG_ELV_SELECT
++	elevator_t *e = q->elevator;
++#else
+ 	elevator_t *e = &q->elevator;
++#endif
+ 
+ 	if (e->elevator_put_req_fn)
+ 		e->elevator_put_req_fn(q, rq);
+@@ -351,7 +453,11 @@ void elv_set_congested(request_queue_t *
+ 
+ int elv_may_queue(request_queue_t *q, int rw)
+ {
++#ifdef CONFIG_ELV_SELECT
++	elevator_t *e = q->elevator;
++#else
+ 	elevator_t *e = &q->elevator;
++#endif
+ 
+ 	if (e->elevator_may_queue_fn)
+ 		return e->elevator_may_queue_fn(q, rw);
+@@ -365,7 +471,11 @@ int elv_may_queue(request_queue_t *q, in
+ 
+ void elv_completed_request(request_queue_t *q, struct request *rq)
+ {
++#ifdef CONFIG_ELV_SELECT
++	elevator_t *e = q->elevator;
++#else
+ 	elevator_t *e = &q->elevator;
++#endif
+ 
+ 	/*
+ 	 * request is released from the driver, io must be done
+@@ -377,18 +487,36 @@ void elv_completed_request(request_queue
+ 		e->elevator_completed_req_fn(q, rq);
+ }
+ 
++#ifdef CONFIG_ELV_SELECT
++static struct kobj_type default_ktype = {
++ 	.release = &elevator_release,
++};
++#endif
++
+ int elv_register_queue(struct request_queue *q)
+ {
+ 	elevator_t *e;
+ 
++#ifdef CONFIG_ELV_SELECT
++	e = q->elevator;
++#else
+ 	e = &q->elevator;
++#endif
+ 
+ 	e->kobj.parent = kobject_get(&q->kobj);
+ 	if (!e->kobj.parent)
+ 		return -EBUSY;
+ 
+ 	snprintf(e->kobj.name, KOBJ_NAME_LEN, "%s", "iosched");
++#ifdef CONFIG_ELV_SELECT
++	if (e->elevator_ktype) {
++		e->elevator_ktype->release = &elevator_release;
++		e->kobj.ktype = e->elevator_ktype;
++	} else
++		e->kobj.ktype = &default_ktype;
++#else
+ 	e->kobj.ktype = e->elevator_ktype;
++#endif
+ 
+ 	return kobject_register(&e->kobj);
+ }
+@@ -396,7 +524,11 @@ int elv_register_queue(struct request_qu
+ void elv_unregister_queue(struct request_queue *q)
+ {
+ 	if (q) {
++#ifdef CONFIG_ELV_SELECT
++		elevator_t *e = q->elevator;
++#else
+ 		elevator_t * e = &q->elevator;
++#endif
+ 		kobject_unregister(&e->kobj);
+ 		kobject_put(&q->kobj);
+ 	}
+diff -puN drivers/block/ll_rw_blk.c~elv-select-xx drivers/block/ll_rw_blk.c
+--- linux-2.6.7-xx1/drivers/block/ll_rw_blk.c~elv-select-xx	2004-06-20 22:21:53.008206392 -0400
++++ linux-2.6.7-xx1-xiphux/drivers/block/ll_rw_blk.c	2004-06-20 22:21:53.194178120 -0400
+@@ -1339,6 +1339,47 @@ void blk_run_queue(struct request_queue 
+ 
+ EXPORT_SYMBOL(blk_run_queue);
+ 
++#ifdef CONFIG_ELV_SELECT
++/**
++ * blk_wait_free_list
++ * @q: the request queue to wait on
++ *
++ * Description:
++ *   Synchronously wait until all requests have been emptied out of the queue.
++ *   Must be called with the queue marked QUEUE_FLAG_DEAD, or
++ *   blk_set_queue_drain.
++ **/
++static void blk_wait_free_list(request_queue_t *q)
++{
++	DEFINE_WAIT(wait);
++	struct request_list *rl = &q->rq;
++
++	if (!test_bit(QUEUE_FLAG_DEAD, &q->queue_flags)
++		&& !blk_queue_drain(q)) {
++		WARN_ON(1);
++		/* It might be racy to set this here. Caller should be fixed */
++		set_bit(QUEUE_FLAG_DRAIN, &q->queue_flags);
++	}
++
++	prepare_to_wait(&rl->empty, &wait, TASK_UNINTERRUPTIBLE);
++
++	if (rl->count[READ] || rl->count[WRITE]
++		|| waitqueue_active(&rl->wait[READ])
++		|| waitqueue_active(&rl->wait[WRITE]) ) {
++
++		spin_unlock_irq(q->queue_lock);
++		wake_up_all(&q->rq.wait[READ]);
++		wake_up_all(&q->rq.wait[WRITE]);
++		io_schedule();
++		spin_lock_irq(q->queue_lock);
++	}
++
++	finish_wait(&rl->empty, &wait);
++
++	WARN_ON(rl->count[READ] || rl->count[WRITE]);
++}
++#endif
++
+ /**
+  * blk_cleanup_queue: - release a &request_queue_t when it is no longer needed
+  * @q:    the request queue to be released
+@@ -1361,7 +1402,12 @@ void blk_cleanup_queue(request_queue_t *
+ 	if (!atomic_dec_and_test(&q->refcnt))
+ 		return;
+ 
++#ifdef CONFIG_ELV_SELECT
++	if (q->elevator)
++		elevator_exit(q);
++#else
+ 	elevator_exit(q);
++#endif
+ 
+ 	del_timer_sync(&q->unplug_timer);
+ 	kblockd_flush();
+@@ -1384,8 +1430,12 @@ static int blk_init_free_list(request_qu
+ 	rl->count[READ] = rl->count[WRITE] = 0;
+ 	init_waitqueue_head(&rl->wait[READ]);
+ 	init_waitqueue_head(&rl->wait[WRITE]);
++#ifdef CONFIG_ELV_SELECT
++	init_waitqueue_head(&rl->empty);
++#endif
+ 
+-	rl->rq_pool = mempool_create(BLKDEV_MIN_RQ, mempool_alloc_slab, mempool_free_slab, request_cachep);
++	rl->rq_pool = mempool_create(BLKDEV_MIN_RQ, mempool_alloc_slab,
++					mempool_free_slab, request_cachep);
+ 
+ 	if (!rl->rq_pool)
+ 		return -ENOMEM;
+@@ -1409,30 +1459,65 @@ static elevator_t *chosen_elevator =
+ #error "You must have at least 1 I/O scheduler selected"
+ #endif
+ 
+-#if defined(CONFIG_IOSCHED_AS) || defined(CONFIG_IOSCHED_DEADLINE) || defined (CONFIG_IOSCHED_NOOP)
+-static int __init elevator_setup(char *str)
++#ifdef CONFIG_ELV_SELECT
++elevator_t *str_to_elv(const char *str)
+ {
+ #ifdef CONFIG_IOSCHED_DEADLINE
+-	if (!strcmp(str, "deadline"))
+-		chosen_elevator = &iosched_deadline;
++	if (!strncmp(str, "deadline", strlen("deadline")))
++		return &iosched_deadline;
+ #endif
+ #ifdef CONFIG_IOSCHED_AS
+-	if (!strcmp(str, "as"))
+-		chosen_elevator = &iosched_as;
++	if (!strncmp(str, "as", strlen("as")))
++		return &iosched_as;
+ #endif
+ #ifdef CONFIG_IOSCHED_CFQ
+-	if (!strcmp(str, "cfq"))
+-		chosen_elevator = &iosched_cfq;
++	if (!strncmp(str, "cfq", strlen("cfq")))
++		return &iosched_cfq;
+ #endif
+ #ifdef CONFIG_IOSCHED_NOOP
+-	if (!strcmp(str, "noop"))
+-		chosen_elevator = &elevator_noop;
++	if (!strncmp(str, "noop", strlen("noop")))
++		return &elevator_noop;
+ #endif
++
++	return NULL;
++}
++
++static int __init elevator_setup(char *str)
++{
++	elevator_t *e = str_to_elv(str);
++	if (e != NULL)
++		chosen_elevator = e;
++
+ 	return 1;
+ }
+ 
+ __setup("elevator=", elevator_setup);
++#else
++#if defined(CONFIG_IOSCHED_AS) || defined(CONFIG_IOSCHED_DEADLINE) || defined (CONFIG_IOSCHED_NOOP)
++static int __init elevator_setup(char *str)
++ {
++ #ifdef CONFIG_IOSCHED_DEADLINE
++	if (!strcmp(str, "deadline"))
++		chosen_elevator = &iosched_deadline;
++ #endif
++ #ifdef CONFIG_IOSCHED_AS
++	if (!strcmp(str, "as"))
++		chosen_elevator = &iosched_as;
++ #endif
++ #ifdef CONFIG_IOSCHED_CFQ
++	if (!strcmp(str, "cfq"))
++		chosen_elevator = &iosched_cfq;
++ #endif
++ #ifdef CONFIG_IOSCHED_NOOP
++	if (!strcmp(str, "noop"))
++		chosen_elevator = &elevator_noop;
++ #endif
++ 	return 1;
++ }
++
++ __setup("elevator=", elevator_setup);
+ #endif /* CONFIG_IOSCHED_AS || CONFIG_IOSCHED_DEADLINE || CONFIG_IOSCHED_NOOP */
++#endif
+ 
+ request_queue_t *blk_alloc_queue(int gfp_mask)
+ {
+@@ -1487,7 +1572,11 @@ EXPORT_SYMBOL(blk_alloc_queue);
+ request_queue_t *blk_init_queue(request_fn_proc *rfn, spinlock_t *lock)
+ {
+ 	request_queue_t *q;
++#ifdef CONFIG_ELV_SELECT
++	elevator_t *e;
++#else
+ 	static int printed;
++#endif
+ 
+ 	q = blk_alloc_queue(GFP_KERNEL);
+ 	if (!q)
+@@ -1496,14 +1585,23 @@ request_queue_t *blk_init_queue(request_
+ 	if (blk_init_free_list(q))
+ 		goto out_init;
+ 
++#ifdef CONFIG_ELV_SELECT
++	e = elevator_alloc(chosen_elevator);
++	if (!e)
++#else
+ 	if (!printed) {
+ 		printed = 1;
+ 		printk("Using %s io scheduler\n", chosen_elevator->elevator_name);
+ 	}
+ 
+ 	if (elevator_init(q, chosen_elevator))
++#endif
+ 		goto out_elv;
+ 
++#ifdef CONFIG_ELV_SELECT
++	elevator_init(q, e);
++#endif
++
+ 	q->request_fn		= rfn;
+ 	q->back_merge_fn       	= ll_back_merge_fn;
+ 	q->front_merge_fn      	= ll_front_merge_fn;
+@@ -1614,6 +1712,12 @@ static void freed_request(request_queue_
+ 		if (!waitqueue_active(&rl->wait[rw]))
+ 			blk_clear_queue_full(q, rw);
+ 	}
++#ifdef CONFIG_ELV_SELECT
++	if ( unlikely(waitqueue_active(&rl->empty)) ) {
++		if (rl->count[READ] == 0 && rl->count[WRITE] == 0)
++			wake_up_all(&rl->empty);
++	}
++#endif
+ }
+ 
+ #define blkdev_free_rq(list) list_entry((list)->next, struct request, queuelist)
+@@ -1627,6 +1731,12 @@ static struct request *get_request(reque
+ 	struct io_context *ioc = get_io_context(gfp_mask);
+ 
+ 	spin_lock_irq(q->queue_lock);
++#ifdef CONFIG_ELV_SELECT
++	if (blk_queue_drain(q)) {
++		spin_unlock_irq(q->queue_lock);
++		goto out;
++	}
++#endif
+ 
+ #ifdef CONFIG_CFQIONICE
+ 	if (!elv_may_queue(q, rw))
+@@ -3143,6 +3253,81 @@ queue_var_store(unsigned long *var, cons
+ 	return count;
+ }
+ 
++#ifdef CONFIG_ELV_SELECT
++static ssize_t queue_elevator_show(struct request_queue *q, char *page)
++{
++	return sprintf(page, "%s\n", q->elevator->elevator_name);
++}
++
++static ssize_t
++queue_elevator_store(struct request_queue *q, const char *page, size_t count)
++{
++	elevator_t *type, *elv;
++	unsigned long flags;
++	static DECLARE_MUTEX(switch_mutex);
++
++	down(&switch_mutex);
++
++	type = str_to_elv(page);
++	if (type == NULL) {
++		goto out;
++	}
++
++	elv = elevator_alloc(type);
++	if (!elv) {
++		goto out;
++	}
++
++	spin_lock_irqsave(q->queue_lock, flags);
++
++	/* Wait for the request list to empty */
++	blk_set_queue_drain(q);
++	blk_wait_free_list(q);
++
++	/* Stop old elevator */
++	elevator_exit(q);
++
++	/* Unlock here should be OK. The elevator should not be entered because
++	 * the queue is drained, and blocked... */
++	spin_unlock_irqrestore(q->queue_lock, flags);
++	elv_unregister_queue(q);
++	spin_lock_irqsave(q->queue_lock, flags);
++
++	/* Start new one */
++	elevator_init(q, elv);
++	printk(KERN_INFO "elevator_init %s\n", q->elevator->elevator_name);
++
++	spin_unlock_irqrestore(q->queue_lock, flags);
++	if (elv_register_queue(q)) {
++		/*
++		 * Can't do much about it now... failure should not cause the
++		 * device to stop working or future elevator selection to stop
++		 * working though.
++		 */
++		printk(KERN_INFO "elv_register_queue failed\n");
++		WARN_ON(1);
++	}
++	spin_lock_irqsave(q->queue_lock, flags);
++
++	/* Unblock the request list and wake waiters */
++	blk_clear_queue_drain(q);
++	wake_up_all(&q->rq.wait[READ]);
++	wake_up_all(&q->rq.wait[WRITE]);
++	spin_unlock_irqrestore(q->queue_lock, flags);
++
++	blk_run_queue(q);
++out:
++	up(&switch_mutex);
++	return count;
++}
++
++static struct queue_sysfs_entry queue_elevator_entry = {
++	.attr = {.name = "io_scheduler", .mode = S_IRUGO | S_IWUSR },
++	.show = queue_elevator_show,
++	.store = queue_elevator_store,
++};
++#endif
++
+ static ssize_t queue_requests_show(struct request_queue *q, char *page)
+ {
+ 	return queue_var_show(q->nr_requests, (page));
+@@ -3219,6 +3404,9 @@ static struct queue_sysfs_entry queue_ra
+ static struct attribute *default_attrs[] = {
+ 	&queue_requests_entry.attr,
+ 	&queue_ra_entry.attr,
++#ifdef CONFIG_ELV_SELECT
++	&queue_elevator_entry.attr,
++#endif
+ 	NULL,
+ };
+ 
+@@ -3275,16 +3463,30 @@ int blk_register_queue(struct gendisk *d
+ 		return -EBUSY;
+ 
+ 	snprintf(q->kobj.name, KOBJ_NAME_LEN, "%s", "queue");
++#ifdef CONFIG_ELV_SELECT
++	if (q->elevator)
++		q->kobj.ktype = &queue_ktype;
++#else
+ 	q->kobj.ktype = &queue_ktype;
++#endif
+ 
+ 	ret = kobject_register(&q->kobj);
+ 	if (ret < 0)
+ 		return ret;
+ 
++#ifdef CONFIG_ELV_SELECT
++	if (q->elevator) {
++		ret = elv_register_queue(q);
++		if (ret) {
++			kobject_unregister(&q->kobj);
++			return ret;
++		}
++#else
+ 	ret = elv_register_queue(q);
+ 	if (ret) {
+ 		kobject_unregister(&q->kobj);
+ 		return ret;
++#endif
+ 	}
+ 
+ 	return 0;
+@@ -3295,7 +3497,10 @@ void blk_unregister_queue(struct gendisk
+ 	request_queue_t *q = disk->queue;
+ 
+ 	if (q && q->request_fn) {
+-		elv_unregister_queue(q);
++#ifdef CONFIG_ELV_SELECT
++		if (q->elevator)
++#endif
++			elv_unregister_queue(q);
+ 
+ 		kobject_unregister(&q->kobj);
+ 		kobject_put(&disk->kobj);
+diff -puN include/linux/blkdev.h~elv-select-xx include/linux/blkdev.h
+--- linux-2.6.7-xx1/include/linux/blkdev.h~elv-select-xx	2004-06-20 22:21:53.011205936 -0400
++++ linux-2.6.7-xx1-xiphux/include/linux/blkdev.h	2004-06-20 22:21:53.203176752 -0400
+@@ -80,6 +80,9 @@ struct request_list {
+ 	int count[2];
+ 	mempool_t *rq_pool;
+ 	wait_queue_head_t wait[2];
++#ifdef CONFIG_ELV_SELECT
++	wait_queue_head_t empty;
++#endif
+ };
+ 
+ #define BLK_MAX_CDB	16
+@@ -279,7 +282,11 @@ struct request_queue
+ 	 */
+ 	struct list_head	queue_head;
+ 	struct request		*last_merge;
++#ifdef CONFIG_ELV_SELECT
++	elevator_t		*elevator;
++#else
+ 	elevator_t		elevator;
++#endif
+ 
+ 	/*
+ 	 * the queue request freelist, one for reads and one for writes
+@@ -376,10 +383,18 @@ struct request_queue
+ #define QUEUE_FLAG_STOPPED	2	/* queue is stopped */
+ #define	QUEUE_FLAG_READFULL	3	/* write queue has been filled */
+ #define QUEUE_FLAG_WRITEFULL	4	/* read queue has been filled */
++#ifdef CONFIG_ELV_SELECT
++#define QUEUE_FLAG_DRAIN	5	/* queue being drained */
++#define QUEUE_FLAG_DEAD		6	/* queue being torn down */
++#define QUEUE_FLAG_REENTER	7	/* Re-entrancy avoidance */
++#define QUEUE_FLAG_PLUGGED	8	/* queue is plugged */
++#define QUEUE_FLAG_ORDERED	9	/* supports ordered writes */
++#else
+ #define QUEUE_FLAG_DEAD		5	/* queue being torn down */
+ #define QUEUE_FLAG_REENTER	6	/* Re-entrancy avoidance */
+ #define QUEUE_FLAG_PLUGGED	7	/* queue is plugged */
+ #define QUEUE_FLAG_ORDERED	8	/* supports ordered writes */
++#endif
+ 
+ #define blk_queue_plugged(q)	test_bit(QUEUE_FLAG_PLUGGED, &(q)->queue_flags)
+ #define blk_queue_tagged(q)	test_bit(QUEUE_FLAG_QUEUED, &(q)->queue_flags)
+@@ -428,6 +443,22 @@ static inline void blk_clear_queue_full(
+ 		clear_bit(QUEUE_FLAG_WRITEFULL, &q->queue_flags);
+ }
+ 
++#ifdef CONFIG_ELV_SELECT
++static inline int blk_queue_drain(struct request_queue *q)
++{
++	return test_bit(QUEUE_FLAG_DRAIN, &q->queue_flags);
++}
++
++static inline void blk_set_queue_drain(struct request_queue *q)
++{
++	set_bit(QUEUE_FLAG_DRAIN, &q->queue_flags);
++}
++
++static inline void blk_clear_queue_drain(struct request_queue *q)
++{
++	clear_bit(QUEUE_FLAG_DRAIN, &q->queue_flags);
++}
++#endif
+ 
+ /*
+  * mergeable request must not have _NOMERGE or _BARRIER bit set, nor may
+diff -puN include/linux/elevator.h~elv-select-xx include/linux/elevator.h
+--- linux-2.6.7-xx1/include/linux/elevator.h~elv-select-xx	2004-06-20 22:21:53.013205632 -0400
++++ linux-2.6.7-xx1-xiphux/include/linux/elevator.h	2004-06-20 22:21:53.204176600 -0400
+@@ -24,8 +24,16 @@ typedef void (elevator_set_congested_fn)
+ typedef int (elevator_set_req_fn) (request_queue_t *, struct request *, int);
+ typedef void (elevator_put_req_fn) (request_queue_t *, struct request *);
+ 
++#ifdef CONFIG_ELV_SELECT
++typedef void (elevator_init_fn) (request_queue_t *, elevator_t *);
++#else
+ typedef int (elevator_init_fn) (request_queue_t *, elevator_t *);
++#endif
+ typedef void (elevator_exit_fn) (request_queue_t *, elevator_t *);
++#ifdef CONFIG_ELV_SELECT
++typedef int (elevator_alloc_fn) (elevator_t *);
++typedef void (elevator_release_fn) (elevator_t *);
++#endif
+ 
+ struct elevator_s
+ {
+@@ -54,6 +62,10 @@ struct elevator_s
+ 
+ 	elevator_init_fn *elevator_init_fn;
+ 	elevator_exit_fn *elevator_exit_fn;
++#ifdef CONFIG_ELV_SELECT
++	elevator_alloc_fn *elevator_alloc_fn;
++	elevator_release_fn *elevator_release_fn;
++#endif
+ 
+ 	void *elevator_data;
+ 
+@@ -108,8 +120,16 @@ extern elevator_t iosched_as;
+  */
+ extern elevator_t iosched_cfq;
+ 
++#ifdef CONFIG_ELV_SELECT
++extern void elevator_init(request_queue_t *, elevator_t *);
++#else
+ extern int elevator_init(request_queue_t *, elevator_t *);
++#endif
+ extern void elevator_exit(request_queue_t *);
++#ifdef CONFIG_ELV_SELECT
++extern elevator_t *elevator_alloc(elevator_t *);
++extern void elevator_release(struct kobject *);
++#endif
+ extern int elv_rq_merge_ok(struct request *, struct bio *);
+ extern int elv_try_merge(struct request *, struct bio *);
+ extern int elv_try_last_merge(request_queue_t *, struct bio *);
+diff -puN arch/i386/Kconfig~elv-select-xx arch/i386/Kconfig
+diff -puN kernel/Kconfig-extra.xx~elv-select-xx kernel/Kconfig-extra.xx
+--- linux-2.6.7-xx1/kernel/Kconfig-extra.xx~elv-select-xx	2004-06-20 22:21:53.110190888 -0400
++++ linux-2.6.7-xx1-xiphux/kernel/Kconfig-extra.xx	2004-06-20 22:21:53.210175688 -0400
+@@ -169,15 +169,16 @@ endmenu
+ 
+ choice
+ 	prompt "I/O scheduling elevator frameworks"
+-	default IO_NONE
++	default ELV_SELECT
+ 	depends on EXPERIMENTAL
+ 	help
+ 	  This will allow you to choose between various modifications to the
+ 	  I/O scheduler code, most of which are incompatible with each other.
+ 
+-	  At the moment, there is only one option: CFQ with ionice support.
++ 	  At the moment, there are only two options: CFQ with ionice support,
++ 	  and runtime selectable I/O schedulers.
+ 
+-	  Nothing is selected by default.
++ 	  Runtime selectable I/O schedulers is selected by default.
+ 
+ config IO_NONE
+ 	bool "None"
+@@ -200,6 +201,19 @@ config CFQIONICE
+ 	  this will, for some reason, break the other IO schedulers.
+ 	  You will only be able to use this scheduler.
+ 
++config ELV_SELECT
++	bool "Runtime selectable I/O schedulers"
++	depends on (IOSCHED_AS && IOSCHED_CFQ)
++	help
++	  This will enable runtime selectable I/O schedulers.
++	  I/O schedulers can be changed at any time by echoing a
++	  string to /sys/block/*/queue/io_scheduler.  Schedulers
++	  can also be assigned on a per-device basis.
++
++	  Please note that this is still experimental.  This patch
++	  also has known issues with usb-storage devices.  It is
++	  also incompatible with the IOnice CFQ scheduler.
++
+ endchoice
+ 
+ endmenu
+
+_

@@ -1,0 +1,423 @@
+
+From: Samuel Thibault <samuel.thibault@ens-lyon.org>
+
+Some Visiobraille braille terminals (TVB) need a peculiar serial flow
+control:
+
+- There is no flow control for the PC -> device way (yes, oddly enough)
+
+- For the device -> PC way,
+
+  * RTS must be kept low, the device keeps CTS low as well.
+
+  * when the device wants to send data, it raises CTS.  RTS must be
+    raised as well.  Data can then pass, CTS and RTS are lowered.
+
+We tried to implement that in user space, with ioctl(TIOCMBIS) & al, but
+the responsiveness is too low: RTS is not raised soon enough, and the
+device aborts transmission.
+
+The patch defines a CTVB flag the same way CRTSCTS is defined, letting user
+space choose whether to use it or not (better ideas for the name are
+welcome).  This makes the device work perfectly (even better than shipped
+drivers for DOS).
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/serial/serial_core.c   |   44 +++++++++++++++------------------
+ 25-akpm/include/asm-alpha/termbits.h   |    1 
+ 25-akpm/include/asm-arm/termbits.h     |    1 
+ 25-akpm/include/asm-arm26/termbits.h   |    1 
+ 25-akpm/include/asm-cris/termbits.h    |    4 ++-
+ 25-akpm/include/asm-h8300/termbits.h   |    1 
+ 25-akpm/include/asm-i386/termbits.h    |    1 
+ 25-akpm/include/asm-ia64/termbits.h    |    1 
+ 25-akpm/include/asm-m68k/termbits.h    |    1 
+ 25-akpm/include/asm-mips/termbits.h    |    1 
+ 25-akpm/include/asm-parisc/termbits.h  |    1 
+ 25-akpm/include/asm-ppc/termbits.h     |    1 
+ 25-akpm/include/asm-ppc64/termbits.h   |    1 
+ 25-akpm/include/asm-s390/termbits.h    |    1 
+ 25-akpm/include/asm-sh/termbits.h      |    1 
+ 25-akpm/include/asm-sparc/termbits.h   |    1 
+ 25-akpm/include/asm-sparc64/termbits.h |    1 
+ 25-akpm/include/asm-v850/termbits.h    |    1 
+ 25-akpm/include/asm-x86_64/termbits.h  |    1 
+ 25-akpm/include/linux/serial.h         |    3 +-
+ 25-akpm/include/linux/serial_core.h    |   24 ++++++++++++++++++
+ 25-akpm/include/linux/tty.h            |    1 
+ 22 files changed, 68 insertions(+), 25 deletions(-)
+
+diff -puN drivers/serial/serial_core.c~new-serial-flow-control drivers/serial/serial_core.c
+--- 25/drivers/serial/serial_core.c~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/drivers/serial/serial_core.c	Mon Oct  4 16:43:45 2004
+@@ -110,23 +110,6 @@ static void uart_tasklet_action(unsigned
+ 	tty_wakeup(state->info->tty);
+ }
+ 
+-static inline void
+-uart_update_mctrl(struct uart_port *port, unsigned int set, unsigned int clear)
+-{
+-	unsigned long flags;
+-	unsigned int old;
+-
+-	spin_lock_irqsave(&port->lock, flags);
+-	old = port->mctrl;
+-	port->mctrl = (old & ~clear) | set;
+-	if (old != port->mctrl)
+-		port->ops->set_mctrl(port, port->mctrl);
+-	spin_unlock_irqrestore(&port->lock, flags);
+-}
+-
+-#define uart_set_mctrl(port,set)	uart_update_mctrl(port,set,0)
+-#define uart_clear_mctrl(port,clear)	uart_update_mctrl(port,0,clear)
+-
+ /*
+  * Startup the port.  This will be called once per open.  All calls
+  * will be serialised by the per-port semaphore.
+@@ -179,8 +162,13 @@ static int uart_startup(struct uart_stat
+ 			 * Setup the RTS and DTR signals once the
+ 			 * port is open and ready to respond.
+ 			 */
+-			if (info->tty->termios->c_cflag & CBAUD)
+-				uart_set_mctrl(port, TIOCM_RTS | TIOCM_DTR);
++			if (info->tty->termios->c_cflag & CBAUD) {
++				uart_set_mctrl(port, TIOCM_DTR);
++				if (info->tty->termios->c_cflag & CTVB)
++					uart_clear_mctrl(port, TIOCM_RTS);
++				else
++					uart_set_mctrl(port, TIOCM_RTS);
++			}
+ 		}
+ 
+ 		info->flags |= UIF_INITIALIZED;
+@@ -426,6 +414,11 @@ uart_change_speed(struct uart_state *sta
+ 	else
+ 		state->info->flags &= ~UIF_CTS_FLOW;
+ 
++	if (termios->c_cflag & CTVB)
++		state->info->flags |= UIF_TVB_FLOW;
++	else
++		state->info->flags &= ~UIF_TVB_FLOW;
++
+ 	if (termios->c_cflag & CLOCAL)
+ 		state->info->flags &= ~UIF_CHECK_CD;
+ 	else
+@@ -1169,8 +1162,8 @@ static void uart_set_termios(struct tty_
+ 	/* Handle transition away from B0 status */
+ 	if (!(old_termios->c_cflag & CBAUD) && (cflag & CBAUD)) {
+ 		unsigned int mask = TIOCM_DTR;
+-		if (!(cflag & CRTSCTS) ||
+-		    !test_bit(TTY_THROTTLED, &tty->flags))
++		if (!(cflag & CTVB) && (!(cflag & CRTSCTS) ||
++		    !test_bit(TTY_THROTTLED, &tty->flags)))
+ 			mask |= TIOCM_RTS;
+ 		uart_set_mctrl(state->port, mask);
+ 	}
+@@ -1409,8 +1402,13 @@ static void uart_update_termios(struct u
+ 		/*
+ 		 * And finally enable the RTS and DTR signals.
+ 		 */
+-		if (tty->termios->c_cflag & CBAUD)
+-			uart_set_mctrl(port, TIOCM_DTR | TIOCM_RTS);
++		if (tty->termios->c_cflag & CBAUD) {
++			uart_set_mctrl(port, TIOCM_DTR);
++			if (tty->termios->c_cflag & CTVB)
++				uart_clear_mctrl(port,TIOCM_RTS);
++			else
++				uart_set_mctrl(port,TIOCM_RTS);
++		}
+ 	}
+ }
+ 
+diff -puN include/asm-alpha/termbits.h~new-serial-flow-control include/asm-alpha/termbits.h
+--- 25/include/asm-alpha/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-alpha/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -148,6 +148,7 @@ struct termios {
+ #define HUPCL	00040000
+ 
+ #define CLOCAL	00100000
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+ /* c_lflag bits */
+diff -puN include/asm-arm26/termbits.h~new-serial-flow-control include/asm-arm26/termbits.h
+--- 25/include/asm-arm26/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-arm26/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -132,6 +132,7 @@ struct termios {
+ #define  B3500000 0010016
+ #define  B4000000 0010017
+ #define CIBAUD	  002003600000	/* input baud rate (not used) */
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CMSPAR    010000000000		/* mark or space (stick) parity */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+diff -puN include/asm-arm/termbits.h~new-serial-flow-control include/asm-arm/termbits.h
+--- 25/include/asm-arm/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-arm/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -132,6 +132,7 @@ struct termios {
+ #define  B3500000 0010016
+ #define  B4000000 0010017
+ #define CIBAUD	  002003600000	/* input baud rate (not used) */
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CMSPAR    010000000000		/* mark or space (stick) parity */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+diff -puN include/asm-cris/termbits.h~new-serial-flow-control include/asm-cris/termbits.h
+--- 25/include/asm-cris/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-cris/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -108,9 +108,10 @@ struct termios {
+  *    10 987 654 321 098 765 432 109 876 543 210
+  *        |           || ||   CIBAUD, IBSHIFT=16
+  *                    ibaud
++ *       |CTVB
+  *     |CMSPAR
+  *    | CRTSCTS
+- *       x x xxx xxx x     x xx Free bits
++ *         x xxx xxx x     x xx Free bits
+  */
+ 
+ #define CBAUD	0010017
+@@ -159,6 +160,7 @@ struct termios {
+  * shifted left IBSHIFT bits.
+  */
+ #define IBSHIFT   16
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CMSPAR    010000000000 /* mark or space (stick) parity - PARODD=space*/
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+diff -puN include/asm-h8300/termbits.h~new-serial-flow-control include/asm-h8300/termbits.h
+--- 25/include/asm-h8300/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-h8300/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -135,6 +135,7 @@ struct termios {
+ #define  B3500000 0010016
+ #define  B4000000 0010017
+ #define CIBAUD	  002003600000	/* input baud rate (not used) */
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CMSPAR	  010000000000		/* mark or space (stick) parity */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+diff -puN include/asm-i386/termbits.h~new-serial-flow-control include/asm-i386/termbits.h
+--- 25/include/asm-i386/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-i386/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -134,6 +134,7 @@ struct termios {
+ #define  B3500000 0010016
+ #define  B4000000 0010017
+ #define CIBAUD	  002003600000	/* input baud rate (not used) */
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CMSPAR	  010000000000		/* mark or space (stick) parity */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+diff -puN include/asm-ia64/termbits.h~new-serial-flow-control include/asm-ia64/termbits.h
+--- 25/include/asm-ia64/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-ia64/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -143,6 +143,7 @@ struct termios {
+ #define  B3500000 0010016
+ #define  B4000000 0010017
+ #define CIBAUD	  002003600000	/* input baud rate (not used) */
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CMSPAR	  010000000000		/* mark or space (stick) parity */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+diff -puN include/asm-m68k/termbits.h~new-serial-flow-control include/asm-m68k/termbits.h
+--- 25/include/asm-m68k/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-m68k/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -135,6 +135,7 @@ struct termios {
+ #define  B3500000 0010016
+ #define  B4000000 0010017
+ #define CIBAUD	  002003600000	/* input baud rate (not used) */
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CMSPAR	  010000000000		/* mark or space (stick) parity */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+diff -puN include/asm-mips/termbits.h~new-serial-flow-control include/asm-mips/termbits.h
+--- 25/include/asm-mips/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-mips/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -164,6 +164,7 @@ struct termios {
+ #define  B3500000 0010016
+ #define  B4000000 0010017
+ #define CIBAUD	  002003600000	/* input baud rate (not used) */
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CMSPAR    010000000000	/* mark or space (stick) parity */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+diff -puN include/asm-parisc/termbits.h~new-serial-flow-control include/asm-parisc/termbits.h
+--- 25/include/asm-parisc/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-parisc/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -135,6 +135,7 @@ struct termios {
+ #define  B3500000 0010016
+ #define  B4000000 0010017
+ #define CIBAUD    002003600000  /* input baud rate (not used) */
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CMSPAR    010000000000          /* mark or space (stick) parity */
+ #define CRTSCTS   020000000000          /* flow control */
+ 
+diff -puN include/asm-ppc64/termbits.h~new-serial-flow-control include/asm-ppc64/termbits.h
+--- 25/include/asm-ppc64/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-ppc64/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -155,6 +155,7 @@ struct termios {
+ #define HUPCL	00040000
+ 
+ #define CLOCAL	00100000
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+ /* c_lflag bits */
+diff -puN include/asm-ppc/termbits.h~new-serial-flow-control include/asm-ppc/termbits.h
+--- 25/include/asm-ppc/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-ppc/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -147,6 +147,7 @@ struct termios {
+ #define HUPCL	00040000
+ 
+ #define CLOCAL	00100000
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+ /* c_lflag bits */
+diff -puN include/asm-s390/termbits.h~new-serial-flow-control include/asm-s390/termbits.h
+--- 25/include/asm-s390/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-s390/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -142,6 +142,7 @@ struct termios {
+ #define  B3500000 0010016
+ #define  B4000000 0010017
+ #define CIBAUD	  002003600000	/* input baud rate (not used) */
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CMSPAR	  010000000000		/* mark or space (stick) parity */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+diff -puN include/asm-sh/termbits.h~new-serial-flow-control include/asm-sh/termbits.h
+--- 25/include/asm-sh/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-sh/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -134,6 +134,7 @@ struct termios {
+ #define  B3500000 0010016
+ #define  B4000000 0010017
+ #define CIBAUD	  002003600000	/* input baud rate (not used) */
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CMSPAR	  010000000000		/* mark or space (stick) parity */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+diff -puN include/asm-sparc64/termbits.h~new-serial-flow-control include/asm-sparc64/termbits.h
+--- 25/include/asm-sparc64/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-sparc64/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -175,6 +175,7 @@ struct termios {
+ #define B3500000  0x00001012
+ #define B4000000  0x00001013  */
+ #define CIBAUD	  0x100f0000  /* input baud rate (not used) */
++#define CTVB	  0x20000000  /* VisioBraille Terminal flow control */
+ #define CMSPAR    0x40000000  /* mark or space (stick) parity */
+ #define CRTSCTS	  0x80000000  /* flow control */
+ 
+diff -puN include/asm-sparc/termbits.h~new-serial-flow-control include/asm-sparc/termbits.h
+--- 25/include/asm-sparc/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-sparc/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -174,6 +174,7 @@ struct termios {
+ #define B3500000  0x00001012
+ #define B4000000  0x00001013  */
+ #define CIBAUD	  0x100f0000  /* input baud rate (not used) */
++#define CTVB	  0x20000000  /* VisioBraille Terminal flow control */
+ #define CMSPAR	  0x40000000  /* mark or space (stick) parity */
+ #define CRTSCTS	  0x80000000  /* flow control */
+ 
+diff -puN include/asm-v850/termbits.h~new-serial-flow-control include/asm-v850/termbits.h
+--- 25/include/asm-v850/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-v850/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -135,6 +135,7 @@ struct termios {
+ #define  B3500000 0010016
+ #define  B4000000 0010017
+ #define CIBAUD	  002003600000	/* input baud rate (not used) */
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CMSPAR	  010000000000		/* mark or space (stick) parity */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+diff -puN include/asm-x86_64/termbits.h~new-serial-flow-control include/asm-x86_64/termbits.h
+--- 25/include/asm-x86_64/termbits.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/asm-x86_64/termbits.h	Mon Oct  4 16:43:45 2004
+@@ -134,6 +134,7 @@ struct termios {
+ #define  B3500000 0010016
+ #define  B4000000 0010017
+ #define CIBAUD	  002003600000	/* input baud rate (not used) */
++#define CTVB	  004000000000		/* VisioBraille Terminal flow control */
+ #define CMSPAR	  010000000000		/* mark or space (stick) parity */
+ #define CRTSCTS	  020000000000		/* flow control */
+ 
+diff -puN include/linux/serial_core.h~new-serial-flow-control include/linux/serial_core.h
+--- 25/include/linux/serial_core.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/linux/serial_core.h	Mon Oct  4 16:43:45 2004
+@@ -267,6 +267,7 @@ struct uart_info {
+  */
+ #define UIF_CHECK_CD		(1 << 25)
+ #define UIF_CTS_FLOW		(1 << 26)
++#define UIF_TVB_FLOW		(1 << 21)
+ #define UIF_NORMAL_ACTIVE	(1 << 29)
+ #define UIF_INITIALIZED		(1 << 31)
+ 
+@@ -378,6 +379,23 @@ uart_handle_sysrq_char(struct uart_port 
+ #define uart_handle_sysrq_char(port,ch,regs)	(0)
+ #endif
+ 
++static inline void
++uart_update_mctrl(struct uart_port *port, unsigned int set, unsigned int clear)
++{
++	unsigned long flags;
++	unsigned int old;
++
++	spin_lock_irqsave(&port->lock, flags);
++	old = port->mctrl;
++	port->mctrl = (old & ~clear) | set;
++	if (old != port->mctrl)
++		port->ops->set_mctrl(port, port->mctrl);
++	spin_unlock_irqrestore(&port->lock, flags);
++}
++
++#define uart_set_mctrl(port,set)	uart_update_mctrl(port,set,0)
++#define uart_clear_mctrl(port,clear)	uart_update_mctrl(port,0,clear)
++
+ /*
+  * We do the SysRQ and SAK checking like this...
+  */
+@@ -449,6 +467,11 @@ uart_handle_cts_change(struct uart_port 
+ 				port->ops->stop_tx(port, 0);
+ 			}
+ 		}
++	} else if (info->flags & UIF_TVB_FLOW) {
++		if (status)
++			uart_set_mctrl(port, TIOCM_RTS);
++		else
++			uart_clear_mctrl(port, TIOCM_RTS);
+ 	}
+ }
+ 
+@@ -457,6 +480,7 @@ uart_handle_cts_change(struct uart_port 
+  */
+ #define UART_ENABLE_MS(port,cflag)	((port)->flags & UPF_HARDPPS_CD || \
+ 					 (cflag) & CRTSCTS || \
++					 (cflag) & CTVB || \
+ 					 !((cflag) & CLOCAL))
+ 
+ #endif
+diff -puN include/linux/serial.h~new-serial-flow-control include/linux/serial.h
+--- 25/include/linux/serial.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/linux/serial.h	Mon Oct  4 16:43:45 2004
+@@ -141,7 +141,8 @@ struct serial_uart_config {
+ #define ASYNC_CONS_FLOW		0x00800000 /* flow control for console  */
+ 
+ #define ASYNC_BOOT_ONLYMCA	0x00400000 /* Probe only if MCA bus */
+-#define ASYNC_INTERNAL_FLAGS	0xFFC00000 /* Internal flags */
++#define ASYNC_TVB_FLOW		0x00200000 /* Do VisioBraille flow control */
++#define ASYNC_INTERNAL_FLAGS	0xFFE00000 /* Internal flags */
+ 
+ /*
+  * Multiport serial configuration structure --- external structure
+diff -puN include/linux/tty.h~new-serial-flow-control include/linux/tty.h
+--- 25/include/linux/tty.h~new-serial-flow-control	Mon Oct  4 16:43:45 2004
++++ 25-akpm/include/linux/tty.h	Mon Oct  4 16:43:45 2004
+@@ -210,6 +210,7 @@ struct tty_flip_buffer {
+ #define C_CLOCAL(tty)	_C_FLAG((tty),CLOCAL)
+ #define C_CIBAUD(tty)	_C_FLAG((tty),CIBAUD)
+ #define C_CRTSCTS(tty)	_C_FLAG((tty),CRTSCTS)
++#define C_TVB(tty)	_C_FLAG((tty),CTVB)
+ 
+ #define L_ISIG(tty)	_L_FLAG((tty),ISIG)
+ #define L_ICANON(tty)	_L_FLAG((tty),ICANON)
+_

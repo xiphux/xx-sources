@@ -1,0 +1,48 @@
+
+From: Andy Whitcroft <apw@shadowen.org>
+
+If a fault in the kernel leads to an unexpected protection fault whilst in
+a code path which holds mmap_sem we will deadlock in do_page_fault() while
+trying to classify the fault.  By carefully testing the source of the fault
+we can detect and OOPS on the vast majority of these, greatly enhancing
+diagnosis of such bugs.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/mm/fault.c |   22 +++++++++++++++++++++-
+ 1 files changed, 21 insertions(+), 1 deletion(-)
+
+diff -puN arch/i386/mm/fault.c~ia32-fault-deadlock-fix-2 arch/i386/mm/fault.c
+--- 25/arch/i386/mm/fault.c~ia32-fault-deadlock-fix-2	Wed Jun  2 14:54:12 2004
++++ 25-akpm/arch/i386/mm/fault.c	Wed Jun  2 14:54:12 2004
+@@ -261,7 +261,27 @@ asmlinkage void do_page_fault(struct pt_
+ 	if (in_atomic() || !mm)
+ 		goto bad_area_nosemaphore;
+ 
+-	down_read(&mm->mmap_sem);
++	/* When running in the kernel we expect faults to occur only to
++	 * addresses in user space.  All other faults represent errors in the
++	 * kernel and should generate an OOPS.  Unfortunatly, in the case of an
++	 * erroneous fault occuring in a code path which already holds mmap_sem
++	 * we will deadlock attempting to validate the fault against the
++	 * address space.  Luckily the kernel only validly references user
++	 * space from well defined areas of code, which are listed in the
++	 * exceptions table.
++	 *
++	 * As the vast majority of faults will be valid we will only perform
++	 * the source reference check when there is a possibilty of a deadlock.
++	 * Attempt to lock the address space, if we cannot we then validate the
++	 * source.  If this is invalid we can skip the address space check,
++	 * thus avoiding the deadlock.
++	 */
++	if (!down_read_trylock(&mm->mmap_sem)) {
++		if ((error_code & 4) == 0 &&
++		    !search_exception_tables(regs->eip))
++			goto bad_area_nosemaphore;
++		down_read(&mm->mmap_sem);
++	}
+ 
+ 	vma = find_vma(mm, address);
+ 	if (!vma)
+_

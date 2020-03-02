@@ -1,0 +1,83 @@
+
+From: Marcelo Tosatti <marcelo.tosatti@cyclades.com>
+
+With silly pageout testcases it is possible to place huge amounts of memory
+under I/O.  With a large request queue (CFQ uses 8192 requests) it is
+possible to place _all_ memory under I/O at the same time.
+
+This means that all memory is pinned and unreclaimable and the VM gets
+upset and goes oom.
+
+The patch limits the amount of memory which is under pageout writeout to be
+a little more than the amount of memory at which balance_dirty_pages()
+callers will synchronously throttle.
+
+This means that heavy pageout activity can starve heavy writeback activity
+completely, but heavy writeback activity will not cause starvation of
+pageout.  Because we don't want a simple `dd' to be causing excessive
+latencies in page reclaim.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/writeback.h |    1 +
+ 25-akpm/mm/page-writeback.c       |   22 ++++++++++++++++++++++
+ 25-akpm/mm/vmscan.c               |    2 ++
+ 3 files changed, 25 insertions(+)
+
+diff -puN include/linux/writeback.h~vm-pageout-throttling include/linux/writeback.h
+--- 25/include/linux/writeback.h~vm-pageout-throttling	2005-01-10 21:14:16.381084664 -0800
++++ 25-akpm/include/linux/writeback.h	2005-01-10 21:14:16.390083296 -0800
+@@ -86,6 +86,7 @@ static inline void wait_on_inode(struct 
+ int wakeup_bdflush(long nr_pages);
+ void laptop_io_completion(void);
+ void laptop_sync_completion(void);
++void throttle_vm_writeout(void);
+ 
+ /* These are exported to sysctl. */
+ extern int dirty_background_ratio;
+diff -puN mm/page-writeback.c~vm-pageout-throttling mm/page-writeback.c
+--- 25/mm/page-writeback.c~vm-pageout-throttling	2005-01-10 21:14:16.383084360 -0800
++++ 25-akpm/mm/page-writeback.c	2005-01-10 21:14:16.392082992 -0800
+@@ -276,6 +276,28 @@ void balance_dirty_pages_ratelimited(str
+ }
+ EXPORT_SYMBOL(balance_dirty_pages_ratelimited);
+ 
++void throttle_vm_writeout(void)
++{
++	struct writeback_state wbs;
++	long background_thresh;
++	long dirty_thresh;
++
++        for ( ; ; ) {
++		get_dirty_limits(&wbs, &background_thresh, &dirty_thresh);
++
++                /*
++                 * Boost the allowable dirty threshold a bit for page
++                 * allocators so they don't get DoS'ed by heavy writers
++                 */
++                dirty_thresh += dirty_thresh / 10;      /* wheeee... */
++
++                if (wbs.nr_unstable + wbs.nr_writeback <= dirty_thresh)
++                        break;
++                blk_congestion_wait(WRITE, HZ/10);
++        }
++}
++
++
+ /*
+  * writeback at least _min_pages, and keep writing until the amount of dirty
+  * memory is less than the background threshold, or until we're all clean.
+diff -puN mm/vmscan.c~vm-pageout-throttling mm/vmscan.c
+--- 25/mm/vmscan.c~vm-pageout-throttling	2005-01-10 21:14:16.386083904 -0800
++++ 25-akpm/mm/vmscan.c	2005-01-10 21:14:16.394082688 -0800
+@@ -828,6 +828,8 @@ shrink_zone(struct zone *zone, struct sc
+ 				break;
+ 		}
+ 	}
++
++	throttle_vm_writeout();
+ }
+ 
+ /*
+_

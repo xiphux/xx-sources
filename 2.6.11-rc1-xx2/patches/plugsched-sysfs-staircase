@@ -1,0 +1,45 @@
+Index: xx-sources/kernel/staircase.c
+===================================================================
+--- xx-sources.orig/kernel/staircase.c	2004-11-09 20:40:15.569379024 -0500
++++ xx-sources/kernel/staircase.c	2004-11-09 20:54:42.960515528 -0500
+@@ -3873,6 +3873,32 @@
+ }
+ #endif /* CONFIG_MAGIC_SYSRQ */
+ 
++/*
++ * sysfs stuff
++ */
++#ifdef CONFIG_SYSFS
++
++SCHED_SHOW_FUNCTION(sc_interactive_show, sc_sched_interactive);
++SCHED_SHOW_FUNCTION(sc_compute_show, sc_sched_compute);
++
++SCHED_STORE_FUNCTION(sc_interactive_store, &sc_sched_interactive, 0, 1);
++SCHED_STORE_FUNCTION(sc_compute_store, &sc_sched_compute, 0, 1);
++
++SCHED_SYSFS_ENTRY(sc_interactive_entry, "interactive", sc_interactive_show, sc_interactive_store);
++SCHED_SYSFS_ENTRY(sc_compute_entry, "compute", sc_compute_show, sc_compute_store);
++
++static struct attribute *default_attrs[] = {
++	&sc_interactive_entry.attr,
++	&sc_compute_entry.attr,
++	NULL,
++};
++
++static struct kobj_type sc_ktype = {
++	.sysfs_ops = &sched_sysfs_ops,
++	.default_attrs = default_attrs,
++};
++#endif
++
+ struct sched_drv sc_sched_drv = {
+ 	.task_cpu		= common_task_cpu,
+ 	.set_task_cpu		= common_set_task_cpu,
+@@ -3929,4 +3955,7 @@
+ #ifdef CONFIG_KGDB
+ 	.kgdb_get_idle		= sc_kgdb_get_idle,
+ #endif
++#ifdef CONFIG_SYSFS
++	.kobj.ktype		= &sc_ktype,
++#endif
+ };

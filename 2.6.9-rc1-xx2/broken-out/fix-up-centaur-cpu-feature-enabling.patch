@@ -1,0 +1,55 @@
+
+From: Dave Jones <davej@redhat.com>
+
+Fix up Centaur CPU feature enabling.
+
+Nehemiah wasn't having the CX8 bit enabled before.  In fixing it up, I
+rewrote the code to be a little clearer.
+
+Signed-off-by: Dave Jones <davej@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/cpu/centaur.c |   27 ++++++++++++---------------
+ 1 files changed, 12 insertions(+), 15 deletions(-)
+
+diff -puN arch/i386/kernel/cpu/centaur.c~fix-up-centaur-cpu-feature-enabling arch/i386/kernel/cpu/centaur.c
+--- 25/arch/i386/kernel/cpu/centaur.c~fix-up-centaur-cpu-feature-enabling	2004-08-30 00:02:41.647259608 -0700
++++ 25-akpm/arch/i386/kernel/cpu/centaur.c	2004-08-30 00:02:41.651259000 -0700
+@@ -286,23 +286,20 @@ static void __init init_c3(struct cpuinf
+ 		c->x86_capability[5] = cpuid_edx(0xC0000001);
+ 	}
+ 
+-	switch (c->x86_model) {
+-		case 6 ... 8:		/* Cyrix III family */
+-			rdmsr (MSR_VIA_FCR, lo, hi);
+-			lo |= (1<<1 | 1<<7);	/* Report CX8 & enable PGE */
+-			wrmsr (MSR_VIA_FCR, lo, hi);
+-
+-			set_bit(X86_FEATURE_CX8, c->x86_capability);
+-			set_bit(X86_FEATURE_3DNOW, c->x86_capability);
++	/* Cyrix III family needs CX8 & PGE explicity enabled. */
++	if (c->x86_model >=6 && c->x86_model <= 9) {
++		rdmsr (MSR_VIA_FCR, lo, hi);
++		lo |= (1<<1 | 1<<7);
++		wrmsr (MSR_VIA_FCR, lo, hi);
++		set_bit(X86_FEATURE_CX8, c->x86_capability);
++	}
+ 
+-			/* fall through */
++	/* Before Nehemiah, the C3's had 3dNOW! */
++	if (c->x86_model >=6 && c->x86_model <9)
++		set_bit(X86_FEATURE_3DNOW, c->x86_capability);
+ 
+-		case 9:	/* Nehemiah */
+-		default:
+-			get_model_name(c);
+-			display_cacheinfo(c);
+-			break;
+-	}
++	get_model_name(c);
++	display_cacheinfo(c);
+ }
+ 
+ static void __init init_centaur(struct cpuinfo_x86 *c)
+_

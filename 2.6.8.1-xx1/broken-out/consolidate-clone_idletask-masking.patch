@@ -1,0 +1,392 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+Every arch now bears the burden of sanitizing CLONE_IDLETASK out of the
+clone_flags passed to do_fork() by userspace.  This patch hoists the
+masking of CLONE_IDLETASK out of the system call entrypoints into
+do_fork(), and thereby removes some small overheads from do_fork(), as
+do_fork() may now assume that CLONE_IDLETASK has been cleared.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/alpha/kernel/process.c         |    3 +--
+ 25-akpm/arch/arm/kernel/sys_arm.c           |    2 +-
+ 25-akpm/arch/arm26/kernel/sys_arm.c         |    2 +-
+ 25-akpm/arch/cris/arch-v10/kernel/process.c |    2 +-
+ 25-akpm/arch/h8300/kernel/process.c         |    2 +-
+ 25-akpm/arch/i386/kernel/process.c          |    2 +-
+ 25-akpm/arch/ia64/ia32/ia32_entry.S         |    2 +-
+ 25-akpm/arch/ia64/kernel/asm-offsets.c      |    5 -----
+ 25-akpm/arch/ia64/kernel/entry.S            |    4 ++--
+ 25-akpm/arch/m68k/kernel/process.c          |    2 +-
+ 25-akpm/arch/m68knommu/kernel/process.c     |    2 +-
+ 25-akpm/arch/mips/kernel/syscall.c          |    2 +-
+ 25-akpm/arch/parisc/kernel/process.c        |    2 +-
+ 25-akpm/arch/ppc/kernel/process.c           |    3 +--
+ 25-akpm/arch/ppc64/kernel/process.c         |    2 +-
+ 25-akpm/arch/s390/kernel/compat_linux.c     |    2 +-
+ 25-akpm/arch/s390/kernel/process.c          |    2 +-
+ 25-akpm/arch/sh/kernel/process.c            |    2 +-
+ 25-akpm/arch/sh64/kernel/process.c          |    2 +-
+ 25-akpm/arch/sparc/kernel/process.c         |    2 --
+ 25-akpm/arch/sparc64/kernel/process.c       |    2 --
+ 25-akpm/arch/x86_64/ia32/sys_ia32.c         |    3 +--
+ 25-akpm/arch/x86_64/kernel/process.c        |    3 +--
+ 25-akpm/include/linux/sched.h               |    1 -
+ 25-akpm/kernel/fork.c                       |   18 ++++++++++--------
+ 25 files changed, 31 insertions(+), 43 deletions(-)
+
+diff -puN arch/alpha/kernel/process.c~consolidate-clone_idletask-masking arch/alpha/kernel/process.c
+--- 25/arch/alpha/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:04.971859256 -0700
++++ 25-akpm/arch/alpha/kernel/process.c	2004-08-07 22:07:05.090841168 -0700
+@@ -246,8 +246,7 @@ alpha_clone(unsigned long clone_flags, u
+ 	if (!usp)
+ 		usp = rdusp();
+ 
+-	return do_fork(clone_flags & ~CLONE_IDLETASK, usp, regs, 0,
+-		       parent_tid, child_tid);
++	return do_fork(clone_flags, usp, regs, 0, parent_tid, child_tid);
+ }
+ 
+ int
+diff -puN arch/arm26/kernel/sys_arm.c~consolidate-clone_idletask-masking arch/arm26/kernel/sys_arm.c
+--- 25/arch/arm26/kernel/sys_arm.c~consolidate-clone_idletask-masking	2004-08-07 22:07:04.973858952 -0700
++++ 25-akpm/arch/arm26/kernel/sys_arm.c	2004-08-07 22:07:05.090841168 -0700
+@@ -256,7 +256,7 @@ asmlinkage int sys_clone(unsigned long c
+ 	if (!newsp)
+ 		newsp = regs->ARM_sp;
+ 
+-	return do_fork(clone_flags & ~CLONE_IDLETASK, newsp, regs, 0, NULL, NULL);
++	return do_fork(clone_flags, newsp, regs, 0, NULL, NULL);
+ }
+ 
+ asmlinkage int sys_vfork(struct pt_regs *regs)
+diff -puN arch/arm/kernel/sys_arm.c~consolidate-clone_idletask-masking arch/arm/kernel/sys_arm.c
+--- 25/arch/arm/kernel/sys_arm.c~consolidate-clone_idletask-masking	2004-08-07 22:07:04.975858648 -0700
++++ 25-akpm/arch/arm/kernel/sys_arm.c	2004-08-07 22:07:05.068844512 -0700
+@@ -257,7 +257,7 @@ asmlinkage int sys_clone(unsigned long c
+ 	if (!newsp)
+ 		newsp = regs->ARM_sp;
+ 
+-	return do_fork(clone_flags & ~CLONE_IDLETASK, newsp, regs, 0, NULL, NULL);
++	return do_fork(clone_flags, newsp, regs, 0, NULL, NULL);
+ }
+ 
+ asmlinkage int sys_vfork(struct pt_regs *regs)
+diff -puN arch/cris/arch-v10/kernel/process.c~consolidate-clone_idletask-masking arch/cris/arch-v10/kernel/process.c
+--- 25/arch/cris/arch-v10/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:04.977858344 -0700
++++ 25-akpm/arch/cris/arch-v10/kernel/process.c	2004-08-07 22:07:05.089841320 -0700
+@@ -180,7 +180,7 @@ asmlinkage int sys_clone(unsigned long n
+ {
+ 	if (!newusp)
+ 		newusp = rdusp();
+-	return do_fork(flags & ~CLONE_IDLETASK, newusp, regs, 0, parent_tid, child_tid);
++	return do_fork(flags, newusp, regs, 0, parent_tid, child_tid);
+ }
+ 
+ /* vfork is a system call in i386 because of register-pressure - maybe
+diff -puN arch/h8300/kernel/process.c~consolidate-clone_idletask-masking arch/h8300/kernel/process.c
+--- 25/arch/h8300/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:04.978858192 -0700
++++ 25-akpm/arch/h8300/kernel/process.c	2004-08-07 22:07:05.087841624 -0700
+@@ -189,7 +189,7 @@ asmlinkage int h8300_clone(struct pt_reg
+ 	newsp = regs->er2;
+ 	if (!newsp)
+ 		newsp  = rdusp();
+-	return do_fork(clone_flags & ~CLONE_IDLETASK, newsp, regs, 0, NULL, NULL);
++	return do_fork(clone_flags, newsp, regs, 0, NULL, NULL);
+ 
+ }
+ 
+diff -puN arch/i386/kernel/process.c~consolidate-clone_idletask-masking arch/i386/kernel/process.c
+--- 25/arch/i386/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:04.980857888 -0700
++++ 25-akpm/arch/i386/kernel/process.c	2004-08-07 22:07:05.088841472 -0700
+@@ -636,7 +636,7 @@ asmlinkage int sys_clone(struct pt_regs 
+ 	child_tidptr = (int __user *)regs.edi;
+ 	if (!newsp)
+ 		newsp = regs.esp;
+-	return do_fork(clone_flags & ~CLONE_IDLETASK, newsp, &regs, 0, parent_tidptr, child_tidptr);
++	return do_fork(clone_flags, newsp, &regs, 0, parent_tidptr, child_tidptr);
+ }
+ 
+ /*
+diff -puN arch/ia64/ia32/ia32_entry.S~consolidate-clone_idletask-masking arch/ia64/ia32/ia32_entry.S
+--- 25/arch/ia64/ia32/ia32_entry.S~consolidate-clone_idletask-masking	2004-08-07 22:07:04.981857736 -0700
++++ 25-akpm/arch/ia64/ia32/ia32_entry.S	2004-08-07 22:07:05.088841472 -0700
+@@ -41,7 +41,7 @@ ENTRY(ia32_clone)
+ 	zxt4 out1=in1				// newsp
+ 	mov out3=16				// stacksize (compensates for 16-byte scratch area)
+ 	adds out2=IA64_SWITCH_STACK_SIZE+16,sp	// out2 = &regs
+-	dep out0=0,in0,CLONE_IDLETASK_BIT,1	// out0 = clone_flags & ~CLONE_IDLETASK
++	mov out0=in0				// out0 = clone_flags
+ 	zxt4 out4=in2				// out4 = parent_tidptr
+ 	zxt4 out5=in4				// out5 = child_tidptr
+ 	br.call.sptk.many rp=do_fork
+diff -puN arch/ia64/kernel/asm-offsets.c~consolidate-clone_idletask-masking arch/ia64/kernel/asm-offsets.c
+--- 25/arch/ia64/kernel/asm-offsets.c~consolidate-clone_idletask-masking	2004-08-07 22:07:04.982857584 -0700
++++ 25-akpm/arch/ia64/kernel/asm-offsets.c	2004-08-07 22:07:05.085841928 -0700
+@@ -195,11 +195,6 @@ void foo(void)
+ 	DEFINE(IA64_TIMESPEC_TV_NSEC_OFFSET, offsetof (struct timespec, tv_nsec));
+ 
+ 
+-	DEFINE(CLONE_IDLETASK_BIT, 12);
+-#if CLONE_IDLETASK != (1 << 12)
+-# error "CLONE_IDLETASK_BIT incorrect, please fix"
+-#endif
+-
+ 	DEFINE(CLONE_SETTLS_BIT, 19);
+ #if CLONE_SETTLS != (1<<19)
+ # error "CLONE_SETTLS_BIT incorrect, please fix"
+diff -puN arch/ia64/kernel/entry.S~consolidate-clone_idletask-masking arch/ia64/kernel/entry.S
+--- 25/arch/ia64/kernel/entry.S~consolidate-clone_idletask-masking	2004-08-07 22:07:04.984857280 -0700
++++ 25-akpm/arch/ia64/kernel/entry.S	2004-08-07 22:07:05.081842536 -0700
+@@ -128,7 +128,7 @@ GLOBAL_ENTRY(sys_clone2)
+ (p6)	st8 [r2]=in5				// store TLS in r16 for copy_thread()
+ 	mov out5=in4	// child_tidptr:  valid only w/CLONE_CHILD_SETTID or CLONE_CHILD_CLEARTID
+ 	adds out2=IA64_SWITCH_STACK_SIZE+16,sp	// out2 = &regs
+-	dep out0=0,in0,CLONE_IDLETASK_BIT,1	// out0 = clone_flags & ~CLONE_IDLETASK
++	mov out0=in0				// out0 = clone_flags
+ 	br.call.sptk.many rp=do_fork
+ .ret1:	.restore sp
+ 	adds sp=IA64_SWITCH_STACK_SIZE,sp	// pop the switch stack
+@@ -157,7 +157,7 @@ GLOBAL_ENTRY(sys_clone)
+ (p6)	st8 [r2]=in4				// store TLS in r13 (tp)
+ 	mov out5=in3	// child_tidptr:  valid only w/CLONE_CHILD_SETTID or CLONE_CHILD_CLEARTID
+ 	adds out2=IA64_SWITCH_STACK_SIZE+16,sp	// out2 = &regs
+-	dep out0=0,in0,CLONE_IDLETASK_BIT,1	// out0 = clone_flags & ~CLONE_IDLETASK
++	mov out0=in0				// out0 = clone_flags
+ 	br.call.sptk.many rp=do_fork
+ .ret2:	.restore sp
+ 	adds sp=IA64_SWITCH_STACK_SIZE,sp	// pop the switch stack
+diff -puN arch/m68k/kernel/process.c~consolidate-clone_idletask-masking arch/m68k/kernel/process.c
+--- 25/arch/m68k/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:04.985857128 -0700
++++ 25-akpm/arch/m68k/kernel/process.c	2004-08-07 22:07:05.085841928 -0700
+@@ -232,7 +232,7 @@ asmlinkage int m68k_clone(struct pt_regs
+ 	child_tidptr = (int *)regs->d4;
+ 	if (!newsp)
+ 		newsp = rdusp();
+-	return do_fork(clone_flags & ~CLONE_IDLETASK, newsp, regs, 0,
++	return do_fork(clone_flags, newsp, regs, 0,
+ 		       parent_tidptr, child_tidptr);
+ }
+ 
+diff -puN arch/m68knommu/kernel/process.c~consolidate-clone_idletask-masking arch/m68knommu/kernel/process.c
+--- 25/arch/m68knommu/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:04.987856824 -0700
++++ 25-akpm/arch/m68knommu/kernel/process.c	2004-08-07 22:07:05.091841016 -0700
+@@ -188,7 +188,7 @@ asmlinkage int m68k_clone(struct pt_regs
+ 	newsp = regs->d2;
+ 	if (!newsp)
+ 		newsp = rdusp();
+-        return do_fork(clone_flags & ~CLONE_IDLETASK, newsp, regs, 0, NULL, NULL);
++        return do_fork(clone_flags, newsp, regs, 0, NULL, NULL);
+ }
+ 
+ int copy_thread(int nr, unsigned long clone_flags,
+diff -puN arch/mips/kernel/syscall.c~consolidate-clone_idletask-masking arch/mips/kernel/syscall.c
+--- 25/arch/mips/kernel/syscall.c~consolidate-clone_idletask-masking	2004-08-07 22:07:04.988856672 -0700
++++ 25-akpm/arch/mips/kernel/syscall.c	2004-08-07 22:07:05.089841320 -0700
+@@ -180,7 +180,7 @@ static_unused int _sys_clone(nabi_no_reg
+ 		newsp = regs.regs[29];
+ 	parent_tidptr = (int *) regs.regs[6];
+ 	child_tidptr = (int *) regs.regs[7];
+-	return do_fork(clone_flags & ~CLONE_IDLETASK, newsp, &regs, 0,
++	return do_fork(clone_flags, newsp, &regs, 0,
+ 	               parent_tidptr, child_tidptr);
+ }
+ 
+diff -puN arch/parisc/kernel/process.c~consolidate-clone_idletask-masking arch/parisc/kernel/process.c
+--- 25/arch/parisc/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:04.989856520 -0700
++++ 25-akpm/arch/parisc/kernel/process.c	2004-08-07 22:07:05.087841624 -0700
+@@ -262,7 +262,7 @@ sys_clone(unsigned long clone_flags, uns
+ 	if(usp == 0)
+ 		usp = regs->gr[30];
+ 
+-	return do_fork(clone_flags & ~CLONE_IDLETASK, usp, regs, 0, user_tid, NULL);
++	return do_fork(clone_flags, usp, regs, 0, user_tid, NULL);
+ }
+ 
+ int
+diff -puN arch/ppc64/kernel/process.c~consolidate-clone_idletask-masking arch/ppc64/kernel/process.c
+--- 25/arch/ppc64/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:04.992856064 -0700
++++ 25-akpm/arch/ppc64/kernel/process.c	2004-08-07 22:07:05.078842992 -0700
+@@ -458,7 +458,7 @@ int sys_clone(unsigned long clone_flags,
+ 		}
+ 	}
+ 
+-	return do_fork(clone_flags & ~CLONE_IDLETASK, p2, regs, 0,
++	return do_fork(clone_flags, p2, regs, 0,
+ 		    (int __user *)parent_tidptr, (int __user *)child_tidptr);
+ }
+ 
+diff -puN arch/ppc/kernel/process.c~consolidate-clone_idletask-masking arch/ppc/kernel/process.c
+--- 25/arch/ppc/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:05.002854544 -0700
++++ 25-akpm/arch/ppc/kernel/process.c	2004-08-07 22:07:05.080842688 -0700
+@@ -561,8 +561,7 @@ int sys_clone(unsigned long clone_flags,
+ 	CHECK_FULL_REGS(regs);
+ 	if (usp == 0)
+ 		usp = regs->gpr[1];	/* stack pointer for child */
+- 	return do_fork(clone_flags & ~CLONE_IDLETASK, usp, regs, 0,
+-			parent_tidp, child_tidp);
++ 	return do_fork(clone_flags, usp, regs, 0, parent_tidp, child_tidp);
+ }
+ 
+ int sys_fork(int p1, int p2, int p3, int p4, int p5, int p6,
+diff -puN arch/s390/kernel/compat_linux.c~consolidate-clone_idletask-masking arch/s390/kernel/compat_linux.c
+--- 25/arch/s390/kernel/compat_linux.c~consolidate-clone_idletask-masking	2004-08-07 22:07:05.013852872 -0700
++++ 25-akpm/arch/s390/kernel/compat_linux.c	2004-08-07 22:07:05.079842840 -0700
+@@ -1219,7 +1219,7 @@ asmlinkage long sys32_clone(struct pt_re
+ 	child_tidptr = (int *) (regs.gprs[5] & 0x7fffffffUL);
+         if (!newsp)
+                 newsp = regs.gprs[15];
+-        return do_fork(clone_flags & ~CLONE_IDLETASK, newsp, &regs, 0,
++        return do_fork(clone_flags, newsp, &regs, 0,
+ 		       parent_tidptr, child_tidptr);
+ }
+ 
+diff -puN arch/s390/kernel/process.c~consolidate-clone_idletask-masking arch/s390/kernel/process.c
+--- 25/arch/s390/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:05.014852720 -0700
++++ 25-akpm/arch/s390/kernel/process.c	2004-08-07 22:07:05.068844512 -0700
+@@ -336,7 +336,7 @@ asmlinkage long sys_clone(struct pt_regs
+ 	child_tidptr = (int __user *) regs.gprs[5];
+         if (!newsp)
+                 newsp = regs.gprs[15];
+-        return do_fork(clone_flags & ~CLONE_IDLETASK, newsp, &regs, 0,
++        return do_fork(clone_flags, newsp, &regs, 0,
+ 		       parent_tidptr, child_tidptr);
+ }
+ 
+diff -puN arch/sh64/kernel/process.c~consolidate-clone_idletask-masking arch/sh64/kernel/process.c
+--- 25/arch/sh64/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:05.015852568 -0700
++++ 25-akpm/arch/sh64/kernel/process.c	2004-08-07 22:07:05.083842232 -0700
+@@ -820,7 +820,7 @@ asmlinkage int sys_clone(unsigned long c
+ {
+ 	if (!newsp)
+ 		newsp = pregs->regs[15];
+-	return do_fork(clone_flags & ~CLONE_IDLETASK, newsp, pregs, 0, 0, 0);
++	return do_fork(clone_flags, newsp, pregs, 0, 0, 0);
+ }
+ 
+ /*
+diff -puN arch/sh/kernel/process.c~consolidate-clone_idletask-masking arch/sh/kernel/process.c
+--- 25/arch/sh/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:05.030850288 -0700
++++ 25-akpm/arch/sh/kernel/process.c	2004-08-07 22:07:05.082842384 -0700
+@@ -440,7 +440,7 @@ asmlinkage int sys_clone(unsigned long c
+ {
+ 	if (!newsp)
+ 		newsp = regs.regs[15];
+-	return do_fork(clone_flags & ~CLONE_IDLETASK, newsp, &regs, 0,
++	return do_fork(clone_flags, newsp, &regs, 0,
+ 			(int __user *)parent_tidptr, (int __user *)child_tidptr);
+ }
+ 
+diff -puN arch/sparc64/kernel/process.c~consolidate-clone_idletask-masking arch/sparc64/kernel/process.c
+--- 25/arch/sparc64/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:05.043848312 -0700
++++ 25-akpm/arch/sparc64/kernel/process.c	2004-08-07 22:07:05.083842232 -0700
+@@ -588,8 +588,6 @@ asmlinkage long sparc_do_fork(unsigned l
+ {
+ 	int __user *parent_tid_ptr, *child_tid_ptr;
+ 
+-	clone_flags &= ~CLONE_IDLETASK;
+-
+ #ifdef CONFIG_COMPAT
+ 	if (test_thread_flag(TIF_32BIT)) {
+ 		parent_tid_ptr = compat_ptr(regs->u_regs[UREG_I2]);
+diff -puN arch/sparc/kernel/process.c~consolidate-clone_idletask-masking arch/sparc/kernel/process.c
+--- 25/arch/sparc/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:05.044848160 -0700
++++ 25-akpm/arch/sparc/kernel/process.c	2004-08-07 22:07:05.075843448 -0700
+@@ -435,8 +435,6 @@ asmlinkage int sparc_do_fork(unsigned lo
+ {
+ 	unsigned long parent_tid_ptr, child_tid_ptr;
+ 
+-	clone_flags &= ~CLONE_IDLETASK;
+-
+ 	parent_tid_ptr = regs->u_regs[UREG_I2];
+ 	child_tid_ptr = regs->u_regs[UREG_I4];
+ 
+diff -puN arch/x86_64/ia32/sys_ia32.c~consolidate-clone_idletask-masking arch/x86_64/ia32/sys_ia32.c
+--- 25/arch/x86_64/ia32/sys_ia32.c~consolidate-clone_idletask-masking	2004-08-07 22:07:05.046847856 -0700
++++ 25-akpm/arch/x86_64/ia32/sys_ia32.c	2004-08-07 22:07:05.084842080 -0700
+@@ -1148,8 +1148,7 @@ asmlinkage long sys32_clone(unsigned int
+ 	void __user *child_tid = (void __user *)regs->rdi;
+ 	if (!newsp)
+ 		newsp = regs->rsp;
+-        return do_fork(clone_flags & ~CLONE_IDLETASK, newsp, regs, 0,
+-		    parent_tid, child_tid);
++        return do_fork(clone_flags, newsp, regs, 0, parent_tid, child_tid);
+ }
+ 
+ /*
+diff -puN arch/x86_64/kernel/process.c~consolidate-clone_idletask-masking arch/x86_64/kernel/process.c
+--- 25/arch/x86_64/kernel/process.c~consolidate-clone_idletask-masking	2004-08-07 22:07:05.061845576 -0700
++++ 25-akpm/arch/x86_64/kernel/process.c	2004-08-07 22:07:05.086841776 -0700
+@@ -563,8 +563,7 @@ asmlinkage long sys_clone(unsigned long 
+ {
+ 	if (!newsp)
+ 		newsp = regs->rsp;
+-	return do_fork(clone_flags & ~CLONE_IDLETASK, newsp, regs, 0,
+-		    parent_tid, child_tid);
++	return do_fork(clone_flags, newsp, regs, 0, parent_tid, child_tid);
+ }
+ 
+ /*
+diff -puN include/linux/sched.h~consolidate-clone_idletask-masking include/linux/sched.h
+--- 25/include/linux/sched.h~consolidate-clone_idletask-masking	2004-08-07 22:07:05.063845272 -0700
++++ 25-akpm/include/linux/sched.h	2004-08-07 22:07:05.078842992 -0700
+@@ -40,7 +40,6 @@ struct exec_domain;
+ #define CLONE_FS	0x00000200	/* set if fs info shared between processes */
+ #define CLONE_FILES	0x00000400	/* set if open files shared between processes */
+ #define CLONE_SIGHAND	0x00000800	/* set if signal handlers and blocked signals shared */
+-#define CLONE_IDLETASK	0x00001000	/* set if new pid should be 0 (kernel only)*/
+ #define CLONE_PTRACE	0x00002000	/* set if we want to let tracing continue on the child too */
+ #define CLONE_VFORK	0x00004000	/* set if the parent wants the child to wake it up on mm_release */
+ #define CLONE_PARENT	0x00008000	/* set if we want to have the same parent as the cloner */
+diff -puN kernel/fork.c~consolidate-clone_idletask-masking kernel/fork.c
+--- 25/kernel/fork.c~consolidate-clone_idletask-masking	2004-08-07 22:07:05.064845120 -0700
++++ 25-akpm/kernel/fork.c	2004-08-07 22:07:08.700292448 -0700
+@@ -47,6 +47,9 @@
+ #include <asm/cacheflush.h>
+ #include <asm/tlbflush.h>
+ 
++/* set if new pid should be 0 (kernel only)*/
++#define CLONE_IDLETASK	0x00001000
++
+ /* The idle threads do not count..
+  * Protected by write_lock_irq(&tasklist_lock)
+  */
+@@ -1213,7 +1216,7 @@ task_t * __init fork_idle(int cpu)
+ 
+ static inline int fork_traceflag (unsigned clone_flags)
+ {
+-	if (clone_flags & (CLONE_UNTRACED | CLONE_IDLETASK))
++	if (clone_flags & CLONE_UNTRACED)
+ 		return 0;
+ 	else if (clone_flags & CLONE_VFORK) {
+ 		if (current->ptrace & PT_TRACE_VFORK)
+@@ -1244,6 +1247,7 @@ long do_fork(unsigned long clone_flags,
+ 	int trace = 0;
+ 	long pid;
+ 
++	clone_flags &= ~CLONE_IDLETASK;
+ 	if (unlikely(current->ptrace)) {
+ 		trace = fork_traceflag (clone_flags);
+ 		if (trace)
+@@ -1273,13 +1277,11 @@ long do_fork(unsigned long clone_flags,
+ 			set_tsk_thread_flag(p, TIF_SIGPENDING);
+ 		}
+ 
+-		if (likely(!(clone_flags & CLONE_IDLETASK))) {
+-			if (!(clone_flags & CLONE_STOPPED))
+-				wake_up_new_task(p, clone_flags);
+-			else
+-				p->state = TASK_STOPPED;
+-			++total_forks;
+-		}
++		if (!(clone_flags & CLONE_STOPPED))
++			wake_up_new_task(p, clone_flags);
++		else
++			p->state = TASK_STOPPED;
++		++total_forks;
+ 
+ 		if (unlikely (trace)) {
+ 			current->ptrace_message = pid;
+_

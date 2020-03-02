@@ -1,0 +1,71 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+PAE is artificially limited in terms of swapspace to the same bitsplit as
+ordinary i386, a 5/24 split (32 swapfiles, 64GB max swapfile size), when a
+5/27 split (32 swapfiles, 512GB max swapfile size) is feasible.  This patch
+transparently removes that limitation by using more of the space available
+in PAE's wider ptes for swap ptes.
+
+While this is obviously not likely to be used directly, it is important
+from the standpoint of strict non-overcommit, where the swapspace must be
+potentially usable in order to be reserved for non-overcommit.  There are
+workloads with Committed_AS of over 256GB on ia32 PAE wanting strict
+non-overcommit to prevent being OOM killed.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/asm-i386/pgtable-2level.h |    7 +++++++
+ 25-akpm/include/asm-i386/pgtable-3level.h |    7 +++++++
+ 25-akpm/include/asm-i386/pgtable.h        |    7 -------
+ 3 files changed, 14 insertions(+), 7 deletions(-)
+
+diff -puN include/asm-i386/pgtable-2level.h~x86-pae-swapspace-expansion include/asm-i386/pgtable-2level.h
+--- 25/include/asm-i386/pgtable-2level.h~x86-pae-swapspace-expansion	2004-08-09 02:04:35.824603848 -0700
++++ 25-akpm/include/asm-i386/pgtable-2level.h	2004-08-09 02:04:35.832602632 -0700
+@@ -75,4 +75,11 @@ static inline int pte_exec_kernel(pte_t 
+ #define pgoff_to_pte(off) \
+ 	((pte_t) { (((off) & 0x1f) << 1) + (((off) >> 5) << 8) + _PAGE_FILE })
+ 
++/* Encode and de-code a swap entry */
++#define __swp_type(x)			(((x).val >> 1) & 0x1f)
++#define __swp_offset(x)			((x).val >> 8)
++#define __swp_entry(type, offset)	((swp_entry_t) { ((type) << 1) | ((offset) << 8) })
++#define __pte_to_swp_entry(pte)		((swp_entry_t) { (pte).pte_low })
++#define __swp_entry_to_pte(x)		((pte_t) { (x).val })
++
+ #endif /* _I386_PGTABLE_2LEVEL_H */
+diff -puN include/asm-i386/pgtable-3level.h~x86-pae-swapspace-expansion include/asm-i386/pgtable-3level.h
+--- 25/include/asm-i386/pgtable-3level.h~x86-pae-swapspace-expansion	2004-08-09 02:04:35.826603544 -0700
++++ 25-akpm/include/asm-i386/pgtable-3level.h	2004-08-09 02:04:35.832602632 -0700
+@@ -134,4 +134,11 @@ static inline pmd_t pfn_pmd(unsigned lon
+ #define pgoff_to_pte(off) ((pte_t) { _PAGE_FILE, (off) })
+ #define PTE_FILE_MAX_BITS       32
+ 
++/* Encode and de-code a swap entry */
++#define __swp_type(x)			(((x).val) & 0x1f)
++#define __swp_offset(x)			((x).val >> 5)
++#define __swp_entry(type, offset)	((swp_entry_t){(type) | (offset) << 5})
++#define __pte_to_swp_entry(pte)		((swp_entry_t){ (pte).pte_high })
++#define __swp_entry_to_pte(x)		((pte_t){ 0, (x).val })
++
+ #endif /* _I386_PGTABLE_3LEVEL_H */
+diff -puN include/asm-i386/pgtable.h~x86-pae-swapspace-expansion include/asm-i386/pgtable.h
+--- 25/include/asm-i386/pgtable.h~x86-pae-swapspace-expansion	2004-08-09 02:04:35.828603240 -0700
++++ 25-akpm/include/asm-i386/pgtable.h	2004-08-09 02:04:35.831602784 -0700
+@@ -398,13 +398,6 @@ extern pte_t *lookup_address(unsigned lo
+ 		}							  \
+ 	} while (0)
+ 
+-/* Encode and de-code a swap entry */
+-#define __swp_type(x)			(((x).val >> 1) & 0x1f)
+-#define __swp_offset(x)			((x).val >> 8)
+-#define __swp_entry(type, offset)	((swp_entry_t) { ((type) << 1) | ((offset) << 8) })
+-#define __pte_to_swp_entry(pte)		((swp_entry_t) { (pte).pte_low })
+-#define __swp_entry_to_pte(x)		((pte_t) { (x).val })
+-
+ #endif /* !__ASSEMBLY__ */
+ 
+ #ifndef CONFIG_DISCONTIGMEM
+_

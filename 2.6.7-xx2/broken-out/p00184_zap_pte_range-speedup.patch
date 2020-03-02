@@ -1,0 +1,27 @@
+
+From: Hugh Dickins <hugh@veritas.com>
+
+zap_pte_range is wasting time marking anon pages accessed: its original
+!PageSwapCache test should have been reinstated when page_mapping was
+changed to return swapper_space; or more simply, just check !PageAnon.
+
+Signed-off-by: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/memory.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN mm/memory.c~zap_pte_range-speedup mm/memory.c
+--- 25/mm/memory.c~zap_pte_range-speedup	2004-06-22 11:26:58.580973488 -0700
++++ 25-akpm/mm/memory.c	2004-06-22 11:26:58.586972576 -0700
+@@ -407,7 +407,7 @@ static void zap_pte_range(struct mmu_gat
+ 				set_pte(ptep, pgoff_to_pte(page->index));
+ 			if (pte_dirty(pte))
+ 				set_page_dirty(page);
+-			if (pte_young(pte) && page_mapping(page))
++			if (pte_young(pte) && !PageAnon(page))
+ 				mark_page_accessed(page);
+ 			tlb->freed++;
+ 			page_remove_rmap(page);
+_

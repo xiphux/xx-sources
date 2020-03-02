@@ -1,0 +1,64 @@
+
+From: Arjan van de Ven <arjanv@redhat.com>
+
+The patch below uses the new-in-gcc-3.4 option to generate a warning on
+unchecked results of marked functions, and applies this to the
+inode_setattr function (which based on recent bk commits HAS to be checked
+for it's return value for correct operation).  A warning looks like this:
+
+fs/ext2/inode.c:1279: warning: ignoring return value of 'inode_setattr', declared with attribute warn_unused_result
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/compiler-gcc+.h |    1 +
+ 25-akpm/include/linux/compiler-gcc3.h |    3 +++
+ 25-akpm/include/linux/compiler.h      |    4 ++++
+ 25-akpm/include/linux/fs.h            |    2 +-
+ 4 files changed, 9 insertions(+), 1 deletion(-)
+
+diff -puN include/linux/compiler-gcc3.h~produce-a-warning-on-unchecked-inode_setattr-use include/linux/compiler-gcc3.h
+--- 25/include/linux/compiler-gcc3.h~produce-a-warning-on-unchecked-inode_setattr-use	2004-06-28 13:15:31.456842472 -0700
++++ 25-akpm/include/linux/compiler-gcc3.h	2004-06-28 13:15:31.464841256 -0700
+@@ -25,3 +25,6 @@
+ #if __GNUC_MINOR__ >= 1
+ #define  noinline __attribute__((noinline))
+ #endif
++#if __GNUC_MINOR__ >= 4
++#define __must_check __attribute__((warn_unused_result))
++#endif
+diff -puN include/linux/compiler-gcc+.h~produce-a-warning-on-unchecked-inode_setattr-use include/linux/compiler-gcc+.h
+--- 25/include/linux/compiler-gcc+.h~produce-a-warning-on-unchecked-inode_setattr-use	2004-06-28 13:15:31.457842320 -0700
++++ 25-akpm/include/linux/compiler-gcc+.h	2004-06-28 13:15:31.464841256 -0700
+@@ -13,3 +13,4 @@
+ #define __attribute_used__	__attribute__((__used__))
+ #define __attribute_pure__	__attribute__((pure))
+ #define __attribute_const__	__attribute__((__const__))
++#define __must_check 		__attribute__((warn_unused_result))
+diff -puN include/linux/compiler.h~produce-a-warning-on-unchecked-inode_setattr-use include/linux/compiler.h
+--- 25/include/linux/compiler.h~produce-a-warning-on-unchecked-inode_setattr-use	2004-06-28 13:15:31.458842168 -0700
++++ 25-akpm/include/linux/compiler.h	2004-06-28 13:15:31.464841256 -0700
+@@ -69,6 +69,10 @@ extern void __chk_user_ptr(void __user *
+ # define __deprecated		/* unimplemented */
+ #endif
+ 
++#ifndef __must_check
++#define __must_check
++#endif
++
+ /*
+  * Allow us to avoid 'defined but not used' warnings on functions and data,
+  * as well as force them to be emitted to the assembly file.
+diff -puN include/linux/fs.h~produce-a-warning-on-unchecked-inode_setattr-use include/linux/fs.h
+--- 25/include/linux/fs.h~produce-a-warning-on-unchecked-inode_setattr-use	2004-06-28 13:15:31.460841864 -0700
++++ 25-akpm/include/linux/fs.h	2004-06-28 13:15:31.467840800 -0700
+@@ -1524,7 +1524,7 @@ extern int simple_pin_fs(char *name, str
+ extern void simple_release_fs(struct vfsmount **mount, int *count);
+ 
+ extern int inode_change_ok(struct inode *, struct iattr *);
+-extern int inode_setattr(struct inode *, struct iattr *);
++extern int __must_check inode_setattr(struct inode *, struct iattr *);
+ 
+ extern void inode_update_time(struct inode *inode, int ctime_too);
+ 
+_

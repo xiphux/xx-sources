@@ -1,0 +1,36 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Fix an oops in the domain debug code when isolated CPUs are specified. 
+Introduced by 5/8 "sched add load balance flag"
+
+Signed-off-by: Nick Piggin <nickpiggin@yahoo.com.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/sched.c |   12 +++++++++++-
+ 1 files changed, 11 insertions(+), 1 deletion(-)
+
+diff -puN kernel/sched.c~sched-fix-domain-debug-for-isolcpus kernel/sched.c
+--- 25/kernel/sched.c~sched-fix-domain-debug-for-isolcpus	2004-10-05 02:09:49.401320192 -0700
++++ 25-akpm/kernel/sched.c	2004-10-05 02:09:49.407319280 -0700
+@@ -4354,7 +4354,17 @@ static void sched_domain_debug(void)
+ 			printk(KERN_DEBUG);
+ 			for (j = 0; j < level + 1; j++)
+ 				printk(" ");
+-			printk("domain %d: span %s\n", level, str);
++			printk("domain %d: ", level);
++
++			if (!(sd->flags & SD_LOAD_BALANCE)) {
++				printk("does not balance");
++				if (sd->parent)
++					printk(" ERROR !SD_LOAD_BALANCE domain has parent");
++				printk("\n");
++				break;
++			}
++
++			printk("span %s\n", str);
+ 
+ 			if (!cpu_isset(i, sd->span))
+ 				printk(KERN_DEBUG "ERROR domain->span does not contain CPU%d\n", i);
+_

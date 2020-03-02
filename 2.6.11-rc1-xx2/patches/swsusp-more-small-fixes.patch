@@ -1,0 +1,126 @@
+
+From: Pavel Machek <pavel@ucw.cz>
+
+This adds few missing statics to swsusp.c, prints errors even when
+non-debugging and fixes last "pmdisk: " message. Fixed few comments. 
+
+Signed-off-by: Pavel Machek <pavel@suse.cz>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/power/disk.c   |    8 ++++----
+ 25-akpm/kernel/power/main.c   |    2 +-
+ 25-akpm/kernel/power/swsusp.c |   14 +++++++-------
+ 3 files changed, 12 insertions(+), 12 deletions(-)
+
+diff -puN kernel/power/disk.c~swsusp-more-small-fixes kernel/power/disk.c
+--- 25/kernel/power/disk.c~swsusp-more-small-fixes	Wed Jan 12 16:06:51 2005
++++ 25-akpm/kernel/power/disk.c	Wed Jan 12 16:06:51 2005
+@@ -163,7 +163,7 @@ static int prepare(void)
+  *
+  *	If we're going through the firmware, then get it over with quickly.
+  *
+- *	If not, then call swsusp to do it's thing, then figure out how
++ *	If not, then call swsusp to do its thing, then figure out how
+  *	to power down the system.
+  */
+ 
+@@ -201,7 +201,7 @@ int pm_suspend_disk(void)
+  *	software_resume - Resume from a saved image.
+  *
+  *	Called as a late_initcall (so all devices are discovered and
+- *	initialized), we call pmdisk to see if we have a saved image or not.
++ *	initialized), we call swsusp to see if we have a saved image or not.
+  *	If so, we quiesce devices, the restore the saved image. We will
+  *	return above (in pm_suspend_disk() ) if everything goes well.
+  *	Otherwise, we fail gracefully and return to the normally
+@@ -221,7 +221,7 @@ static int software_resume(void)
+ 		return 0;
+ 	}
+ 
+-	pr_debug("PM: Reading pmdisk image.\n");
++	pr_debug("PM: Reading swsusp image.\n");
+ 
+ 	if ((error = swsusp_read()))
+ 		goto Done;
+@@ -284,7 +284,7 @@ static char * pm_disk_modes[] = {
+ 
+ static ssize_t disk_show(struct subsystem * subsys, char * buf)
+ {
+-	return sprintf(buf,"%s\n",pm_disk_modes[pm_disk_mode]);
++	return sprintf(buf, "%s\n", pm_disk_modes[pm_disk_mode]);
+ }
+ 
+ 
+diff -puN kernel/power/main.c~swsusp-more-small-fixes kernel/power/main.c
+--- 25/kernel/power/main.c~swsusp-more-small-fixes	Wed Jan 12 16:06:51 2005
++++ 25-akpm/kernel/power/main.c	Wed Jan 12 16:06:51 2005
+@@ -99,7 +99,7 @@ static int suspend_enter(u32 state)
+  *	@state:		State we're coming out of.
+  *
+  *	Call platform code to clean up, restart processes, and free the 
+- *	console that we've allocated.
++ *	console that we've allocated. This is not called for suspend-to-disk.
+  */
+ 
+ static void suspend_finish(suspend_state_t state)
+diff -puN kernel/power/swsusp.c~swsusp-more-small-fixes kernel/power/swsusp.c
+--- 25/kernel/power/swsusp.c~swsusp-more-small-fixes	Wed Jan 12 16:06:51 2005
++++ 25-akpm/kernel/power/swsusp.c	Wed Jan 12 16:06:51 2005
+@@ -420,7 +420,7 @@ struct highmem_page {
+ 	struct highmem_page *next;
+ };
+ 
+-struct highmem_page *highmem_copy = NULL;
++static struct highmem_page *highmem_copy;
+ 
+ static int save_highmem_zone(struct zone *zone)
+ {
+@@ -753,11 +753,11 @@ static int swsusp_alloc(void)
+ 		return -ENOSPC;
+ 
+ 	if ((error = alloc_pagedir())) {
+-		pr_debug("suspend: Allocating pagedir failed.\n");
++		printk(KERN_ERR "suspend: Allocating pagedir failed.\n");
+ 		return error;
+ 	}
+ 	if ((error = alloc_image_pages())) {
+-		pr_debug("suspend: Allocating image pages failed.\n");
++		printk(KERN_ERR "suspend: Allocating image pages failed.\n");
+ 		swsusp_free();
+ 		return error;
+ 	}
+@@ -767,7 +767,7 @@ static int swsusp_alloc(void)
+ 	return 0;
+ }
+ 
+-int suspend_prepare_image(void)
++static int suspend_prepare_image(void)
+ {
+ 	int error;
+ 
+@@ -1050,12 +1050,12 @@ static int submit(int rw, pgoff_t page_o
+ 	return error;
+ }
+ 
+-int bio_read_page(pgoff_t page_off, void * page)
++static int bio_read_page(pgoff_t page_off, void * page)
+ {
+ 	return submit(READ, page_off, page);
+ }
+ 
+-int bio_write_page(pgoff_t page_off, void * page)
++static int bio_write_page(pgoff_t page_off, void * page)
+ {
+ 	return submit(WRITE, page_off, page);
+ }
+@@ -1172,7 +1172,7 @@ static int __init read_pagedir(void)
+ 		return -ENOMEM;
+ 	pagedir_nosave = (struct pbe *)addr;
+ 
+-	pr_debug("pmdisk: Reading pagedir (%d Pages)\n",n);
++	pr_debug("swsusp: Reading pagedir (%d Pages)\n",n);
+ 
+ 	for (i = 0; i < n && !error; i++, addr += PAGE_SIZE) {
+ 		unsigned long offset = swp_offset(swsusp_info.pagedir[i]);
+_

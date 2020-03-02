@@ -1,0 +1,255 @@
+
+From: David Howells <dhowells@redhat.com>
+
+The attached patch makes it possible for a userspace process to read a key
+even if it does not have Read permission on that key but if it instead has
+Search permission on that key, and that key can be searched out validly
+from one of its process keyrings.  The appropriate key type must also
+support reading back a key's content for this to be possible.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/security/keys/internal.h     |   11 ++++++
+ 25-akpm/security/keys/keyctl.c       |   64 +++++++++++++++++++++++++++--------
+ 25-akpm/security/keys/keyring.c      |   28 +++++++++++++--
+ 25-akpm/security/keys/process_keys.c |   29 +++++++++++++--
+ 4 files changed, 110 insertions(+), 22 deletions(-)
+
+diff -puN security/keys/internal.h~keys-permission-fix security/keys/internal.h
+--- 25/security/keys/internal.h~keys-permission-fix	2004-08-31 23:08:59.895757824 -0700
++++ 25-akpm/security/keys/internal.h	2004-08-31 23:08:59.902756760 -0700
+@@ -66,6 +66,17 @@ extern struct key *__keyring_search_one(
+ 					const char *description,
+ 					key_perm_t perm);
+ 
++typedef int (*key_match_func_t)(const struct key *, const void *);
++
++extern struct key *keyring_search_aux(struct key *keyring,
++				      struct key_type *type,
++				      const void *description,
++				      key_match_func_t match);
++
++extern struct key *search_process_keyrings_aux(struct key_type *type,
++					       const void *description,
++					       key_match_func_t match);
++
+ extern struct key *find_keyring_by_name(const char *name, key_serial_t bound);
+ 
+ extern int install_thread_keyring(struct task_struct *tsk);
+diff -puN security/keys/keyctl.c~keys-permission-fix security/keys/keyctl.c
+--- 25/security/keys/keyctl.c~keys-permission-fix	2004-08-31 23:08:59.896757672 -0700
++++ 25-akpm/security/keys/keyctl.c	2004-08-31 23:08:59.903756608 -0700
+@@ -457,8 +457,19 @@ static long user_keyring_search(key_seri
+ 
+ /*****************************************************************************/
+ /*
++ * see if the key we're looking at is the target key
++ */
++static int user_read_key_same(const struct key *key, const void *target)
++{
++	return key == target;
++
++} /* end user_read_key_same() */
++
++/*****************************************************************************/
++/*
+  * read a user key's payload
+- * - the keyring must be readable
++ * - the keyring must be readable or the key must be searchable from the
++ *   process's keyrings
+  * - if there's a buffer, we place up to buflen bytes of data into it
+  * - unless there's an error, we return the amount of data in the key,
+  *   irrespective of how much we may have copied
+@@ -468,24 +479,51 @@ static long user_read_key(key_serial_t k
+ 			  char __user *buffer,
+ 			  size_t buflen)
+ {
+-	struct key *key;
++	struct key *key, *skey;
+ 	long ret;
+ 
+-	key = lookup_user_key(keyid, 0, 0, KEY_READ);
+-	if (IS_ERR(key)) {
+-		ret = PTR_ERR(key);
+-		goto error;
++	/* find the key first */
++	key = lookup_user_key(keyid, 0, 0, 0);
++	if (!IS_ERR(key)) {
++		/* see if we can read it directly */
++		if (key_permission(key, KEY_READ))
++			goto can_read_key;
++
++		/* can't; see if it's searchable from this process's
++		 * keyrings */
++		ret = -ENOKEY;
++		if (key_permission(key, KEY_SEARCH)) {
++			/* okay - we do have search permission on the key
++			 * itself, but do we have the key? */
++			skey = search_process_keyrings_aux(key->type, key,
++							   user_read_key_same);
++			if (!IS_ERR(skey))
++				goto can_read_key2;
++		}
++
++		goto error2;
+ 	}
+ 
+-	ret = -EOPNOTSUPP;
+-	if (key->type->read) {
+-		/* read the data with the semaphore held (since we
+-		 * might sleep) */
+-		down_read(&key->sem);
+-		ret = key->type->read(key, buffer, buflen);
+-		up_read(&key->sem);
++	ret = -ENOKEY;
++	goto error;
++
++	/* the key is probably readable - now try to read it */
++ can_read_key2:
++	key_put(skey);
++ can_read_key:
++	ret = key_validate(key);
++	if (ret == 0) {
++		ret = -EOPNOTSUPP;
++		if (key->type->read) {
++			/* read the data with the semaphore held (since we
++			 * might sleep) */
++			down_read(&key->sem);
++			ret = key->type->read(key, buffer, buflen);
++			up_read(&key->sem);
++		}
+ 	}
+ 
++ error2:
+ 	key_put(key);
+  error:
+ 	return ret;
+diff -puN security/keys/keyring.c~keys-permission-fix security/keys/keyring.c
+--- 25/security/keys/keyring.c~keys-permission-fix	2004-08-31 23:08:59.897757520 -0700
++++ 25-akpm/security/keys/keyring.c	2004-08-31 23:08:59.904756456 -0700
+@@ -308,13 +308,16 @@ struct key *keyring_alloc(const char *de
+  * search the supplied keyring tree for a key that matches the criterion
+  * - perform a breadth-then-depth search up to the prescribed limit
+  * - we only find keys on which we have search permission
++ * - we use the supplied match function to see if the description (or other
++ *   feature of interest) matches
+  * - we readlock the keyrings as we search down the tree
+  * - we return -EAGAIN if we didn't find any matching key
+  * - we return -ENOKEY if we only found negative matching keys
+  */
+-struct key *keyring_search(struct key *keyring,
+-			   struct key_type *type,
+-			   const char *description)
++struct key *keyring_search_aux(struct key *keyring,
++			       struct key_type *type,
++			       const void *description,
++			       key_match_func_t match)
+ {
+ 	struct {
+ 		struct key *keyring;
+@@ -368,7 +371,7 @@ struct key *keyring_search(struct key *k
+ 			continue;
+ 
+ 		/* keys that don't match */
+-		if (!key->type->match(key, description))
++		if (!match(key, description))
+ 			continue;
+ 
+ 		/* key must have search permissions */
+@@ -451,6 +454,23 @@ struct key *keyring_search(struct key *k
+  error:
+ 	return key;
+ 
++} /* end keyring_search_aux() */
++
++/*****************************************************************************/
++/*
++ * search the supplied keyring tree for a key that matches the criterion
++ * - perform a breadth-then-depth search up to the prescribed limit
++ * - we only find keys on which we have search permission
++ * - we readlock the keyrings as we search down the tree
++ * - we return -EAGAIN if we didn't find any matching key
++ * - we return -ENOKEY if we only found negative matching keys
++ */
++struct key *keyring_search(struct key *keyring,
++			   struct key_type *type,
++			   const char *description)
++{
++	return keyring_search_aux(keyring, type, description, type->match);
++
+ } /* end keyring_search() */
+ 
+ EXPORT_SYMBOL(keyring_search);
+diff -puN security/keys/process_keys.c~keys-permission-fix security/keys/process_keys.c
+--- 25/security/keys/process_keys.c~keys-permission-fix	2004-08-31 23:08:59.899757216 -0700
++++ 25-akpm/security/keys/process_keys.c	2004-08-31 23:08:59.905756304 -0700
+@@ -363,11 +363,14 @@ void key_fsgid_changed(struct task_struc
+ /*****************************************************************************/
+ /*
+  * search the process keyrings for the first matching key
++ * - we use the supplied match function to see if the description (or other
++ *   feature of interest) matches
+  * - we return -EAGAIN if we didn't find any matching key
+  * - we return -ENOKEY if we found only negative matching keys
+  */
+-struct key *search_process_keyrings(struct key_type *type,
+-				    const char *description)
++struct key *search_process_keyrings_aux(struct key_type *type,
++					const void *description,
++					key_match_func_t match)
+ {
+ 	struct task_struct *tsk = current;
+ 	struct key *key, *ret, *err;
+@@ -385,7 +388,8 @@ struct key *search_process_keyrings(stru
+ 
+ 	/* search the thread keyring first */
+ 	if (tsk->thread_keyring) {
+-		key = keyring_search(tsk->thread_keyring, type, description);
++		key = keyring_search_aux(tsk->thread_keyring, type,
++					 description, match);
+ 		if (!IS_ERR(key))
+ 			goto found;
+ 
+@@ -404,7 +408,8 @@ struct key *search_process_keyrings(stru
+ 
+ 	/* search the process keyring second */
+ 	if (tsk->process_keyring) {
+-		key = keyring_search(tsk->process_keyring, type, description);
++		key = keyring_search_aux(tsk->process_keyring, type,
++					 description, match);
+ 		if (!IS_ERR(key))
+ 			goto found;
+ 
+@@ -423,7 +428,8 @@ struct key *search_process_keyrings(stru
+ 
+ 	/* search the session keyring last */
+ 	if (tsk->session_keyring) {
+-		key = keyring_search(tsk->session_keyring, type, description);
++		key = keyring_search_aux(tsk->session_keyring, type,
++					 description, match);
+ 		if (!IS_ERR(key))
+ 			goto found;
+ 
+@@ -446,6 +452,19 @@ struct key *search_process_keyrings(stru
+  found:
+ 	return key;
+ 
++} /* end search_process_keyrings_aux() */
++
++/*****************************************************************************/
++/*
++ * search the process keyrings for the first matching key
++ * - we return -EAGAIN if we didn't find any matching key
++ * - we return -ENOKEY if we found only negative matching keys
++ */
++struct key *search_process_keyrings(struct key_type *type,
++				    const char *description)
++{
++	return search_process_keyrings_aux(type, description, type->match);
++
+ } /* end search_process_keyrings() */
+ 
+ /*****************************************************************************/
+_

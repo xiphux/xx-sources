@@ -1,0 +1,158 @@
+Move the conditional reschedule entries into the common code.
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+
+Index: linux-2.6.10-rc1-mm4/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc1-mm4.orig/kernel/sched.c	2004-11-10 09:20:58.918878851 +1100
++++ linux-2.6.10-rc1-mm4/kernel/sched.c	2004-11-10 09:21:00.785578957 +1100
+@@ -3166,72 +3166,6 @@ static long ingo_sys_sched_yield(void)
+ 	return 0;
+ }
+ 
+-static inline void __cond_resched(void)
+-{
+-	do {
+-		add_preempt_count(PREEMPT_ACTIVE);
+-		schedule();
+-		sub_preempt_count(PREEMPT_ACTIVE);
+-	} while (need_resched());
+-}
+-
+-int __sched cond_resched(void)
+-{
+-	if (need_resched()) {
+-		__cond_resched();
+-		return 1;
+-	}
+-	return 0;
+-}
+-
+-EXPORT_SYMBOL(cond_resched);
+-
+-/*
+- * cond_resched_lock() - if a reschedule is pending, drop the given lock,
+- * call schedule, and on return reacquire the lock.
+- *
+- * This works OK both with and without CONFIG_PREEMPT.  We do strange low-level
+- * operations here to prevent schedule() from being called twice (once via
+- * spin_unlock(), once by hand).
+- */
+-int cond_resched_lock(spinlock_t * lock)
+-{
+-#if defined(CONFIG_SMP) && defined(CONFIG_PREEMPT)
+-	if (lock->break_lock) {
+-		lock->break_lock = 0;
+-		spin_unlock(lock);
+-		cpu_relax();
+-		spin_lock(lock);
+-	}
+-#endif
+-	if (need_resched()) {
+-		_raw_spin_unlock(lock);
+-		preempt_enable_no_resched();
+-		__cond_resched();
+-		spin_lock(lock);
+-		return 1;
+-	}
+-	return 0;
+-}
+-
+-EXPORT_SYMBOL(cond_resched_lock);
+-
+-int __sched cond_resched_softirq(void)
+-{
+-	BUG_ON(!in_softirq());
+-
+-	if (need_resched()) {
+-		__local_bh_enable();
+-		__cond_resched();
+-		local_bh_disable();
+-		return 1;
+-	}
+-	return 0;
+-}
+-
+-EXPORT_SYMBOL(cond_resched_softirq);
+-
+-
+ /**
+  * yield - yield the current processor to other threads.
+  *
+Index: linux-2.6.10-rc1-mm4/kernel/scheduler.c
+===================================================================
+--- linux-2.6.10-rc1-mm4.orig/kernel/scheduler.c	2004-11-10 09:20:58.919878691 +1100
++++ linux-2.6.10-rc1-mm4/kernel/scheduler.c	2004-11-10 09:21:00.786578796 +1100
+@@ -556,6 +556,71 @@ asmlinkage long sys_sched_get_priority_m
+ 	return ret;
+ }
+ 
++static inline void __cond_resched(void)
++{
++	do {
++		add_preempt_count(PREEMPT_ACTIVE);
++		schedule();
++		sub_preempt_count(PREEMPT_ACTIVE);
++	} while (need_resched());
++}
++
++int __sched cond_resched(void)
++{
++	if (need_resched()) {
++		__cond_resched();
++		return 1;
++	}
++	return 0;
++}
++
++EXPORT_SYMBOL(cond_resched);
++
++/*
++ * cond_resched_lock() - if a reschedule is pending, drop the given lock,
++ * call schedule, and on return reacquire the lock.
++ *
++ * This works OK both with and without CONFIG_PREEMPT.  We do strange low-level
++ * operations here to prevent schedule() from being called twice (once via
++ * spin_unlock(), once by hand).
++ */
++int cond_resched_lock(spinlock_t * lock)
++{
++#if defined(CONFIG_SMP) && defined(CONFIG_PREEMPT)
++	if (lock->break_lock) {
++		lock->break_lock = 0;
++		spin_unlock(lock);
++		cpu_relax();
++		spin_lock(lock);
++	}
++#endif
++	if (need_resched()) {
++		_raw_spin_unlock(lock);
++		preempt_enable_no_resched();
++		__cond_resched();
++		spin_lock(lock);
++		return 1;
++	}
++	return 0;
++}
++
++EXPORT_SYMBOL(cond_resched_lock);
++
++int __sched cond_resched_softirq(void)
++{
++	BUG_ON(!in_softirq());
++
++	if (need_resched()) {
++		__local_bh_enable();
++		__cond_resched();
++		local_bh_disable();
++		return 1;
++	}
++	return 0;
++}
++
++EXPORT_SYMBOL(cond_resched_softirq);
++
+ extern struct sched_drv ingo_sched_drv;
+ static const struct sched_drv *scheduler = &ingo_sched_drv;
+ 

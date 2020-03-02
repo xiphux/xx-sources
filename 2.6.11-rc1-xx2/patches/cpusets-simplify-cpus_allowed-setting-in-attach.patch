@@ -1,0 +1,52 @@
+
+From: Paul Jackson <pj@sgi.com>
+
+When reattaching a task to a different cpuset, I had code that attempted to
+preserve the cpuset relative placement of the task (such as might have been
+done using sched_setaffinity, mbind or set_mempolicy) by rebinding the task
+to the intersection of its old and new placement, if not empty.
+
+This resulted in strange and puzzling behaviour, such as having a tasks
+cpus_allowed not change if the task was reattached to the root cpuset.
+
+Simplify the code - when attaching a task to a cpuset, simply set its
+cpus_allowed to that of the cpuset.  This is much less surprising in
+practice.
+
+Signed-off-by: Paul Jackson <pj@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/cpuset.c |   12 +-----------
+ 1 files changed, 1 insertion(+), 11 deletions(-)
+
+diff -puN kernel/cpuset.c~cpusets-simplify-cpus_allowed-setting-in-attach kernel/cpuset.c
+--- 25/kernel/cpuset.c~cpusets-simplify-cpus_allowed-setting-in-attach	2004-09-11 17:26:04.867894664 -0700
++++ 25-akpm/kernel/cpuset.c	2004-09-11 17:26:04.872893904 -0700
+@@ -610,7 +610,6 @@ static int attach_task(struct cpuset *cs
+ 	pid_t pid;
+ 	struct task_struct *tsk;
+ 	struct cpuset *oldcs;
+-	cpumask_t cpus;
+ 
+ 	if (sscanf(buf, "%d", &pid) != 1)
+ 		return -EIO;
+@@ -650,16 +649,7 @@ static int attach_task(struct cpuset *cs
+ 	tsk->cpuset = cs;
+ 	task_unlock(tsk);
+ 
+-	/*
+-	 * If the tasks current CPU placement overlaps with its new cpuset,
+-	 * then let it run in that overlap.  Otherwise fallback to simply
+-	 * letting it have the run of the CPUs in the new cpuset.
+-	 */
+-	if (cpus_intersects(tsk->cpus_allowed, cs->cpus_allowed))
+-		cpus_and(cpus, tsk->cpus_allowed, cs->cpus_allowed);
+-	else
+-		cpus = cs->cpus_allowed;
+-	set_cpus_allowed(tsk, cpus);
++	set_cpus_allowed(tsk, cs->cpus_allowed);
+ 
+ 	put_task_struct(tsk);
+ 	if (atomic_dec_and_test(&oldcs->count))
+_

@@ -1,0 +1,50 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+Clean up a few suspicious-looking uses of smp_processor_id() in preemptible
+code.
+
+The current_cpu_data use is unclean but most likely safe.  I haven't seen any
+outright bugs.  Since oprofile does not seem to be ready for different-type
+CPUs (do we even care?), the patch below documents this property by using
+boot_cpu_data.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/oprofile/nmi_int.c |    8 ++++----
+ 1 files changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN arch/i386/oprofile/nmi_int.c~oprofile-smp_processor_id-fixes arch/i386/oprofile/nmi_int.c
+--- 25/arch/i386/oprofile/nmi_int.c~oprofile-smp_processor_id-fixes	Fri Oct  8 13:36:26 2004
++++ 25-akpm/arch/i386/oprofile/nmi_int.c	Fri Oct  8 13:36:26 2004
+@@ -311,7 +311,7 @@ struct oprofile_operations nmi_ops = {
+ 
+ static int __init p4_init(void)
+ {
+-	__u8 cpu_model = current_cpu_data.x86_model;
++	__u8 cpu_model = boot_cpu_data.x86_model;
+ 
+ 	if (cpu_model > 3)
+ 		return 0;
+@@ -342,7 +342,7 @@ static int __init p4_init(void)
+ 
+ static int __init ppro_init(void)
+ {
+-	__u8 cpu_model = current_cpu_data.x86_model;
++	__u8 cpu_model = boot_cpu_data.x86_model;
+ 
+ 	if (cpu_model > 0xd)
+ 		return 0;
+@@ -366,8 +366,8 @@ static int using_nmi;
+ 
+ int __init nmi_init(struct oprofile_operations ** ops)
+ {
+-	__u8 vendor = current_cpu_data.x86_vendor;
+-	__u8 family = current_cpu_data.x86;
++	__u8 vendor = boot_cpu_data.x86_vendor;
++	__u8 family = boot_cpu_data.x86;
+  
+ 	if (!cpu_has_apic)
+ 		return -ENODEV;
+_

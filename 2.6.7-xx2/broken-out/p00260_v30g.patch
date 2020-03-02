@@ -1,0 +1,1215 @@
+---
+
+ linux-2.6.7-rc3-xx5-xiphux/fs/proc/array.c           |    6 
+ linux-2.6.7-rc3-xx5-xiphux/include/linux/init_task.h |   10 
+ linux-2.6.7-rc3-xx5-xiphux/include/linux/sched.h     |   43 +
+ linux-2.6.7-rc3-xx5-xiphux/kernel/Kconfig-extra.xx   |   26 +
+ linux-2.6.7-rc3-xx5-xiphux/kernel/sched.c            |  482 +++++++++++++++++--
+ linux-2.6.7-rc3-xx5-xiphux/mm/oom_kill.c             |    2 
+ 6 files changed, 528 insertions(+), 41 deletions(-)
+
+diff -puN fs/proc/array.c~v30g fs/proc/array.c
+--- linux-2.6.7-rc3-xx5/fs/proc/array.c~v30g	2004-06-16 23:09:04.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/fs/proc/array.c	2004-06-16 23:50:21.997649200 -0400
+@@ -157,6 +157,10 @@ static inline char * task_state(struct t
+ 		"State:\t%s\n"
+ #ifdef CONFIG_STAIRCASE
+ 		"Burst:\t%d\n"
++#elif defined(CONFIG_NICKSCHED)
++		"sleep_avg:\t%lu\n"
++		"sleep_time:\t%lu\n"
++		"total_time:\t%lu\n"
+ #elif !defined(CONFIG_SPA)
+ 		"SleepAVG:\t%lu%%\n"
+ #endif
+@@ -169,6 +173,8 @@ static inline char * task_state(struct t
+ 		get_task_state(p),
+ #ifdef CONFIG_STAIRCASE
+ 		p->burst,
++#elif defined(CONFIG_NICKSCHED)
++		p->sleep_avg, p->sleep_time, p->total_time,
+ #elif !defined(CONFIG_SPA)
+ 		(p->sleep_avg/1024)*100/(1020000000/1024),
+ #endif
+diff -puN include/linux/init_task.h~v30g include/linux/init_task.h
+--- linux-2.6.7-rc3-xx5/include/linux/init_task.h~v30g	2004-06-16 23:09:04.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/include/linux/init_task.h	2004-06-16 23:50:22.024645096 -0400
+@@ -66,19 +66,27 @@ extern struct group_info init_groups;
+  */
+ #ifdef CONFIG_SPA
+ #define SCHED_PRIO
++#elif defined(CONFIG_NICKSCHED)
++#define SCHED_PRIO .prio = MAX_PRIO-29,
+ #elif defined(CONFIG_STAIRCASE)
+ #define SCHED_PRIO .prio = MAX_PRIO-21,
+ #else
+ #define SCHED_PRIO .prio = MAX_PRIO-20,
+ #endif
+ 
+-#ifdef CONFIG_STAIRCASE
++#ifdef CONFIG_NICKSCHED
++#define SCHED_STATIC_PRIO .static_prio = MAX_PRIO-29,
++#elif defined(CONFIG_STAIRCASE)
+ #define SCHED_STATIC_PRIO .static_prio = MAX_PRIO-21,
+ #else
+ #define SCHED_STATIC_PRIO .static_prio = MAX_PRIO-20,
+ #endif
+ 
++#ifdef CONFIG_NICKSCHED
++#define SCHED_TIME_SLICE
++#else
+ #define SCHED_TIME_SLICE .time_slice = HZ,
++#endif
+ 
+ #ifdef CONFIG_SPA
+ #define SCHED_TIMESTAMP .sched_timestamp = ((INITIAL_JIFFIES * NSEC_PER_SEC) / HZ),
+diff -puN include/linux/sched.h~v30g include/linux/sched.h
+--- linux-2.6.7-rc3-xx5/include/linux/sched.h~v30g	2004-06-16 23:09:04.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/include/linux/sched.h	2004-06-16 23:50:22.033643728 -0400
+@@ -324,7 +324,9 @@ struct signal_struct {
+ #define MAX_USER_RT_PRIO	100
+ #define MAX_RT_PRIO		MAX_USER_RT_PRIO
+ 
+-#ifdef CONFIG_STAIRCASE
++#ifdef CONFIG_NICKSCHED
++#define MAX_PRIO		(MAX_RT_PRIO + 59)
++#elif defined(CONFIG_STAIRCASE)
+ #define MAX_PRIO		(MAX_RT_PRIO + 41)
+ #else
+ #define MAX_PRIO		(MAX_RT_PRIO + 40)
+@@ -451,7 +453,9 @@ struct task_struct {
+ 	unsigned int interactive_bonus, throughput_bonus, sub_cycle_count;
+ 	u64 cycle_count, total_sleep, total_cpu, total_delay;
+ #else /* !CONFIG_SPA */
+-#ifndef CONFIG_STAIRCASE
++#ifdef CONFIG_NICKSCHED
++	unsigned long array_sequence;
++#elif !defined(CONFIG_STAIRCASE)
+ 	unsigned long sleep_avg;
+ 	long interactive_credit;
+ #endif /* ifndef CONFIG_STAIRCASE */
+@@ -459,7 +463,7 @@ struct task_struct {
+ #ifdef CONFIG_STAIRCASE
+ 	unsigned long runtime, totalrun;
+ 	unsigned int burst;
+-#else /* !CONFIG_STAIRCASE */
++#elif !defined(CONFIG_NICKSCHED) /* !CONFIG_STAIRCASE */
+ 	int activated;
+ #endif /* CONFIG_STAIRCASE */
+ #endif /* CONFIG_SPA */
+@@ -472,6 +476,11 @@ struct task_struct {
+ #elif !defined(CONFIG_SPA) /* CONFIG_STAIRCASE */
+ 	unsigned int first_time_slice;
+ #endif /* !defined(CONFIG_SPA) && !defined(CONFIG_STAIRCASE) */
++#ifdef CONFIG_NICKSCHED
++	unsigned int used_slice;
++	unsigned long total_time, sleep_time;
++	unsigned long sleep_avg;
++#endif
+ 
+ 	struct list_head tasks;
+ 	struct list_head ptrace_children;
+@@ -631,6 +640,20 @@ do { if (atomic_dec_and_test(&(tsk)->usa
+ #define SD_WAKE_BALANCE		32	/* Perform balancing at task wakeup */
+ #define SD_SHARE_CPUPOWER	64	/* Domain members share cpu power */
+ 
++#ifdef CONFIG_NICKSCHED
++#define PER_CPU_GAIN_ONE
++#define CPUPOWER_FLAG
++#define CACHE_HOT_TIME_ONE .cache_hot_time = (5*1000/2),
++#define PER_CPU_GAIN_TWO
++#define CACHE_HOT_TIME_TWO .cache_hot_time = (10*1000),
++#else
++#define PER_CPU_GAIN_ONE .per_cpu_gain = 15,
++#define CPUPOWER_FLAG | SD_SHARE_CPUPOWER
++#define CACHE_HOT_TIME_ONE .cache_hot_time = (5*1000000/2),
++#define PER_CPU_GAIN_TWO .per_cpu_gain = 100,
++#define CACHE_HOT_TIME_TWO .cache_hot_time = (10*1000000),
++#endif
++
+ struct sched_group {
+ 	struct sched_group *next;	/* Must be a circular list */
+ 	cpumask_t cpumask;
+@@ -655,7 +678,9 @@ struct sched_domain {
+ 	unsigned int imbalance_pct;	/* No balance until over watermark */
+ 	unsigned long long cache_hot_time; /* Task considered cache hot (ns) */
+ 	unsigned int cache_nice_tries;	/* Leave cache hot tasks for # tries */
++#ifndef CONFIG_NICKSCHED
+ 	unsigned int per_cpu_gain;	/* CPU % gained by adding domain cpus */
++#endif
+ 	int flags;			/* See SD_* */
+ 
+ 	/* Runtime fields. */
+@@ -704,13 +729,13 @@ struct sched_domain {
+ 	.imbalance_pct		= 110,			\
+ 	.cache_hot_time		= 0,			\
+ 	.cache_nice_tries	= 0,			\
+-	.per_cpu_gain		= 15,			\
++	PER_CPU_GAIN_ONE				\
+ 	.flags			= SD_BALANCE_NEWIDLE	\
+ 				| SD_BALANCE_EXEC	\
+ 				| SD_BALANCE_CLONE	\
+ 				| SD_WAKE_AFFINE	\
+ 				| SD_WAKE_IDLE		\
+-				| SD_SHARE_CPUPOWER,	\
++				CPUPOWER_FLAG,		\
+ 	.last_balance		= jiffies,		\
+ 	.balance_interval	= 1,			\
+ 	.nr_balance_failed	= 0,			\
+@@ -725,9 +750,9 @@ struct sched_domain {
+ 	.max_interval		= 4,			\
+ 	.busy_factor		= 64,			\
+ 	.imbalance_pct		= 125,			\
+-	.cache_hot_time		= (5*1000000/2),	\
++	CACHE_HOT_TIME_ONE				\
+ 	.cache_nice_tries	= 1,			\
+-	.per_cpu_gain		= 100,			\
++	PER_CPU_GAIN_TWO				\
+ 	.flags			= SD_BALANCE_NEWIDLE	\
+ 				| SD_BALANCE_EXEC	\
+ 				| SD_BALANCE_CLONE	\
+@@ -748,9 +773,9 @@ struct sched_domain {
+ 	.max_interval		= 32,			\
+ 	.busy_factor		= 32,			\
+ 	.imbalance_pct		= 125,			\
+-	.cache_hot_time		= (10*1000000),		\
++	CACHE_HOT_TIME_TWO				\
+ 	.cache_nice_tries	= 1,			\
+-	.per_cpu_gain		= 100,			\
++	PER_CPU_GAIN_TWO				\
+ 	.flags			= SD_BALANCE_EXEC	\
+ 				| SD_BALANCE_CLONE	\
+ 				| SD_WAKE_BALANCE,	\
+diff -puN kernel/sched.c~v30g kernel/sched.c
+--- linux-2.6.7-rc3-xx5/kernel/sched.c~v30g	2004-06-16 23:09:04.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/kernel/sched.c	2004-06-16 23:50:46.941857104 -0400
+@@ -64,8 +64,13 @@
+  * to static priority [ MAX_RT_PRIO..MAX_PRIO-1 ],
+  * and back.
+  */
++#ifdef CONFIG_NICKSCHED
++#define NICE_TO_PRIO(nice)	(MAX_RT_PRIO + (nice) + 30)
++#define PRIO_TO_NICE(prio)	((prio) - MAX_RT_PRIO - 30)
++#else
+ #define NICE_TO_PRIO(nice)	(MAX_RT_PRIO + (nice) + 20)
+ #define PRIO_TO_NICE(prio)	((prio) - MAX_RT_PRIO - 20)
++#endif
+ #define TASK_NICE(p)		PRIO_TO_NICE((p)->static_prio)
+ 
+ /*
+@@ -77,12 +82,12 @@
+ #define TASK_USER_PRIO(p)	USER_PRIO((p)->static_prio)
+ #define MAX_USER_PRIO		(USER_PRIO(MAX_PRIO))
+ 
+-#if !defined(CONFIG_SPA) && !defined(CONFIG_STAIRCASE)
++#if !defined(CONFIG_SPA) && !defined(CONFIG_STAIRCASE) && !defined(CONFIG_NICKSCHED)
+ #define AVG_TIMESLICE	(MIN_TIMESLICE + ((MAX_TIMESLICE - MIN_TIMESLICE) *\
+ 			(MAX_PRIO-1-NICE_TO_PRIO(0))/(MAX_USER_PRIO - 1)))
+ #endif
+ 
+-#ifndef CONFIG_SPA
++#if !defined(CONFIG_SPA) && !defined(CONFIG_NICKSCHED)
+ /*
+  * Some helpers for converting nanosecond timing to jiffy resolution
+  */
+@@ -92,7 +97,52 @@
+ #endif /* ifndef CONFIG_STAIRCASE */
+ #endif /* ifndef CONFIG_SPA */
+ 
+-#ifdef CONFIG_STAIRCASE
++#ifdef CONFIG_NICKSCHED
++/*
++ * MIN_TIMESLICE is the timeslice that a minimum priority process gets if there
++ * is a maximum priority process runnable. MAX_TIMESLICE is derived from the
++ * formula in task_timeslice. It cannot be changed here. It is the timesilce
++ * that the maximum priority process will get. Larger timeslices are attainable
++ * by low priority processes however.
++ */
++#define BASE_TIMESLICE		1
++#define MIN_TIMESLICE		2
++#define MAX_TIMESLICE		(60 * MIN_TIMESLICE) /* do not change this */
++
++/* Maximum amount of history that will be used to calculate priority */
++#define MAX_SLEEP_SHIFT		19
++#define MAX_SLEEP		(1UL << MAX_SLEEP_SHIFT) /* roughly 0.52s */
++
++/*
++ * Maximum effect that 1 block of activity (run/sleep/etc) can have. This is
++ * will moderate dicard freak events (eg. SIGSTOP)
++ */
++#define MAX_SLEEP_AFFECT	(MAX_SLEEP/16)
++#define MAX_RUN_AFFECT		(MAX_SLEEP/2)
++#define MAX_WAIT_AFFECT		(MAX_SLEEP_AFFECT)
++
++/*
++ * The amount of history can be decreased (on fork for example). This puts a
++ * lower bound on it.
++ */
++#define MIN_HISTORY		(MAX_SLEEP/2)
++
++/*
++ * SLEEP_FACTOR is a fixed point factor used to scale history tracking things.
++ * In particular: total_time, sleep_time, sleep_avg.
++ */
++#define SLEEP_FACTOR		1024
++
++/*
++ * The scheduler classifies a process as performing one of the following
++ * activities
++ */
++#define STIME_SLEEP		1	/* Sleeping */
++#define STIME_RUN		2	/* Using CPU */
++#define STIME_WAIT		3	/* Waiting for CPU */
++
++#define TASK_PREEMPTS_CURR(p, rq)     ( (p)->prio < (rq)->curr->prio )
++#elif defined(CONFIG_STAIRCASE)
+ int compute = 0;
+ /*
+  *This is the time all tasks within the same priority round robin.
+@@ -289,7 +339,7 @@ static unsigned int time_slice_ticks = M
+ 
+ #endif
+ 
+-#ifndef CONFIG_STAIRCASE
++#if !defined(CONFIG_STAIRCASE) && !defined(CONFIG_NICKSCHED)
+ static
+ #ifdef CONFIG_SPA
+ inline
+@@ -332,7 +382,8 @@ unsigned int task_timeslice(
+ #define BASE_PROM_INTERVAL_MSECS DEFAULT_TIME_SLICE_MSECS
+ #endif
+ static unsigned int base_prom_interval_ticks = MSECS_TO_JIFFIES_MIN_1(BASE_PROM_INTERVAL_MSECS);
+-
++#elif defined(CONFIG_NICKSCHED)
++#define BITMAP_SIZE ((((MAX_PRIO+7)/8)+sizeof(long)-1)/sizeof(long))
+ #elif !defined(CONFIG_STAIRCASE)
+ #define BITMAP_SIZE ((((MAX_PRIO+1+7)/8)+sizeof(long)-1)/sizeof(long))
+ #endif
+@@ -346,6 +397,9 @@ struct prio_slot {
+ };
+ #elif !defined(CONFIG_STAIRCASE)
+ struct prio_array {
++#ifdef CONFIG_NICKSCHED
++	int min_prio;
++#endif
+ 	unsigned int nr_active;
+ 	unsigned long bitmap[BITMAP_SIZE];
+ 	struct list_head queue[MAX_PRIO];
+@@ -371,7 +425,9 @@ struct runqueue {
+ 	unsigned long cpu_load;
+ #endif
+ 	unsigned long long nr_switches;
+-#if !defined(CONFIG_SPA) && !defined(CONFIG_STAIRCASE)
++#ifdef CONFIG_NICKSCHED
++	unsigned long array_sequence;
++#elif !defined(CONFIG_SPA) && !defined(CONFIG_STAIRCASE)
+ 	unsigned long expired_timestamp;
+ #endif
+ 	unsigned long nr_uninterruptible;
+@@ -392,8 +448,10 @@ struct runqueue {
+ 	unsigned long next_prom_due;
+ #else
+ 	prio_array_t *active, *expired, arrays[2];
++#ifndef CONFIG_NICKSCHED
+ 	int best_expired_prio;
+ #endif
++#endif
+ 	atomic_t nr_iowait;
+ 
+ #ifdef CONFIG_SMP
+@@ -477,6 +535,15 @@ static inline void task_rq_unlock(runque
+ 	spin_unlock_irqrestore(&rq->lock, *flags);
+ }
+ 
++#define US_TO_JIFFIES(x)	(x * HZ / 1000000)
++static inline unsigned long long clock_us(void)
++{
++#ifdef CONFIG_NICKSCHED
++	return sched_clock() >> 10;
++#else
++	return sched_clock();
++#endif
++}
+ 
+ #ifdef CONFIG_SCHEDSTATS
+ 
+@@ -710,6 +777,89 @@ static inline void enqueue_task_head(str
+ #endif
+ }
+ 
++#ifdef CONFIG_NICKSCHED
++/*
++ * add_task_time updates a task @p after @time of doing the specified @type
++ * of activity. See STIME_*. This is used for priority calculation.
++ */
++static void add_task_time(task_t *p, unsigned long long time, unsigned long type)
++{
++	unsigned long ratio;
++	unsigned long max_affect;
++	unsigned long long tmp;
++
++	if (time == 0)
++		return;
++
++	if (type == STIME_SLEEP)
++		max_affect = MAX_SLEEP_AFFECT;
++	else if (type == STIME_RUN)
++		max_affect = MAX_RUN_AFFECT;
++	else
++		max_affect = MAX_WAIT_AFFECT;
++
++	if (time > max_affect)
++		time = max_affect;
++
++	ratio = MAX_SLEEP - time;
++	tmp = (unsigned long long)ratio*p->total_time + MAX_SLEEP/2;
++	tmp >>= MAX_SLEEP_SHIFT;
++	p->total_time = (unsigned long)tmp;
++
++	tmp = (unsigned long long)ratio*p->sleep_time + MAX_SLEEP/2;
++	tmp >>= MAX_SLEEP_SHIFT;
++	p->sleep_time = (unsigned long)tmp;
++
++	if (type != STIME_WAIT) {
++		p->total_time += time;
++		if (type == STIME_SLEEP)
++			p->sleep_time += time;
++
++		p->sleep_avg = (SLEEP_FACTOR * p->sleep_time) / p->total_time;
++	}
++
++	if (p->total_time < MIN_HISTORY) {
++		p->total_time = MIN_HISTORY;
++		p->sleep_time = p->total_time * p->sleep_avg / SLEEP_FACTOR;
++	}
++}
++
++/*
++ * The higher a thread's priority, the bigger timeslices
++ * it gets during one round of execution. But even the lowest
++ * priority thread gets MIN_TIMESLICE worth of execution time.
++ *
++ * Timeslices are scaled, so if only low priority processes are running,
++ * they will all get long timeslices.
++ */
++static unsigned int task_timeslice(task_t *p, runqueue_t *rq)
++{
++	int idx, delta;
++	unsigned int base, timeslice;
++
++	if (unlikely(rt_task(p)))
++		return MAX_TIMESLICE;
++
++	idx = min(rq->active->min_prio, rq->expired->min_prio);
++	idx = min(idx, p->prio);
++	delta = p->prio - idx;
++
++	/*
++	 * This is a bit subtle. The first line establishes a timeslice based
++	 * on how far this task is from being the highest priority runnable.
++	 * The second line scales this result so low priority tasks will get
++	 * big timeslices if higher priority ones are not running.
++	 */
++	base = BASE_TIMESLICE * (MAX_USER_PRIO + 1) / (delta + 2);
++	timeslice = base * (USER_PRIO(idx) + 8) / 24;
++
++	if (timeslice < MIN_TIMESLICE)
++		timeslice = MIN_TIMESLICE;
++
++	return timeslice;
++}
++#endif
++
+ #ifndef CONFIG_STAIRCASE
+ /*
+  * effective_prio - return the priority that is based on the static
+@@ -729,7 +879,13 @@ static
+ #ifdef CONFIG_SPA
+ inline
+ #endif
+-int effective_prio(
++int
++#ifdef CONFIG_NICKSCHED
++task_priority
++#else
++effective_prio
++#endif
++(
+ #ifdef CONFIG_SPA
+ 		const
+ #endif
+@@ -749,12 +905,21 @@ int effective_prio(
+ #else
+ 	int bonus, prio;
+ 
++#ifdef CONFIG_NICKSCHED
++	if (unlikely(rt_task(p)))
++#else
+ 	if (rt_task(p))
++#endif
+ 		return p->prio;
+ 
++#ifdef CONFIG_NICKSCHED
++	bonus = ((MAX_USER_PRIO / 3) * p->sleep_avg + (SLEEP_FACTOR / 2)) / SLEEP_FACTOR;
++	prio = USER_PRIO(p->static_prio) + 10;
++	prio = MAX_RT_PRIO + prio - bonus;
++#else
+ 	bonus = CURRENT_BONUS(p) - MAX_BONUS / 2;
+-
+ 	prio = p->static_prio - bonus;
++#endif
+ 	if (prio < MAX_RT_PRIO)
+ 		prio = MAX_RT_PRIO;
+ 	if (prio > MAX_PRIO-1)
+@@ -768,12 +933,18 @@ int effective_prio(
+  * __activate_task - move a task to the runqueue.
+  */
+ static inline void __activate_task(task_t *p, runqueue_t *rq
+-#ifdef CONFIG_SPA
++#ifdef CONFIG_NICKSCHED
++		, prio_array_t *array
++#elif defined(CONFIG_SPA)
+ 		, int prio
+ #endif
+ 		)
+ {
+-#ifdef CONFIG_STAIRCASE
++#ifdef CONFIG_NICKSCHED
++	if (unlikely(p->prio < array->min_prio))
++		array->min_prio = p->prio;
++	enqueue_task(p, array);
++#elif defined(CONFIG_STAIRCASE)
+ 	enqueue_task(p, rq);
+ #elif defined(CONFIG_SPA)
+ 	p->time_slice = task_timeslice(p);
+@@ -788,9 +959,17 @@ static inline void __activate_task(task_
+ /*
+  * __activate_idle_task - move idle task to the _front_ of runqueue.
+  */
+-static inline void __activate_idle_task(task_t *p, runqueue_t *rq)
++static inline void __activate_idle_task(task_t *p, runqueue_t *rq
++#ifdef CONFIG_NICKSCHED
++		, prio_array_t *array
++#endif
++		)
+ {
+-#ifdef CONFIG_STAIRCASE
++#ifdef CONFIG_NICKSCHED
++	if (unlikely(p->prio < array->min_prio))
++		array->min_prio = p->prio;
++	enqueue_task_head(p, array);
++#elif defined(CONFIG_STAIRCASE)
+ 	enqueue_task_head(p, rq);
+ #else
+ 	enqueue_task_head(p, rq->active);
+@@ -1012,7 +1191,7 @@ static void recalc_throughput_bonus(task
+ 	bonus = MILLI_BONUS_RND(p->avg_delay_per_cycle, load * p->avg_cpu_per_cycle);
+ 	p->throughput_bonus = MAP_MILLI_BONUS(max_tpt_bonus, bonus);
+ }
+-#else
++#elif !defined(CONFIG_NICKSCHED)
+ static void recalc_task_prio(task_t *p, unsigned long long now)
+ {
+ 	unsigned long long __sleep_time = now - p->timestamp;
+@@ -1102,12 +1281,15 @@ void
+ #endif
+ activate_task(task_t *p, runqueue_t *rq, int local)
+ {
+-#ifdef CONFIG_SPA
++#ifdef CONFIG_NICKSCHED
++	prio_array_t *array;
++	unsigned long long sleep;
++#elif defined(CONFIG_SPA)
+ 	int prio = effective_prio(p);
+ #endif
+ 	unsigned long long now;
+ 
+-	now = sched_clock();
++	now = clock_us();
+ #ifdef CONFIG_SMP
+ 	if (!local) {
+ 		/* Compensate for drifting sched_clock */
+@@ -1119,7 +1301,25 @@ activate_task(task_t *p, runqueue_t *rq,
+ #ifdef CONFIG_STAIRCASE
+ 	p->slice = slice(p);
+ #endif
+-#ifndef CONFIG_SPA
++#ifdef CONFIG_NICKSCHED
++	sleep = now - p->timestamp;
++	p->timestamp = now;
++	add_task_time(p, sleep, STIME_SLEEP);
++	p->prio = task_priority(p);
++ 	/*
++	 * If we have slept through an active/expired array switch, restart
++	 * our timeslice too.
++	 */
++	array = rq->active;
++	if (rq->array_sequence != p->array_sequence) {
++		p->first_time_slice = 0;
++		p->used_slice = 0;
++	} else if (p->used_slice == -1) {
++		array = rq->expired;
++		p->first_time_slice = 0;
++		p->used_slice = 0;
++	}
++#elif !defined(CONFIG_SPA)
+ 	recalc_task_prio(p, now);
+ 
+ #ifdef CONFIG_STAIRCASE
+@@ -1152,6 +1352,9 @@ activate_task(task_t *p, runqueue_t *rq,
+ 	}
+ #endif
+ #endif
++#ifdef CONFIG_NICKSCHED
++	__activate_task(p, rq, array);
++#else
+ 	p->timestamp = now;
+ 
+ #ifdef CONFIG_SPA
+@@ -1160,6 +1363,7 @@ activate_task(task_t *p, runqueue_t *rq,
+ #else
+ 	__activate_task(p, rq);
+ #endif
++#endif
+ }
+ 
+ /*
+@@ -1167,6 +1371,9 @@ activate_task(task_t *p, runqueue_t *rq,
+  */
+ static void deactivate_task(struct task_struct *p, runqueue_t *rq)
+ {
++#ifdef CONFIG_NICKSCHED
++	p->array_sequence = rq->array_sequence;
++#endif
+ 	rq->nr_running--;
+ 	if (p->state == TASK_UNINTERRUPTIBLE)
+ 		rq->nr_uninterruptible++;
+@@ -1536,7 +1743,7 @@ out_activate:
+ #endif /* CONFIG_SMP */
+ 	if (old_state == TASK_UNINTERRUPTIBLE) {
+ 		rq->nr_uninterruptible--;
+-#if !defined(CONFIG_SPA) && !defined(CONFIG_STAIRCASE)
++#if !defined(CONFIG_SPA) && !defined(CONFIG_STAIRCASE) && !defined(CONFIG_NICKSCHED)
+ 		/*
+ 		 * Tasks on involuntary sleep don't earn
+ 		 * sleep_avg beyond just interactive state.
+@@ -1605,6 +1812,11 @@ int fastcall wake_up_state(task_t *p, un
+  */
+ void fastcall sched_fork(task_t *p)
+ {
++#ifdef CONFIG_NICKSCHED
++	unsigned long ts;
++	unsigned long flags;
++	runqueue_t *rq;
++#endif
+ 	/*
+ 	 * We mark the process as running here, but have not actually
+ 	 * inserted it onto the runqueue yet. This guarantees that
+@@ -1651,21 +1863,43 @@ void fastcall sched_fork(task_t *p)
+ 	 * resulting in more scheduling fairness.
+ 	 */
+ 	local_irq_disable();
++#ifdef CONFIG_NICKSCHED
++	p->timestamp = clock_us();
++	rq = task_rq_lock(current, &flags);
++	ts = task_timeslice(current, rq);
++	task_rq_unlock(rq, &flags);
++
++	/*
++	 * Share half our timeslice with the child.
++	 */
++	p->used_slice = current->used_slice + (ts - current->used_slice) / 2;
++	current->used_slice += (ts - current->used_slice + 1) / 2;
++#else
+ 	p->time_slice = (current->time_slice + 1) >> 1;
++#endif
+ 	/*
+ 	 * The remainder of the first timeslice might be recovered by
+ 	 * the parent if the child exits early enough.
+ 	 */
+ 	p->first_time_slice = 1;
++#ifdef CONFIG_NICKSCHED
++	if (unlikely(current->used_slice >= ts))
++#else
+ 	current->time_slice >>= 1;
+ 	p->timestamp = sched_clock();
+-	if (!current->time_slice) {
++	if (!current->time_slice)
++#endif
++	{
+ 		/*
+ 		 * This case is rare, it happens when the parent has only
+ 		 * a single jiffy left from its timeslice. Taking the
+ 		 * runqueue lock is not a problem.
+ 		 */
++#ifdef CONFIG_NICKSCHED
++		current->used_slice = ts - 1;
++#else
+ 		current->time_slice = 1;
++#endif
+ 		preempt_disable();
+ 		scheduler_tick(0, 0);
+ 		local_irq_enable();
+@@ -1699,7 +1933,29 @@ void fastcall wake_up_forked_process(tas
+ 	set_task_cpu(p, smp_processor_id());
+ 	__activate_task(p, rq);
+ #else
+-#ifdef CONFIG_SPA
++#ifdef CONFIG_NICKSCHED
++	set_task_cpu(p, smp_processor_id());
++	/*
++	 *  Get only 1/10th of the parents history. Limited by MIN_HISTORY.
++	 */
++	p->total_time = current->total_time / 4;
++	p->sleep_time = current->sleep_time / 4;
++	p->sleep_avg = current->sleep_avg;
++	if (p->total_time < MIN_HISTORY) {
++		p->total_time = MIN_HISTORY;
++		p->sleep_time = p->total_time * p->sleep_avg / SLEEP_FACTOR;
++	}
++	/*
++	 * Lose 1/4 sleep_time for forking.
++	 */
++	current->sleep_time = 3 * current->sleep_time / 4;
++	if (current->total_time != 0)
++		current->sleep_avg = (SLEEP_FACTOR * current->sleep_time)
++			/ current->total_time;
++	p->prio = task_priority(p);
++	if (p->prio < current->prio || unlikely(current->array != rq->active))
++		__activate_task(p, rq, rq->active);
++#elif defined(CONFIG_SPA)
+ 	set_task_cpu(p, smp_processor_id());
+ 
+ 	/*
+@@ -1763,12 +2019,29 @@ void fastcall sched_exit(task_t * p)
+ 	unsigned long flags;
+ 	runqueue_t *rq;
+ 
++#ifdef CONFIG_NICKSCHED
++	rq = task_rq_lock(p->parent, &flags);
++#else
+ 	local_irq_save(flags);
++#endif
+ 	if (p->first_time_slice) {
++#ifdef CONFIG_NICKSCHED
++		p->parent->used_slice -= task_timeslice(p, rq) - p->used_slice;
++#else
+ 		p->parent->time_slice += p->time_slice;
+ 		if (unlikely(p->parent->time_slice > MAX_TIMESLICE))
+ 			p->parent->time_slice = MAX_TIMESLICE;
++#endif
++	}
++#ifdef CONFIG_NICKSCHED
++	/* Apply some penalty to @p's parent if @p used a lot of CPU */
++	if (p->sleep_avg < p->parent->sleep_avg) {
++		add_task_time(p->parent,
++			MAX_SLEEP * (p->parent->sleep_avg - p->sleep_avg)
++			/ SLEEP_FACTOR / 2,
++			STIME_RUN);
+ 	}
++#else
+ 	local_irq_restore(flags);
+ 	/*
+ 	 * If the child was a (relative-) CPU hog then decrease
+@@ -1779,6 +2052,7 @@ void fastcall sched_exit(task_t * p)
+ 		p->parent->sleep_avg = p->parent->sleep_avg /
+ 		(EXIT_WEIGHT + 1) * EXIT_WEIGHT + p->sleep_avg /
+ 		(EXIT_WEIGHT + 1);
++#endif
+ 	task_rq_unlock(rq, &flags);
+ }
+ #endif
+@@ -2047,7 +2321,7 @@ lock_again:
+ 		double_rq_unlock(this_rq, rq);
+ 		goto lock_again;
+ 	}
+-#ifndef CONFIG_SPA
++#if !defined(CONFIG_SPA) && !defined(CONFIG_SPA)
+ #ifndef CONFIG_STAIRCASE
+ 	/*
+ 	 * We decrease the sleep average of forking parents
+@@ -2066,7 +2340,27 @@ lock_again:
+ #endif
+ 	set_task_cpu(p, cpu);
+ 
+-#ifdef CONFIG_SPA
++#ifdef CONFIG_NICKSCHED
++	/*
++	 * Get only 1/10th of the parents history. Limited by MIN_HISTORY.
++	 */
++	p->total_time = current->total_time / 4;
++	p->sleep_time = current->sleep_time / 4;
++	p->sleep_avg = current->sleep_avg;
++	if (p->total_time < MIN_HISTORY) {
++		p->total_time = MIN_HISTORY;
++		p->sleep_time = p->total_time * p->sleep_avg / SLEEP_FACTOR;
++	}
++	/*
++	 * Lose 1/4 sleep_time for forking.
++	 */
++	current->sleep_time = 3 * current->sleep_time / 4;
++	if (current->total_time != 0) {
++		current->sleep_avg = (SLEEP_FACTOR * current->sleep_time)
++					/ current->total_time;
++	}
++	p->prio = task_priority(p);
++#elif defined(CONFIG_SPA)
+ 	/*
+ 	 * Scheduling statistics compilation starts now
+ 	 */
+@@ -2083,8 +2377,12 @@ lock_again:
+ #else
+ 		if (unlikely(!current->array))
+ #endif
++#ifdef CONFIG_NICKSCHED
++			__activate_task(p, rq, rq->active);
++#else
+ 			__activate_task(p, rq);
+ #endif
++#endif
+ 		else {
+ #ifndef CONFIG_SPA
+ 			p->prio = current->prio;
+@@ -2108,7 +2406,11 @@ lock_again:
+ 		__activate_task(p, rq, prio);
+ 		if (PRIO_PREEMPTS_CURR(prio, rq))
+ #else
++#ifdef CONFIG_NICKSCHED
++		__activate_task(p, rq, rq->active);
++#else
+ 		__activate_task(p, rq);
++#endif
+ #ifdef CONFIG_STAIRCASE
+ 		if (task_preempts_curr(p, rq))
+ #else
+@@ -2886,6 +3188,7 @@ static inline int needs_idle_balance(con
+ #endif
+ #endif
+ 
++#ifndef CONFIG_NICKSCHED
+ static inline int wake_priority_sleeper(runqueue_t *rq)
+ {
+ #ifdef CONFIG_SCHED_SMT
+@@ -2900,6 +3203,7 @@ static inline int wake_priority_sleeper(
+ #endif
+ 	return 0;
+ }
++#endif
+ 
+ #ifdef CONFIG_SPA
+ /*
+@@ -2948,7 +3252,7 @@ DEFINE_PER_CPU(struct kernel_stat, kstat
+ 
+ EXPORT_PER_CPU_SYMBOL(kstat);
+ 
+-#if !defined(CONFIG_SPA) && !defined(CONFIG_STAIRCASE)
++#if !defined(CONFIG_SPA) && !defined(CONFIG_STAIRCASE) && !defined(CONFIG_NICKSCHED)
+ /*
+  * We place interactive tasks back into the active array, if possible.
+  *
+@@ -2975,12 +3279,15 @@ EXPORT_PER_CPU_SYMBOL(kstat);
+  */
+ void scheduler_tick(int user_ticks, int sys_ticks)
+ {
++#ifdef CONFIG_NICKSCHED
++	enum idle_type cpu_status;
++#endif
+ 	int cpu = smp_processor_id();
+ 	struct cpu_usage_stat *cpustat = &kstat_this_cpu.cpustat;
+ 	runqueue_t *rq = this_rq();
+ 	task_t *p = current;
+ 
+-	rq->timestamp_last_tick = sched_clock();
++	rq->timestamp_last_tick = clock_us();
+ 
+ 	if (rcu_pending(cpu))
+ 		rcu_check_callbacks(cpu, user_ticks);
+@@ -2994,15 +3301,23 @@ void scheduler_tick(int user_ticks, int 
+ 		sys_ticks = 0;
+ 	}
+ 
++#ifdef CONFIG_NICKSCHED
++	cpu_status = NOT_IDLE;
++#endif
+ 	if (p == rq->idle) {
+ 		if (atomic_read(&rq->nr_iowait) > 0)
+ 			cpustat->iowait += sys_ticks;
+ 		else
+ 			cpustat->idle += sys_ticks;
++#ifdef CONFIG_NICKSCHED
++		cpu_status = IDLE;
++		goto out;
++#else
+ 		if (wake_priority_sleeper(rq))
+ 			goto out;
+ 		rebalance_tick(cpu, rq, IDLE);
+ 		return;
++#endif
+ 	}
+ 	if (TASK_NICE(p) > 0
+ #ifdef CONFIG_STAIRCASE
+@@ -3014,7 +3329,15 @@ void scheduler_tick(int user_ticks, int 
+ 		cpustat->user += user_ticks;
+ 	cpustat->system += sys_ticks;
+ 
+-#ifdef CONFIG_STAIRCASE
++#ifdef CONFIG_NICKSCHED
++	if (unlikely(rt_task(p)) && p->policy == SCHED_FIFO)
++		goto out;
++	p->used_slice++;
++	if (unlikely(p->used_slice >= task_timeslice(p, rq))) {
++		p->used_slice = -1;
++		set_tsk_need_resched(p);
++	}
++#elif defined(CONFIG_STAIRCASE)
+ 	spin_lock(&rq->lock);
+ 	/*
+ 	 * SCHED_FIFO tasks never run out of timeslice.
+@@ -3052,12 +3375,19 @@ void scheduler_tick(int user_ticks, int 
+ #else
+ #ifndef CONFIG_SPA
+ 	/* Task might have expired already, but not scheduled off yet */
+-	if (p->array != rq->active) {
++#ifdef CONFIG_NICKSCHED
++	if (unlikely(p->used_slice == -1))
++#else
++	if (p->array != rq->active)
++#endif
++	{
+ 		set_tsk_need_resched(p);
+ 		goto out;
+ 	}
+ #endif
++#ifndef CONFIG_NICKSCHED
+ 	spin_lock(&rq->lock);
++#endif
+ 	/*
+ 	 * The task was running during this tick - update the
+ 	 * time slice counter. Note: we do not update a thread's
+@@ -3159,10 +3489,16 @@ void scheduler_tick(int user_ticks, int 
+ 	}
+ #endif
+ #endif /* CONFIG_STAIRCASE */
++#ifndef CONFIG_NICKSCHED
+ out_unlock:
+ 	spin_unlock(&rq->lock);
++#endif
+ out:
++#ifdef CONFIG_NICKSCHED
++	rebalance_tick(cpu, rq, cpu_status);
++#else
+ 	rebalance_tick(cpu, rq, NOT_IDLE);
++#endif
+ #ifdef CONFIG_SPA
+ 	if (unlikely(promotions_due(rq))) {
+ 		/*
+@@ -3176,6 +3512,7 @@ out:
+ #endif
+ }
+ 
++#ifndef CONFIG_NICKSCHED
+ #ifdef CONFIG_SCHED_SMT
+ static inline void wake_sleeping_dependent(int cpu, runqueue_t *rq)
+ {
+@@ -3292,6 +3629,7 @@ static inline int dependent_idle(const r
+ }
+ #endif
+ #endif
++#endif
+ 
+ /*
+  * schedule() is the main scheduler function.
+@@ -3323,12 +3661,20 @@ asmlinkage void __sched schedule(void)
+ 	 * schedule() atomically, we ignore that path for now.
+ 	 * Otherwise, whine if we are scheduling when we should not be.
+ 	 */
++#ifdef CONFIG_NICKSCHED
++	if (unlikely(in_atomic()) &&
++			likely(!(current->state & (TASK_DEAD | TASK_ZOMBIE)))) {
++		printk(KERN_ERR "bad: scheduling while atomic!\n");
++		dump_stack();
++	}
++#else
+ 	if (likely(!(current->state & (TASK_DEAD | TASK_ZOMBIE)))) {
+ 		if (unlikely(in_atomic())) {
+ 			printk(KERN_ERR "bad: scheduling while atomic!\n");
+ 			dump_stack();
+ 		}
+ 	}
++#endif
+ 
+ need_resched:
+ 	preempt_disable();
+@@ -3338,8 +3684,12 @@ need_resched:
+ 	release_kernel_lock(prev);
+  	schedstat_inc(rq, sched_cnt);
+ #ifndef CONFIG_SPA
+-	now = sched_clock();
+-#ifdef CONFIG_STAIRCASE
++	now = clock_us();
++#ifdef CONFIG_NICKSCHED
++	run_time = now - prev->timestamp;
++	prev->timestamp = now;
++	add_task_time(prev, run_time, STIME_RUN);
++#elif defined(CONFIG_STAIRCASE)
+ 	prev->runtime = now - prev->timestamp;
+ #else
+ 	if (likely(now - prev->timestamp < NS_MAX_SLEEP_AVG))
+@@ -3358,6 +3708,24 @@ need_resched:
+ #endif
+ 	spin_lock_irq(&rq->lock);
+ 
++#ifdef CONFIG_NICKSCHED
++	if (unlikely(prev->used_slice == -1) && likely(prev->array)) {
++		prev->used_slice = 0;
++		prev->first_time_slice = 0;
++
++		if (unlikely(rt_task(prev)) ) {
++			if (prev->policy == SCHED_RR) {
++				dequeue_task(prev, prev->array);
++				enqueue_task(prev, rq->active);
++			}
++		} else {
++			dequeue_task(prev, prev->array);
++			prev->prio = task_priority(prev);
++			enqueue_task(prev, rq->expired);
++		}
++	}
++#endif
++
+ 	/*
+ 	 * if entering off of a kernel preemption go straight
+ 	 * to picking the next task.
+@@ -3379,14 +3747,22 @@ need_resched:
+ 	if (unlikely(!rq->nr_running))
+ #endif
+ 	{
++#ifdef CONFIG_NICKSCHED
++		rq->array_sequence++;
++#endif
+ 		idle_balance(cpu, rq);
+ #ifndef CONFIG_SPA
+ 		if (!rq->nr_running) {
+ 			next = rq->idle;
++#ifdef CONFIG_NICKSCHED
++			rq->arrays[0].min_prio = MAX_PRIO;
++			rq->arrays[1].min_prio = MAX_PRIO;
++#else
+ #ifndef CONFIG_STAIRCASE
+ 			rq->expired_timestamp = 0;
+ #endif
+ 			wake_sleeping_dependent(cpu, rq);
++#endif
+  			schedstat_inc(rq, sched_idle);
+ 			goto switch_tasks;
+ 		}
+@@ -3411,11 +3787,19 @@ need_resched:
+ 		 * Switch the active and expired arrays.
+ 		 */
+ 		schedstat_inc(rq, sched_switch);
++#ifdef CONFIG_NICKSCHED
++		rq->array_sequence++;
++#endif
+ 		rq->active = rq->expired;
+ 		rq->expired = array;
+ 		array = rq->active;
++#ifdef CONFIG_NICKSCHED
++		idx = find_next_bit(rq->active->bitmap, MAX_PRIO, MAX_RT_PRIO);
++		rq->active->min_prio = idx;
++#else
+ 		rq->expired_timestamp = 0;
+ 		rq->best_expired_prio = MAX_PRIO;
++#endif
+ 	}
+ 
+ 	idx = sched_find_first_bit(array->bitmap);
+@@ -3424,6 +3808,7 @@ need_resched:
+ 	next = list_entry(queue->next, task_t, run_list);
+ #endif
+ 
++#ifndef CONFIG_NICKSCHED
+ 	if (dependent_sleeper(cpu, rq, next)) {
+ #ifdef CONFIG_SPA
+ 		rq->current_prio_slot = rq->queues + IDLE_PRIO;
+@@ -3448,6 +3833,7 @@ need_resched:
+ 	}
+ 	next->activated = 0;
+ #endif
++#endif
+ switch_tasks:
+ 	prefetch(next);
+ 	clear_tsk_need_resched(prev);
+@@ -3461,7 +3847,7 @@ switch_tasks:
+ 	prev->avg_cpu_per_cycle += delta;
+ 	prev->total_cpu += delta;
+ 	prev->timestamp = prev->sched_timestamp = rq->timestamp_last_tick;
+-#else
++#elif !defined(CONFIG_NICKSCHED)
+ #ifndef CONFIG_STAIRCASE
+ 	prev->sleep_avg -= run_time;
+ 	if ((long)prev->sleep_avg <= 0) {
+@@ -3474,7 +3860,9 @@ switch_tasks:
+ #endif
+ 
+ 	if (likely(prev != next)) {
+-#ifdef CONFIG_STAIRCASE
++#ifdef CONFIG_NICKSCHED
++		add_task_time(next, now - next->timestamp, STIME_WAIT);
++#elif defined(CONFIG_STAIRCASE)
+ 		rq->preempted = 0;
+ 		rq->cache_ticks = 0;
+ #endif
+@@ -3503,7 +3891,11 @@ switch_tasks:
+ 
+ 	reacquire_kernel_lock(current);
+ 	preempt_enable_no_resched();
++#ifdef CONFIG_NICKSCHED
++	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
++#else
+ 	if (test_thread_flag(TIF_NEED_RESCHED))
++#endif
+ 		goto need_resched;
+ }
+ 
+@@ -3782,7 +4174,12 @@ void set_user_nice(task_t *p, long nice)
+ 		dequeue_task(p);
+ 	delta = PRIO_TO_NICE(p->static_prio) - nice;
+ #else
+-	if (rt_task(p)) {
++#ifdef CONFIG_NICKSCHED
++	if (unlikely(rt_task(p)))
++#else
++	if (rt_task(p))
++#endif
++	{
+ 		p->static_prio = NICE_TO_PRIO(nice);
+ 		goto out_unlock;
+ 	}
+@@ -4069,7 +4466,11 @@ static int setscheduler(pid_t pid, int p
+ 	array = p->array;
+ 	if (array)
+ #endif
++#ifdef CONFIG_NICKSCHED
++		deactivate_task(p, rq);
++#else
+ 		deactivate_task(p, task_rq(p));
++#endif
+ 	retval = 0;
+ #ifndef CONFIG_SPA
+ 	oldprio = p->prio;
+@@ -4084,6 +4485,8 @@ static int setscheduler(pid_t pid, int p
+ #ifdef CONFIG_SPA
+ 		int prio = effective_prio(p);
+ 		__activate_task(p, task_rq(p), prio);
++#elif defined(CONFIG_NICKSCHED)
++		__activate_task(p, rq, array);
+ #else
+ 		__activate_task(p, task_rq(p));
+ #endif
+@@ -4546,6 +4949,10 @@ long sys_sched_rr_get_interval(pid_t pid
+ 	int retval = -EINVAL;
+ 	struct timespec t;
+ 	task_t *p;
++#ifdef CONFIG_NICKSCHED
++	unsigned long flags;
++	runqueue_t *rq;
++#endif
+ 
+ 	if (pid < 0)
+ 		goto out_nounlock;
+@@ -4560,13 +4967,21 @@ long sys_sched_rr_get_interval(pid_t pid
+ 	if (retval)
+ 		goto out_unlock;
+ 
++#ifdef CONFIG_NICKSCHED
++	rq = task_rq_lock(p, &flags);
++#endif
+ 	jiffies_to_timespec(p->policy & SCHED_FIFO ?
+-#ifdef CONFIG_STAIRCASE
++#ifdef CONFIG_NICKSCHED
++				0 : US_TO_JIFFIES(task_timeslice(p, rq)),
++#elif defined(CONFIG_STAIRCASE)
+ 				0 : slice(p),
+ #else
+ 				0 : task_timeslice(p),
+ #endif
+ 				&t);
++#ifdef CONFIG_NICKSCHED
++	task_rq_unlock(rq, &flags);
++#endif
+ 	read_unlock(&tasklist_lock);
+ 	retval = copy_to_user(interval, &t, sizeof(t)) ? -EFAULT : 0;
+ out_nounlock:
+@@ -5434,8 +5849,10 @@ void __init sched_init(void)
+ #elif !defined(CONFIG_SPA)
+ 		rq->active = rq->arrays;
+ 		rq->expired = rq->arrays + 1;
++#ifndef CONFIG_NICKSCHED
+ 		rq->best_expired_prio = MAX_PRIO;
+ #endif
++#endif
+ 
+ #ifdef CONFIG_SMP
+ 		rq->sd = &sched_domain_init;
+@@ -5468,6 +5885,9 @@ void __init sched_init(void)
+ #else
+ 		for (j = 0; j < 2; j++) {
+ 			array = rq->arrays + j;
++#ifdef CONFIG_NICKSCHED
++			array->min_prio = MAX_PRIO;
++#endif
+ 			for (k = 0; k < MAX_PRIO; k++) {
+ 				INIT_LIST_HEAD(array->queue + k);
+ 				__clear_bit(k, array->bitmap);
+diff -puN mm/oom_kill.c~v30g mm/oom_kill.c
+--- linux-2.6.7-rc3-xx5/mm/oom_kill.c~v30g	2004-06-16 23:09:04.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/mm/oom_kill.c	2004-06-16 23:49:46.742008872 -0400
+@@ -148,7 +148,9 @@ static void __oom_kill_task(task_t *p)
+ 	 * all the memory it needs. That way it should be able to
+ 	 * exit() and clear out its resources quickly...
+ 	 */
++#ifndef CONFIG_NICKSCHED
+ 	p->time_slice = HZ;
++#endif
+ 	p->flags |= PF_MEMALLOC | PF_MEMDIE;
+ 
+ 	/* This process has hardware access, be more careful. */
+diff -puN arch/i386/Kconfig~v30g arch/i386/Kconfig
+diff -puN kernel/Kconfig-extra.xx~v30g kernel/Kconfig-extra.xx
+--- linux-2.6.7-rc3-xx5/kernel/Kconfig-extra.xx~v30g	2004-06-16 23:09:05.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/kernel/Kconfig-extra.xx	2004-06-16 23:50:22.087635520 -0400
+@@ -17,6 +17,32 @@ config SCHED_NONE
+ 	  It contains the sched domains code by Nick Piggin and some tweaks
+ 	  to the scheduling code, but no significant changes.
+ 
++config NICKSCHED
++	bool "Nicksched"
++	help
++	  This is a scheduler written by Nick Piggin.  It is quite fast,
++	  responsive, and does well under heavy loads.
++
++	  In this scheduler, the architecture is still pretty similar
++	  to the original scheduler - there are still two priority
++	  arrays, for example.  The differences are in how the bonuses
++ 	  are given.
++
++	  In Nicksched, a task's priority and bonuses are based on its
++	  "sleep time."  The scheduler keeps track of a task's history -
++	  how long the task was running.  Each task is also assigned one
++	  of three running modes: sleeping (not active), running (using
++	  the CPU), and waiting (waiting for CPU time).  Tasks are given
++	  priority bonuses based on these two factors.  This is a lot
++	  simpler than the original interactivity/credit model, since
++	  it mostly uses linear functions and bit shifts to keep
++	  calculations simple and quick.  And with this method, it
++	  is a lot easier to scale timeslices - for example, the
++	  timeslice given is scaled against the priority of the other
++	  tasks, so a lower priority process can still get larger
++	  timeslices if there aren't higher priority processes using
++	  the CPU.
++
+ config SPA
+ 	bool "Single Priority Array (SPA)"
+ 	help
+
+_

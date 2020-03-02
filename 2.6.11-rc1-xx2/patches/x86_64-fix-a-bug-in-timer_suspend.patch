@@ -1,0 +1,61 @@
+
+From: "Rafael J. Wysocki" <rjw@sisk.pl>
+
+This patch is intended to fix a bug in timer_suspend() on x86_64 that
+causes hard lockups on suspend with swsusp and provide some optimizations. 
+It is based on the Nigel Cunningham's patches to to reduce delay in
+arch/kernel/time.c.
+
+Signed-off-by: Rafael J. Wysocki <rjw@sisk.pl>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/x86_64/kernel/time.c |   14 +++++++++-----
+ 1 files changed, 9 insertions(+), 5 deletions(-)
+
+diff -puN arch/x86_64/kernel/time.c~x86_64-fix-a-bug-in-timer_suspend arch/x86_64/kernel/time.c
+--- 25/arch/x86_64/kernel/time.c~x86_64-fix-a-bug-in-timer_suspend	2005-01-12 17:55:16.701598864 -0800
++++ 25-akpm/arch/x86_64/kernel/time.c	2005-01-12 17:55:16.706598104 -0800
+@@ -955,16 +955,19 @@ void __init time_init_smp(void)
+ 
+ __setup("report_lost_ticks", time_setup);
+ 
+-static long clock_cmos_diff, sleep_start;
++static long clock_cmos_diff;
++static unsigned long sleep_start;
+ 
+ static int timer_suspend(struct sys_device *dev, u32 state)
+ {
+ 	/*
+ 	 * Estimate time zone so that set_time can update the clock
+ 	 */
+-	clock_cmos_diff = -get_cmos_time();
++	long cmos_time =  get_cmos_time();
++
++	clock_cmos_diff = -cmos_time;
+ 	clock_cmos_diff += get_seconds();
+-	sleep_start = jiffies;
++	sleep_start = cmos_time;
+ 	return 0;
+ }
+ 
+@@ -973,7 +976,7 @@ static int timer_resume(struct sys_devic
+ 	unsigned long flags;
+ 	unsigned long sec;
+ 	unsigned long ctime = get_cmos_time();
+-	unsigned long sleep_length = ctime - sleep_start;
++	unsigned long sleep_length = (ctime - sleep_start) * HZ;
+ 
+ 	if (vxtime.hpet_address)
+ 		hpet_reenable();
+@@ -983,7 +986,8 @@ static int timer_resume(struct sys_devic
+ 	xtime.tv_sec = sec;
+ 	xtime.tv_nsec = 0;
+ 	write_sequnlock_irqrestore(&xtime_lock,flags);
+-	jiffies += sleep_length * HZ;
++	jiffies += sleep_length;
++	wall_jiffies += sleep_length;
+ 	return 0;
+ }
+ 
+_

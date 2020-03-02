@@ -1,0 +1,64 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Hugh and I both thought this would be generally useful.
+
+Signed-off-by: Nick Piggin <nickpiggin@yahoo.com.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/kernel.h |    1 +
+ 25-akpm/kernel/panic.c         |    6 ++++--
+ 25-akpm/mm/page_alloc.c        |    1 +
+ 3 files changed, 6 insertions(+), 2 deletions(-)
+
+diff -puN include/linux/kernel.h~taint-on-bad_page include/linux/kernel.h
+--- 25/include/linux/kernel.h~taint-on-bad_page	2004-09-30 22:37:12.108909384 -0700
++++ 25-akpm/include/linux/kernel.h	2004-09-30 22:37:12.115908320 -0700
+@@ -151,6 +151,7 @@ extern enum system_states {
+ #define TAINT_UNSAFE_SMP		(1<<2)
+ #define TAINT_FORCED_RMMOD		(1<<3)
+ #define TAINT_MACHINE_CHECK		(1<<4)
++#define TAINT_BAD_PAGE			(1<<5)
+ 
+ extern void dump_stack(void);
+ 
+diff -puN kernel/panic.c~taint-on-bad_page kernel/panic.c
+--- 25/kernel/panic.c~taint-on-bad_page	2004-09-30 22:37:12.109909232 -0700
++++ 25-akpm/kernel/panic.c	2004-09-30 22:37:12.115908320 -0700
+@@ -119,6 +119,7 @@ EXPORT_SYMBOL(panic);
+  *  'S' - SMP with CPUs not designed for SMP.
+  *  'R' - User forced a module unload.
+  *  'M' - Machine had a machine check experience.
++ *  'B' - System has hit bad_page.
+  *
+  *	The string is overwritten by the next call to print_taint().
+  */
+@@ -127,12 +128,13 @@ const char *print_tainted(void)
+ {
+ 	static char buf[20];
+ 	if (tainted) {
+-		snprintf(buf, sizeof(buf), "Tainted: %c%c%c%c%c",
++		snprintf(buf, sizeof(buf), "Tainted: %c%c%c%c%c%c",
+ 			tainted & TAINT_PROPRIETARY_MODULE ? 'P' : 'G',
+ 			tainted & TAINT_FORCED_MODULE ? 'F' : ' ',
+ 			tainted & TAINT_UNSAFE_SMP ? 'S' : ' ',
+ 			tainted & TAINT_FORCED_RMMOD ? 'R' : ' ',
+- 			tainted & TAINT_MACHINE_CHECK ? 'M' : ' ');
++ 			tainted & TAINT_MACHINE_CHECK ? 'M' : ' ',
++			tainted & TAINT_BAD_PAGE ? 'B' : ' ');
+ 	}
+ 	else
+ 		snprintf(buf, sizeof(buf), "Not tainted");
+diff -puN mm/page_alloc.c~taint-on-bad_page mm/page_alloc.c
+--- 25/mm/page_alloc.c~taint-on-bad_page	2004-09-30 22:37:12.111908928 -0700
++++ 25-akpm/mm/page_alloc.c	2004-09-30 22:37:12.117908016 -0700
+@@ -95,6 +95,7 @@ static void bad_page(const char *functio
+ 	set_page_count(page, 0);
+ 	reset_page_mapcount(page);
+ 	page->mapping = NULL;
++	tainted |= TAINT_BAD_PAGE;
+ }
+ 
+ #ifndef CONFIG_HUGETLB_PAGE
+_

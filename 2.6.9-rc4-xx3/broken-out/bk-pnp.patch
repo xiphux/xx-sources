@@ -1,0 +1,132 @@
+bk://linux-pnp.bkbits.net/pnp-2.6
+ambx1@neo.rr.com|ChangeSet|20040627220754|26519 ambx1
+
+# This is a BitKeeper generated diff -Nru style patch.
+#
+# ChangeSet
+#   2004/07/04 22:57:16-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-pnp
+# 
+# drivers/serial/8250_pnp.c
+#   2004/07/04 22:57:13-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/07/01 01:46:42-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-pnp
+# 
+# drivers/serial/8250_pnp.c
+#   2004/07/01 01:46:38-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/06/27 22:07:54+00:00 ambx1@neo.rr.com 
+#   [PNP] Additional serial updates
+#   
+#   Removes some debug code missed in the last pass and fixes a potential __init
+#   problem.
+# 
+# drivers/serial/8250_pnp.c
+#   2004/06/27 21:48:00+00:00 ambx1@neo.rr.com +3 -6
+#   [PNP] Additional Serial Updates
+# 
+# ChangeSet
+#   2004/06/24 21:46:05+00:00 ambx1@neo.rr.com 
+#   [PNP] Detect unknown PnP modems
+#   
+#   This patch allows the PnP subsystem to utilizes the serial driver's detection 
+#   heuristics.
+# 
+# drivers/serial/8250_pnp.c
+#   2004/06/24 21:42:16+00:00 ambx1@neo.rr.com +12 -3
+#   [PNP] Detect unknown PnP modems
+# 
+# ChangeSet
+#   2004/06/24 21:34:25+00:00 ambx1@neo.rr.com 
+#   [PNP] Add driver specific matching logic
+#   
+#   This patch allows pnp drivers to implement optionally thier own (*match) 
+#   functions because some PnP devices require special detection conditions.
+# 
+# include/linux/pnp.h
+#   2004/06/20 12:26:13+00:00 ambx1@neo.rr.com +1 -0
+#   [PNP] Add driver specific matching logic
+# 
+# drivers/pnp/driver.c
+#   2004/06/21 10:29:55+00:00 ambx1@neo.rr.com +7 -0
+#   [PNP] Add driver specific matching logic
+# 
+diff -Nru a/drivers/pnp/driver.c b/drivers/pnp/driver.c
+--- a/drivers/pnp/driver.c	2004-10-10 22:24:34 -07:00
++++ b/drivers/pnp/driver.c	2004-10-10 22:24:34 -07:00
+@@ -50,6 +50,11 @@
+ 	return 0;
+ }
+ 
++static struct pnp_device_id generic_id = {
++	.id		= "ANYDEVS",
++	.driver_data	= 0,
++};
++
+ static const struct pnp_device_id * match_device(struct pnp_driver *drv, struct pnp_dev *dev)
+ {
+ 	const struct pnp_device_id *drv_id = drv->id_table;
+@@ -61,6 +66,8 @@
+ 			return drv_id;
+ 		drv_id++;
+ 	}
++	if ((drv->match && !drv->match(dev)))
++		return &generic_id;
+ 	return NULL;
+ }
+ 
+diff -Nru a/drivers/serial/8250_pnp.c b/drivers/serial/8250_pnp.c
+--- a/drivers/serial/8250_pnp.c	2004-10-10 22:24:34 -07:00
++++ b/drivers/serial/8250_pnp.c	2004-10-10 22:24:34 -07:00
+@@ -379,7 +379,7 @@
+  * PnP modems, alternatively we must hardcode all modems in pnp_devices[]
+  * table.
+  */
+-static int __devinit serial_pnp_guess_board(struct pnp_dev *dev, int *flags)
++static int serial_pnp_guess_board(struct pnp_dev *dev)
+ {
+ 	if (!(check_name(pnp_dev_name(dev)) || (dev->card && check_name(dev->card->name))))
+ 		return -ENODEV;
+@@ -399,7 +399,7 @@
+ 	struct serial_struct serial_req;
+ 	int ret, line, flags = dev_id->driver_data;
+ 	if (flags & UNKNOWN_DEV) {
+-		ret = serial_pnp_guess_board(dev, &flags);
++		ret = serial_pnp_guess_board(dev);
+ 		if (ret < 0)
+ 			return ret;
+ 	}
+@@ -430,11 +430,17 @@
+ 		unregister_serial(line - 1);
+ }
+ 
++static int serial_pnp_match(struct pnp_dev *dev)
++{
++	return serial_pnp_guess_board(dev);
++}
++
+ static struct pnp_driver serial_pnp_driver = {
+ 	.name		= "serial",
+ 	.id_table	= pnp_dev_table,
+ 	.probe		= serial_pnp_probe,
+ 	.remove		= __devexit_p(serial_pnp_remove),
++	.match		= serial_pnp_match,
+ };
+ 
+ static int __init serial8250_pnp_init(void)
+diff -Nru a/include/linux/pnp.h b/include/linux/pnp.h
+--- a/include/linux/pnp.h	2004-10-10 22:24:34 -07:00
++++ b/include/linux/pnp.h	2004-10-10 22:24:34 -07:00
+@@ -292,6 +292,7 @@
+ 	unsigned int flags;
+ 	int  (*probe)  (struct pnp_dev *dev, const struct pnp_device_id *dev_id);
+ 	void (*remove) (struct pnp_dev *dev);
++	int  (*match)  (struct pnp_dev *dev);
+ 	struct device_driver driver;
+ };
+ 

@@ -1,0 +1,50 @@
+---
+
+ linux-2.6.7-xx4-xiphux/include/linux/sched.h |    1 -
+ linux-2.6.7-xx4-xiphux/kernel/sched.c        |   13 +++----------
+ 2 files changed, 3 insertions(+), 11 deletions(-)
+
+diff -puN include/linux/sched.h~staircase-7.6-to-7.7 include/linux/sched.h
+--- linux-2.6.7-xx4/include/linux/sched.h~staircase-7.6-to-7.7	2004-06-28 12:40:55.866766848 -0400
++++ linux-2.6.7-xx4-xiphux/include/linux/sched.h	2004-06-28 12:41:21.654846464 -0400
+@@ -609,7 +609,6 @@ do { if (atomic_dec_and_test(&(tsk)->usa
+ #define PF_SYNCWRITE	0x00200000	/* I am doing a sync write */
+ #ifdef CONFIG_STAIRCASE
+ #define PF_FORKED	0x00400000	/* I have just forked */
+-#define PF_PREEMPTED	0x00800000	/* I have just been preempted */
+ #endif
+ 
+ #ifdef CONFIG_SMP
+diff -puN kernel/sched.c~staircase-7.6-to-7.7 kernel/sched.c
+--- linux-2.6.7-xx4/kernel/sched.c~staircase-7.6-to-7.7	2004-06-28 12:40:57.690489600 -0400
++++ linux-2.6.7-xx4-xiphux/kernel/sched.c	2004-06-28 12:42:43.563394472 -0400
+@@ -485,12 +485,9 @@ static int task_preempts_curr(struct tas
+ {
+ 	if (p->prio >= rq->curr->prio)
+ 		return 0;
+-	if (!compute || rq->cache_ticks >= cache_decay_ticks ||
+-		rt_task(p) || !p->mm || rq->curr == rq->idle ||
+-		(batch_task(rq->curr) && !batch_task(p)))
+-			rq->curr->flags |= PF_PREEMPTED;
++ 	if (!compute || rq->cache_ticks >= cache_decay_ticks ||
++		rt_task(p) || !p->mm || rq->curr == rq->idle)
+ 			return 1;
+-	}
+ 	rq->preempted = 1;
+ 		return 0;
+ }
+@@ -562,11 +559,7 @@ static void enqueue_task(struct task_str
+ 		)
+ {
+ #ifdef CONFIG_STAIRCASE
+-	if (p->flags & PF_PREEMPTED) {
+-		p->flags &= ~PF_PREEMPTED;
+-		list_add(&p->run_list, rq->queue + p->prio);
+-	} else
+-		list_add_tail(&p->run_list, rq->queue + p->prio);
++	list_add_tail(&p->run_list, rq->queue + p->prio);
+ 	__set_bit(p->prio, rq->bitmap);
+ #elif defined(CONFIG_SPA)
+ 	list_add_tail(&p->run_list, &rq->queues[prio].queue);
+
+_

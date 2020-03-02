@@ -1,0 +1,39 @@
+
+From: Hugh Dickins <hugh@veritas.com>
+
+The i386 and x86_64 _raw_read_trylocks in preempt-smp.patch are too
+successful: atomic_read() returns a signed integer.
+
+Signed-off-by: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/asm-i386/spinlock.h   |    2 +-
+ 25-akpm/include/asm-x86_64/spinlock.h |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN include/asm-i386/spinlock.h~preempt-smp-_raw_read_trylock-bias-fix include/asm-i386/spinlock.h
+--- 25/include/asm-i386/spinlock.h~preempt-smp-_raw_read_trylock-bias-fix	Mon Oct  4 15:24:34 2004
++++ 25-akpm/include/asm-i386/spinlock.h	Mon Oct  4 15:24:34 2004
+@@ -222,7 +222,7 @@ static inline int _raw_read_trylock(rwlo
+ {
+ 	atomic_t *count = (atomic_t *)lock;
+ 	atomic_dec(count);
+-	if (atomic_read(count) < RW_LOCK_BIAS)
++	if (atomic_read(count) >= 0)
+ 		return 1;
+ 	atomic_inc(count);
+ 	return 0;
+diff -puN include/asm-x86_64/spinlock.h~preempt-smp-_raw_read_trylock-bias-fix include/asm-x86_64/spinlock.h
+--- 25/include/asm-x86_64/spinlock.h~preempt-smp-_raw_read_trylock-bias-fix	Mon Oct  4 15:24:34 2004
++++ 25-akpm/include/asm-x86_64/spinlock.h	Mon Oct  4 15:24:34 2004
+@@ -195,7 +195,7 @@ static inline int _raw_read_trylock(rwlo
+ {
+ 	atomic_t *count = (atomic_t *)lock;
+ 	atomic_dec(count);
+-	if (atomic_read(count) < RW_LOCK_BIAS)
++	if (atomic_read(count) >= 0)
+ 		return 1;
+ 	atomic_inc(count);
+ 	return 0;
+_

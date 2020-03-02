@@ -1,0 +1,140 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/um/drivers/mconsole_kern.c |    2 +-
+ 25-akpm/arch/um/drivers/net_kern.c      |    4 ++--
+ 25-akpm/arch/um/drivers/ubd_kern.c      |    4 ++--
+ 25-akpm/arch/um/kernel/irq.c            |    2 +-
+ 25-akpm/arch/um/kernel/sigio_kern.c     |    2 +-
+ 25-akpm/arch/um/kernel/smp.c            |    2 +-
+ 25-akpm/arch/um/kernel/syscall_kern.c   |    2 +-
+ 25-akpm/arch/um/kernel/time_kern.c      |    2 +-
+ 25-akpm/arch/um/kernel/trap_kern.c      |    2 +-
+ 9 files changed, 11 insertions(+), 11 deletions(-)
+
+diff -puN arch/um/drivers/mconsole_kern.c~lock-initializer-cleanup-usermode arch/um/drivers/mconsole_kern.c
+--- 25/arch/um/drivers/mconsole_kern.c~lock-initializer-cleanup-usermode	Wed Jan 12 16:54:39 2005
++++ 25-akpm/arch/um/drivers/mconsole_kern.c	Wed Jan 12 16:54:39 2005
+@@ -538,7 +538,7 @@ static int create_proc_mconsole(void)
+ 	return(0);
+ }
+ 
+-static spinlock_t notify_spinlock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(notify_spinlock);
+ 
+ void lock_notify(void)
+ {
+diff -puN arch/um/drivers/net_kern.c~lock-initializer-cleanup-usermode arch/um/drivers/net_kern.c
+--- 25/arch/um/drivers/net_kern.c~lock-initializer-cleanup-usermode	Wed Jan 12 16:54:39 2005
++++ 25-akpm/arch/um/drivers/net_kern.c	Wed Jan 12 16:54:39 2005
+@@ -32,7 +32,7 @@
+ 
+ #define DRIVER_NAME "uml-netdev"
+ 
+-static spinlock_t opened_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(opened_lock);
+ LIST_HEAD(opened);
+ 
+ static int uml_net_rx(struct net_device *dev)
+@@ -282,7 +282,7 @@ void uml_net_user_timer_expire(unsigned 
+ #endif
+ }
+ 
+-static spinlock_t devices_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(devices_lock);
+ static struct list_head devices = LIST_HEAD_INIT(devices);
+ 
+ static struct device_driver uml_net_driver = {
+diff -puN arch/um/drivers/ubd_kern.c~lock-initializer-cleanup-usermode arch/um/drivers/ubd_kern.c
+--- 25/arch/um/drivers/ubd_kern.c~lock-initializer-cleanup-usermode	Wed Jan 12 16:54:39 2005
++++ 25-akpm/arch/um/drivers/ubd_kern.c	Wed Jan 12 16:54:39 2005
+@@ -56,8 +56,8 @@
+ 
+ #define DRIVER_NAME "uml-blkdev"
+ 
+-static spinlock_t ubd_io_lock = SPIN_LOCK_UNLOCKED;
+-static spinlock_t ubd_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(ubd_io_lock);
++static DEFINE_SPINLOCK(ubd_lock);
+ 
+ static void (*do_ubd)(void);
+ 
+diff -puN arch/um/kernel/irq.c~lock-initializer-cleanup-usermode arch/um/kernel/irq.c
+--- 25/arch/um/kernel/irq.c~lock-initializer-cleanup-usermode	Wed Jan 12 16:54:39 2005
++++ 25-akpm/arch/um/kernel/irq.c	Wed Jan 12 16:54:39 2005
+@@ -109,7 +109,7 @@ int um_request_irq(unsigned int irq, int
+ EXPORT_SYMBOL(um_request_irq);
+ EXPORT_SYMBOL(reactivate_fd);
+ 
+-static spinlock_t irq_spinlock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(irq_spinlock);
+ 
+ unsigned long irq_lock(void)
+ {
+diff -puN arch/um/kernel/sigio_kern.c~lock-initializer-cleanup-usermode arch/um/kernel/sigio_kern.c
+--- 25/arch/um/kernel/sigio_kern.c~lock-initializer-cleanup-usermode	Wed Jan 12 16:54:39 2005
++++ 25-akpm/arch/um/kernel/sigio_kern.c	Wed Jan 12 16:54:39 2005
+@@ -39,7 +39,7 @@ int write_sigio_irq(int fd)
+ 	return(0);
+ }
+ 
+-static spinlock_t sigio_spinlock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(sigio_spinlock);
+ 
+ void sigio_lock(void)
+ {
+diff -puN arch/um/kernel/smp.c~lock-initializer-cleanup-usermode arch/um/kernel/smp.c
+--- 25/arch/um/kernel/smp.c~lock-initializer-cleanup-usermode	Wed Jan 12 16:54:39 2005
++++ 25-akpm/arch/um/kernel/smp.c	Wed Jan 12 16:54:39 2005
+@@ -216,7 +216,7 @@ int hard_smp_processor_id(void)
+ 	return(pid_to_processor_id(os_getpid()));
+ }
+ 
+-static spinlock_t call_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(call_lock);
+ static atomic_t scf_started;
+ static atomic_t scf_finished;
+ static void (*func)(void *info);
+diff -puN arch/um/kernel/syscall_kern.c~lock-initializer-cleanup-usermode arch/um/kernel/syscall_kern.c
+--- 25/arch/um/kernel/syscall_kern.c~lock-initializer-cleanup-usermode	Wed Jan 12 16:54:39 2005
++++ 25-akpm/arch/um/kernel/syscall_kern.c	Wed Jan 12 16:54:39 2005
+@@ -159,7 +159,7 @@ long execute_syscall(void *r)
+ 	return(CHOOSE_MODE_PROC(execute_syscall_tt, execute_syscall_skas, r));
+ }
+ 
+-spinlock_t syscall_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(syscall_lock);
+ 
+ static int syscall_index = 0;
+ 
+diff -puN arch/um/kernel/time_kern.c~lock-initializer-cleanup-usermode arch/um/kernel/time_kern.c
+--- 25/arch/um/kernel/time_kern.c~lock-initializer-cleanup-usermode	Wed Jan 12 16:54:39 2005
++++ 25-akpm/arch/um/kernel/time_kern.c	Wed Jan 12 16:54:39 2005
+@@ -161,7 +161,7 @@ void timer_handler(int sig, union uml_pt
+ 		timer_irq(regs);
+ }
+ 
+-static spinlock_t timer_spinlock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(timer_spinlock);
+ 
+ unsigned long time_lock(void)
+ {
+diff -puN arch/um/kernel/trap_kern.c~lock-initializer-cleanup-usermode arch/um/kernel/trap_kern.c
+--- 25/arch/um/kernel/trap_kern.c~lock-initializer-cleanup-usermode	Wed Jan 12 16:54:39 2005
++++ 25-akpm/arch/um/kernel/trap_kern.c	Wed Jan 12 16:54:39 2005
+@@ -221,7 +221,7 @@ void trap_init(void)
+ {
+ }
+ 
+-spinlock_t trap_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(trap_lock);
+ 
+ static int trap_index = 0;
+ 
+_

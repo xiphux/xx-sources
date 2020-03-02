@@ -1,0 +1,67 @@
+
+From: Paolo 'Blaisorblade' Giarrusso <blaisorblade_spam@yahoo.it>
+
+It seems that linker script for userspace software are quite
+toolchain-depending, at least because what we use is a merge between builtin
+LD scripts (see strings /usr/bin/ld) and normal kernel linking scripts.
+
+Plus, a number of people are having toolchain-related troubles building UML
+(even assertion failures on linking, with Gentoo and Fedora 2).
+
+So, let's try to make UML nicer for binutils.
+
+Signed-off-by: Paolo 'Blaisorblade' Giarrusso <blaisorblade_spam@yahoo.it>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/um/kernel/dyn.lds.S |    3 +++
+ 25-akpm/arch/um/kernel/uml.lds.S |   10 +++++++++-
+ 2 files changed, 12 insertions(+), 1 deletion(-)
+
+diff -puN arch/um/kernel/dyn.lds.S~uml-update-ld-scripts-to-newer-binutils arch/um/kernel/dyn.lds.S
+--- 25/arch/um/kernel/dyn.lds.S~uml-update-ld-scripts-to-newer-binutils	Thu Jan 13 15:32:31 2005
++++ 25-akpm/arch/um/kernel/dyn.lds.S	Thu Jan 13 15:32:31 2005
+@@ -7,8 +7,11 @@ jiffies = jiffies_64;
+ 
+ SECTIONS
+ {
++  PROVIDE (__executable_start = START);
+   . = START + SIZEOF_HEADERS;
+   .interp         : { *(.interp) }
++  /* Used in arch/um/kernel/mem.c. Any memory between START and __binary_start
++   * is remapped.*/
+   __binary_start = .;
+   . = ALIGN(4096);		/* Init code and data */
+   _stext = .;
+diff -puN arch/um/kernel/uml.lds.S~uml-update-ld-scripts-to-newer-binutils arch/um/kernel/uml.lds.S
+--- 25/arch/um/kernel/uml.lds.S~uml-update-ld-scripts-to-newer-binutils	Thu Jan 13 15:32:31 2005
++++ 25-akpm/arch/um/kernel/uml.lds.S	Thu Jan 13 15:32:31 2005
+@@ -7,8 +7,12 @@ jiffies = jiffies_64;
+ 
+ SECTIONS
+ {
++  /*This must contain the right address - not quite the default ELF one.*/
++  PROVIDE (__executable_start = START);
+   . = START + SIZEOF_HEADERS;
+ 
++  /* Used in arch/um/kernel/mem.c. Any memory between START and __binary_start
++   * is remapped.*/
+   __binary_start = .;
+ #ifdef MODE_TT
+   .thread_private : {
+@@ -20,9 +24,13 @@ SECTIONS
+   }
+   . = ALIGN(4096);
+   .remap : { arch/um/kernel/tt/unmap_fin.o (.text) }
+-#endif
++
++  /* We want it only if we are in MODE_TT. In both cases, however, when MODE_TT
++   * is off the resulting binary segfaults.*/
+ 
+   . = ALIGN(4096);		/* Init code and data */
++#endif
++
+   _stext = .;
+   __init_begin = .;
+   .init.text : {
+_

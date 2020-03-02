@@ -1,0 +1,181 @@
+
+From: Paul Mundt <lethal@Linux-SH.ORG>
+
+This updates the sh dma-mapping code, as well as doing some cleanup in the
+consistent API.  We also add a consistent_{alloc,free} to the machvec for
+platforms that need special handling.
+
+Signed-off-by: Paul Mundt <lethal@linux-sh.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/sh/mm/consistent.c      |   40 ++++++++++++++++++-----------------
+ 25-akpm/include/asm-sh/dma-mapping.h |   32 ++++++++++++++++++++++++++++
+ 25-akpm/include/asm-sh/machvec.h     |    4 +++
+ 3 files changed, 57 insertions(+), 19 deletions(-)
+
+diff -puN arch/sh/mm/consistent.c~sh-dma-mapping-updates arch/sh/mm/consistent.c
+--- 25/arch/sh/mm/consistent.c~sh-dma-mapping-updates	2004-06-23 20:00:14.005560856 -0700
++++ 25-akpm/arch/sh/mm/consistent.c	2004-06-23 20:00:14.011559944 -0700
+@@ -24,56 +24,58 @@ void *consistent_alloc(int gfp, size_t s
+ 	if (!page)
+ 		return NULL;
+ 
+-	ret = (void *)P2SEGADDR(page_to_bus(page));
++	ret = page_address(page);
++	*handle = virt_to_phys(ret);
+ 
+ 	/*
+ 	 * We must flush the cache before we pass it on to the device
+ 	 */
+ 	dma_cache_wback_inv(ret, size);
+ 
+-	*handle = (unsigned long)ret;
+-
++	page = virt_to_page(ret);
+ 	free = page + (size >> PAGE_SHIFT);
+ 	end  = page + (1 << order);
+ 
+-	do {
++	while (++page < end) {
+ 		set_page_count(page, 1);
+-		page++;
+-	} while (size -= PAGE_SIZE);
+ 
+-	/*
+-	 * Free any unused pages
+-	 */
+-	while (page < end) {
+-		set_page_count(page, 1);
+-		__free_page(page);
+-		page++;
++		/* Free any unused pages */
++		if (page >= free) {
++			__free_page(page);
++		}
+ 	}
+ 
+-	return ret;
++	return P2SEGADDR(ret);
+ }
+ 
+ void consistent_free(void *vaddr, size_t size)
+ {
+ 	unsigned long addr = P1SEGADDR((unsigned long)vaddr);
++	struct page *page=virt_to_page(addr);
++	int num_pages=(size+PAGE_SIZE-1) >> PAGE_SHIFT;
++	int i;
+ 
+-	free_pages(addr, get_order(size));
++	for(i=0;i<num_pages;i++) {
++		__free_page((page+i));
++	}
+ }
+ 
+ void consistent_sync(void *vaddr, size_t size, int direction)
+ {
++	void * p1addr = (void*) P1SEGADDR((unsigned long)vaddr);
++
+ 	switch (direction) {
+ 	case DMA_FROM_DEVICE:		/* invalidate only */
+-		dma_cache_inv(vaddr, size);
++		dma_cache_inv(p1addr, size);
+ 		break;
+ 	case DMA_TO_DEVICE:		/* writeback only */
+-		dma_cache_wback(vaddr, size);
++		dma_cache_wback(p1addr, size);
+ 		break;
+ 	case DMA_BIDIRECTIONAL:		/* writeback and invalidate */
+-		dma_cache_wback_inv(vaddr, size);
++		dma_cache_wback_inv(p1addr, size);
+ 		break;
+ 	default:
+ 		BUG();
+ 	}
+ }
+-
++EXPORT_SYMBOL(consistent_sync);
+diff -puN include/asm-sh/dma-mapping.h~sh-dma-mapping-updates include/asm-sh/dma-mapping.h
+--- 25/include/asm-sh/dma-mapping.h~sh-dma-mapping-updates	2004-06-23 20:00:14.006560704 -0700
++++ 25-akpm/include/asm-sh/dma-mapping.h	2004-06-23 20:00:14.012559792 -0700
+@@ -44,6 +44,8 @@ static inline void *dma_alloc_coherent(s
+ 	if (dev && dev->bus == &pci_bus_type)
+ 		return __pci_alloc_consistent(NULL, size, dma_handle);
+ #endif
++	if (sh_mv.mv_consistent_alloc)
++		return sh_mv.mv_consistent_alloc(dev, size, dma_handle, flag);
+ 
+ 	return consistent_alloc(flag, size, dma_handle);
+ }
+@@ -61,6 +63,11 @@ static inline void dma_free_coherent(str
+ 	}
+ #endif
+ 
++	if (sh_mv.mv_consistent_free) {
++		sh_mv.mv_consistent_free(dev, size, vaddr, dma_handle);
++		return;
++	}
++
+ 	consistent_free(vaddr, size);
+ }
+ 
+@@ -152,6 +159,26 @@ static inline void dma_sync_sg(struct de
+ 	}
+ }
+ 
++static inline void dma_sync_single_for_cpu(struct device *dev,
++					   dma_addr_t dma_handle, size_t size,
++					   enum dma_data_direction dir)
++	__attribute__ ((alias("dma_sync_single")));
++
++static inline void dma_sync_single_for_device(struct device *dev,
++					   dma_addr_t dma_handle, size_t size,
++					   enum dma_data_direction dir)
++	__attribute__ ((alias("dma_sync_single")));
++
++static inline void dma_sync_sg_for_cpu(struct device *dev,
++				       struct scatterlist *sg, int nelems,
++				       enum dma_data_direction dir)
++	__attribute__ ((alias("dma_sync_sg")));
++
++static inline void dma_sync_sg_for_device(struct device *dev,
++				       struct scatterlist *sg, int nelems,
++				       enum dma_data_direction dir)
++	__attribute__ ((alias("dma_sync_sg")));
++
+ static inline int dma_get_cache_alignment(void)
+ {
+ 	/*
+@@ -161,5 +188,10 @@ static inline int dma_get_cache_alignmen
+ 	return L1_CACHE_BYTES;
+ }
+ 
++static inline int dma_mapping_error(dma_addr_t dma_addr)
++{
++	return dma_addr == 0;
++}
++
+ #endif /* __ASM_SH_DMA_MAPPING_H */
+ 
+diff -puN include/asm-sh/machvec.h~sh-dma-mapping-updates include/asm-sh/machvec.h
+--- 25/include/asm-sh/machvec.h~sh-dma-mapping-updates	2004-06-23 20:00:14.008560400 -0700
++++ 25-akpm/include/asm-sh/machvec.h	2004-06-23 20:00:14.012559792 -0700
+@@ -17,6 +17,7 @@
+ #include <asm/machtypes.h>
+ #include <asm/machvec_init.h>
+ 
++struct device;
+ struct timeval;
+ 
+ struct sh_machine_vector
+@@ -62,6 +63,9 @@ struct sh_machine_vector
+ 	void (*mv_init_pci)(void);
+ 
+ 	void (*mv_heartbeat)(void);
++
++	void *(*mv_consistent_alloc)(struct device *, size_t, dma_addr_t *, int);
++	void (*mv_consistent_free)(struct device *, size_t, void *, dma_addr_t);
+ };
+ 
+ extern struct sh_machine_vector sh_mv;
+_

@@ -1,0 +1,454 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+This patch converts all users of remap_page_range() under sound/ to use
+remap_pfn_range(), with the exception of maestro3 changelogs, which are likely
+expected to be preserved intact apart from additions (as most changelogs are),
+regardless of API changes.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/sound/oss/ali5455.c        |    6 ++++--
+ 25-akpm/sound/oss/au1000.c         |    5 +++--
+ 25-akpm/sound/oss/cmpci.c          |    6 ++++--
+ 25-akpm/sound/oss/cs4281/cs4281m.c |   11 ++++++-----
+ 25-akpm/sound/oss/cs46xx.c         |    7 ++++---
+ 25-akpm/sound/oss/es1370.c         |   10 +++++++---
+ 25-akpm/sound/oss/es1371.c         |   10 +++++++---
+ 25-akpm/sound/oss/esssolo1.c       |    6 ++++--
+ 25-akpm/sound/oss/forte.c          |    3 ++-
+ 25-akpm/sound/oss/i810_audio.c     |    5 +++--
+ 25-akpm/sound/oss/ite8172.c        |    5 +++--
+ 25-akpm/sound/oss/maestro.c        |    6 ++++--
+ 25-akpm/sound/oss/maestro3.c       |    4 +++-
+ 25-akpm/sound/oss/rme96xx.c        |    4 ++--
+ 25-akpm/sound/oss/sonicvibes.c     |    6 ++++--
+ 25-akpm/sound/oss/soundcard.c      |    6 +++---
+ 25-akpm/sound/oss/trident.c        |    5 +++--
+ 25-akpm/sound/oss/ymfpci.c         |    5 +++--
+ 18 files changed, 69 insertions(+), 41 deletions(-)
+
+diff -puN sound/oss/ali5455.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/ali5455.c
+--- 25/sound/oss/ali5455.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.528751680 -0700
++++ 25-akpm/sound/oss/ali5455.c	2004-10-05 02:01:59.565746056 -0700
+@@ -933,7 +933,7 @@ static int alloc_dmabuf(struct ali_state
+ 	dmabuf->rawbuf = rawbuf;
+ 	dmabuf->buforder = order;
+ 
+-	/* now mark the pages as reserved; otherwise remap_page_range doesn't do what we want */
++	/* now mark the pages as reserved; otherwise remap_pfn_range doesn't do what we want */
+ 	pend = virt_to_page(rawbuf + (PAGE_SIZE << order) - 1);
+ 	for (page = virt_to_page(rawbuf); page <= pend; page++)
+ 		SetPageReserved(page);
+@@ -1954,7 +1954,9 @@ static int ali_mmap(struct file *file, s
+ 	if (size > (PAGE_SIZE << dmabuf->buforder))
+ 		goto out;
+ 	ret = -EAGAIN;
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(dmabuf->rawbuf), size, vma->vm_page_prot))
++	if (remap_pfn_range(vma, vma->vm_start,
++				virt_to_phys(dmabuf->rawbuf) >> PAGE_SHIFT,
++				size, vma->vm_page_prot))
+ 		goto out;
+ 	dmabuf->mapped = 1;
+ 	dmabuf->trigger = 0;
+diff -puN sound/oss/au1000.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/au1000.c
+--- 25/sound/oss/au1000.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.530751376 -0700
++++ 25-akpm/sound/oss/au1000.c	2004-10-05 02:01:59.567745752 -0700
+@@ -629,7 +629,7 @@ static int prog_dmabuf(struct au1000_sta
+ 			return -ENOMEM;
+ 		db->buforder = order;
+ 		/* now mark the pages as reserved;
+-		   otherwise remap_page_range doesn't do what we want */
++		   otherwise remap_pfn_range doesn't do what we want */
+ 		pend = virt_to_page(db->rawbuf +
+ 				    (PAGE_SIZE << db->buforder) - 1);
+ 		for (page = virt_to_page(db->rawbuf); page <= pend; page++)
+@@ -1338,7 +1338,8 @@ static int au1000_mmap(struct file *file
+ 		ret = -EINVAL;
+ 		goto out;
+ 	}
+-	if (remap_page_range(vma->vm_start, virt_to_phys(db->rawbuf),
++	if (remap_pfn_range(vma->vm_start,
++			     virt_to_phys(db->rawbuf) >> PAGE_SHIFT,
+ 			     size, vma->vm_page_prot)) {
+ 		ret = -EAGAIN;
+ 		goto out;
+diff -puN sound/oss/cmpci.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/cmpci.c
+--- 25/sound/oss/cmpci.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.532751072 -0700
++++ 25-akpm/sound/oss/cmpci.c	2004-10-05 02:01:59.570745296 -0700
+@@ -1393,7 +1393,7 @@ static int prog_dmabuf(struct cm_state *
+ 		if (!db->rawbuf || !db->dmaaddr)
+ 			return -ENOMEM;
+ 		db->buforder = order;
+-		/* now mark the pages as reserved; otherwise remap_page_range doesn't do what we want */
++		/* now mark the pages as reserved; otherwise remap_pfn_range doesn't do what we want */
+ 		pend = virt_to_page(db->rawbuf + (PAGE_SIZE << db->buforder) - 1);
+ 		for (pstart = virt_to_page(db->rawbuf); pstart <= pend; pstart++)
+ 			SetPageReserved(pstart);
+@@ -2301,7 +2301,9 @@ static int cm_mmap(struct file *file, st
+ 	if (size > (PAGE_SIZE << db->buforder))
+ 		goto out;
+ 	ret = -EINVAL;
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(db->rawbuf), size, vma->vm_page_prot))
++	if (remap_pfn_range(vma, vma->vm_start,
++				virt_to_phys(db->rawbuf) >> PAGE_SHIFT,
++				size, vma->vm_page_prot))
+ 		goto out;
+ 	db->mapped = 1;
+ 	ret = 0;
+diff -puN sound/oss/cs4281/cs4281m.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/cs4281/cs4281m.c
+--- 25/sound/oss/cs4281/cs4281m.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.534750768 -0700
++++ 25-akpm/sound/oss/cs4281/cs4281m.c	2004-10-05 02:01:59.574744688 -0700
+@@ -1755,7 +1755,7 @@ static int prog_dmabuf(struct cs4281_sta
+ 		}
+ 		db->buforder = order;
+ 		// Now mark the pages as reserved; otherwise the 
+-		// remap_page_range() in cs4281_mmap doesn't work.
++		// remap_pfn_range() in cs4281_mmap doesn't work.
+ 		// 1. get index to last page in mem_map array for rawbuf.
+ 		mapend = virt_to_page(db->rawbuf + 
+ 			(PAGE_SIZE << db->buforder) - 1);
+@@ -1778,7 +1778,7 @@ static int prog_dmabuf(struct cs4281_sta
+ 		}
+ 		s->buforder_tmpbuff = order;
+ 		// Now mark the pages as reserved; otherwise the 
+-		// remap_page_range() in cs4281_mmap doesn't work.
++		// remap_pfn_range() in cs4281_mmap doesn't work.
+ 		// 1. get index to last page in mem_map array for rawbuf.
+ 		mapend = virt_to_page(s->tmpbuff + 
+ 				(PAGE_SIZE << s->buforder_tmpbuff) - 1);
+@@ -3135,9 +3135,10 @@ static int cs4281_mmap(struct file *file
+ 	size = vma->vm_end - vma->vm_start;
+ 	if (size > (PAGE_SIZE << db->buforder))
+ 		return -EINVAL;
+-	if (remap_page_range
+-	    (vma, vma->vm_start, virt_to_phys(db->rawbuf), size,
+-	     vma->vm_page_prot)) return -EAGAIN;
++	if (remap_pfn_range(vma, vma->vm_start,
++				virt_to_phys(db->rawbuf) >> PAGE_SHIFT,
++				size, vma->vm_page_prot))
++		return -EAGAIN;
+ 	db->mapped = 1;
+ 
+ 	CS_DBGOUT(CS_FUNCTION | CS_PARMS | CS_OPEN, 4,
+diff -puN sound/oss/cs46xx.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/cs46xx.c
+--- 25/sound/oss/cs46xx.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.536750464 -0700
++++ 25-akpm/sound/oss/cs46xx.c	2004-10-05 02:01:59.579743928 -0700
+@@ -1190,7 +1190,7 @@ static int alloc_dmabuf(struct cs_state 
+ 	dmabuf->buforder = order;
+ 	dmabuf->rawbuf = rawbuf;
+ 	// Now mark the pages as reserved; otherwise the 
+-	// remap_page_range() in cs46xx_mmap doesn't work.
++	// remap_pfn_range() in cs46xx_mmap doesn't work.
+ 	// 1. get index to last page in mem_map array for rawbuf.
+ 	mapend = virt_to_page(dmabuf->rawbuf + 
+ 		(PAGE_SIZE << dmabuf->buforder) - 1);
+@@ -1227,7 +1227,7 @@ static int alloc_dmabuf(struct cs_state 
+ 	dmabuf->buforder_tmpbuff = order;
+ 	
+ 	// Now mark the pages as reserved; otherwise the 
+-	// remap_page_range() in cs46xx_mmap doesn't work.
++	// remap_pfn_range() in cs46xx_mmap doesn't work.
+ 	// 1. get index to last page in mem_map array for rawbuf.
+ 	mapend = virt_to_page(dmabuf->tmpbuff + 
+ 		(PAGE_SIZE << dmabuf->buforder_tmpbuff) - 1);
+@@ -2452,7 +2452,8 @@ static int cs_mmap(struct file *file, st
+ 		ret = -EINVAL;
+ 		goto out;
+ 	}
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(dmabuf->rawbuf),
++	if (remap_pfn_range(vma, vma->vm_start,
++			     virt_to_phys(dmabuf->rawbuf) >> PAGE_SHIFT,
+ 			     size, vma->vm_page_prot))
+ 	{
+ 		ret = -EAGAIN;
+diff -puN sound/oss/es1370.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/es1370.c
+--- 25/sound/oss/es1370.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.538750160 -0700
++++ 25-akpm/sound/oss/es1370.c	2004-10-05 02:01:59.582743472 -0700
+@@ -573,7 +573,7 @@ static int prog_dmabuf(struct es1370_sta
+ 		if (!db->rawbuf)
+ 			return -ENOMEM;
+ 		db->buforder = order;
+-		/* now mark the pages as reserved; otherwise remap_page_range doesn't do what we want */
++		/* now mark the pages as reserved; otherwise remap_pfn_range doesn't do what we want */
+ 		pend = virt_to_page(db->rawbuf + (PAGE_SIZE << db->buforder) - 1);
+ 		for (page = virt_to_page(db->rawbuf); page <= pend; page++)
+ 			SetPageReserved(page);
+@@ -1364,7 +1364,9 @@ static int es1370_mmap(struct file *file
+ 		ret = -EINVAL;
+ 		goto out;
+ 	}
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(db->rawbuf), size, vma->vm_page_prot)) {
++	if (remap_pfn_range(vma, vma->vm_start,
++				virt_to_phys(db->rawbuf) >> PAGE_SHIFT,
++				size, vma->vm_page_prot)) {
+ 		ret = -EAGAIN;
+ 		goto out;
+ 	}
+@@ -1940,7 +1942,9 @@ static int es1370_mmap_dac(struct file *
+ 	if (size > (PAGE_SIZE << s->dma_dac1.buforder))
+ 		goto out;
+ 	ret = -EAGAIN;
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(s->dma_dac1.rawbuf), size, vma->vm_page_prot))
++	if (remap_pfn_range(vma, vma->vm_start,
++			virt_to_phys(s->dma_dac1.rawbuf) >> PAGE_SHIFT,
++			size, vma->vm_page_prot))
+ 		goto out;
+ 	s->dma_dac1.mapped = 1;
+ 	ret = 0;
+diff -puN sound/oss/es1371.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/es1371.c
+--- 25/sound/oss/es1371.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.540749856 -0700
++++ 25-akpm/sound/oss/es1371.c	2004-10-05 02:01:59.585743016 -0700
+@@ -910,7 +910,7 @@ static int prog_dmabuf(struct es1371_sta
+ 		if (!db->rawbuf)
+ 			return -ENOMEM;
+ 		db->buforder = order;
+-		/* now mark the pages as reserved; otherwise remap_page_range doesn't do what we want */
++		/* now mark the pages as reserved; otherwise remap_pfn_range doesn't do what we want */
+ 		pend = virt_to_page(db->rawbuf + (PAGE_SIZE << db->buforder) - 1);
+ 		for (page = virt_to_page(db->rawbuf); page <= pend; page++)
+ 			SetPageReserved(page);
+@@ -1555,7 +1555,9 @@ static int es1371_mmap(struct file *file
+ 		ret = -EINVAL;
+ 		goto out;
+ 	}
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(db->rawbuf), size, vma->vm_page_prot)) {
++	if (remap_pfn_range(vma, vma->vm_start,
++				virt_to_phys(db->rawbuf) >> PAGE_SHIFT,
++				size, vma->vm_page_prot)) {
+ 		ret = -EAGAIN;
+ 		goto out;
+ 	}
+@@ -2128,7 +2130,9 @@ static int es1371_mmap_dac(struct file *
+ 	if (size > (PAGE_SIZE << s->dma_dac1.buforder))
+ 		goto out;
+ 	ret = -EAGAIN;
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(s->dma_dac1.rawbuf), size, vma->vm_page_prot))
++	if (remap_pfn_range(vma, vma->vm_start,
++			virt_to_phys(s->dma_dac1.rawbuf) >> PAGE_SHIFT,
++			size, vma->vm_page_prot))
+ 		goto out;
+ 	s->dma_dac1.mapped = 1;
+ 	ret = 0;
+diff -puN sound/oss/esssolo1.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/esssolo1.c
+--- 25/sound/oss/esssolo1.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.542749552 -0700
++++ 25-akpm/sound/oss/esssolo1.c	2004-10-05 02:01:59.587742712 -0700
+@@ -445,7 +445,7 @@ static int prog_dmabuf(struct solo1_stat
+ 		if (!db->rawbuf)
+ 			return -ENOMEM;
+ 		db->buforder = order;
+-		/* now mark the pages as reserved; otherwise remap_page_range doesn't do what we want */
++		/* now mark the pages as reserved; otherwise remap_pfn_range doesn't do what we want */
+ 		pend = virt_to_page(db->rawbuf + (PAGE_SIZE << db->buforder) - 1);
+ 		for (page = virt_to_page(db->rawbuf); page <= pend; page++)
+ 			SetPageReserved(page);
+@@ -1242,7 +1242,9 @@ static int solo1_mmap(struct file *file,
+ 	if (size > (PAGE_SIZE << db->buforder))
+ 		goto out;
+ 	ret = -EAGAIN;
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(db->rawbuf), size, vma->vm_page_prot))
++	if (remap_pfn_range(vma, vma->vm_start,
++				virt_to_phys(db->rawbuf) >> PAGE_SHIFT,
++				size, vma->vm_page_prot))
+ 		goto out;
+ 	db->mapped = 1;
+ 	ret = 0;
+diff -puN sound/oss/forte.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/forte.c
+--- 25/sound/oss/forte.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.543749400 -0700
++++ 25-akpm/sound/oss/forte.c	2004-10-05 02:01:59.589742408 -0700
+@@ -1409,7 +1409,8 @@ forte_dsp_mmap (struct file *file, struc
+                 goto out;
+ 	}
+ 
+-        if (remap_page_range (vma, vma->vm_start, virt_to_phys (channel->buf),
++        if (remap_pfn_range(vma, vma->vm_start,
++			      virt_to_phys(channel->buf) >> PAGE_SHIFT,
+ 			      size, vma->vm_page_prot)) {
+ 		DPRINTK ("%s: remap el a no worko\n", __FUNCTION__);
+ 		ret = -EAGAIN;
+diff -puN sound/oss/i810_audio.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/i810_audio.c
+--- 25/sound/oss/i810_audio.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.545749096 -0700
++++ 25-akpm/sound/oss/i810_audio.c	2004-10-05 02:01:59.593741800 -0700
+@@ -916,7 +916,7 @@ static int alloc_dmabuf(struct i810_stat
+ 	dmabuf->rawbuf = rawbuf;
+ 	dmabuf->buforder = order;
+ 	
+-	/* now mark the pages as reserved; otherwise remap_page_range doesn't do what we want */
++	/* now mark the pages as reserved; otherwise remap_pfn_range doesn't do what we want */
+ 	pend = virt_to_page(rawbuf + (PAGE_SIZE << order) - 1);
+ 	for (page = virt_to_page(rawbuf); page <= pend; page++)
+ 		SetPageReserved(page);
+@@ -1749,7 +1749,8 @@ static int i810_mmap(struct file *file, 
+ 	if (size > (PAGE_SIZE << dmabuf->buforder))
+ 		goto out;
+ 	ret = -EAGAIN;
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(dmabuf->rawbuf),
++	if (remap_pfn_range(vma, vma->vm_start,
++			     virt_to_phys(dmabuf->rawbuf) >> PAGE_SHIFT,
+ 			     size, vma->vm_page_prot))
+ 		goto out;
+ 	dmabuf->mapped = 1;
+diff -puN sound/oss/ite8172.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/ite8172.c
+--- 25/sound/oss/ite8172.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.547748792 -0700
++++ 25-akpm/sound/oss/ite8172.c	2004-10-05 02:01:59.595741496 -0700
+@@ -693,7 +693,7 @@ static int prog_dmabuf(struct it8172_sta
+ 			return -ENOMEM;
+ 		db->buforder = order;
+ 		/* now mark the pages as reserved;
+-		   otherwise remap_page_range doesn't do what we want */
++		   otherwise remap_pfn_range doesn't do what we want */
+ 		pend = virt_to_page(db->rawbuf +
+ 				    (PAGE_SIZE << db->buforder) - 1);
+ 		for (page = virt_to_page(db->rawbuf); page <= pend; page++)
+@@ -1311,7 +1311,8 @@ static int it8172_mmap(struct file *file
+ 		unlock_kernel();
+ 		return -EINVAL;
+ 	}
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(db->rawbuf),
++	if (remap_pfn_range(vma, vma->vm_start,
++			     virt_to_phys(db->rawbuf) >> PAGE_SHIFT,
+ 			     size, vma->vm_page_prot)) {
+ 		unlock_kernel();
+ 		return -EAGAIN;
+diff -puN sound/oss/maestro3.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/maestro3.c
+--- 25/sound/oss/maestro3.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.549748488 -0700
++++ 25-akpm/sound/oss/maestro3.c	2004-10-05 02:01:59.598741040 -0700
+@@ -1557,7 +1557,9 @@ static int m3_mmap(struct file *file, st
+      * ask Jeff what the hell I'm doing wrong.
+      */
+     ret = -EAGAIN;
+-    if (remap_page_range(vma, vma->vm_start, virt_to_phys(db->rawbuf), size, vma->vm_page_prot))
++    if (remap_pfn_range(vma, vma->vm_start,
++			virt_to_phys(db->rawbuf) >> PAGE_SHIFT,
++			size, vma->vm_page_prot))
+         goto out;
+ 
+     db->mapped = 1;
+diff -puN sound/oss/maestro.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/maestro.c
+--- 25/sound/oss/maestro.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.551748184 -0700
++++ 25-akpm/sound/oss/maestro.c	2004-10-05 02:01:59.601740584 -0700
+@@ -2520,7 +2520,9 @@ static int ess_mmap(struct file *file, s
+ 	if (size > (PAGE_SIZE << db->buforder))
+ 		goto out;
+ 	ret = -EAGAIN;
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(db->rawbuf), size, vma->vm_page_prot))
++	if (remap_pfn_range(vma, vma->vm_start,
++			virt_to_phys(db->rawbuf) >> PAGE_SHIFT,
++			size, vma->vm_page_prot))
+ 		goto out;
+ 	db->mapped = 1;
+ 	ret = 0;
+@@ -2953,7 +2955,7 @@ allocate_buffers(struct ess_state *s)
+ 
+ 	}
+ 
+-	/* now mark the pages as reserved; otherwise remap_page_range doesn't do what we want */
++	/* now mark the pages as reserved; otherwise remap_pfn_range doesn't do what we want */
+ 	pend = virt_to_page(rawbuf + (PAGE_SIZE << order) - 1);
+ 	for (page = virt_to_page(rawbuf); page <= pend; page++)
+ 		SetPageReserved(page);
+diff -puN sound/oss/rme96xx.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/rme96xx.c
+--- 25/sound/oss/rme96xx.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.552748032 -0700
++++ 25-akpm/sound/oss/rme96xx.c	2004-10-05 02:01:59.603740280 -0700
+@@ -1685,14 +1685,14 @@ static int rm96xx_mmap(struct file *file
+ 	if (vma->vm_flags & VM_WRITE) {
+ 		if (!s->started) rme96xx_startcard(s,1);
+ 
+-		if (remap_page_range(vma, vma->vm_start, virt_to_phys(s->playbuf + dma->outoffset*RME96xx_DMA_MAX_SIZE), size, vma->vm_page_prot)) {
++		if (remap_pfn_range(vma, vma->vm_start, virt_to_phys(s->playbuf + dma->outoffset*RME96xx_DMA_MAX_SIZE) >> PAGE_SHIFT, size, vma->vm_page_prot)) {
+ 			unlock_kernel();
+ 			return -EAGAIN;
+ 		}
+ 	} 
+ 	else if (vma->vm_flags & VM_READ) {
+ 		if (!s->started) rme96xx_startcard(s,1);
+-		if (remap_page_range(vma, vma->vm_start, virt_to_phys(s->playbuf + dma->inoffset*RME96xx_DMA_MAX_SIZE), size, vma->vm_page_prot)) {
++		if (remap_pfn_range(vma, vma->vm_start, virt_to_phys(s->playbuf + dma->inoffset*RME96xx_DMA_MAX_SIZE) >> PAGE_SHIFT, size, vma->vm_page_prot)) {
+ 			unlock_kernel();
+ 			return -EAGAIN;
+ 		}
+diff -puN sound/oss/sonicvibes.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/sonicvibes.c
+--- 25/sound/oss/sonicvibes.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.554747728 -0700
++++ 25-akpm/sound/oss/sonicvibes.c	2004-10-05 02:01:59.606739824 -0700
+@@ -756,7 +756,7 @@ static int prog_dmabuf(struct sv_state *
+ 		if ((virt_to_bus(db->rawbuf) + (PAGE_SIZE << db->buforder) - 1) & ~0xffffff)
+ 			printk(KERN_DEBUG "sv: DMA buffer beyond 16MB: busaddr 0x%lx  size %ld\n", 
+ 			       virt_to_bus(db->rawbuf), PAGE_SIZE << db->buforder);
+-		/* now mark the pages as reserved; otherwise remap_page_range doesn't do what we want */
++		/* now mark the pages as reserved; otherwise remap_pfn_range doesn't do what we want */
+ 		pend = virt_to_page(db->rawbuf + (PAGE_SIZE << db->buforder) - 1);
+ 		for (page = virt_to_page(db->rawbuf); page <= pend; page++)
+ 			SetPageReserved(page);
+@@ -1549,7 +1549,9 @@ static int sv_mmap(struct file *file, st
+ 	if (size > (PAGE_SIZE << db->buforder))
+ 		goto out;
+ 	ret = -EAGAIN;
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(db->rawbuf), size, vma->vm_page_prot))
++	if (remap_pfn_range(vma, vma->vm_start,
++				virt_to_phys(db->rawbuf) >> PAGE_SHIFT,
++				size, vma->vm_page_prot))
+ 		goto out;
+ 	db->mapped = 1;
+ 	ret = 0;
+diff -puN sound/oss/soundcard.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/soundcard.c
+--- 25/sound/oss/soundcard.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.556747424 -0700
++++ 25-akpm/sound/oss/soundcard.c	2004-10-05 02:01:59.608739520 -0700
+@@ -463,9 +463,9 @@ static int sound_mmap(struct file *file,
+ 	if (size != dmap->bytes_in_use) {
+ 		printk(KERN_WARNING "Sound: mmap() size = %ld. Should be %d\n", size, dmap->bytes_in_use);
+ 	}
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(dmap->raw_buf),
+-		vma->vm_end - vma->vm_start,
+-		vma->vm_page_prot)) {
++	if (remap_pfn_range(vma, vma->vm_start,
++			virt_to_phys(dmap->raw_buf) >> PAGE_SHIFT,
++			vma->vm_end - vma->vm_start, vma->vm_page_prot)) {
+ 		unlock_kernel();
+ 		return -EAGAIN;
+ 	}
+diff -puN sound/oss/trident.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/trident.c
+--- 25/sound/oss/trident.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.558747120 -0700
++++ 25-akpm/sound/oss/trident.c	2004-10-05 02:01:59.611739064 -0700
+@@ -1281,7 +1281,7 @@ alloc_dmabuf(struct dmabuf *dmabuf, stru
+ 	dmabuf->buforder = order;
+ 
+ 	/* now mark the pages as reserved; otherwise */ 
+-	/* remap_page_range doesn't do what we want */
++	/* remap_pfn_range doesn't do what we want */
+ 	pend = virt_to_page(rawbuf + (PAGE_SIZE << order) - 1);
+ 	for (page = virt_to_page(rawbuf); page <= pend; page++)
+ 		SetPageReserved(page);
+@@ -2223,7 +2223,8 @@ trident_mmap(struct file *file, struct v
+ 	if (size > (PAGE_SIZE << dmabuf->buforder))
+ 		goto out;
+ 	ret = -EAGAIN;
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(dmabuf->rawbuf), 
++	if (remap_pfn_range(vma, vma->vm_start,
++			     virt_to_phys(dmabuf->rawbuf) >> PAGE_SHIFT,
+ 			     size, vma->vm_page_prot))
+ 		goto out;
+ 	dmabuf->mapped = 1;
+diff -puN sound/oss/ymfpci.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range sound/oss/ymfpci.c
+--- 25/sound/oss/ymfpci.c~convert-users-of-remap_page_range-under-sound-to-use-remap_pfn_range	2004-10-05 02:01:59.559746968 -0700
++++ 25-akpm/sound/oss/ymfpci.c	2004-10-05 02:01:59.614738608 -0700
+@@ -334,7 +334,7 @@ static int alloc_dmabuf(ymfpci_t *unit, 
+ 	dmabuf->dma_addr = dma_addr;
+ 	dmabuf->buforder = order;
+ 
+-	/* now mark the pages as reserved; otherwise remap_page_range doesn't do what we want */
++	/* now mark the pages as reserved; otherwise remap_pfn_range doesn't do what we want */
+ 	mapend = virt_to_page(rawbuf + (PAGE_SIZE << order) - 1);
+ 	for (map = virt_to_page(rawbuf); map <= mapend; map++)
+ 		set_bit(PG_reserved, &map->flags);
+@@ -1545,7 +1545,8 @@ static int ymf_mmap(struct file *file, s
+ 	size = vma->vm_end - vma->vm_start;
+ 	if (size > (PAGE_SIZE << dmabuf->buforder))
+ 		return -EINVAL;
+-	if (remap_page_range(vma, vma->vm_start, virt_to_phys(dmabuf->rawbuf),
++	if (remap_pfn_range(vma, vma->vm_start,
++			     virt_to_phys(dmabuf->rawbuf) >> PAGE_SHIFT,
+ 			     size, vma->vm_page_prot))
+ 		return -EAGAIN;
+ 	dmabuf->mapped = 1;
+_

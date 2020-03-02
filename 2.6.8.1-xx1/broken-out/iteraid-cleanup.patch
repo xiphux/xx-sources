@@ -1,0 +1,2962 @@
+
+
+- Lots of whitepsace fixes
+
+- If the pci_alloc_consistent() or the kmalloc() in IdeSetupDma() fails,
+  I think the driver crashes the machine?
+
+- The formatting needs a cleanup still - Lindent gets a few things wrong.
+
+  For example:
+
+	if (Srb->SrbFlags & SRB_FLAGS_DATA_IN) {
+		pChan->sg_dma_direction = PCI_DMA_FROMDEVICE;
+	}
+
+	else {
+		pChan->sg_dma_direction = PCI_DMA_TODEVICE;
+	}
+
+  should be
+
+	if (Srb->SrbFlags & SRB_FLAGS_DATA_IN)
+		pChan->sg_dma_direction = PCI_DMA_FROMDEVICE;
+	else
+		pChan->sg_dma_direction = PCI_DMA_TODEVICE;
+
+
+  I've appended a patch to do all the whitespace cleanups.  I'll include
+  this, and your patch, in -mm kernels.
+
+- RaidGetHighestBit() can use fls()?
+
+
+- IT8212ErasePartition() eaks the memory at `buffer' on error paths.
+
+
+- IT8212TruncateReduentSectors seems to be misspelled.  Should it be
+  "redundant"?
+
+- Lots of functions made static:
+
+  MapError, IdeStartTransfer, IT8212TruncateReduentSectors
+  IT8212DiskArrayAddressableSector, IT8212CreateDiskArray,
+  IT8212IssueIdentify, IT8212SwitchDmaMode, IT8212ReadWrite,
+  IT8212SetTransferMode, IT8212SetBestTransferMode, IT8212InitBypassMode,
+  many more.
+
+- Unused functions iteraid_command, IT8212IssueIdentify,
+  IT8212SetBestTransferMode, IT8212InitBypassMode, AtapiHwInitialize,
+  RaidGetHighestBit, IT8212SetTransferMode, internal_done wrapped in #if 0.
+
+- Something needs to be done about this:
+
+drivers/scsi/hosts.h:1: warning: #warning "This file is obsolete, please use <scsi/scsi_host.h> instead"
+
+- Move static function declarations from iteraid.h into iteraid.c
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/scsi/iteraid.c | 1192 ++++++++++++++++++-----------------------
+ 25-akpm/drivers/scsi/iteraid.h |   33 -
+ 2 files changed, 541 insertions(+), 684 deletions(-)
+
+diff -puN drivers/scsi/iteraid.c~iteraid-cleanup drivers/scsi/iteraid.c
+--- 25/drivers/scsi/iteraid.c~iteraid-cleanup	Mon Aug  2 15:50:18 2004
++++ 25-akpm/drivers/scsi/iteraid.c	Mon Aug  2 15:51:45 2004
+@@ -284,6 +284,38 @@ static struct semaphore mimd_entry_mtx;
+ static spinlock_t queue_request_lock = SPIN_LOCK_UNLOCKED;
+ static spinlock_t io_request_lock = SPIN_LOCK_UNLOCKED;
+ 
++static int iteraid_detect(Scsi_Host_Template *);
++static int iteraid_release(struct Scsi_Host *);
++#if 0
++static int iteraid_command(Scsi_Cmnd *);
++#endif
++static int iteraid_queuecommand(Scsi_Cmnd *, void (*done) (Scsi_Cmnd *));
++static int iteraid_biosparam(struct scsi_device *, struct block_device *,
++				sector_t, int *);
++static int iteraid_proc_info(struct Scsi_Host *, char *buffer, char **start,
++		      off_t offset, int length, int inout);
++
++static void TaskStart(PChannel, Scsi_Cmnd *);
++static void TaskQueue(void);
++static void TaskDone(PChannel, PSCSI_REQUEST_BLOCK);
++static u32 IdeSendCommand(PChannel, PSCSI_REQUEST_BLOCK);
++//static void IdeMediaStatus(u8, PChannel, u8);
++static void IdeSetupDma(PChannel, unsigned long, unsigned short);
++static void MapRequest(Scsi_Cmnd *, PSCSI_REQUEST_BLOCK);
++static u8 IssueIdentify(PChannel, u8, u8);
++static u8 IT8212ResetAdapter(PITE_ADAPTER);
++static void AtapiStartIo(PChannel, PSCSI_REQUEST_BLOCK);
++static u8 AtapiInterrupt(PChannel);
++static void AtapiResetController(PITE_ADAPTER pAdap, PChannel pChan);
++
++static int itedev_open(struct inode *, struct file *);
++static int itedev_ioctl_entry(struct inode *, struct file *, unsigned int,
++			      unsigned long);
++static int itedev_ioctl(struct inode *, struct file *, unsigned int,
++			unsigned long);
++static int itedev_close(struct inode *, struct file *);
++
++
+ #define DRV_VER_8212 "1.45"
+ static int driver_ver = 145;	/* Current driver version       */
+ static int ite_major = 0;	/* itedev chardev major number  */
+@@ -304,27 +336,25 @@ static void HexDump(unsigned char *buf, 
+ {
+ 	unsigned int i = 0;
+ 	unsigned int j = 0;
++
+ 	printk("\n");
+ 	for (i = 0; i < length; i += 16) {
+ 		printk("%04X    ", i);
+-		for (j = i; (j < i + 8) && (j < length); j++) {
++		for (j = i; (j < i + 8) && (j < length); j++)
+ 			printk(" %02X", buf[j]);
+-		}
+ 		if (j == i + 8)
+ 			printk("-");
+-		for (j = i + 8; (j < i + 16) && (j < length); j++) {
++		for (j = i + 8; (j < i + 16) && (j < length); j++)
+ 			printk("%02X ", buf[j]);
+-		}
+ 		printk("\n");
+ 	}
+ }				/* end HexDump */
+-
+-#endif				/*  */
++#endif
+ 
+ /************************************************************************
+  * This routine maps ATAPI and IDE errors to specific SRB statuses.
+  ************************************************************************/
+-u8 MapError(PChannel pChan, PSCSI_REQUEST_BLOCK Srb)
++static u8 MapError(PChannel pChan, PSCSI_REQUEST_BLOCK Srb)
+ {
+ 	u8 errorByte;
+ 	u8 srbStatus;
+@@ -397,12 +427,10 @@ u8 MapError(PChannel pChan, PSCSI_REQUES
+ 			srbStatus = SRB_STATUS_ERROR;
+ 			break;
+ 		}
+-	}
+-
+-	/*
+-	 * If this is IDE error.
+-	 */
+-	else {
++	} else {
++		/*
++		 * If this is IDE error.
++		 */
+ 		scsiStatus = 0;
+ 		srbStatus = SRB_STATUS_ERROR;
+ 
+@@ -414,9 +442,7 @@ u8 MapError(PChannel pChan, PSCSI_REQUES
+ 			printk("IDE: media change\n");
+ 			scsiStatus = SCSISTAT_CHECK_CONDITION;
+ 			srbStatus = SRB_STATUS_ERROR;
+-		}
+-
+-		else if (errorByte & IDE_ERROR_COMMAND_ABORTED) {
++		} else if (errorByte & IDE_ERROR_COMMAND_ABORTED) {
+ 			printk("IDE: command abort\n");
+ 			srbStatus = SRB_STATUS_ABORTED;
+ 			scsiStatus = SCSISTAT_CHECK_CONDITION;
+@@ -436,9 +462,7 @@ u8 MapError(PChannel pChan, PSCSI_REQUES
+ 			/*
+ 			 * pChan->ErrorCount++;
+ 			 */
+-		}
+-
+-		else if (errorByte & IDE_ERROR_END_OF_MEDIA) {
++		} else if (errorByte & IDE_ERROR_END_OF_MEDIA) {
+ 			printk("IDE: end of media\n");
+ 			scsiStatus = SCSISTAT_CHECK_CONDITION;
+ 			srbStatus = SRB_STATUS_ERROR;
+@@ -452,14 +476,10 @@ u8 MapError(PChannel pChan, PSCSI_REQUES
+ 				 * pChan->ErrorCount++;
+ 				 */
+ 			}
+-		}
+-
+-		else if (errorByte & IDE_ERROR_ILLEGAL_LENGTH) {
++		} else if (errorByte & IDE_ERROR_ILLEGAL_LENGTH) {
+ 			printk("IDE: illegal length\n");
+ 			srbStatus = SRB_STATUS_INVALID_REQUEST;
+-		}
+-
+-		else if (errorByte & IDE_ERROR_BAD_BLOCK) {
++		} else if (errorByte & IDE_ERROR_BAD_BLOCK) {
+ 			printk("IDE: bad block\n");
+ 			srbStatus = SRB_STATUS_ERROR;
+ 			scsiStatus = SCSISTAT_CHECK_CONDITION;
+@@ -474,9 +494,7 @@ u8 MapError(PChannel pChan, PSCSI_REQUES
+ 				senseBuffer->AdditionalSenseCodeQualifier = 0;
+ 				srbStatus |= SRB_STATUS_AUTOSENSE_VALID;
+ 			}
+-		}
+-
+-		else if (errorByte & IDE_ERROR_ID_NOT_FOUND) {
++		} else if (errorByte & IDE_ERROR_ID_NOT_FOUND) {
+ 			printk("IDE: id not found\n");
+ 			srbStatus = SRB_STATUS_ERROR;
+ 			scsiStatus = SCSISTAT_CHECK_CONDITION;
+@@ -495,9 +513,7 @@ u8 MapError(PChannel pChan, PSCSI_REQUES
+ 			/*
+ 			 * pChan->ErrorCount++;
+ 			 */
+-		}
+-
+-		else if (errorByte & IDE_ERROR_MEDIA_CHANGE) {
++		} else if (errorByte & IDE_ERROR_MEDIA_CHANGE) {
+ 			printk("IDE: media change\n");
+ 			scsiStatus = SCSISTAT_CHECK_CONDITION;
+ 			srbStatus = SRB_STATUS_ERROR;
+@@ -514,9 +530,7 @@ u8 MapError(PChannel pChan, PSCSI_REQUES
+ 				senseBuffer->AdditionalSenseCodeQualifier = 0;
+ 				srbStatus |= SRB_STATUS_AUTOSENSE_VALID;
+ 			}
+-		}
+-
+-		else if (errorByte & IDE_ERROR_DATA_ERROR) {
++		} else if (errorByte & IDE_ERROR_DATA_ERROR) {
+ 			printk("IDE: data error\n");
+ 			scsiStatus = SCSISTAT_CHECK_CONDITION;
+ 			srbStatus = SRB_STATUS_ERROR;
+@@ -555,18 +569,21 @@ u8 MapError(PChannel pChan, PSCSI_REQUES
+ 	return srbStatus;
+ }				/* end MapError */
+ 
++#if 0
+ /************************************************************************
+  * Just get the higest bit value.
+  ************************************************************************/
+ static u8 RaidGetHighestBit(u8 Number)
+ {
+ 	char bit;
++
+ 	for (bit = 7; bit >= 0; bit--) {
+ 		if (Number & (1 << bit))
+ 			return bit;
+ 	}
+ 	return 0xFF;
+ }				/* end RaidGetHighestBit */
++#endif
+ 
+ /************************************************************************
+  * Reset IDE controller or ATAPI device.
+@@ -578,6 +595,7 @@ static void AtapiResetController(PITE_AD
+ 	u8 i;
+ 	unsigned long dma_base;
+ 	SCSI_REQUEST_BLOCK srb;
++
+ 	printk("AtapiResetController enter\n");
+ 	dma_base = pChan->dma_base;
+ 	resetResult = FALSE;
+@@ -666,13 +684,14 @@ static void AtapiResetController(PITE_AD
+ /************************************************************************
+  * IDE start read/write transfer.
+  ************************************************************************/
+-void IdeStartTransfer
+-    (PChannel pChan,
+-     PSCSI_REQUEST_BLOCK Srb, u32 startingSector, u32 SectorNumber) {
++static void IdeStartTransfer(PChannel pChan, PSCSI_REQUEST_BLOCK Srb,
++			u32 startingSector, u32 SectorNumber)
++{
+ 	u8 DiskId;
+ 	u8 drvSelect;
+ 	u8 bmClearStat;
+ 	unsigned long dma_base;
++
+ 	dprintk("IdeStartTransfer enter\n");
+ 	DiskId = (u8) Srb->TargetId;
+ 	dma_base = pChan->dma_base;
+@@ -722,25 +741,20 @@ void IdeStartTransfer
+ 		if (Srb->SrbFlags & SRB_FLAGS_DATA_IN) {
+ 			outb(IDE_COMMAND_READ_DMA_EXT,
+ 			     pChan->io_ports[IDE_COMMAND_OFFSET]);
+-		}
+-
+-		else if (Srb->SrbFlags & SRB_FLAGS_DATA_OUT) {
++		} else if (Srb->SrbFlags & SRB_FLAGS_DATA_OUT) {
+ 			outb(IDE_COMMAND_WRITE_DMA_EXT,
+ 			     pChan->io_ports[IDE_COMMAND_OFFSET]);
+ 		}
+-	}
+-
+-	/*
+-	 * 28-bit addressing.
+-	 */
+-	else {
++	} else {
++		/*
++		 * 28-bit addressing.
++		 */
+ 
+ 		/*
+ 		 * Select drive and set LBA mode.
+ 		 */
+ 		drvSelect = (u8) (startingSector >> 24);
+-		drvSelect =
+-		    drvSelect | (((u8) DiskId & 0x1) << 4) | 0x40 | 0xA0;
++		drvSelect = drvSelect | (((u8) DiskId & 0x1) << 4)|0x40|0xA0;
+ 		outb(drvSelect, pChan->io_ports[IDE_SELECT_OFFSET]);
+ 		outb((u8) SectorNumber, pChan->io_ports[IDE_NSECTOR_OFFSET]);
+ 		outb((u8) startingSector, pChan->io_ports[IDE_LOCYL_OFFSET]);
+@@ -755,9 +769,7 @@ void IdeStartTransfer
+ 		if (Srb->SrbFlags & SRB_FLAGS_DATA_IN) {
+ 			outb(IDE_COMMAND_READ_DMA,
+ 			     pChan->io_ports[IDE_COMMAND_OFFSET]);
+-		}
+-
+-		else if (Srb->SrbFlags & SRB_FLAGS_DATA_OUT) {
++		} else if (Srb->SrbFlags & SRB_FLAGS_DATA_OUT) {
+ 			outb(IDE_COMMAND_WRITE_DMA,
+ 			     pChan->io_ports[IDE_COMMAND_OFFSET]);
+ 		}
+@@ -781,9 +793,7 @@ void IdeStartTransfer
+ 		bmClearStat =
+ 		    bmClearStat | BM_DRV1_DMA_CAPABLE | BM_STAT_FLG_INT |
+ 		    BM_STAT_FLG_ERR;
+-	}
+-
+-	else {
++	} else {
+ 		bmClearStat =
+ 		    bmClearStat | BM_DRV0_DMA_CAPABLE | BM_STAT_FLG_INT |
+ 		    BM_STAT_FLG_ERR;
+@@ -798,13 +808,10 @@ void IdeStartTransfer
+ 	/*
+ 	 * Start DMA read/write.
+ 	 */
+-	if (Srb->SrbFlags & SRB_FLAGS_DATA_IN) {
++	if (Srb->SrbFlags & SRB_FLAGS_DATA_IN)
+ 		outb(BM_CMD_FLG_START | BM_CMD_FLG_WRTTOMEM, dma_base);
+-	}
+-
+-	else if (Srb->SrbFlags & SRB_FLAGS_DATA_OUT) {
++	else if (Srb->SrbFlags & SRB_FLAGS_DATA_OUT)
+ 		outb(BM_CMD_FLG_START | BM_CMD_FLG_WRTTODSK, dma_base);
+-	}
+ 	dprintk("IdeStartTransfer exit\n");
+ }				/* end IdeStartTransfer */
+ 
+@@ -817,13 +824,11 @@ static int IdeBuildSglist(PChannel pChan
+ 	u32 bytesRemaining = Srb->DataTransferLength;
+ 	unsigned char *virt_addr = Srb->DataBuffer;
+ 	struct scatterlist *sg = pChan->sg_table;
+-	if (Srb->SrbFlags & SRB_FLAGS_DATA_IN) {
+-		pChan->sg_dma_direction = PCI_DMA_FROMDEVICE;
+-	}
+ 
+-	else {
++	if (Srb->SrbFlags & SRB_FLAGS_DATA_IN)
++		pChan->sg_dma_direction = PCI_DMA_FROMDEVICE;
++	else
+ 		pChan->sg_dma_direction = PCI_DMA_TODEVICE;
+-	}
+ 
+ 	/*
+ 	 * The upper layer will never give the memory more than 64K bytes.
+@@ -844,6 +849,7 @@ static int IdeBuildDmaTable(PChannel pCh
+ 	unsigned int count = 0;
+ 	int i;
+ 	struct scatterlist *sg;
++
+ 	i = IdeBuildSglist(pChan, Srb);
+ 	sg = pChan->sg_table;
+ 	while (i && sg_dma_len(sg)) {
+@@ -858,9 +864,7 @@ static int IdeBuildDmaTable(PChannel pCh
+ 		while (cur_len) {
+ 			if (count++ >= PRD_ENTRIES) {
+ 				printk(KERN_WARNING "@@DMA table too small\n");
+-			}
+-
+-			else {
++			} else {
+ 				u32 xcount, bcount =
+ 				    0x10000 - (cur_addr & 0xFFFF);
+ 				if (bcount > cur_len)
+@@ -868,20 +872,20 @@ static int IdeBuildDmaTable(PChannel pCh
+ 				*table++ = cpu_to_le32(cur_addr);
+ 				xcount = bcount & 0xFFFF;
+ 				if (xcount == 0x0000) {
+-
+ 					/*
+-					 * Most chipsets correctly interpret a length
+-					 * of 0x0000 as 64KB, but at least one
+-					 * (e.g. CS5530) misinterprets it as zero (!).
+-					 * So here we break the 64KB entry into two
+-					 * 32KB entries instead.
++					 * Most chipsets correctly interpret a
++					 * length of 0x0000 as 64KB, but at
++					 * least one (e.g. CS5530) misinterprets
++					 * it as zero (!).  So here we break the
++					 * 64KB entry into two 32KB entries
++					 * instead.
+ 					 */
+ 					if (count++ >= PRD_ENTRIES)
+ 						printk(KERN_WARNING
+-						       "##DMA table too small\n");
++						     "##DMA table too small\n");
+ 					*table++ = cpu_to_le32(0x8000);
+ 					*table++ =
+-					    cpu_to_le32(cur_addr + 0x8000);
++						cpu_to_le32(cur_addr + 0x8000);
+ 					xcount = 0x8000;
+ 				}
+ 				*table++ = cpu_to_le32(xcount);
+@@ -895,9 +899,7 @@ static int IdeBuildDmaTable(PChannel pCh
+ 	if (count) {
+ 		*--table |= cpu_to_le32(0x80000000);
+ 		return count;
+-	}
+-
+-	else {
++	} else {
+ 		printk(KERN_WARNING "Empty DMA table?\n");
+ 	}
+ 	return count;
+@@ -912,16 +914,14 @@ static void IdeBuildDmaSgTable(PChannel 
+ 	int i;
+ 	PPRD_TABLE_ENTRY pSG = (PPRD_TABLE_ENTRY) pChan->dmatable_cpu;
+ 	struct scatterlist *sg = (struct scatterlist *)Srb->DataBuffer;
+-	if (Srb->SrbFlags & SRB_FLAGS_DATA_IN) {
+-		pChan->sg_dma_direction = PCI_DMA_FROMDEVICE;
+-	}
+ 
+-	else {
++	if (Srb->SrbFlags & SRB_FLAGS_DATA_IN)
++		pChan->sg_dma_direction = PCI_DMA_FROMDEVICE;
++	else
+ 		pChan->sg_dma_direction = PCI_DMA_TODEVICE;
+-	}
+-	use_sg =
+-	    pci_map_sg(pChan->pPciDev, Srb->DataBuffer, Srb->UseSg,
+-		       pChan->sg_dma_direction);
++
++	use_sg = pci_map_sg(pChan->pPciDev, Srb->DataBuffer, Srb->UseSg,
++				pChan->sg_dma_direction);
+ 	for (i = 0; i < use_sg; i++) {
+ 		pSG[i].PhysicalBaseAddress = sg_dma_address(&sg[i]);
+ 		pSG[i].ByteCount = sg_dma_len(&sg[i]);
+@@ -971,13 +971,12 @@ void IT8212ReconfigChannel(PChannel pCha
+ {
+ 	u8 enableVirtualChannel;
+ 	struct pci_dev *pPciDev = pChan->pPciDev;
++
+ 	pci_read_config_byte(pPciDev, 0x43, &enableVirtualChannel);
+ 	if (Operation == DisableChannel) {
+ 		enableVirtualChannel &= ~(1 << ArrayId);
+ 		printk("IT8212ReconfigChannel: disable channel %X\n", ArrayId);
+-	}
+-
+-	else {
++	} else {
+ 		enableVirtualChannel |= ~(1 << ArrayId);
+ 		printk("IT8212ReconfigChannel: enable channel %X\n", ArrayId);
+ 	}
+@@ -1008,6 +1007,7 @@ u8 IT8212GetChipStatus(uioctl_t * ioc)
+ 	PChannel pChan;
+ 	PITE_ADAPTER pAdap;
+ 	PHYSICAL_DISK_STATUS *pPhyDiskInfo;
++
+ 	dprintk("IT8212GetChipStatus enter\n");
+ 
+ 	/*
+@@ -1021,10 +1021,10 @@ u8 IT8212GetChipStatus(uioctl_t * ioc)
+ 	/*
+ 	 * Allocate space for PHYSICAL_DISK_STATUS.
+ 	 */
+-	if ((pPhyDiskInfo =
+-	     kmalloc(sizeof(PHYSICAL_DISK_STATUS) * 4, GFP_KERNEL)) == NULL) {
+-		printk
+-		    ("IT8212GetChipStatus: error kmalloc for PHYSCIAL_DISK_STATUS.\n");
++	pPhyDiskInfo = kmalloc(sizeof(PHYSICAL_DISK_STATUS) * 4, GFP_KERNEL);
++	if (pPhyDiskInfo == NULL) {
++		printk("IT8212GetChipStatus: error kmalloc for "
++				"PHYSCIAL_DISK_STATUS.\n");
+ 		return -ENOMEM;
+ 	}
+ 	memset(pPhyDiskInfo, 0, sizeof(PHYSICAL_DISK_STATUS));
+@@ -1070,8 +1070,8 @@ u8 IT8212GetChipStatus(uioctl_t * ioc)
+ 	 * Wait for BUSY = 0, DRQ = 1.
+ 	 */
+ 	CheckBusyDrq(pChan, statusByte) if (statusByte != 0x58) {
+-		printk
+-		    ("IT8212GetChipStatus: disk[0] return unexpected status after");
++		printk("IT8212GetChipStatus: disk[0] return unexpected "
++				"status after");
+ 		printk("issue command. status=0x%X\n", statusByte);
+ 		goto exit_error;
+ 	}
+@@ -1084,7 +1084,7 @@ u8 IT8212GetChipStatus(uioctl_t * ioc)
+ #if (0)
+ 	HexDump((unsigned char *)pPhyDiskInfo, 512);
+ 
+-#endif				/*  */
++#endif
+ 
+ 	/*
+ 	 * Copy physical disk info to user area.
+@@ -1097,31 +1097,30 @@ u8 IT8212GetChipStatus(uioctl_t * ioc)
+ 	 */
+ 	WaitForCommandComplete(pChan, statusByte);
+ 	if (statusByte != IDE_STATUS_IDLE) {
+-		printk
+-		    ("IT8212GetChipStatus: disk[0] return unexpected status after");
+-		printk("read data. status=0x%X\n", statusByte);
++		printk("IT8212GetChipStatus: disk[0] return unexpected "
++			"status after read data. status=0x%X\n", statusByte);
+ 		goto exit_error;
+ 	}
+ 	srbStatus = SRB_STATUS_SUCCESS;
+ 	goto exit;
+-      exit_error:
++exit_error:
+ 	/*
+ 	 * If fail, hard reset to avoid the DRQ status pending.
+ 	 */
+ 	srbStatus = SRB_STATUS_ERROR;
+ 	IdeHardReset(pChan, statusByte);
+-      exit:
++exit:
+ 	/*
+ 	 * Reenable interrupt after command complete.
+ 	 */
+ 	outb(IDE_DC_REENABLE_CONTROLLER, pChan->io_ports[IDE_CONTROL_OFFSET]);
+ 
+ 	/*
+-	 * If primary master is null, disable primary master channel before we leave.
++	 * If primary master is null, disable primary master channel before we
++	 * leave.
+ 	 */
+-	if (PriMasterIsNull) {
++	if (PriMasterIsNull)
+ 		IT8212ReconfigChannel(pChan, 0, DisableChannel);
+-	}
+ 	dprintk("IT8212GetChipStatus exit\n");
+ 	return srbStatus;
+ }				/* end IT8212GetChipStatus */
+@@ -1138,19 +1137,17 @@ unsigned char IT8212ErasePartition(uioct
+ 	PRAID_CREATE_INFO createInfo = (PRAID_CREATE_INFO) pioc->data;
+ 	PITE_ADAPTER pAdap;
+ 	PChannel pChan;
++
+ 	printk("IT8212ErasePartition enter\n");
+ 	printk("createInfo->DiskArrayId = %d\n", createInfo->DiskArrayId);
+ 	if (createInfo->ErasePartition == 0
+ 	    || (createInfo->RaidType == RAID_LEVEL_NODISK))
+ 		return SRB_STATUS_SUCCESS;
+ 	pAdap = ite_adapters[0];
+-	if (createInfo->DiskArrayId < 2) {
++	if (createInfo->DiskArrayId < 2)
+ 		pChan = &pAdap->IDEChannel[0];
+-	}
+-
+-	else {
++	else
+ 		pChan = &pAdap->IDEChannel[1];
+-	}
+ 
+ 	/*
+ 	 * Allocate 512 bytes for buffer.
+@@ -1199,9 +1196,8 @@ unsigned char IT8212ErasePartition(uioct
+ 	 */
+ 	CheckBusyDrq(pChan, statusByte);
+ 	if (statusByte != 0x58) {
+-		printk
+-		    ("IT8212ErasePartition: disk[%d] error status. status=0x%X\n",
+-		     createInfo->DiskArrayId, statusByte);
++		printk("IT8212ErasePartition: disk[%d] error status. "
++			"status=0x%X\n", createInfo->DiskArrayId, statusByte);
+ 		goto exit_error;
+ 	}
+ 
+@@ -1215,20 +1211,19 @@ unsigned char IT8212ErasePartition(uioct
+ 	 */
+ 	WaitForCommandComplete(pChan, statusByte);
+ 	if (statusByte != IDE_STATUS_IDLE) {
+-		printk
+-		    ("IT8212ErasePartition: disk[%d] error status. status=0x%X\n",
+-		     createInfo->DiskArrayId, statusByte);
++		printk("IT8212ErasePartition: disk[%d] error status. "
++			"status=0x%X\n", createInfo->DiskArrayId, statusByte);
+ 		goto exit_error;
+ 	}
+ 	srbStatus = SRB_STATUS_SUCCESS;
+ 	goto exit;
+-      exit_error:
++exit_error:
+ 	/*
+ 	 * If failed, hard reset to avoid the DRQ status pending.
+ 	 */
+ 	IdeHardReset(pChan, statusByte);
+ 	srbStatus = SRB_STATUS_ERROR;
+-      exit:
++exit:
+ 	/*
+ 	 * Reenable interrupt after command complete.
+ 	 */
+@@ -1240,20 +1235,18 @@ unsigned char IT8212ErasePartition(uioct
+ /************************************************************************
+  *
+  ************************************************************************/
+-u32 IT8212TruncateReduentSectors
+-    (u32 OriginalSectorCount, u16 StripeSizeInKBytes) {
++static u32 IT8212TruncateReduentSectors(u32 OriginalSectorCount,
++				u16 StripeSizeInKBytes)
++{
+ 	u16 stripeSizeInSector;
+ 
+ 	/*
+ 	 * 0 means using default value (32 sectors).
+ 	 */
+-	if (StripeSizeInKBytes == 0) {
++	if (StripeSizeInKBytes == 0)
+ 		stripeSizeInSector = 64 * 2;
+-	}
+-
+-	else {
++	else
+ 		stripeSizeInSector = StripeSizeInKBytes * 2;
+-	}
+ 	return ((OriginalSectorCount / stripeSizeInSector) *
+ 		stripeSizeInSector);
+ }				/* end IT8212TruncateReduentSectors */
+@@ -1261,13 +1254,14 @@ u32 IT8212TruncateReduentSectors
+ /************************************************************************
+  * Calculate the addressable sector for this RAID.
+  ************************************************************************/
+-u32 IT8212DiskArrayAddressableSector(unsigned char *DiskArrayCreateInfo)
++static u32 IT8212DiskArrayAddressableSector(unsigned char *DiskArrayCreateInfo)
+ {
+ 	u8 DiskNo;
+ 	u8 NumOfDisks;
+ 	u32 MinDiskCapacity;
+ 	u32 ArrayCapacity;
+ 	PRAID_CREATE_INFO createInfo = (PRAID_CREATE_INFO) DiskArrayCreateInfo;
++
+ 	MinDiskCapacity = ArrayCapacity = NumOfDisks = 0;
+ 	printk("createInfo->AddressableSectors[0] = 0x%X\n",
+ 	       createInfo->AddressableSectors[0]);
+@@ -1348,7 +1342,7 @@ u32 IT8212DiskArrayAddressableSector(uns
+ /************************************************************************
+  * Create a new array.
+  ************************************************************************/
+-u8 IT8212CreateDiskArray(uioctl_t * pioc)
++static u8 IT8212CreateDiskArray(uioctl_t * pioc)
+ {
+ 	u8 i;
+ 	u8 subCommand = 0xFF;
+@@ -1380,6 +1374,7 @@ u8 IT8212CreateDiskArray(uioctl_t * pioc
+ 		0x0005,		/* DMA  clock register 2                */
+ 		0x0005		/* PIO  clock register                  */
+ 	};
++
+ 	printk("IT8212CreateDiskArray enter\n");
+ 
+ #if (MARK_DUMP_CREATE_INFO)
+@@ -1487,14 +1482,11 @@ u8 IT8212CreateDiskArray(uioctl_t * pioc
+ 		       UserAddressableSectors);
+ 		identifyData->Capacity_48bit_LOW = UserAddressableSectors;
+ 		identifyData->Capacity_48bit_HIGH = 0;
+-		if (UserAddressableSectors > 0x0FFFFFFF) {
++		if (UserAddressableSectors > 0x0FFFFFFF)
+ 			identifyData->UserAddressableSectors = 0x0FFFFFFF;
+-		}
+-
+-		else {
++		else
+ 			identifyData->UserAddressableSectors =
+-			    UserAddressableSectors;
+-		}
++					UserAddressableSectors;
+ 
+ 		/*
+ 		 * Get DMA supported mode and UDMA supported mode.
+@@ -1545,7 +1537,7 @@ u8 IT8212CreateDiskArray(uioctl_t * pioc
+ #if (MARK_DEBUG_DUMP_MEM)
+ 	HexDump(buffer, 512);
+ 
+-#endif				/*  */
++#endif
+ 
+ 	/*
+ 	 * There are some contrains of disk placement. AP will take care of it.
+@@ -1592,8 +1584,8 @@ u8 IT8212CreateDiskArray(uioctl_t * pioc
+ 	if (subCommand == 0x48) {
+ 		WaitForCommandComplete(pChan, statusByte);
+ 		if (statusByte != IDE_STATUS_IDLE) {
+-			printk
+-			    ("IT8212CreateDiskArray: disk[0] return unexpected status after issue command.\n");
++			printk("IT8212CreateDiskArray: disk[0] return "
++				"unexpected status after issue command.\n");
+ 			goto exit_error;
+ 		}
+ 		IT8212ReconfigChannel(pChan, createInfo->DiskArrayId,
+@@ -1612,8 +1604,8 @@ u8 IT8212CreateDiskArray(uioctl_t * pioc
+ 		 */
+ 		CheckBusyDrq(pChan, statusByte);
+ 		if (statusByte != 0x58) {
+-			printk
+-			    ("IT8212CreateDiskArray: disk[0] return unexpected status after issue command.\n");
++			printk("IT8212CreateDiskArray: disk[0] return "
++				"unexpected status after issue command.\n");
+ 			goto exit_error;
+ 		}
+ 		WriteBuffer(pChan, buffer, 256);
+@@ -1623,8 +1615,8 @@ u8 IT8212CreateDiskArray(uioctl_t * pioc
+ 		 */
+ 		WaitForCommandComplete(pChan, statusByte);
+ 		if (statusByte != IDE_STATUS_IDLE) {
+-			printk
+-			    ("IT8212CreateDiskArray: disk[0] return unexpected status after issue command.\n");
++			printk("IT8212CreateDiskArray: disk[0] return "
++				"unexpected status after issue command.\n");
+ 			goto exit_error;
+ 		}
+ 		IT8212ReconfigChannel(pChan, createInfo->DiskArrayId,
+@@ -1632,20 +1624,19 @@ u8 IT8212CreateDiskArray(uioctl_t * pioc
+ 		srbStatus = SRB_STATUS_SUCCESS;
+ 		goto exit;
+ 	}
+-      exit_error:
++exit_error:
+ 	/*
+ 	 * If fail, hard reset to avoid the DRQ pending.
+ 	 */
+ 	IdeHardReset(pChan, statusByte);
+ 	srbStatus = SRB_STATUS_ERROR;
+-      exit:
++exit:
+ 	/*
+-	 * If primary master is null, and we are not configuring array 0. Disable
+-	 * primary master channel again.
++	 * If primary master is null, and we are not configuring array 0.
++	 * Disable primary master channel again.
+ 	 */
+-	if (PriMasterIsNull && createInfo->DiskArrayId) {
++	if (PriMasterIsNull && createInfo->DiskArrayId)
+ 		IT8212ReconfigChannel(pChan, 0, DisableChannel);
+-	}
+ 
+ 	/*
+ 	 * Reenable interrupt after command complete.
+@@ -1655,10 +1646,11 @@ u8 IT8212CreateDiskArray(uioctl_t * pioc
+ 	return srbStatus;
+ }				/* end IT8212CreateDiskArray */
+ 
++#if 0
+ /************************************************************************
+  * Return "virtual" drive 512 bytes identification data.
+  ************************************************************************/
+-u8 IT8212IssueIdentify(uioctl_t * pioc)
++static u8 IT8212IssueIdentify(uioctl_t *pioc)
+ {
+ 	u8 channum;
+ 	u8 devnum;
+@@ -1696,9 +1688,8 @@ u8 IT8212IssueIdentify(uioctl_t * pioc)
+ 			 */
+ 			statusByte = inb(pChan->io_ports[IDE_ALTERNATE_OFFSET]);
+ 			if ((statusByte & 0x40) != 0x40) {
+-				printk
+-				    ("IT8212IssueIdentify: disk[%d] is offline\n",
+-				     devnum + channum * 2);
++				printk("IT8212IssueIdentify: disk[%d] is "
++					"offline\n", devnum + channum * 2);
+ 				continue;
+ 			}
+ 
+@@ -1709,9 +1700,9 @@ u8 IT8212IssueIdentify(uioctl_t * pioc)
+ 			if ((statusByte & IDE_STATUS_BUSY)
+ 			    || (statusByte & IDE_STATUS_DRQ)
+ 			    || (statusByte == 0)) {
+-				printk
+-				    ("IT8212IssueIdentify: disk[%d] not ready. status=0x%X\n",
+-				     devnum + channum * 2, statusByte);
++				printk("IT8212IssueIdentify: disk[%d] not "
++					"ready. status=0x%X\n",
++					devnum + channum * 2, statusByte);
+ 				srbStatus = SRB_STATUS_BUSY;
+ 				goto exit;
+ 			}
+@@ -1733,9 +1724,10 @@ u8 IT8212IssueIdentify(uioctl_t * pioc)
+ 			 */
+ 			CheckBusyDrq(pChan, statusByte);
+ 			if (statusByte != 0x58) {
+-				printk
+-				    ("IT8212IssueIndetify: disk[%d] returns unexpedted status after issue command. status=0x%X\n",
+-				     devnum + channum * 2, statusByte);
++				printk("IT8212IssueIndetify: disk[%d] returns "
++					"unexpedted status after issue command."
++					" status=0x%X\n",
++					devnum + channum * 2, statusByte);
+ 				goto error;
+ 			}
+ 
+@@ -1748,7 +1740,6 @@ u8 IT8212IssueIdentify(uioctl_t * pioc)
+ 
+ 			/*
+ 			 * Then copy to user area.
+-			 * unsigned long copy_to_user(void *to, const void *from, unsigned long count).
+ 			 */
+ 			copy_to_user((unsigned short *)(pioc->data +
+ 							((devnum +
+@@ -1762,22 +1753,23 @@ u8 IT8212IssueIdentify(uioctl_t * pioc)
+ 			 */
+ 			WaitForCommandComplete(pChan, statusByte);
+ 			if (statusByte != IDE_STATUS_IDLE) {
+-				printk
+-				    ("IT8212IssueIdentify: disk[%d] returns unexpected status after read data. status=0x%X\n",
+-				     devnum + channum * 2, statusByte);
++				printk("IT8212IssueIdentify: disk[%d] returns "
++					"unexpected status after read data. "
++					"status=0x%X\n",
++					devnum + channum * 2, statusByte);
+ 				goto error;
+ 			}
+ 		}		/* end for each device */
+ 	}			/* end for each channel */
+ 	srbStatus = SRB_STATUS_SUCCESS;
+ 	goto exit;
+-      error:
++error:
+ 	/*
+ 	 * If failed, hard reset to avoid the IRQ pending.
+ 	 */
+ 	IdeHardReset(pChan, statusByte);
+ 	srbStatus = SRB_STATUS_ERROR;
+-      exit:
++exit:
+ 	/*
+ 	 * Reenable interrupt after command complete.
+ 	 */
+@@ -1788,6 +1780,7 @@ u8 IT8212IssueIdentify(uioctl_t * pioc)
+ 	}
+ 	return srbStatus;
+ }				/* end IT8212IssueIdentify */
++#endif
+ 
+ /************************************************************************
+  * Reset the controller.
+@@ -1811,13 +1804,11 @@ static u8 IT8212ResetAdapter(PITE_ADAPTE
+ 			if (pChan->DeviceFlags[device] & DFLAGS_DEVICE_PRESENT) {
+ 				if (pChan->
+ 				    DeviceFlags[device] & DFLAGS_ATAPI_DEVICE) {
+-					printk
+-					    ("IT8212ResetAdapter: perform ATAPI soft reset (%d, %d)\n",
+-					     channel, device);
++					printk("IT8212ResetAdapter: perform "
++						"ATAPI soft reset (%d, %d)\n",
++						channel, device);
+ 					AtapiSoftReset(pChan, device);
+-				}
+-
+-				else {
++				} else {
+ 					resetChannel[channel] = TRUE;
+ 				}
+ 			}
+@@ -1856,9 +1847,7 @@ static u8 IT8212ResetAdapter(PITE_ADAPTE
+ 					status[(channel * 2) + device] =
+ 					    inb(pChan->
+ 						io_ports[IDE_COMMAND_OFFSET]);
+-				}
+-
+-				else {
++				} else {
+ 					status[(channel * 2) + device] = 0;
+ 				}
+ 			}
+@@ -1873,21 +1862,16 @@ static u8 IT8212ResetAdapter(PITE_ADAPTE
+ 		    (status[2] != IDE_STATUS_IDLE && status[2] != 0x0) ||
+ 		    (status[3] != IDE_STATUS_IDLE && status[3] != 0x0)) {
+ 			udelay(30);
+-		}
+-
+-		else {
++		} else {
+ 			break;
+ 		}
+ 	}
+ 	if (i == 1000 * 1000) {
+ 		printk("IT8212ResetAdapter Fail!\n");
+-		printk
+-		    ("Device status after reset = [0x%x, 0x%x, 0x%x, 0x%x]\n",
++		printk("Device status after reset = [0x%x, 0x%x, 0x%x, 0x%x]\n",
+ 		     status[0], status[1], status[2], status[3]);
+ 		return FALSE;
+-	}
+-
+-	else {
++	} else {
+ 		printk("IT8212ResetAdapter Success!\n");
+ 		return TRUE;
+ 	}
+@@ -1903,6 +1887,7 @@ u8 IT8212Rebuild(uioctl_t * pioc)
+ 	PRAID_REBUILD_INFO apRebuildInfo = (PRAID_REBUILD_INFO) pioc->data;
+ 	PITE_ADAPTER pAdap;
+ 	PChannel pChan;
++
+ 	dprintk("IT8212Rebuild enter\n");
+ 	rebuildDirection =
+ 	    (apRebuildInfo->Resume << 4) | (apRebuildInfo->
+@@ -1911,13 +1896,10 @@ u8 IT8212Rebuild(uioctl_t * pioc)
+ 	apRebuildInfo->Status = 0xFF;
+ 	pAdap = ite_adapters[0];
+ 	printk("IT8212Rebuild: diskArrayId=%d\n", apRebuildInfo->DiskArrayId);
+-	if (apRebuildInfo->DiskArrayId < 2) {
++	if (apRebuildInfo->DiskArrayId < 2)
+ 		pChan = &pAdap->IDEChannel[0];
+-	}
+-
+-	else {
++	else
+ 		pChan = &pAdap->IDEChannel[1];
+-	}
+ 
+ 	/*
+ 	 * Selcet device.
+@@ -1988,7 +1970,7 @@ u8 IT8212Rebuild(uioctl_t * pioc)
+  * Bit 6 = Secondary Channel Dev 1 Transfer Mode (1=MultiWord DMA, 0=Ultra DMA)
+  * Bit 7 = PCI Mode Reset
+  ************************************************************************/
+-void IT8212SwitchDmaMode(PChannel pChan, u8 DeviceId)
++static void IT8212SwitchDmaMode(PChannel pChan, u8 DeviceId)
+ {
+ 	u8 pciControl;
+ 	u8 channel;
+@@ -2030,24 +2012,20 @@ void IT8212SwitchDmaMode(PChannel pChan,
+ 		/*
+ 		 * Switch to DMA mode.
+ 		 */
+-		if (RevisionID == 0x10) {
++		if (RevisionID == 0x10)
+ 			configByte = pciControl | dmaModeV10[DeviceId];
+-		}
+ 		pci_write_config_byte(pPciDev, 0x50, configByte);
+-	}
+-
+-	/*
+-	 * Running on ULTRA DMA mode.
+-	 */
+-	else {
++	} else {
++		/*
++		 * Running on ULTRA DMA mode.
++		 */
+ 
+ 		/*
+ 		 * Select UDMA mode.
+ 		 */
+ 		configByte = pciControl;
+-		if (RevisionID == 0x10) {
++		if (RevisionID == 0x10)
+ 			configByte &= udmaModeV10[DeviceId];
+-		}
+ 
+ 		/*
+ 		 * Select IDE clock.
+@@ -2091,13 +2069,14 @@ void IT8212SwitchDmaMode(PChannel pChan,
+ /************************************************************************
+  * IT8212 read/write routine.
+  ************************************************************************/
+-u32 IT8212ReadWrite(PChannel pChan, PSCSI_REQUEST_BLOCK Srb)
++static u32 IT8212ReadWrite(PChannel pChan, PSCSI_REQUEST_BLOCK Srb)
+ {
+ 	u8 statusByte = 0;
+ 	u32 startingSector;
+ 	u32 sectorNumber;
+ 	u32 capacity;
+ 	PITE_ADAPTER pAdap;
++
+ 	if (Srb->TargetId >= 4) {
+ 		pAdap = ite_adapters[1];
+ 		if (Srb->TargetId < 6)
+@@ -2105,9 +2084,7 @@ u32 IT8212ReadWrite(PChannel pChan, PSCS
+ 
+ 		else
+ 			pChan = &pAdap->IDEChannel[1];
+-	}
+-
+-	else {
++	} else {
+ 		pAdap = ite_adapters[0];
+ 		if (Srb->TargetId < 2)
+ 			pChan = &pAdap->IDEChannel[0];
+@@ -2160,21 +2137,17 @@ u32 IT8212ReadWrite(PChannel pChan, PSCS
+ 	/*
+ 	 * First, switch to DMA or UDMA mode if running on bypass mode.
+ 	 */
+-	if (pAdap->bypass_mode) {
++	if (pAdap->bypass_mode)
+ 		IT8212SwitchDmaMode(pChan, Srb->TargetId);
+-	}
+ 
+ 	/*
+ 	 * Check the SCATTER/GATHER count. The upper will give the different
+ 	 * memory address depend on whether use_sg is used or not.
+ 	 */
+-	if (Srb->UseSg == 0) {
++	if (Srb->UseSg == 0)
+ 		IdeBuildDmaTable(pChan, Srb);
+-	}
+-
+-	else {
++	else
+ 		IdeBuildDmaSgTable(pChan, Srb);
+-	}
+ 
+ 	/*
+ 	 * Start transfer the data.
+@@ -2187,11 +2160,13 @@ u32 IT8212ReadWrite(PChannel pChan, PSCS
+ 	return SRB_STATUS_PENDING;
+ }				/* end IT8212ReadWrite */
+ 
++#if 0
+ /************************************************************************
+  * Setup the transfer mode.
+  ************************************************************************/
+-void IT8212SetTransferMode
+-    (PChannel pChan, u32 DiskId, u8 TransferMode, u8 ModeNumber) {
++static void IT8212SetTransferMode(PChannel pChan, u32 DiskId, u8 TransferMode,
++			u8 ModeNumber)
++{
+ 	u8 statusByte = 0;
+ 
+ 	/*
+@@ -2205,9 +2180,8 @@ void IT8212SetTransferMode
+ 	 */
+ 	WaitForDeviceReady(pChan, statusByte);
+ 	if ((statusByte & IDE_STATUS_BUSY) || (statusByte & IDE_STATUS_DRQ)) {
+-		printk
+-		    ("IT8212SetTransferMode: disk[%d] not ready. status=0x%x\n",
+-		     DiskId, statusByte);
++		printk("IT8212SetTransferMode: disk[%d] not ready. "
++				"status=0x%x\n", DiskId, statusByte);
+ 		return;
+ 	}
+ 
+@@ -2242,11 +2216,14 @@ void IT8212SetTransferMode
+ 		       statusByte);
+ 	}
+ }				/* end IT8212SetTransferMode */
++#endif
+ 
++#if 0
+ /************************************************************************
+  * Set the best transfer mode for device.
+  ************************************************************************/
+-void IT8212SetBestTransferMode(PITE_ADAPTER pAdap, PChannel pChan, u8 channel)
++static void IT8212SetBestTransferMode(PITE_ADAPTER pAdap, PChannel pChan,
++					u8 channel)
+ {
+ 	u8 i;
+ 	u8 k;
+@@ -2341,9 +2318,7 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 		    || (ideIdentifyData->AdvancedPIOModes == 0)) {
+ 			transferMode = PIO_FLOW_CONTROL;
+ 			modeNumber = 2;
+-		}
+-
+-		else {
++		} else {
+ 			transferMode = PIO_FLOW_CONTROL;
+ 			modeNumber =
+ 			    RaidGetHighestBit((u8) ideIdentifyData->
+@@ -2358,7 +2333,8 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 		pio_dma_timing[1][channel][device] = pioTiming[1][modeNumber];
+ 
+ 		/*
+-		 * Get the best transfer mode (maybe Ultra DMA or Multi-Word DMA).
++		 * Get the best transfer mode (maybe Ultra DMA or Multi-Word
++		 * DMA).
+ 		 */
+ 		ideIdentifyData = &pChan->IdentifyData[i];
+ 		if ((!(ideIdentifyData->ValidFieldIndicator & 0x04))
+@@ -2371,37 +2347,32 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 			modeNumber =
+ 			    RaidGetHighestBit(ideIdentifyData->
+ 					      MultiWordDMASupport);
+-			printk
+-			    ("The best transfer mode of Device[%d] is DMA-%d\n",
+-			     i, modeNumber);
+-		}
+-
+-		else {
++			printk("The best transfer mode of Device[%d] is "
++				"DMA-%d\n", i, modeNumber);
++		} else {
+ 			transferMode = ULTRA_DMA;
+ 			modeNumber =
+ 			    RaidGetHighestBit(ideIdentifyData->UltraDMASupport);
+-			printk
+-			    ("The best transfer mode of Device[%d] is Ultra-%d\n",
+-			     i, modeNumber);
++			printk("The best transfer mode of Device[%d] is "
++					"Ultra-%d\n", i, modeNumber);
+ 
+ 			/*
+ 			 * If this is 40-pin cable. Limit to Ultra DMA mode 2.
+ 			 */
+-#	 if (0)
++#if (0)
+ 			if ((cableStatus[i] == CABLE_40_PIN)
+ 			    && (modeNumber > 2)) {
+-				printk
+-				    ("Reduce trans mode of Device[%d] to Ultra-2 for cable issue.\n",
+-				     i);
++				printk("Reduce trans mode of Device[%d] to "
++					"Ultra-2 for cable issue.\n", i);
+ 				modeNumber = 0x02;
+ 			}
+-#	 endif
++#endif
+ 		}
+ 		IT8212SetTransferMode(pChan, i, transferMode, modeNumber);
+ 
+ 		/*
+-		 * If running on ByPass mode, driver must take the responsibility to
+-		 * set the PIO/DMA/UDMA timing.
++		 * If running on ByPass mode, driver must take the
++		 * responsibility to set the PIO/DMA/UDMA timing.
+ 		 */
+ 		if (pAdap->bypass_mode) {
+ 			pci_read_config_byte(pPciDev, 0x50, &pciControl);
+@@ -2409,16 +2380,15 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 			if (transferMode == ULTRA_DMA) {
+ 
+ 				/*
+-				 * Set this channel to UDMA mode (not only the device).
++				 * Set this channel to UDMA mode (not only the
++				 * device).
+ 				 */
+ 				if (RevisionID == 0x10) {
+ 					configByte =
+ 					    pciControl & udmaModeV10[i +
+ 								     channel *
+ 								     2];
+-				}
+-
+-				else {
++				} else {
+ 					configByte =
+ 					    pciControl & udmaMode[i +
+ 								  channel * 2];
+@@ -2449,7 +2419,8 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 				}
+ 
+ 				/*
+-				 * Bug Bug. Fill these two fields into the same value.
++				 * Bug Bug. Fill these two fields into the same
++				 * value.
+ 				 */
+ 				if (RevisionID == 0x10) {
+ 					pci_write_config_byte(pPciDev,
+@@ -2462,9 +2433,7 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 								    (channel *
+ 								     4) + 1),
+ 							      configByte);
+-				}
+-
+-				else {
++				} else {
+ 					pci_write_config_byte(pPciDev,
+ 							      (u8) (0x56 +
+ 								    (channel *
+@@ -2479,20 +2448,17 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 				pChan->DmaType[i] = ULTRA_DMA;
+ 				pChan->IdeClock[i] = udmaTiming[2][modeNumber];
+ 				pChan->UdmaTiming[i] = configByte;
+-			}
+-
+-			else if (transferMode == MULTIWORD_DMA) {
++			} else if (transferMode == MULTIWORD_DMA) {
+ 
+ 				/*
+-				 * If an ATAPI device with DMA mode, force it to run in PIO mode.
++				 * If an ATAPI device with DMA mode, force it
++				 * to run in PIO mode.
+ 				 */
+ 				if (RevisionID == 0x10
+ 				    && pChan->
+ 				    DeviceFlags[i] & DFLAGS_ATAPI_DEVICE) {
+ 					pChan->UseDma[i] = FALSE;
+-				}
+-
+-				else {
++				} else {
+ 
+ 					/*
+ 					 * Set this device to DMA mode.
+@@ -2521,7 +2487,8 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 
+ 	/*
+ 	 * Because each channel owns one PIO/DMA timimg register only, so we
+-	 * must set the timing to the slowest one to fit all. Really stupid H/W! :(
++	 * must set the timing to the slowest one to fit all. Really stupid
++	 * H/W! :(
+ 	 */
+ 	if (pAdap->bypass_mode) {
+ 
+@@ -2566,11 +2533,10 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 		 */
+ 		configByte =
+ 		    pChan->PioDmaTiming[(pciControl >> (channel + 1)) & 1];
+-		if (configByte != 0) {
++		if (configByte != 0)
+ 			pci_write_config_byte(pPciDev,
+ 					      (u8) (0x54 + (channel * 4)),
+ 					      configByte);
+-		}
+ 
+ 		/*
+ 		 * Check shall we do switch between the two devices
+@@ -2583,9 +2549,8 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 			 */
+ 			if (!(pChan->DeviceFlags[i] & DFLAGS_DEVICE_PRESENT)
+ 			    || (pChan->DeviceFlags[i] & DFLAGS_CONFIG_CHANGED)) {
+-				printk
+-				    ("Channel %x: master is not present. No switch mode.\n",
+-				     channel);
++				printk("Channel %x: master is not present. No "
++					"switch mode.\n", channel);
+ 				pChan->DoSwitch = FALSE;
+ 				continue;
+ 			}
+@@ -2596,9 +2561,8 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 			if (!(pChan->DeviceFlags[i + 1] & DFLAGS_DEVICE_PRESENT)
+ 			    || (pChan->
+ 				DeviceFlags[i + 1] & DFLAGS_CONFIG_CHANGED)) {
+-				printk
+-				    ("Channel %x: slave is not present. No switch mode.\n",
+-				     channel);
++				printk("Channel %x: slave is not present. No "
++					"switch mode.\n", channel);
+ 				pChan->DoSwitch = FALSE;
+ 				continue;
+ 			}
+@@ -2608,9 +2572,8 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 			 */
+ 			if (pChan->DmaType[i] == USE_MULTIWORD_DMA
+ 			    && pChan->DmaType[i + 1] == USE_MULTIWORD_DMA) {
+-				printk
+-				    ("Channel %x: run on DMA mode only. No switch mode.\n",
+-				     channel);
++				printk("Channel %x: run on DMA mode only. No "
++					"switch mode.\n", channel);
+ 				pChan->DoSwitch = FALSE;
+ 				continue;
+ 			}
+@@ -2622,9 +2585,8 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 			    && (pChan->UdmaTiming[i] ==
+ 				pChan->UdmaTiming[i + 1])
+ 			    && (pChan->IdeClock[i] == pChan->IdeClock[i + 1])) {
+-				printk
+-				    ("Channel %x: two dev run on the same mode. No switch mode.\n",
+-				     channel);
++				printk("Channel %x: two dev run on the same "
++					"mode. No switch mode.\n", channel);
+ 				pChan->DoSwitch = FALSE;
+ 				continue;
+ 			}
+@@ -2632,11 +2594,13 @@ void IT8212SetBestTransferMode(PITE_ADAP
+ 		}
+ 	}
+ }				/* end IT8212SetBestTransferMode */
++#endif
+ 
++#if 0
+ /************************************************************************
+  * Initialize bypass(transparent) mode if BIOS is not ready.
+  ************************************************************************/
+-u8 IT8212InitBypassMode(struct pci_dev *pPciDev)
++static u8 IT8212InitBypassMode(struct pci_dev *pPciDev)
+ {
+ 
+ 	/*
+@@ -2655,18 +2619,20 @@ u8 IT8212InitBypassMode(struct pci_dev *
+ 	pci_write_config_byte(pPciDev, 0x0D, 0x00);
+ 	return TRUE;
+ }				/* end IT8212InitBypassMode */
++#endif
+ 
+ /************************************************************************
+  * This is the interrupt service routine for ATAPI IDE miniport driver.
+  * TURE if expecting an interrupt.
+  ************************************************************************/
+-u8 IT8212Interrupt(PChannel pChan, u8 bypass_mode)
++static u8 IT8212Interrupt(PChannel pChan, u8 bypass_mode)
+ {
+ 	u8 statusByte;
+ 	u8 bmstatus;
+ 	u32 i;
+ 	unsigned long bmbase;
+ 	PSCSI_REQUEST_BLOCK Srb;
++
+ 	bmstatus = 0;
+ 	bmbase = pChan->dma_base;
+ 	Srb = pChan->CurrentSrb;
+@@ -2690,8 +2656,8 @@ u8 IT8212Interrupt(PChannel pChan, u8 by
+ 	 */
+ 	bmstatus = inb(bmbase + 2);
+ 	if ((bmstatus & BM_STAT_FLG_INT) == 0) {
+-		dprintk
+-		    ("IT8212Interrupt: suspicious interrupt (int bit is not on)\n");
++		dprintk("IT8212Interrupt: suspicious interrupt (int bit is not "
++			"on)\n");
+ 		return FALSE;
+ 	}
+ 
+@@ -2699,9 +2665,8 @@ u8 IT8212Interrupt(PChannel pChan, u8 by
+ 	 * Bug Fixed: All PIO access are blocked during bus master operation, so
+ 	 * stop bus master operation before we try to access IDE registers.
+ 	 */
+-	if (bypass_mode) {
++	if (bypass_mode)
+ 		outb(bmbase, 0);
+-	}
+ 
+ 	/*
+ 	 * Clear interrupt by reading status register.
+@@ -2712,9 +2677,8 @@ u8 IT8212Interrupt(PChannel pChan, u8 by
+ 	/*
+ 	 * Handle ATAPI interrupt.
+ 	 */
+-	if (pChan->DeviceFlags[Srb->TargetId & 1] & DFLAGS_ATAPI_DEVICE) {
++	if (pChan->DeviceFlags[Srb->TargetId & 1] & DFLAGS_ATAPI_DEVICE)
+ 		return AtapiInterrupt(pChan);
+-	}
+ 	pChan->ExpectingInterrupt = FALSE;
+ 	if ((statusByte & IDE_STATUS_BUSY) || (statusByte & IDE_STATUS_DRQ)) {
+ 
+@@ -2730,9 +2694,9 @@ u8 IT8212Interrupt(PChannel pChan, u8 by
+ 			mdelay(5);
+ 		}
+ 		if (i == 100) {
+-			printk
+-			    ("IT8212Interrupt: disk[%x] return busy or drq status. status = 0x%x\n",
+-			     Srb->TargetId, statusByte);
++			printk("IT8212Interrupt: disk[%x] return busy or drq "
++				"status. status = 0x%x\n",
++				Srb->TargetId, statusByte);
+ 			return FALSE;
+ 		}
+ 	}
+@@ -2748,9 +2712,7 @@ u8 IT8212Interrupt(PChannel pChan, u8 by
+ 		 * Map error to specific SRB status and handle request sense.
+ 		 */
+ 		Srb->SrbStatus = MapError(pChan, Srb);
+-	}
+-
+-	else {
++	} else {
+ 		Srb->SrbStatus = SRB_STATUS_SUCCESS;
+ 	}
+ 	pChan->CurrentSrb = NULL;
+@@ -2775,6 +2737,7 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 	u8 target_id;
+ 	PSCSI_REQUEST_BLOCK srb;
+ 	PITE_ADAPTER pAdap;
++
+ 	wordCount = 0;
+ 	wordsThisInterrupt = 256;
+ 	srb = pChan->CurrentSrb;
+@@ -2786,9 +2749,7 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 
+ 		else
+ 			pChan = &pAdap->IDEChannel[1];
+-	}
+-
+-	else {
++	} else {
+ 		pAdap = ite_adapters[0];
+ 		if (target_id < 2)
+ 			pChan = &pAdap->IDEChannel[0];
+@@ -2852,9 +2813,7 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 		 */
+ 		WriteBuffer(pChan, (unsigned short *)srb->Cdb, 6);
+ 		return TRUE;
+-	}
+-
+-	else if (interruptReason == 0x0 && (statusByte & IDE_STATUS_DRQ)) {
++	} else if (interruptReason == 0x0 && (statusByte & IDE_STATUS_DRQ)) {
+ 
+ 		/*
+ 		 * Write the data.
+@@ -2871,17 +2830,15 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 		 */
+ 		wordCount >>= 1;
+ 		if (wordCount != pChan->WordsLeft) {
+-			printk
+-			    ("AtapiInterrupt: %d words requested; %d words xferred\n",
+-			     pChan->WordsLeft, wordCount);
++			printk("AtapiInterrupt: %d words requested; %d words "
++				"xferred\n", pChan->WordsLeft, wordCount);
+ 		}
+ 
+ 		/*
+ 		 * Verify this makes sense.
+ 		 */
+-		if (wordCount > pChan->WordsLeft) {
++		if (wordCount > pChan->WordsLeft)
+ 			wordCount = pChan->WordsLeft;
+-		}
+ 
+ 		/*
+ 		 * Ensure that this is a write command.
+@@ -2891,10 +2848,11 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 			WaitOnBusy(pChan, statusByte);
+ 			WriteBuffer(pChan, pChan->DataBuffer, wordCount);
+ 
+-#	 if (0)
++#if (0)
+ 			/*
+-			 * Translate ATAPI data back to SCSI data if needed (don't
+-			 * convert if the original command is SCSIOP_MODE_SELECT10)
++			 * Translate ATAPI data back to SCSI data if needed
++			 * (don't convert if the original command is
++			 * SCSIOP_MODE_SELECT10)
+ 			 */
+ 			if (srb->Cdb[0] == ATAPI_MODE_SELECT
+ 			    && pchan->ConvertCdb) {
+@@ -2902,13 +2860,10 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 					   (char *)pChan->DataBuffer,
+ 					   wordCount << 1);
+ 			}
+-#	 endif
+-		}
+-
+-		else {
+-			printk
+-			    ("AtapiInterrupt: int reason %x, but srb is for a write %p.\n",
+-			     interruptReason, srb);
++#endif
++		} else {
++			printk("AtapiInterrupt: int reason %x, but srb is for "
++				"a write %p.\n", interruptReason, srb);
+ 
+ 			/*
+ 			 * Fail this request.
+@@ -2923,9 +2878,7 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 		pChan->DataBuffer += wordCount;
+ 		pChan->WordsLeft -= wordCount;
+ 		return TRUE;
+-	}
+-
+-	else if (interruptReason == 0x2 && (statusByte & IDE_STATUS_DRQ)) {
++	} else if (interruptReason == 0x2 && (statusByte & IDE_STATUS_DRQ)) {
+ 
+ 		/*
+ 		 * Pick up bytes to transfer and convert to words.
+@@ -2938,17 +2891,15 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 		 */
+ 		wordCount >>= 1;
+ 		if (wordCount != pChan->WordsLeft) {
+-			printk
+-			    ("AtapiInterrupt: %d words requested; %d words xferred\n",
+-			     pChan->WordsLeft, wordCount);
++			printk("AtapiInterrupt: %d words requested; %d words "
++				"xferred\n", pChan->WordsLeft, wordCount);
+ 		}
+ 
+ 		/*
+ 		 * Verify this makes sense.
+ 		 */
+-		if (wordCount > pChan->WordsLeft) {
++		if (wordCount > pChan->WordsLeft)
+ 			wordCount = pChan->WordsLeft;
+-		}
+ 
+ 		/*
+ 		 * Ensure that this is a read command.
+@@ -2959,9 +2910,8 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 			ReadBuffer(pChan, pChan->DataBuffer, wordCount);
+ 
+ 			/*
+-			 * From Windows DDK
+-			 * You should typically set the ANSI-approved Version field,
+-			 * in the INQUIRY response, to at least 2.
++			 * You should typically set the ANSI-approved Version
++			 * field, in the INQUIRY response, to at least 2.
+ 			 */
+ 			if (srb->Cdb[0] == SCSIOP_INQUIRY) {
+ 
+@@ -2970,12 +2920,9 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 				 */
+ 				*((unsigned char *)pChan->DataBuffer + 2) = 2;
+ 			}
+-		}
+-
+-		else {
+-			printk
+-			    ("AtapiInterrupt: int reason %x, but srb is for a read %p.\n",
+-			     interruptReason, srb);
++		} else {
++			printk("AtapiInterrupt: int reason %x, but srb is for "
++				"a read %p.\n", interruptReason, srb);
+ 
+ 			/*
+ 			 * Fail this request.
+@@ -2996,9 +2943,9 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 		if (pChan->WordsLeft == 0) {
+ 
+ 			/*
+-			 * Work around to make many atapi devices return correct sector size
+-			 * of 2048. Also certain devices will have sector count == 0x00, check
+-			 * for that also.
++			 * Work around to make many atapi devices return
++			 * correct sector size of 2048. Also certain devices
++			 * will have sector count == 0x00, check for that also.
+ 			 */
+ 			if ((srb->Cdb[0] == 0x25) &&
+ 			    ((pChan->IdentifyData[srb->TargetId & 1].
+@@ -3014,25 +2961,22 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 			}
+ 		}
+ 		return TRUE;
+-	}
+-
+-	else if (interruptReason == 0x3 && !(statusByte & IDE_STATUS_DRQ)) {
++	} else if (interruptReason == 0x3 && !(statusByte & IDE_STATUS_DRQ)) {
+ 		dprintk("AtapiInterrupt: command complete!\n");
+ 
+ 		/*
+ 		 * Command complete.
+ 		 */
+-		if (pChan->WordsLeft) {
++		if (pChan->WordsLeft)
+ 			status = SRB_STATUS_DATA_OVERRUN;
+-		}
+-
+-		else {
++		else
+ 			status = SRB_STATUS_SUCCESS;
+-		}
+-	      CompleteRequest:if (status == SRB_STATUS_ERROR) {
++CompleteRequest:
++		if (status == SRB_STATUS_ERROR) {
+ 
+ 			/*
+-			 * Map error to specific SRB status and handle request sense.
++			 * Map error to specific SRB status and handle request
++			 * sense.
+ 			 */
+ 			printk("AtapiInterrupt error\n");
+ 			status = MapError(pChan, srb);
+@@ -3041,9 +2985,7 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 			 * Try to recover it.... 2003/02/27
+ 			 */
+ 			pChan->RDP = FALSE;
+-		}
+-
+-		else {
++		} else {
+ 
+ 			/*
+ 			 * Wait for busy to drop.
+@@ -3060,9 +3002,8 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 				/*
+ 				 * Reset the controller.
+ 				 */
+-				printk
+-				    ("AtapiInterrupt: resetting due to BSY still up - %x.\n",
+-				     statusByte);
++				printk("AtapiInterrupt: resetting due to BSY "
++					"still up - %x.\n", statusByte);
+ 				AtapiResetController(pAdap, pChan);
+ 				return TRUE;
+ 			}
+@@ -3083,9 +3024,9 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 					/*
+ 					 * Reset the controller.
+ 					 */
+-					printk
+-					    ("AtapiInterrupt: resetting due to DRQ still up - %x\n",
+-					     statusByte);
++					printk("AtapiInterrupt: resetting due "
++						"to DRQ still up - %x\n",
++						statusByte);
+ 					AtapiResetController(pAdap, pChan);
+ 					return TRUE;
+ 				}
+@@ -3113,25 +3054,19 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 			if (pChan->WordsLeft) {
+ 
+ 				/*
+-				 * Subtract out residual words and update if filemark hit,
+-				 * setmark hit , end of data, end of media...
++				 * Subtract out residual words and update if
++				 * filemark hit, setmark hit , end of data,
++				 * end of media...
+ 				 */
+-				if (!
+-				    (pChan->
+-				     DeviceFlags[srb->
+-						 TargetId & 1] &
++				if (!(pChan->DeviceFlags[srb->TargetId & 1] &
+ 				     DFLAGS_TAPE_DEVICE)) {
+ 					if (status == SRB_STATUS_DATA_OVERRUN) {
+ 						srb->DataTransferLength -=
+ 						    pChan->WordsLeft * 2;
+-					}
+-
+-					else {
++					} else {
+ 						srb->DataTransferLength = 0;
+ 					}
+-				}
+-
+-				else {
++				} else {
+ 					srb->DataTransferLength -=
+ 					    pChan->WordsLeft * 2;
+ 				}
+@@ -3139,32 +3074,26 @@ static u8 AtapiInterrupt(PChannel pChan)
+ 			GetBaseStatus(pChan, statusByte);
+ 			if (pChan->RDP && !(statusByte & IDE_STATUS_DSC)) {
+ 				printk("-@@-\n");
+-			}
+-
+-			else {
++			} else {
+ 
+ 				/*
+-				 * Clear current SRB. Indicate ready for next request.
++				 * Clear current SRB. Indicate ready for next
++				 * request.
+ 				 */
+ 				pChan->CurrentSrb = NULL;
+ 				TaskDone(pChan, srb);
+ 			}
+-		}
+-
+-		else {
++		} else {
+ 			printk("AtapiInterrupt: no SRB!\n");
+ 		}
+ 		return TRUE;
+-	}
+-
+-	else {
++	} else {
+ 
+ 		/*
+ 		 * Unexpected int.
+ 		 */
+-		printk
+-		    ("AtapiInterrupt: unexpected interrupt. intReason %x. status %x.\n",
+-		     interruptReason, statusByte);
++		printk("AtapiInterrupt: unexpected interrupt. intReason %x. "
++			"status %x.\n", interruptReason, statusByte);
+ 		return FALSE;
+ 	}
+ 	return TRUE;
+@@ -3180,6 +3109,7 @@ static irqreturn_t Irq_Handler(int irq, 
+ 	u8 j;
+ 	unsigned long flags;
+ 	PITE_ADAPTER pAdap;
++
+ 	spin_lock_irqsave(&io_request_lock, flags);
+ 
+ 	/*
+@@ -3202,7 +3132,7 @@ static irqreturn_t Irq_Handler(int irq, 
+ /************************************************************************
+  * This routine handles IDE Verify.
+  ************************************************************************/
+-u8 IdeVerify(PChannel pChan, PSCSI_REQUEST_BLOCK Srb)
++static u8 IdeVerify(PChannel pChan, PSCSI_REQUEST_BLOCK Srb)
+ {
+ 	u8 drvSelect;
+ 	u8 statusByte = 0;
+@@ -3250,9 +3180,8 @@ u8 IdeVerify(PChannel pChan, PSCSI_REQUE
+ 		sectors =
+ 		    pChan->IdentifyData[Srb->TargetId & 0x01].
+ 		    Capacity_48bit_LOW;
+-		printk
+-		    ("IdeVerify (48-bit): starting sector %d, Ending sector %d\n",
+-		     startingSector, endSector);
++		printk("IdeVerify (48-bit): starting sector %d, Ending "
++			"sector %d\n", startingSector, endSector);
+ 		if (endSector > sectors) {
+ 
+ 			/*
+@@ -3265,9 +3194,7 @@ u8 IdeVerify(PChannel pChan, PSCSI_REQUE
+ 			     pChan->io_ports[IDE_NSECTOR_OFFSET]);
+ 			outb((u8) (sectors - startingSector - 1),
+ 			     pChan->io_ports[IDE_NSECTOR_OFFSET]);
+-		}
+-
+-		else {
++		} else {
+ 
+ 			/*
+ 			 * Set up sector count register. Round up to next block.
+@@ -3304,15 +3231,12 @@ u8 IdeVerify(PChannel pChan, PSCSI_REQUE
+ 		 */
+ 		outb(IDE_COMMAND_READ_VERIFY_EXT,
+ 		     pChan->io_ports[IDE_COMMAND_OFFSET]);
+-	}
+-
+-	/*
+-	 * 28-bit addressing
+-	 */
+-	else {
+-		sectors =
+-		    pChan->IdentifyData[Srb->TargetId & 0x01].
+-		    UserAddressableSectors;
++	} else {
++		/*
++		 * 28-bit addressing
++		 */
++		sectors = pChan->IdentifyData[Srb->TargetId & 0x01].
++						UserAddressableSectors;
+ 		printk("IdeVerify: starting sector %d, ending sector %d\n",
+ 		       startingSector, endSector);
+ 		if (endSector > sectors) {
+@@ -3325,18 +3249,15 @@ u8 IdeVerify(PChannel pChan, PSCSI_REQUE
+ 			     sectors - startingSector - 1);
+ 			outb((u8) (sectors - startingSector - 1),
+ 			     pChan->io_ports[IDE_NSECTOR_OFFSET]);
+-		}
+-
+-		else {
++		} else {
+ 
+ 			/*
+ 			 * Set up sector count register. Round up to next block.
+ 			 */
+-			if (sectorCount > 0xFF) {
++			if (sectorCount > 0xFF)
+ 				sectorCount = (u16) 0xFF;
+-			}
+-			outb((u8) sectorCount,
+-			     pChan->io_ports[IDE_NSECTOR_OFFSET]);
++			outb((u8)sectorCount,
++				pChan->io_ports[IDE_NSECTOR_OFFSET]);
+ 		}
+ 
+ 		/*
+@@ -3382,36 +3303,32 @@ void
+ IT8212MoveMemory(unsigned char *DestAddr, unsigned char *SrcAddr, u32 ByteCount)
+ {
+ 	long i;
+-	dprintk
+-	    ("IT8212MoveMemory: DestAddr=0x%p, SrcAddr=0x%p, ByteCount=0x%x\n",
+-	     DestAddr, SrcAddr, ByteCount);
++
++	dprintk("IT8212MoveMemory: DestAddr=0x%p, SrcAddr=0x%p, "
++		"ByteCount=0x%x\n", DestAddr, SrcAddr, ByteCount);
+ 	if (DestAddr > SrcAddr) {
+ 
+ 		/*
+-		 * If Destination Area is in the back of the Source Area, copy from
+-		 * the end of the requested area.
++		 * If Destination Area is in the back of the Source Area, copy
++		 * from the end of the requested area.
+ 		 */
+-		for (i = (ByteCount - 1); i >= 0; i--) {
++		for (i = (ByteCount - 1); i >= 0; i--)
+ 			*(DestAddr + i) = *(SrcAddr + i);
+-		}
+-	}
+-
+-	else if (DestAddr < SrcAddr) {
++	} else if (DestAddr < SrcAddr) {
+ 
+ 		/*
+-		 * If Destination Area is in the front of the Source Area, copy from
+-		 * the begin of the requested area.
++		 * If Destination Area is in the front of the Source Area, copy
++		 * from the begin of the requested area.
+ 		 */
+-		for (i = 0; i < ByteCount; i++) {
++		for (i = 0; i < ByteCount; i++)
+ 			*(DestAddr + i) = *(SrcAddr + i);
+-		}
+ 	}
+ }				/* end IT8212MoveMemory */
+ 
+ /************************************************************************
+  * Convert SCSI packet command to Atapi packet command.
+  ************************************************************************/
+-void Scsi2Atapi(PChannel pChan, PSCSI_REQUEST_BLOCK Srb)
++static void Scsi2Atapi(PChannel pChan, PSCSI_REQUEST_BLOCK Srb)
+ {
+ 
+ 	/*
+@@ -3513,19 +3430,20 @@ void Scsi2Atapi(PChannel pChan, PSCSI_RE
+ 			modeSelect10->Control = modeSelect6->Control;
+ 
+ 			/*
+-			 * 3. Becasuse we will remove the block descripter (-8), and
+-			 * translate the header (+4), so the requested length should
+-			 * be modified. That is, -8+4=-4 bytes.
++			 * 3. Becasuse we will remove the block descripter (-8),
++			 * and translate the header (+4), so the requested
++			 * length should be modified. That is, -8+4=-4 bytes.
+ 			 */
+ 			modeSelect10->ParameterListLengthLsb -= 4;
+ 
+ 			/*
+-			 * Second, convert the parameter page format from SCSI to ATAPI.
++			 * Second, convert the parameter page format from SCSI
++			 * to ATAPI.
+ 			 */
+ 
+ 			/*
+-			 * Remove the mode parameter data (except the header and the
+-			 * block descripter).
++			 * Remove the mode parameter data (except the header
++			 * and the block descripter).
+ 			 */
+ 			byteCount =
+ 			    modeSelect6->ParameterListLength -
+@@ -3545,15 +3463,17 @@ void Scsi2Atapi(PChannel pChan, PSCSI_RE
+ 			}
+ 
+ 			/*
+-			 * Keep the original header6 (4 bytes) in tempHeader for later use
++			 * Keep the original header6 (4 bytes) in tempHeader for
++			 * later use
+ 			 */
+ 			memcpy(tempHeader, header10,
+ 			       sizeof(SCSI_MODE_PARAMETER_HEADER6));
+ 
+ 			/*
+-			 * Change the "mode parameter header(6)" to "mode parameter header(10)"
+-			 * Notice: Remove the block descripter in SCSI-2 command out. It
+-			 * won't be used in MMC.
++			 * Change the "mode parameter header(6)" to "mode
++			 * parameter header(10)"
++			 * Notice: Remove the block descripter in SCSI-2 command
++			 * out. It won't be used in MMC.
+ 			 */
+ 			memset((unsigned char *)header10, 0,
+ 			       sizeof(SCSI_MODE_PARAMETER_HEADER10));
+@@ -3565,8 +3485,8 @@ void Scsi2Atapi(PChannel pChan, PSCSI_RE
+ 			    header6->BlockDescriptorLength;
+ 
+ 			/*
+-			 * ATAPI doesn't support block descripter, so remove it from the
+-			 * mode paramter.
++			 * ATAPI doesn't support block descripter, so remove it
++			 * from the mode paramter.
+ 			 */
+ 			header10->BlockDescriptorLengthLsb = 0;
+ 			break;
+@@ -3577,7 +3497,7 @@ void Scsi2Atapi(PChannel pChan, PSCSI_RE
+ /************************************************************************
+  * Send ATAPI packet command to device.
+  ************************************************************************/
+-u32 AtapiSendCommand(PChannel pChan, PSCSI_REQUEST_BLOCK Srb)
++static u32 AtapiSendCommand(PChannel pChan, PSCSI_REQUEST_BLOCK Srb)
+ {
+ 	u8 statusByte;
+ 	u8 byteCountLow;
+@@ -3589,6 +3509,7 @@ u32 AtapiSendCommand(PChannel pChan, PSC
+ 	int i;
+ 	unsigned long bmAddress = pChan->dma_base;
+ 	PITE_ADAPTER pAdap = ite_adapters[0];
++
+ 	dprintk("AtapiSendCommand: command 0x%X to device %d\n", Srb->Cdb[0],
+ 		Srb->TargetId);
+ 
+@@ -3610,14 +3531,12 @@ u32 AtapiSendCommand(PChannel pChan, PSC
+ 			 */
+ 			return SRB_STATUS_SELECTION_TIMEOUT;
+ 		}
+-	}
+-
+-	else if (Srb->Lun > 0) {
++	} else if (Srb->Lun > 0) {
+ 		return SRB_STATUS_SELECTION_TIMEOUT;
+ 	}
+-	if (!(flags & DFLAGS_ATAPI_DEVICE)) {
++
++	if (!(flags & DFLAGS_ATAPI_DEVICE))
+ 		return SRB_STATUS_SELECTION_TIMEOUT;
+-	}
+ 
+ 	/*
+ 	 * Select device 0 or 1.
+@@ -3631,7 +3550,7 @@ u32 AtapiSendCommand(PChannel pChan, PSC
+ #if (0)
+ 	outb(0x00, pChan->io_ports[ATAPI_CONTROL_OFFSET]);
+ 
+-#endif				/*  */
++#endif
+ 
+ 	/*
+ 	 * Verify that controller is ready for next command.
+@@ -3666,35 +3585,32 @@ u32 AtapiSendCommand(PChannel pChan, PSC
+ 		return SRB_STATUS_BUSY;
+ 	}
+ 	if (statusByte & IDE_STATUS_DRQ) {
+-		printk
+-		    ("AtapiSendCommand: enter with status (%x). Attempt to recover.\n",
+-		     statusByte);
++		printk("AtapiSendCommand: enter with status (%x). Attempt to "
++			"recover.\n", statusByte);
+ 
+ 		/*
+-		 * Try to drain the data that one preliminary device thinks that it has
+-		 * to transfer. Hopefully this random assertion of DRQ will not be present
+-		 * in production devices.
++		 * Try to drain the data that one preliminary device thinks that
++		 * it has to transfer. Hopefully this random assertion of DRQ
++		 * will not be present in production devices.
+ 		 */
+ 		for (i = 0; i < 0x10000; i++) {
+ 			GetStatus(pChan, statusByte);
+ 			if (statusByte & IDE_STATUS_DRQ) {
+ 
+ 				/*
+-				 * Note: The data register is always referenced as a 16-bit word.
++				 * Note: The data register is always referenced
++				 * as a 16-bit word.
+ 				 */
+ 				inw(pChan->io_ports[ATAPI_DATA_OFFSET]);
+-			}
+-
+-			else {
++			} else {
+ 				break;
+ 			}
+ 		}
+ 		if (i == 0x10000) {
+-			printk
+-			    ("AtapiSendCommand: DRQ still asserted.Status (%x)\n",
+-			     statusByte);
+-			printk
+-			    ("AtapiSendCommand: issued soft reset to Atapi device. \n");
++			printk("AtapiSendCommand: DRQ still asserted.Status "
++				"(%x)\n", statusByte);
++			printk("AtapiSendCommand: issued soft reset to Atapi "
++				"device. \n");
+ 			AtapiSoftReset(pChan, Srb->TargetId);
+ 
+ 			/*
+@@ -3708,7 +3624,8 @@ u32 AtapiSendCommand(PChannel pChan, PSC
+ 			 */
+ 
+ 			/*
+-			 * Clean up device extension fields that AtapiStartIo won't.
++			 * Clean up device extension fields that AtapiStartIo
++			 * won't.
+ 			 */
+ 			pChan->ExpectingInterrupt = FALSE;
+ 			pChan->RDP = FALSE;
+@@ -3718,14 +3635,16 @@ u32 AtapiSendCommand(PChannel pChan, PSC
+ 	if (flags & (DFLAGS_SANYO_ATAPI_CHANGER | DFLAGS_ATAPI_CHANGER)) {
+ 
+ 		/*
+-		 * As the cdrom driver sets the LUN field in the cdb, it must be removed.
++		 * As the cdrom driver sets the LUN field in the cdb, it must
++		 * be removed.
+ 		 */
+ 		Srb->Cdb[1] &= ~0xE0;
+ 		if ((Srb->Cdb[0] == SCSIOP_TEST_UNIT_READY)
+ 		    && (flags & DFLAGS_SANYO_ATAPI_CHANGER)) {
+ 
+ 			/*
+-			 * Torisan changer. TUR's are overloaded to be platter switches.
++			 * Torisan changer. TUR's are overloaded to be platter
++			 * switches.
+ 			 */
+ 			Srb->Cdb[7] = Srb->Lun;
+ 		}
+@@ -3752,32 +3671,27 @@ u32 AtapiSendCommand(PChannel pChan, PSC
+ 			}
+ 
+ 			/*
+-			 * First, switch to DMA or UDMA mode if running on Bypass mode.
++			 * First, switch to DMA or UDMA mode if running on
++			 * Bypass mode.
+ 			 */
+-			if (pAdap->bypass_mode) {
++			if (pAdap->bypass_mode)
+ 				IT8212SwitchDmaMode(pChan, Srb->TargetId);
+-			}
+ 
+ 			/*
+-			 * Check the SCATTER/GATHER count. The upper will give the
+-			 * different memory address depend on whether use_sg is used
+-			 * or not.
++			 * Check the SCATTER/GATHER count. The upper will give
++			 * the different memory address depend on whether
++			 * use_sg is used or not.
+ 			 */
+-			if (Srb->UseSg == 0) {
++			if (Srb->UseSg == 0)
+ 				IdeBuildDmaTable(pChan, Srb);
+-			}
+-
+-			else {
++			else
+ 				IdeBuildDmaSgTable(pChan, Srb);
+-			}
+ 			bmClearStat = inb(bmAddress + 2);
+ 			if (Srb->TargetId & 0x01) {
+ 				bmClearStat =
+ 				    bmClearStat | BM_DRV1_DMA_CAPABLE |
+ 				    BM_STAT_FLG_INT | BM_STAT_FLG_ERR;
+-			}
+-
+-			else {
++			} else {
+ 				bmClearStat =
+ 				    bmClearStat | BM_DRV0_DMA_CAPABLE |
+ 				    BM_STAT_FLG_INT | BM_STAT_FLG_ERR;
+@@ -3802,13 +3716,10 @@ u32 AtapiSendCommand(PChannel pChan, PSC
+ 	 * Set data buffer pointer and words left.
+ 	 */
+ 	pChan->DataBuffer = (unsigned short *)Srb->DataBuffer;
+-	if (useDMA) {
++	if (useDMA)
+ 		pChan->WordsLeft = 0;
+-	}
+-
+-	else {
++	else
+ 		pChan->WordsLeft = Srb->DataTransferLength / 2;
+-	}
+ 	outb((u8) (((Srb->TargetId & 0x1) << 4) | 0xA0),
+ 	     pChan->io_ports[ATAPI_SELECT_OFFSET]);
+ 	WaitOnBusy(pChan, statusByte);
+@@ -3818,9 +3729,8 @@ u32 AtapiSendCommand(PChannel pChan, PSC
+ 	 */
+ 	byteCountLow = (u8) (Srb->DataTransferLength & 0xFF);
+ 	byteCountHigh = (u8) (Srb->DataTransferLength >> 8);
+-	if (Srb->DataTransferLength >= 0x10000) {
++	if (Srb->DataTransferLength >= 0x10000)
+ 		byteCountLow = byteCountHigh = 0xFF;
+-	}
+ 	outb(byteCountLow, pChan->io_ports[ATAPI_LCYL_OFFSET]);
+ 	outb(byteCountHigh, pChan->io_ports[ATAPI_HCYL_OFFSET]);
+ 	outb(0, pChan->io_ports[ATAPI_INTREASON_OFFSET]);
+@@ -3836,14 +3746,11 @@ u32 AtapiSendCommand(PChannel pChan, PSC
+ 		 */
+ 		outb(IDE_COMMAND_ATAPI_PACKET,
+ 		     pChan->io_ports[IDE_COMMAND_OFFSET]);
+-		printk
+-		    ("AtapiSendCommand: wait for int. to send packet. status (%x)\n",
+-		     statusByte);
++		printk("AtapiSendCommand: wait for int. to send packet. "
++				"status (%x)\n", statusByte);
+ 		pChan->ExpectingInterrupt = TRUE;
+ 		return SRB_STATUS_PENDING;
+-	}
+-
+-	else {
++	} else {
+ 
+ 		/*
+ 		 * Write ATAPI packet command.
+@@ -3883,9 +3790,10 @@ u32 AtapiSendCommand(PChannel pChan, PSC
+ 
+ 		/*
+ 		 * If SCSIOP_READ command is sent to an Audio CD, error will be
+-		 * returned. But the error will be blocked by our controller if bus
+-		 * master operation started. So wait for a short period to check if
+-		 * error occurs. If error occurs, don't start bus master operation.
++		 * returned. But the error will be blocked by our controller if
++		 * bus master operation started. So wait for a short period to
++		 * check if error occurs. If error occurs, don't start bus
++		 * master operation.
+ 		 */
+ 		if (RevisionID == 0x10) {
+ 			for (i = 0; i < 500; i++) {
+@@ -3896,8 +3804,9 @@ u32 AtapiSendCommand(PChannel pChan, PSC
+ 					/*
+ 					 * If error occurs, give up this round.
+ 					 */
+-					printk
+-					    ("AtapiSendCommand: command failed. Don't start bus master.");
++					printk("AtapiSendCommand: command "
++						"failed. Don't start bus "
++						"master.");
+ 					printk("status=%x, i=%d\n", statusByte,
+ 					       i);
+ 					pChan->ExpectingInterrupt = TRUE;
+@@ -3905,13 +3814,10 @@ u32 AtapiSendCommand(PChannel pChan, PSC
+ 				}
+ 			}
+ 		}
+-		if (Srb->SrbFlags & SRB_FLAGS_DATA_IN) {
++		if (Srb->SrbFlags & SRB_FLAGS_DATA_IN)
+ 			outb(BM_CMD_FLG_START | BM_CMD_FLG_WRTTOMEM, bmAddress);
+-		}
+-
+-		else if (Srb->SrbFlags & SRB_FLAGS_DATA_OUT) {
++		else if (Srb->SrbFlags & SRB_FLAGS_DATA_OUT)
+ 			outb(BM_CMD_FLG_START | BM_CMD_FLG_WRTTODSK, bmAddress);
+-		}
+ 	}
+ 
+ 	/* end if (useDMA) */
+@@ -3933,6 +3839,7 @@ static u32 IdeSendCommand(PChannel pChan
+ 	Scsi_Cmnd *pREQ;
+ 	unsigned char *request_buffer;
+ 	PINQUIRYDATA inquiryData;
++
+ 	pREQ = Srb->pREQ;
+ 	status = SRB_STATUS_SUCCESS;
+ 	statusByte = 0;
+@@ -3941,8 +3848,8 @@ static u32 IdeSendCommand(PChannel pChan
+ 		dprintk("SCSIOP_INQUIRY\n");
+ 
+ 		/*
+-		 * Filter out all TIDs but 0 and 1 since this is an IDE interface
+-		 * which support up to two devices.
++		 * Filter out all TIDs but 0 and 1 since this is an IDE
++		 * interface which support up to two devices.
+ 		 */
+ 		if ((pREQ->device->lun != 0) ||
+ 		    (!pChan->
+@@ -3954,9 +3861,7 @@ static u32 IdeSendCommand(PChannel pChan
+ 			 */
+ 			status = SRB_STATUS_INVALID_TARGET_ID;
+ 			break;
+-		}
+-
+-		else {
++		} else {
+ 			request_buffer = Srb->DataBuffer;
+ 			inquiryData = Srb->DataBuffer;
+ 
+@@ -4020,9 +3925,7 @@ static u32 IdeSendCommand(PChannel pChan
+ 		    UserAddressableSectors == 0x0FFFFFFF) {
+ 			i = pChan->IdentifyData[pREQ->device->id & 0x01].
+ 			    Capacity_48bit_LOW - 1;
+-		}
+-
+-		else {
++		} else {
+ 			i = pChan->IdentifyData[pREQ->device->id & 0x01].
+ 			    UserAddressableSectors - 1;
+ 		}
+@@ -4096,25 +3999,21 @@ static void AtapiStartIo(PChannel pChan,
+ 		/*
+ 		 * Send command to device.
+ 		 */
+-		if (pChan->DeviceFlags[Srb->TargetId & 1] & DFLAGS_ATAPI_DEVICE) {
++		if (pChan->DeviceFlags[Srb->TargetId & 1] &
++				DFLAGS_ATAPI_DEVICE) {
+ 
+ 			/*
+ 			 * If this is ATAPI device.
+ 			 */
+ 			status = AtapiSendCommand(pChan, Srb);
+-		}
+-
+-		else if (pChan->
+-			 DeviceFlags[Srb->TargetId & 1] & DFLAGS_DEVICE_PRESENT)
+-		{
++		} else if (pChan->DeviceFlags[Srb->TargetId & 1] &
++				DFLAGS_DEVICE_PRESENT) {
+ 
+ 			/*
+ 			 * If this is IDE device.
+ 			 */
+ 			status = IdeSendCommand(pChan, Srb);
+-		}
+-
+-		else {
++		} else {
+ 
+ 			/*
+ 			 * Nothing else.
+@@ -4137,7 +4036,8 @@ static void AtapiStartIo(PChannel pChan,
+ 		status = SRB_STATUS_INVALID_REQUEST;
+ 		break;
+ 	}			/* end switch */
+-      busy:if (status != SRB_STATUS_PENDING) {
++busy:
++	if (status != SRB_STATUS_PENDING) {
+ 
+ 		/*
+ 		 * Set status in SRB.
+@@ -4178,9 +4078,7 @@ static void MapRequest(Scsi_Cmnd * pREQ,
+ 	if ((Srb->Cdb[0] == SCSIOP_WRITE6) || (Srb->Cdb[0] == SCSIOP_WRITE)
+ 	    || (Srb->Cdb[0] == SCSIOP_MODE_SELECT10)) {
+ 		Srb->SrbFlags = SRB_FLAGS_DATA_OUT;
+-	}
+-
+-	else {
++	} else {
+ 		Srb->SrbFlags = SRB_FLAGS_DATA_IN;
+ 	}
+ 	Srb->TimeOutValue = 0;
+@@ -4188,12 +4086,11 @@ static void MapRequest(Scsi_Cmnd * pREQ,
+ 	if (Srb->Cdb[0] == SCSIOP_REQUEST_SENSE) {
+ 		Srb->DataTransferLength = 0x40;
+ 		Srb->DataBuffer = pREQ->sense_buffer;
+-	}
+-
+-	else {
++	} else {
+ 		Srb->DataTransferLength = pREQ->request_bufflen;
+ 		Srb->DataBuffer = pREQ->request_buffer;
+ 	}
++
+ 	if (pREQ->use_sg) {
+ 		Srb->WorkingFlags |= SRB_WFLAGS_USE_SG;
+ 	}
+@@ -4285,16 +4182,18 @@ static void TaskQueue(void)
+ 	Scsi_Cmnd *SCpnt;
+ 	PChannel pChan;
+ 	PITE_ADAPTER pAdap;
+-      check_next:if (it8212_req_last != NULL) {
++
++check_next:
++	if (it8212_req_last != NULL) {
+ 		spin_lock_irqsave(&queue_request_lock, flags);
++
+ 		SCpnt = (Scsi_Cmnd *) it8212_req_last->SCp.ptr;
+-		if (it8212_req_last == SCpnt) {
++		if (it8212_req_last == SCpnt)
+ 			it8212_req_last = NULL;
+-		}
+-
+-		else {
++		else
+ 			it8212_req_last->SCp.ptr = (char *)SCpnt->SCp.ptr;
+-		} spin_unlock_irqrestore(&queue_request_lock, flags);
++
++		spin_unlock_irqrestore(&queue_request_lock, flags);
+ 
+ 		/*
+ 		 * Check the command.
+@@ -4318,9 +4217,7 @@ static void TaskQueue(void)
+ 
+ 			else
+ 				pChan = &pAdap->IDEChannel[1];
+-		}
+-
+-		else {
++		} else {
+ 			pAdap = ite_adapters[0];
+ 			if (SCpnt->device->id < 2)
+ 				pChan = &pAdap->IDEChannel[0];
+@@ -4340,7 +4237,7 @@ static void TaskQueue(void)
+  *		done  - Pointer to done function to call.
+  * Returns:	Status code.
+  ****************************************************************/
+-int iteraid_queuecommand(Scsi_Cmnd * SCpnt, void (*done) (Scsi_Cmnd *))
++static int iteraid_queuecommand(Scsi_Cmnd * SCpnt, void (*done) (Scsi_Cmnd *))
+ {
+ 	unsigned long flags;
+ 	dprintk("##Queuecommand enter##\n");
+@@ -4352,18 +4249,18 @@ int iteraid_queuecommand(Scsi_Cmnd * SCp
+ 	spin_lock_irqsave(&queue_request_lock, flags);
+ 	if (it8212_req_last == NULL) {
+ 		SCpnt->SCp.ptr = (char *)SCpnt;
+-	}
+-
+-	else {
++	} else {
+ 		SCpnt->SCp.ptr = it8212_req_last->SCp.ptr;
+ 		it8212_req_last->SCp.ptr = (char *)SCpnt;
+-	} it8212_req_last = SCpnt;
++	}
++	it8212_req_last = SCpnt;
+ 	spin_unlock_irqrestore(&queue_request_lock, flags);
+ 	TaskQueue();
+ 	dprintk("@@Queuecommand exit@@\n");
+ 	return 0;
+ }				/* end iteraid_queuecommand */
+ 
++#if 0
+ /****************************************************************
+  * Name:	internal_done :LOCAL
+  * Description:	Done handler for non-queued commands
+@@ -4374,14 +4271,16 @@ static void internal_done(Scsi_Cmnd * SC
+ {
+ 	SCpnt->SCp.Status++;
+ }				/* end internal_done */
++#endif
+ 
++#if 0
+ /****************************************************************
+  * Name:	iteraid_command
+  * Description:	Process a command from the SCSI manager.
+  * Parameters:	SCpnt - Pointer to SCSI command structure.
+  * Returns:	Status code.
+  ****************************************************************/
+-int iteraid_command(Scsi_Cmnd * SCpnt)
++static int iteraid_command(Scsi_Cmnd * SCpnt)
+ {
+ 	unsigned long timeout;
+ 	SCpnt->SCp.Status = 0;
+@@ -4391,13 +4290,13 @@ int iteraid_command(Scsi_Cmnd * SCpnt)
+ 	 * Should be longer than hard-reset time.
+ 	 */
+ 	timeout = jiffies + 60 * HZ;
+-	while (!SCpnt->SCp.Status && time_before(jiffies, timeout)) {
++	while (!SCpnt->SCp.Status && time_before(jiffies, timeout))
+ 		barrier();
+-	}
+ 	if (!SCpnt->SCp.Status)
+ 		SCpnt->result = (DID_ERROR << 16);
+ 	return SCpnt->result;
+ }				/* end iteraid_command */
++#endif
+ 
+ /************************************************************************
+  * Enables/disables media status notification.
+@@ -4425,27 +4324,24 @@ static void IdeMediaStatus(u8 EnableMSN,
+ 				 */
+ 				errorByte =
+ 				    inb(pChan->io_ports[IDE_ERROR_OFFSET]);
+-				printk
+-				    ("IdeMediaStatus: error enabling media status. status %u, error byte %u\n",
+-				     statusByte, errorByte);
+-			}
+-
+-			else {
++				printk("IdeMediaStatus: error enabling media "
++					"status. status %u, error byte %u\n",
++					statusByte, errorByte);
++			} else {
+ 				pChan->DeviceFlags[Device] |=
+ 				    DFLAGS_MEDIA_STATUS_ENABLED;
+-				printk
+-				    ("IdeMediaStatus: media status notification supported!\n");
++				printk("IdeMediaStatus: media status "
++					"notification supported!\n");
+ 				pChan->ReturningMediaStatus = 0;
+ 			}
+ 		}
+-	}
+-
+-	else {			/* end if EnableMSN == TRUE */
++	} else {			/* end if EnableMSN == TRUE */
+ 
+ 		/*
+ 		 * Disable if previously enabled.
+ 		 */
+-		if ((pChan->DeviceFlags[Device] & DFLAGS_MEDIA_STATUS_ENABLED)) {
++		if ((pChan->DeviceFlags[Device] &
++				DFLAGS_MEDIA_STATUS_ENABLED)) {
+ 			outb((u8) (0x31), pChan->io_ports[IDE_FEATURE_OFFSET]);
+ 			outb(IDE_COMMAND_ENABLE_MEDIA_STATUS,
+ 			     pChan->io_ports[IDE_COMMAND_OFFSET]);
+@@ -4499,15 +4395,13 @@ static u8 IssueIdentify(PChannel pChan, 
+ 				/*
+ 				 * Give up on this.
+ 				 */
+-				printk
+-				    ("IssueIdentify(IDE): disk[%d] not ready. status=0x%x\n",
+-				     DeviceNumber, statusByte);
++				printk("IssueIdentify(IDE): disk[%d] not "
++					"ready. status=0x%x\n",
++					DeviceNumber, statusByte);
+ 				return FALSE;
+ 			}
+ 		}
+-	}
+-
+-	else {
++	} else {
+ 		dprintk("IssueIdentify: checking for ATAPI. status (%x)\n",
+ 			statusByte);
+ 		if ((statusByte & IDE_STATUS_BUSY)
+@@ -4526,9 +4420,9 @@ static u8 IssueIdentify(PChannel pChan, 
+ 				/*
+ 				 * Give up on this.
+ 				 */
+-				printk
+-				    ("IssueIdentify(ATAPI): disk[%d] not ready. status=0x%x\n",
+-				     DeviceNumber, statusByte);
++				printk("IssueIdentify(ATAPI): disk[%d] not "
++					"ready. status=0x%x\n",
++					DeviceNumber, statusByte);
+ 				return FALSE;
+ 			}
+ 		}
+@@ -4559,23 +4453,17 @@ static u8 IssueIdentify(PChannel pChan, 
+ 		 */
+ 		WaitForBaseDrq(pChan, statusByte);
+ 		if (!(statusByte & IDE_STATUS_DRQ)) {
+-			printk
+-			    ("IssueIdentify: disk[%d] DRQ never asserted. status=%x\n",
+-			     DeviceNumber, statusByte);
++			printk("IssueIdentify: disk[%d] DRQ never asserted. "
++				"status=%x\n", DeviceNumber, statusByte);
+ 
+ 			/*
+ 			 * Give one more chance.
+ 			 */
+-			if (Command == IDE_COMMAND_IDENTIFY) {
++			if (Command == IDE_COMMAND_IDENTIFY)
+ 				IdeHardReset(pChan, statusByte);
+-			}
+-
+-			else {
++			else
+ 				AtapiSoftReset(pChan, DeviceNumber);
+-			}
+-		}
+-
+-		else {
++		} else {
+ 			break;
+ 		}
+ 	}
+@@ -4624,14 +4512,12 @@ static u8 IssueIdentify(PChannel pChan, 
+ 	    && Command != IDE_COMMAND_IDENTIFY) {
+ 
+ 		/*
+-		 * This device interrupts with the assertion of DRQ after receiving
+-		 * Atapi Packet Command.
++		 * This device interrupts with the assertion of DRQ after
++		 * receiving Atapi Packet Command.
+ 		 */
+ 		pChan->DeviceFlags[DeviceNumber] |= DFLAGS_INT_DRQ;
+ 		dprintk(KERN_NOTICE "Device interrupts on assertion of DRQ.\n");
+-	}
+-
+-	else {
++	} else {
+ 		dprintk(KERN_NOTICE
+ 			"Device does't interrupt on assertion of DRQ.\n");
+ 	}
+@@ -4644,9 +4530,7 @@ static u8 IssueIdentify(PChannel pChan, 
+ 		 */
+ 		pChan->DeviceFlags[DeviceNumber] |= DFLAGS_TAPE_DEVICE;
+ 		printk(KERN_NOTICE "IssueIdentify: device is a tape drive.\n");
+-	}
+-
+-	else {
++	} else {
+ 		dprintk(KERN_NOTICE
+ 			"IssueIdentify: device is not a tape drive.\n");
+ 	}
+@@ -4664,9 +4548,7 @@ static u8 IssueIdentify(PChannel pChan, 
+ 			 * Suck out any remaining bytes and throw away.
+ 			 */
+ 			inw(pChan->io_ports[IDE_DATA_OFFSET]);
+-		}
+-
+-		else {
++		} else {
+ 			break;
+ 		}
+ 	}
+@@ -4708,7 +4590,8 @@ static u8 iteraid_find_device(PChannel p
+ 		     pChan->io_ports[IDE_CONTROL_OFFSET]);
+ 
+ 		/*
+-		 * Check here for some SCSI adapters that incorporate IDE emulation.
++		 * Check here for some SCSI adapters that incorporate IDE
++		 * emulation.
+ 		 */
+ 		statusByte = inb(pChan->io_ports[IDE_CONTROL_OFFSET]);
+ 
+@@ -4722,17 +4605,18 @@ static u8 iteraid_find_device(PChannel p
+ 		if (signatureLow == 0x14 && signatureHigh == 0xEB) {
+ 
+ 			/*
+-			 * ATAPI signature found. Issue ATAPI packet identify command.
++			 * ATAPI signature found. Issue ATAPI packet identify
++			 * command.
+ 			 */
+-			if (IssueIdentify
+-			    (pChan, deviceNumber, IDE_COMMAND_ATAPI_IDENTIFY)) {
++			if (IssueIdentify(pChan, deviceNumber,
++					IDE_COMMAND_ATAPI_IDENTIFY)) {
+ 
+ 				/*
+ 				 * Indicate ATAPI device.
+ 				 */
+-				printk
+-				    ("iteraid_find_device: channel %x device %x is ATAPI.\n",
+-				     channel, deviceNumber);
++				printk("iteraid_find_device: channel %x "
++					"device %x is ATAPI.\n",
++					channel, deviceNumber);
+ 				pChan->DeviceFlags[deviceNumber] |=
+ 				    DFLAGS_ATAPI_DEVICE;
+ 				pChan->DeviceFlags[deviceNumber] |=
+@@ -4744,22 +4628,18 @@ static u8 iteraid_find_device(PChannel p
+ 				if (statusByte & IDE_STATUS_ERROR) {
+ 					AtapiSoftReset(pChan, deviceNumber);
+ 				}
+-			}
+-
+-			else {
++			} else {
+ 
+ 				/*
+ 				 * Indicate no working device.
+ 				 */
+-				printk
+-				    ("iteraid_find_device: channel %x device %x doesn't respond.\n",
+-				     channel, deviceNumber);
++				printk("iteraid_find_device: channel %x device "
++					"%x doesn't respond.\n",
++					channel, deviceNumber);
+ 				pChan->DeviceFlags[deviceNumber] &=
+ 				    ~DFLAGS_DEVICE_PRESENT;
+ 			}
+-		}
+-
+-		else {
++		} else {
+ 
+ 			/*
+ 			 * Select the device.
+@@ -4768,7 +4648,8 @@ static u8 iteraid_find_device(PChannel p
+ 			     pChan->io_ports[IDE_SELECT_OFFSET]);
+ 
+ 			/*
+-			 * Check here for some SCSI adapters that incorporate IDE emulation.
++			 * Check here for some SCSI adapters that incorporate
++			 * IDE emulation.
+ 			 */
+ 			GetStatus(pChan, statusByte);
+ 
+@@ -4777,19 +4658,18 @@ static u8 iteraid_find_device(PChannel p
+ 			 */
+ 			if (statusByte == 0xFF || statusByte == 0x7F
+ 			    || statusByte == 0x0) {
+-				dprintk
+-				    ("FindDevices: cannot find IDE device. status = %x\n",
+-				     statusByte);
++				dprintk("FindDevices: cannot find IDE device. "
++					"status = %x\n", statusByte);
+ 				continue;
+ 			}
+ 
+ 			/*
+-			 * Issue IDE Identify. If an ATAPI device is actually present,
+-			 * the signature will be asserted, and the drive will be
+-			 * recognized as such.
++			 * Issue IDE Identify. If an ATAPI device is actually
++			 * present, the signature will be asserted, and the
++			 * drive will be recognized as such.
+ 			 */
+-			if (IssueIdentify
+-			    (pChan, deviceNumber, IDE_COMMAND_IDENTIFY)) {
++			if (IssueIdentify(pChan, deviceNumber,
++					IDE_COMMAND_IDENTIFY)) {
+ 
+ 				/*
+ 				 * IDE drive found.
+@@ -4804,9 +4684,7 @@ static u8 iteraid_find_device(PChannel p
+ 				pChan->DeviceFlags[deviceNumber] &=
+ 				    ~DFLAGS_CONFIG_CHANGED;
+ 				deviceResponded = TRUE;
+-			}
+-
+-			else {
++			} else {
+ 				printk(KERN_WARNING
+ 				       "FindDevices: device %u is not present\n",
+ 				       (channel * 2) + deviceNumber);
+@@ -4818,10 +4696,11 @@ static u8 iteraid_find_device(PChannel p
+ 	return deviceResponded;
+ }				/* end iteraid_find_device */
+ 
++#if 0
+ /************************************************************************
+  * IDE disk hardware initialize.
+  ************************************************************************/
+-u8 AtapiHwInitialize(PITE_ADAPTER pAdap, PChannel pChan, u8 channel)
++static u8 AtapiHwInitialize(PITE_ADAPTER pAdap, PChannel pChan, u8 channel)
+ {
+ 	u8 i;
+ 	u8 statusByte = 0;
+@@ -4848,23 +4727,24 @@ u8 AtapiHwInitialize(PITE_ADAPTER pAdap,
+ 			 */
+ 			if ((statusByte =
+ 			     inb(pChan->io_ports[IDE_MIDCYL_OFFSET])) != 0xAA) {
+-				printk
+-				    ("AtapiHwInitialize: identifier read back from (%x, %x) = %x\n",
+-				     channel, i, statusByte);
++				printk("AtapiHwInitialize: identifier read "
++					"back from (%x, %x) = %x\n",
++					channel, i, statusByte);
+ 
+ 				/*
+ 				 * ***** Dont free it....For later use *****
+-				 * ScsiPortFreeDeviceBase(HwDeviceExtension, ioSpace1);
++				 * ScsiPortFreeDeviceBase(HwDeviceExtension,
++				 * ioSpace1);
+ 				 */
+ 				continue;
+ 			}
+-			printk
+-			    ("AtapiHwInitialize: found ATA device (%x, %x)n",
++			printk("AtapiHwInitialize: found ATA device (%x, %x)n",
+ 			     channel, i);
+ 		}
+ 	}
+ 	return TRUE;
+ }				/* end AtapiHwInitialize */
++#endif
+ 
+ /************************************************************************
+  * Initialize a adapter, return 0 means success.
+@@ -4929,7 +4809,8 @@ static int iteraid_init(PITE_ADAPTER pAd
+ 
+ 		/*
+ 		 * Reference the book "LINUX DEVICE DRIVER 2nd", Page 484
+-		 * unsigned long pci_resource_start(struct pci_dev *dev, int bar);
++		 * unsigned long pci_resource_start(struct pci_dev *dev,
++		 * int bar);
+ 		 */
+ 		base_addr = pci_resource_start(pPciDev, i * 2);
+ 		control_addr = pci_resource_start(pPciDev, i * 2 + 1);
+@@ -4953,7 +4834,7 @@ static int iteraid_init(PITE_ADAPTER pAd
+ 		/*
+ 		 * This section should be masked off if BIOS is ready.
+ 		 */
+-#    if (MARK_DEBUG_BYPASS_MODE)
++#if (MARK_DEBUG_BYPASS_MODE)
+ 		/*
+ 		 * BIOS is not ready, so I change to ByPass Mode by myself.
+ 		 */
+@@ -4964,15 +4845,15 @@ static int iteraid_init(PITE_ADAPTER pAd
+ 		 */
+ 		IT8212InitBypassMode(pPciDev);
+ 
+-#    endif
++#endif
+ 
+ 		/*
+ 		 * Hardware initialize.
+ 		 */
+-#    if (0)
++#if (0)
+ 		AtapiHwInitialize(pAdap, pChan, z);
+ 
+-#    endif
++#endif
+ 
+ 		/*
+ 		 * Find and identify the IDE or ATAPI device.
+@@ -4982,10 +4863,10 @@ static int iteraid_init(PITE_ADAPTER pAd
+ 		/*
+ 		 * Set the best transfer mode.
+ 		 */
+-#    if (MARK_SET_BEST_TRANSFER)
++#if (MARK_SET_BEST_TRANSFER)
+ 		IT8212SetBestTransferMode(pAdap, pChan, z);
+ 
+-#    endif
++#endif
+ 
+ 		/*
+ 		 * Set Scatter/Gather List buffer for the channel.
+@@ -4999,7 +4880,7 @@ static int iteraid_init(PITE_ADAPTER pAd
+ /************************************************************************
+  * This function will find and initialize any cards.
+  ************************************************************************/
+-int iteraid_detect(Scsi_Host_Template * tpnt)
++static int iteraid_detect(Scsi_Host_Template * tpnt)
+ {
+ 	u8 i;
+ 	u8 j;
+@@ -5040,15 +4921,12 @@ int iteraid_detect(Scsi_Host_Template * 
+ 		if (mode & 1) {
+ 			dprintk("Firmware mode in PCI#%d\n", pci_id);
+ 			pAdap->bypass_mode = FALSE;
+-		}
+-
+-		else {
++		} else {
+ 			dprintk("Transparent mode in PCI#%d\n", pci_id);
+ 			pAdap->bypass_mode = TRUE;
+ 		}
+-		if (iteraid_init(pAdap, pPciDev) == 0) {
++		if (iteraid_init(pAdap, pPciDev) == 0)
+ 			ite_adapters[NumAdapters++] = pAdap;
+-		}
+ 		pci_id++;
+ 	}
+ 
+@@ -5075,22 +4953,23 @@ int iteraid_detect(Scsi_Host_Template * 
+ 		ite_vhost->max_id = MAX_DEVICES;
+ 		ite_vhost->max_lun = 1;
+ 
+-#    if (0)
+-#    if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
++#if (0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
+ 		scsi_set_device(ite_vhost, &pPciDev->dev);
+ 
+-#    elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,4)
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,4)
+ 		scsi_set_pci_device(ite_vhost, pPciDev);
+ 
+-#    endif
+-#    endif
++#endif
++#endif
+ 
+ 		/*
+-		 * Register the driver as a character device, for applications to
+-		 * acess it for ioctls. Ideally, this should go in the init_module()
+-		 * routine, but since it is hidden in the file "scsi_module.c" (
+-		 * included in the end), we define it here. First argument (major)
+-		 * to register_chrdev implies a dynamic major number allocation.
++		 * Register the driver as a character device, for applications
++		 * to access it for ioctls. Ideally, this should go in the
++		 * init_module() routine, but since it is hidden in the file
++		 * "scsi_module.c" (included in the end), we define it here.
++		 * First argument (major) to register_chrdev implies a dynamic
++		 * major number allocation.
+ 		 */
+ 		ite_major = register_chrdev(0, "itedev", &itedev_fops);
+ 
+@@ -5114,7 +4993,7 @@ int iteraid_detect(Scsi_Host_Template * 
+  * Parameters:	pshost - Pointer to SCSI command structure.
+  * Returns:	zero.
+  ************************************************************************/
+-int iteraid_release(struct Scsi_Host *pshost)
++static int iteraid_release(struct Scsi_Host *pshost)
+ {
+ 	u8 i;
+ 	PITE_ADAPTER pAdap;
+@@ -5157,12 +5036,13 @@ int iteraid_release(struct Scsi_Host *ps
+ /************************************************************************
+  * This is the new scsi eh reset function.
+  ************************************************************************/
+-int iteraid_reset_eh(Scsi_Cmnd * SCpnt)
++static int iteraid_reset_eh(Scsi_Cmnd * SCpnt)
+ {
+ 	u8 i;
+ 	u8 j;
+ 	PChannel pChan;
+ 	PITE_ADAPTER pAdap;
++
+ 	if (SCpnt == NULL) {
+ 		printk("iteraid_reset_eh: invalid Scsi_Cmnd\n");
+ 		return FAILED;
+@@ -5180,7 +5060,7 @@ int iteraid_reset_eh(Scsi_Cmnd * SCpnt)
+ /************************************************************************
+  * The new error handling code.
+  ************************************************************************/
+-int iteraid_abort_eh(Scsi_Cmnd * SCpnt)
++static int iteraid_abort_eh(Scsi_Cmnd * SCpnt)
+ {
+ 	if (SCpnt == NULL) {
+ 		printk("iteraid_reset_eh: invalid Scsi_Cmnd\n");
+@@ -5198,9 +5078,9 @@ int iteraid_abort_eh(Scsi_Cmnd * SCpnt)
+  *		geom - Pointer to integer array to place geometry data.
+  * Returns:	zero.
+  ************************************************************************/
+-int iteraid_biosparam
+-    (struct scsi_device *sdev, struct block_device *bdev, sector_t capacity,
+-     int geom[]) {
++static int iteraid_biosparam(struct scsi_device *sdev,
++		struct block_device *bdev, sector_t capacity, int geom[])
++{
+ 	int heads;
+ 	int sectors;
+ 	int cylinders;
+@@ -5212,9 +5092,7 @@ int iteraid_biosparam
+ 	if (capacity >= 0x200000) {
+ 		heads = 255;
+ 		sectors = 63;
+-	}
+-
+-	else {
++	} else {
+ 		heads = 64;
+ 		sectors = 32;
+ 	}
+@@ -5234,7 +5112,8 @@ int iteraid_biosparam
+  ************************************************************************/
+ static int ite_halt(struct notifier_block *nb, ulong event, void *buf)
+ {
+-	if (event != SYS_RESTART && event != SYS_HALT && event != SYS_POWER_OFF) {
++	if (event != SYS_RESTART && event != SYS_HALT &&
++			event != SYS_POWER_OFF) {
+ 		return NOTIFY_DONE;
+ 	}
+ 	unregister_reboot_notifier(&ite_notifier);
+@@ -5244,9 +5123,9 @@ static int ite_halt(struct notifier_bloc
+ /************************************************************************
+  * PROC information.
+  ************************************************************************/
+-int iteraid_proc_info
+-    (struct Scsi_Host *shost, char *buffer, char **start, off_t offset,
+-     int length, int inout) {
++static int iteraid_proc_info(struct Scsi_Host *shost, char *buffer,
++			char **start, off_t offset, int length, int inout)
++{
+ 	return 0;
+ }				/* end iteraid_proc_info */
+ 
+@@ -5263,10 +5142,9 @@ static int itedev_open(struct inode *ino
+ /************************************************************************
+  * IOCTL code entry.
+  ************************************************************************/
+-static int
+-    itedev_ioctl_entry
+-    (struct inode *inode, struct file *filep, unsigned int cmd,
+-     unsigned long arg) {
++static int itedev_ioctl_entry(struct inode *inode, struct file *filep,
++				unsigned int cmd, unsigned long arg)
++{
+ 	int ret = -1;
+ 
+ 	/*
+@@ -5281,10 +5159,9 @@ static int
+ /************************************************************************
+  * Real IOCTL function handles ioctl for the character device.
+  ************************************************************************/
+-static int
+-    itedev_ioctl
+-    (struct inode *inode, struct file *filep, unsigned int cmd,
+-     unsigned long arg) {
++static int itedev_ioctl(struct inode *inode, struct file *filep,
++			unsigned int cmd, unsigned long arg)
++{
+ 	u8 diskArrayId;
+ 	u8 statusByte = 0;
+ 	u8 srbStatus;
+@@ -5363,13 +5240,10 @@ static int
+ 		/*
+ 		 * Select channel.
+ 		 */
+-		if (diskArrayId < 2) {
++		if (diskArrayId < 2)
+ 			pChan = &pAdap->IDEChannel[0];
+-		}
+-
+-		else {
++		else
+ 			pChan = &pAdap->IDEChannel[1];
+-		}
+ 
+ 		/*
+ 		 * Select device.
+@@ -5383,9 +5257,9 @@ static int
+ 		WaitForDeviceReady(pChan, statusByte);
+ 		if ((statusByte & IDE_STATUS_BUSY)
+ 		    || (statusByte & IDE_STATUS_DRQ) || (statusByte == 0)) {
+-			printk
+-			    ("IT8212GetRebuildStatus: Disk[%d] busy. Status=0x%X\n",
+-			     diskArrayId, statusByte);
++			printk("IT8212GetRebuildStatus: Disk[%d] busy. "
++					"Status=0x%X\n",
++					diskArrayId, statusByte);
+ 			srbStatus = SRB_STATUS_BUSY;
+ 			goto exit;
+ 		}
+@@ -5425,18 +5299,19 @@ static int
+ 		/*
+ 		 * Put the rebuild status to user space.
+ 		 */
+-		put_user(progress, (u8 *) pioc->data);
+-	      exit:return 0;
++		return put_user(progress, (u8 *) pioc->data);
++exit:
++		return 0;
+ 	case ITE_IOC_RESET_ADAPTER:
+ 		dprintk("ITE_IOC_RESET_ADAPTER\n");
+ 
+ 		/*
+ 		 * Reset the adapter.
+ 		 */
+-#	 if (0)
++#if (0)
+ 		status = IT8212ResetAdapter();
+ 
+-#	 endif
++#endif
+ 
+ 		/*
+ 		 * Return TURE or FALSE to user space.
+@@ -5469,12 +5344,23 @@ static int itedev_close(struct inode *in
+ /************************************************************************
+  * Scsi_Host_Template Initializer
+  ************************************************************************/
+-static Scsi_Host_Template driver_template =
+-    {.proc_name = "IT8212",.proc_info = iteraid_proc_info,.name =
+-"ITE RAIDExpress133",.detect = iteraid_detect,.release = iteraid_release,.queuecommand =
+-iteraid_queuecommand,.eh_abort_handler = iteraid_abort_eh,.eh_host_reset_handler =
+-iteraid_reset_eh,.bios_param = iteraid_biosparam,.can_queue = 1,.this_id = -1,.sg_tablesize =
+-32,.max_sectors = 256,.cmd_per_lun = 1,.use_clustering = DISABLE_CLUSTERING,.emulated = 1
++static Scsi_Host_Template driver_template = {
++	.proc_name = 			"IT8212",
++	.proc_info =			iteraid_proc_info,
++	.name =				"ITE RAIDExpress133",
++	.detect =			iteraid_detect,
++	.release =			iteraid_release,
++	.queuecommand =			iteraid_queuecommand,
++	.eh_abort_handler =		iteraid_abort_eh,
++	.eh_host_reset_handler =	iteraid_reset_eh,
++	.bios_param =			iteraid_biosparam,
++	.can_queue =			1,
++	.this_id =			-1,
++	.sg_tablesize =			32,
++	.max_sectors =			256,
++	.cmd_per_lun =			1,
++	.use_clustering =		DISABLE_CLUSTERING,
++	.emulated =			1,
+ };
+ 
+ #include "scsi_module.c"
+diff -puN drivers/scsi/iteraid.h~iteraid-cleanup drivers/scsi/iteraid.h
+--- 25/drivers/scsi/iteraid.h~iteraid-cleanup	Mon Aug  2 15:50:18 2004
++++ 25-akpm/drivers/scsi/iteraid.h	Mon Aug  2 15:51:23 2004
+@@ -1426,7 +1426,7 @@ typedef struct _Adapter {
+ }
+ 
+ #define IdeHardReset(pChan, result)		\
+-{						\
++do {						\
+  unsigned char	statusByte;			\
+  int		i;				\
+  outb(IDE_DC_RESET_CONTROLLER, pChan->io_ports[IDE_CONTROL_OFFSET]);	\
+@@ -1454,39 +1454,10 @@ typedef struct _Adapter {
+      dprintk("IdeHardReset Success!\n");	\
+      result = TRUE;				\
+     }						\
+-}
++} while (0)
+ 
+ /************************************************************************
+  * Function prototypes
+  ************************************************************************/
+-const char *iteraid_info(struct Scsi_Host *);
+-int iteraid_detect(Scsi_Host_Template *);
+-int iteraid_release(struct Scsi_Host *);
+-int iteraid_command(Scsi_Cmnd *);
+-int iteraid_queuecommand(Scsi_Cmnd *, void (*done) (Scsi_Cmnd *));
+-int iteraid_biosparam(struct scsi_device *, struct block_device *, sector_t,
+-		      int *);
+-int iteraid_proc_info(struct Scsi_Host *, char *buffer, char **start,
+-		      off_t offset, int length, int inout);
+-
+-static void TaskStart(PChannel, Scsi_Cmnd *);
+-static void TaskQueue(void);
+-static void TaskDone(PChannel, PSCSI_REQUEST_BLOCK);
+-static u32 IdeSendCommand(PChannel, PSCSI_REQUEST_BLOCK);
+-//static void IdeMediaStatus(u8, PChannel, u8);
+-static void IdeSetupDma(PChannel, unsigned long, unsigned short);
+-static void MapRequest(Scsi_Cmnd *, PSCSI_REQUEST_BLOCK);
+-static u8 IssueIdentify(PChannel, u8, u8);
+-static u8 IT8212ResetAdapter(PITE_ADAPTER);
+-static void AtapiStartIo(PChannel, PSCSI_REQUEST_BLOCK);
+-static u8 AtapiInterrupt(PChannel);
+-static void AtapiResetController(PITE_ADAPTER pAdap, PChannel pChan);
+-
+-static int itedev_open(struct inode *, struct file *);
+-static int itedev_ioctl_entry(struct inode *, struct file *, unsigned int,
+-			      unsigned long);
+-static int itedev_ioctl(struct inode *, struct file *, unsigned int,
+-			unsigned long);
+-static int itedev_close(struct inode *, struct file *);
+ 
+ #endif				/* #ifndef _ITERAID_H_ */
+_

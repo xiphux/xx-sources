@@ -1,0 +1,39 @@
+
+From: Stephen Tweedie <sct@redhat.com>
+
+Make sure that verify_group_input() brelse's the buffer we're verifying in
+every case.
+
+Signed-off-by: Stephen Tweedie <sct@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/ext3/resize.c |    7 +++----
+ 1 files changed, 3 insertions(+), 4 deletions(-)
+
+diff -puN fs/ext3/resize.c~ext3-online-resize-fix-bh-leak fs/ext3/resize.c
+--- 25/fs/ext3/resize.c~ext3-online-resize-fix-bh-leak	Thu Sep 30 17:32:40 2004
++++ 25-akpm/fs/ext3/resize.c	Thu Sep 30 17:32:40 2004
+@@ -36,7 +36,7 @@ static int verify_group_input(struct sup
+ 		(1 + ext3_bg_num_gdb(sb, group) +
+ 		 le16_to_cpu(es->s_reserved_gdt_blocks)) : 0;
+ 	unsigned metaend = start + overhead;
+-	struct buffer_head *bh;
++	struct buffer_head *bh = NULL;
+ 	int free_blocks_count;
+ 	int err = -EINVAL;
+ 
+@@ -104,10 +104,9 @@ static int verify_group_input(struct sup
+ 		ext3_warning(sb, __FUNCTION__,
+ 			     "Inode table (%u-%u) overlaps GDT table (%u-%u)",
+ 			     input->inode_table, itend - 1, start, metaend - 1);
+-	else {
+-		brelse(bh);
++	else
+ 		err = 0;
+-	}
++	brelse(bh);
+ 
+ 	return err;
+ }
+_

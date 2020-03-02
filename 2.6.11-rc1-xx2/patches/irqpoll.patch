@@ -1,0 +1,243 @@
+
+From: Alan Cox <alan@lxorguk.ukuu.org.uk>
+
+Anyone reporting a stuck IRQ should try these options.  Its effectiveness
+varies we've found in the Fedora case.  Quite a few systems with misdescribed
+IRQ routing just work when you use irqpoll.  It also fixes up the VIA systems
+although thats now fixed with the VIA quirk (which we could just make default
+as its what Redmond OS does but Linus didn't like it historically).
+
+A small number of systems have jammed IRQ sources or misdescribes that cause
+an IRQ that we have no handler registered anywhere for.  In those cases it
+doesn't help.
+
+The main reason to stick it in -mm is to make sure it doesn't break/harm
+anything not using the feature.
+
+Signed-off-by: Alan Cox <number6@the-village.bc.nu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/kernel-parameters.txt |   15 ++++
+ 25-akpm/arch/ppc64/kernel/irq.c             |    2 
+ 25-akpm/include/linux/irq.h                 |    2 
+ 25-akpm/kernel/irq/handle.c                 |    4 -
+ 25-akpm/kernel/irq/spurious.c               |  103 +++++++++++++++++++++++++++-
+ 5 files changed, 120 insertions(+), 6 deletions(-)
+
+diff -puN arch/ppc64/kernel/irq.c~irqpoll arch/ppc64/kernel/irq.c
+--- 25/arch/ppc64/kernel/irq.c~irqpoll	2005-01-10 21:14:35.867122336 -0800
++++ 25-akpm/arch/ppc64/kernel/irq.c	2005-01-10 21:14:35.880120360 -0800
+@@ -214,7 +214,7 @@ void ppc_irq_dispatch_handler(struct pt_
+ 
+ 		spin_lock(&desc->lock);
+ 		if (!noirqdebug)
+-			note_interrupt(irq, desc, action_ret);
++			note_interrupt(irq, desc, action_ret, regs);
+ 		if (likely(!(desc->status & IRQ_PENDING)))
+ 			break;
+ 		desc->status &= ~IRQ_PENDING;
+diff -puN Documentation/kernel-parameters.txt~irqpoll Documentation/kernel-parameters.txt
+--- 25/Documentation/kernel-parameters.txt~irqpoll	2005-01-10 21:14:35.869122032 -0800
++++ 25-akpm/Documentation/kernel-parameters.txt	2005-01-10 21:14:35.881120208 -0800
+@@ -416,6 +416,10 @@ running once the system is up.
+ 			Format: {"of[f]" | "sk[ipmbr]"}
+ 			See comment in arch/i386/boot/edd.S
+ 
++	edd		[EDD]
++			Format: {"of[f]" | "sk[ipmbr]"}
++			See comment in arch/i386/boot/edd.S
++
+ 	eicon=		[HW,ISDN] 
+ 			Format: <id>,<membase>,<irq>
+ 
+@@ -586,6 +590,17 @@ running once the system is up.
+ 	ips=		[HW,SCSI] Adaptec / IBM ServeRAID controller
+ 			See header of drivers/scsi/ips.c.
+ 
++	irqfixup	[HW]
++			When an interrupt is not handled search all handlers
++			for it. Intended to get systems with badly broken
++			firmware running.
++
++	irqpoll		[HW]
++			When an interrupt is not handled search all handlers
++			for it. Also check all handlers each timer
++			interrupt. Intended to get systems with badly broken
++			firmware running.
++
+ 	isapnp=		[ISAPNP]
+ 			Format: <RDP>, <reset>, <pci_scan>, <verbosity>
+ 
+diff -puN include/linux/irq.h~irqpoll include/linux/irq.h
+--- 25/include/linux/irq.h~irqpoll	2005-01-10 21:14:35.871121728 -0800
++++ 25-akpm/include/linux/irq.h	2005-01-10 21:14:35.882120056 -0800
+@@ -83,7 +83,7 @@ extern int noirqdebug_setup(char *str);
+ extern fastcall int handle_IRQ_event(unsigned int irq, struct pt_regs *regs,
+ 				       struct irqaction *action);
+ extern fastcall unsigned int __do_IRQ(unsigned int irq, struct pt_regs *regs);
+-extern void note_interrupt(unsigned int irq, irq_desc_t *desc, int action_ret);
++extern void note_interrupt(unsigned int irq, irq_desc_t *desc, int action_ret, struct pt_regs *regs);
+ extern void report_bad_irq(unsigned int irq, irq_desc_t *desc, int action_ret);
+ extern int can_request_irq(unsigned int irq, unsigned long irqflags);
+ 
+diff -puN kernel/irq/handle.c~irqpoll kernel/irq/handle.c
+--- 25/kernel/irq/handle.c~irqpoll	2005-01-10 21:14:35.873121424 -0800
++++ 25-akpm/kernel/irq/handle.c	2005-01-10 21:14:35.882120056 -0800
+@@ -119,7 +119,7 @@ fastcall unsigned int __do_IRQ(unsigned 
+ 		desc->handler->ack(irq);
+ 		action_ret = handle_IRQ_event(irq, regs, desc->action);
+ 		if (!noirqdebug)
+-			note_interrupt(irq, desc, action_ret);
++			note_interrupt(irq, desc, action_ret, regs);
+ 		desc->handler->end(irq);
+ 		return 1;
+ 	}
+@@ -173,7 +173,7 @@ fastcall unsigned int __do_IRQ(unsigned 
+ 
+ 		spin_lock(&desc->lock);
+ 		if (!noirqdebug)
+-			note_interrupt(irq, desc, action_ret);
++			note_interrupt(irq, desc, action_ret, regs);
+ 		if (likely(!(desc->status & IRQ_PENDING)))
+ 			break;
+ 		desc->status &= ~IRQ_PENDING;
+diff -puN kernel/irq/spurious.c~irqpoll kernel/irq/spurious.c
+--- 25/kernel/irq/spurious.c~irqpoll	2005-01-10 21:14:35.875121120 -0800
++++ 25-akpm/kernel/irq/spurious.c	2005-01-10 21:14:35.883119904 -0800
+@@ -11,6 +11,77 @@
+ #include <linux/kallsyms.h>
+ #include <linux/interrupt.h>
+ 
++static int irqfixup;
++
++/*
++ *	Recovery handler for misrouted interrupts.
++ */
++
++static int misrouted_irq(int irq, struct pt_regs *regs)
++{
++	int i;
++	irq_desc_t *desc;
++	int ok = 0;
++	int work = 0;	/* Did we do work for a real IRQ */
++	for(i = 1; i < NR_IRQS; i++)
++	{
++		struct irqaction *action;
++		if(i == irq)	/* Already tried */
++			continue;
++		desc = &irq_desc[i];
++		spin_lock(&desc->lock);
++		action = desc->action;
++		/* Already running on another processor */
++		if(desc->status & IRQ_INPROGRESS)
++		{
++			/* Already running: If it is shared get the other
++			   CPU to go looking for our mystery interrupt too */
++			if(desc->action && (desc->action->flags & SA_SHIRQ))
++				desc->status |= IRQ_PENDING;
++			spin_unlock(&desc->lock);
++			continue;
++		}
++		/* Honour the normal IRQ locking */
++		desc->status |= IRQ_INPROGRESS;
++		spin_unlock(&desc->lock);
++		while(action)
++		{
++			/* Only shared IRQ handlers are safe to call */
++			if(action->flags & SA_SHIRQ)
++			{
++				if(action->handler(i, action->dev_id, regs) == IRQ_HANDLED)
++					ok = 1;
++			}
++			action = action->next;
++		}
++		local_irq_disable();
++		/* Now clean up the flags */
++		spin_lock(&desc->lock);
++		action = desc->action;
++
++		/* While we were looking for a fixup someone queued a real
++		   IRQ clashing with our walk */
++
++		while((desc->status & IRQ_PENDING) && action)
++		{
++			/* Perform real IRQ processing for the IRQ we deferred */
++			work = 1;
++			spin_unlock(&desc->lock);
++			handle_IRQ_event(i, regs, action);
++			spin_lock(&desc->lock);
++			desc->status &= ~IRQ_PENDING;
++		}
++		desc->status &= ~IRQ_INPROGRESS;
++		/* If we did actual work for the real IRQ line we must
++		   let the IRQ controller clean up too */
++		if(work)
++			desc->handler->end(i);
++		spin_unlock(&desc->lock);
++	}
++	/* So the caller can adjust the irq error counts */
++	return ok;
++}
++
+ /*
+  * If 99,900 of the previous 100,000 interrupts have not been handled
+  * then assume that the IRQ is stuck in some manner. Drop a diagnostic
+@@ -31,7 +102,7 @@ __report_bad_irq(unsigned int irq, irq_d
+ 		printk(KERN_ERR "irq event %d: bogus return value %x\n",
+ 				irq, action_ret);
+ 	} else {
+-		printk(KERN_ERR "irq %d: nobody cared!\n", irq);
++		printk(KERN_ERR "irq %d: nobody cared (try booting with the \"irqpoll\" option.\n", irq);
+ 	}
+ 	dump_stack();
+ 	printk(KERN_ERR "handlers:\n");
+@@ -55,7 +126,7 @@ void report_bad_irq(unsigned int irq, ir
+ 	}
+ }
+ 
+-void note_interrupt(unsigned int irq, irq_desc_t *desc, irqreturn_t action_ret)
++void note_interrupt(unsigned int irq, irq_desc_t *desc, irqreturn_t action_ret, struct pt_regs *regs)
+ {
+ 	if (action_ret != IRQ_HANDLED) {
+ 		desc->irqs_unhandled++;
+@@ -63,6 +134,15 @@ void note_interrupt(unsigned int irq, ir
+ 			report_bad_irq(irq, desc, action_ret);
+ 	}
+ 
++	if(unlikely(irqfixup)) { /* Don't punish working computers */
++		if((irqfixup == 2 && irq == 0) || action_ret == IRQ_NONE) {
++			int ok;
++			ok = misrouted_irq(irq, regs);
++			if(action_ret == IRQ_NONE)
++				desc->irqs_unhandled -= ok;
++		}
++	}
++
+ 	desc->irq_count++;
+ 	if (desc->irq_count < 100000)
+ 		return;
+@@ -94,3 +174,22 @@ int __init noirqdebug_setup(char *str)
+ 
+ __setup("noirqdebug", noirqdebug_setup);
+ 
++static int __init irqfixup_setup(char *str)
++{
++	irqfixup = 1;
++	printk(KERN_WARNING "Misrouted IRQ fixup support enabled.\n");
++	printk(KERN_WARNING "This may impact system performance.\n");
++	return 1;
++}
++
++__setup("irqfixup", irqfixup_setup);
++
++static int __init irqpoll_setup(char *str)
++{
++	irqfixup = 2;
++	printk(KERN_WARNING "Misrouted IRQ fixup and polling support enabled.\n");
++	printk(KERN_WARNING "This may significantly impact system performance.\n");
++	return 1;
++}
++
++__setup("irqpoll", irqpoll_setup);
+_

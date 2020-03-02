@@ -1,0 +1,63 @@
+
+From: Ian Pratt <Ian.Pratt@cl.cam.ac.uk>
+
+This patch adds 'ptep_establish_new', in keeping with the existing
+'ptep_establish', but for use where a mapping is being established where there
+was previously none present.  This function is useful (rather than just using
+set_pte) because having the virtual address available enables a very important
+optimisation for arch-xen.
+
+We introduce HAVE_ARCH_PTEP_ESTABLISH_NEW and define a generic implementation
+in asm-generic/pgtable.h, following the pattern of the existing
+ptep_establish.
+
+Signed-off-by: Ian Pratt <Ian.Pratt@cl.cam.ac.uk>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/asm-generic/pgtable.h |   10 ++++++++++
+ 25-akpm/mm/memory.c                   |    4 ++--
+ 2 files changed, 12 insertions(+), 2 deletions(-)
+
+diff -puN include/asm-generic/pgtable.h~xen-vmm-4-add-ptep_establish_new-to-make-va-available include/asm-generic/pgtable.h
+--- 25/include/asm-generic/pgtable.h~xen-vmm-4-add-ptep_establish_new-to-make-va-available	2005-01-10 21:14:26.190593392 -0800
++++ 25-akpm/include/asm-generic/pgtable.h	2005-01-10 21:14:26.196592480 -0800
+@@ -42,6 +42,16 @@ do {				  					  \
+ } while (0)
+ #endif
+ 
++#ifndef __HAVE_ARCH_PTEP_ESTABLISH_NEW
++/*
++ * Establish a mapping where none previously existed
++ */
++#define ptep_establish_new(__vma, __address, __ptep, __entry)		\
++do {									\
++	set_pte(__ptep, __entry);					\
++} while (0)
++#endif
++
+ #ifndef __HAVE_ARCH_PTEP_TEST_AND_CLEAR_YOUNG
+ static inline int ptep_test_and_clear_young(pte_t *ptep)
+ {
+diff -puN mm/memory.c~xen-vmm-4-add-ptep_establish_new-to-make-va-available mm/memory.c
+--- 25/mm/memory.c~xen-vmm-4-add-ptep_establish_new-to-make-va-available	2005-01-10 21:14:26.192593088 -0800
++++ 25-akpm/mm/memory.c	2005-01-10 21:14:26.197592328 -0800
+@@ -1820,7 +1820,7 @@ do_anonymous_page(struct mm_struct *mm, 
+ 		page_add_anon_rmap(page, vma, addr);
+ 	}
+ 
+-	set_pte(page_table, entry);
++	ptep_establish_new(vma, addr, page_table, entry);
+ 	pte_unmap(page_table);
+ 
+ 	/* No need to invalidate - it was non-present before */
+@@ -1927,7 +1927,7 @@ retry:
+ 		entry = mk_pte(new_page, vma->vm_page_prot);
+ 		if (write_access)
+ 			entry = maybe_mkwrite(pte_mkdirty(entry), vma);
+-		set_pte(page_table, entry);
++		ptep_establish_new(vma, address, page_table, entry);
+ 		if (anon) {
+ 			lru_cache_add_active(new_page);
+ 			page_add_anon_rmap(new_page, vma, address);
+_

@@ -1,0 +1,52 @@
+
+From: Mikael Pettersson <mikpe@csd.uu.se>
+
+This patch fixes a bug in perfctr's x86 driver, which can cause it to clear
+one of the counter control registers at driver initialisation time.  At
+this point the HW is either free or owned by the lapic NMI watchdog.  In
+the former case the bug is harmless, but in the latter case the effect on
+P6 and AMD is that the watchdog stops ticking.
+
+Signed-off-by: Mikael Pettersson <mikpe@csd.uu.se>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/perfctr/x86.c      |    2 +-
+ 25-akpm/include/asm-i386/perfctr.h |    9 ++++++++-
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+diff -puN drivers/perfctr/x86.c~perfctr-x86-init-bug drivers/perfctr/x86.c
+--- 25/drivers/perfctr/x86.c~perfctr-x86-init-bug	2004-07-26 16:50:40.350090712 -0700
++++ 25-akpm/drivers/perfctr/x86.c	2004-07-26 16:50:40.356089800 -0700
+@@ -1142,7 +1142,7 @@ static void __init finalise_backpatching
+ 	memset(&state, 0, sizeof state);
+ 	state.cstatus =
+ 		(perfctr_info.cpu_features & PERFCTR_FEATURE_PCINT)
+-		? perfctr_mk_cstatus(0, 0, 1)
++		? __perfctr_mk_cstatus(0, 1, 0, 0)
+ 		: 0;
+ 	perfctr_cpu_sample(&state);
+ 	perfctr_cpu_resume(&state);
+diff -puN include/asm-i386/perfctr.h~perfctr-x86-init-bug include/asm-i386/perfctr.h
+--- 25/include/asm-i386/perfctr.h~perfctr-x86-init-bug	2004-07-26 16:50:40.351090560 -0700
++++ 25-akpm/include/asm-i386/perfctr.h	2004-07-26 16:50:40.357089648 -0700
+@@ -73,10 +73,17 @@ struct perfctr_cpu_state {
+    which should have less overhead in most cases */
+ 
+ static inline
++unsigned int __perfctr_mk_cstatus(unsigned int tsc_on, unsigned int have_ictrs,
++				  unsigned int nrictrs, unsigned int nractrs)
++{
++	return (tsc_on<<31) | (have_ictrs<<16) | ((nractrs+nrictrs)<<8) | nractrs;
++}
++
++static inline
+ unsigned int perfctr_mk_cstatus(unsigned int tsc_on, unsigned int nractrs,
+ 				unsigned int nrictrs)
+ {
+-	return (tsc_on<<31) | (nrictrs<<16) | ((nractrs+nrictrs)<<8) | nractrs;
++	return __perfctr_mk_cstatus(tsc_on, nrictrs, nrictrs, nractrs);
+ }
+ 
+ static inline unsigned int perfctr_cstatus_enabled(unsigned int cstatus)
+_

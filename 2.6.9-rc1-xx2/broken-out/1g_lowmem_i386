@@ -1,0 +1,51 @@
+Index: xx-sources/arch/i386/Kconfig
+===================================================================
+--- xx-sources.orig/arch/i386/Kconfig	2004-08-30 14:01:54.200853064 -0400
++++ xx-sources/arch/i386/Kconfig	2004-08-30 14:07:12.568453832 -0400
+@@ -737,6 +737,20 @@
+ 	  It is safe to say 'Y' here, and it is advised because there is no
+ 	  performance impact.
+ 
++config 1GLOWMEM
++	bool "1Gb Low Memory Support"
++	depends on NOHIGHMEM
++	default y
++	help
++	 Linux on i386 architecture normally supports just under 900Mb without
++	 enabling HIGHMEM support. This option will enable you to support 1Gb
++	 of ram without needing to enable HIGHMEM support. The advantage of
++	 this is that you don't need the extra overhead of high memory support
++	 to utilise the last 100Mb of ram. However this may break drivers such
++	 as vmware.
++	 
++	 If unsure say "yes"
++
+ # Common NUMA Features
+ config NUMA
+ 	bool "Numa Memory Allocation and Scheduler Support"
+Index: xx-sources/include/asm-i386/page.h
+===================================================================
+--- xx-sources.orig/include/asm-i386/page.h	2004-08-30 14:04:01.374519728 -0400
++++ xx-sources/include/asm-i386/page.h	2004-08-30 14:07:12.573453072 -0400
+@@ -122,12 +122,19 @@
+ 
+ #endif /* __ASSEMBLY__ */
+ 
++#ifdef CONFIG_1GLOWMEM
++#ifdef __ASSEMBLY__
++#define __PAGE_OFFSET		(0xB0000000)
++#else
++#define __PAGE_OFFSET		(0xB0000000UL)
++#endif /* __ASSEMBLY__ */
++#else
+ #ifdef __ASSEMBLY__
+ #define __PAGE_OFFSET		(0xC0000000)
+ #else
+ #define __PAGE_OFFSET		(0xC0000000UL)
+-#endif
+-
++#endif /* __ASSEMBLY__ */
++#endif /* CONFIG_1GLOWMEM */
+ 
+ #define PAGE_OFFSET		((unsigned long)__PAGE_OFFSET)
+ #define VMALLOC_RESERVE		((unsigned long)__VMALLOC_RESERVE)

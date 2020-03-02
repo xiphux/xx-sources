@@ -1,0 +1,913 @@
+---
+
+ linux-2.6.7-rc3-xx1-xiphux/fs/proc/array.c        |    4 
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/sched.h  |   20 -
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/sysctl.h |    4 
+ linux-2.6.7-rc3-xx1-xiphux/kernel/sched.c         |  377 ++++++++++++++++------
+ linux-2.6.7-rc3-xx1-xiphux/kernel/sysctl.c        |   18 +
+ 5 files changed, 324 insertions(+), 99 deletions(-)
+
+diff -puN fs/proc/array.c~spa-staircase-v0.1 fs/proc/array.c
+--- linux-2.6.7-rc3-xx1/fs/proc/array.c~spa-staircase-v0.1	2004-06-10 17:18:11.000000000 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/fs/proc/array.c	2004-06-10 22:07:35.443246968 -0400
+@@ -155,7 +155,9 @@ static inline char * task_state(struct t
+ 	read_lock(&tasklist_lock);
+ 	buffer += sprintf(buffer,
+ 		"State:\t%s\n"
++#ifndef CONFIG_SPA_STAIRCASE
+ 		"SleepAVG:\t%lu%%\n"
++#endif
+ 		"Tgid:\t%d\n"
+ 		"Pid:\t%d\n"
+ 		"PPid:\t%d\n"
+@@ -163,7 +165,9 @@ static inline char * task_state(struct t
+ 		"Uid:\t%d\t%d\t%d\t%d\n"
+ 		"Gid:\t%d\t%d\t%d\t%d\n",
+ 		get_task_state(p),
++#ifndef CONFIG_SPA_STAIRCASE
+ 		(p->sleep_avg/1024)*100/(1020000000/1024),
++#endif
+ 	       	p->tgid,
+ 		p->pid, p->pid ? p->real_parent->pid : 0,
+ 		p->pid && p->ptrace ? p->parent->pid : 0,
+diff -puN include/linux/sched.h~spa-staircase-v0.1 include/linux/sched.h
+--- linux-2.6.7-rc3-xx1/include/linux/sched.h~spa-staircase-v0.1	2004-06-10 17:18:11.000000000 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/sched.h	2004-06-10 22:07:35.449246056 -0400
+@@ -172,6 +172,9 @@ extern void show_stack(struct task_struc
+ 
+ void io_schedule(void);
+ long io_schedule_timeout(long timeout);
++#ifdef CONFIG_SPA_STAIRCASE
++extern int interactive, compute;
++#endif
+ 
+ extern void cpu_init (void);
+ extern void trap_init(void);
+@@ -421,17 +424,22 @@ struct task_struct {
+ 	prio_array_t *array;
+ #endif
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++	unsigned long runtime, totalrun;
++	unsigned int burst;
++#else
+ 	unsigned long sleep_avg;
+ 	long interactive_credit;
+-	unsigned long long timestamp;
+ 	int activated;
++#endif
++	unsigned long long timestamp;
+ 
+ 	unsigned long policy;
+ 	cpumask_t cpus_allowed;
+-	unsigned int time_slice;
+-#ifndef CONFIG_SPA_STAIRCASE
+-	unsigned int first_time_slice;
++#ifdef CONFIG_SPA_STAIRCASE
++	unsigned int slice;
+ #endif
++	unsigned int time_slice, first_time_slice;
+ 
+ 	struct list_head tasks;
+ 	struct list_head ptrace_children;
+@@ -806,11 +814,7 @@ extern void FASTCALL(wake_up_forked_proc
+  }
+ #endif
+ extern void FASTCALL(sched_fork(task_t * p));
+-#ifdef CONFIG_SPA_STAIRCASE
+-+static inline void sched_exit(task_t * p) {}
+-#else
+ extern void FASTCALL(sched_exit(task_t * p));
+-#endif
+ 
+ extern int in_group_p(gid_t);
+ extern int in_egroup_p(gid_t);
+diff -puN include/linux/sysctl.h~spa-staircase-v0.1 include/linux/sysctl.h
+--- linux-2.6.7-rc3-xx1/include/linux/sysctl.h~spa-staircase-v0.1	2004-06-10 17:18:11.000000000 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/sysctl.h	2004-06-10 22:07:31.625827304 -0400
+@@ -133,6 +133,10 @@ enum
+ 	KERN_NGROUPS_MAX=63,	/* int: NGROUPS_MAX */
+ 	KERN_SPARC_SCONS_PWROFF=64, /* int: serial console power-off halt */
+ 	KERN_HZ_TIMER=65,	/* int: hz timer on or off */
++#ifdef CONFIG_SPA_STAIRCASE
++	KERN_INTERACTIVE=66,	/* interactive tasks to have cpu bursts */
++	KERN_COMPUTE=67,	/* adjust timeslices for a compute server */
++#endif
+ };
+ 
+ 
+diff -puN kernel/sched.c~spa-staircase-v0.1 kernel/sched.c
+--- linux-2.6.7-rc3-xx1/kernel/sched.c~spa-staircase-v0.1	2004-06-10 17:18:11.000000000 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/kernel/sched.c	2004-06-10 22:10:57.955460432 -0400
+@@ -16,6 +16,8 @@
+  *		by Davide Libenzi, preemptible kernel bits by Robert Love.
+  *  2003-09-03	Interactivity tuning by Con Kolivas.
+  *  2004-04-02	Scheduler domains code by Nick Piggin
++ *  2004-06-08	New staircase scheduling policy by Con Kolivas with help
++ *		from William Lee Irwin III & Zwane Mwaikambo.
+  *  2004-06-03	Single priority array by Peter Williams
+  * 		(Courtesy of Aurema Pty Ltd, www.aurema.com)
+  */
+@@ -83,8 +85,20 @@
+  * Some helpers for converting nanosecond timing to jiffy resolution
+  */
+ #define NS_TO_JIFFIES(TIME)	((TIME) / (1000000000 / HZ))
++#ifndef CONFIG_SPA_STAIRCASE
+ #define JIFFIES_TO_NS(TIME)	((TIME) * (1000000000 / HZ))
++#endif
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++int compute = 0;
++/*
++ *This is the time all tasks within the same priority round robin.
++ *compute setting is reserved for dedicated computational scheduling
++ *and has ten times larger intervals.
++ */
++#define _RR_INTERVAL		((10 * HZ / 1000) ? : 1)
++#define RR_INTERVAL		(_RR_INTERVAL * (1 + 9 * compute))
++#else
+ /*
+  * These are the 'tuning knobs' of the scheduler:
+  *
+@@ -92,25 +106,17 @@
+  * maximum timeslice is 200 msecs. Timeslices get refilled after
+  * they expire.
+  */
+-#ifndef CONFIG_SPA_STAIRCASE
+ #define MIN_TIMESLICE		( 10 * HZ / 1000)
+ #define MAX_TIMESLICE		(200 * HZ / 1000)
+-#endif
+ #define ON_RUNQUEUE_WEIGHT	 30
+ #define CHILD_PENALTY		 95
+ #define PARENT_PENALTY		100
+-#ifndef CONFIG_SPA_STAIRCASE
+ #define EXIT_WEIGHT		  3
+-#endif
+ #define PRIO_BONUS_RATIO	 25
+ #define MAX_BONUS		(MAX_USER_PRIO * PRIO_BONUS_RATIO / 100)
+ #define INTERACTIVE_DELTA	  2
+-#ifdef CONFIG_SPA_STAIRCASE
+-#define MAX_SLEEP_AVG		(TIME_SLICE_TICKS * MAX_BONUS)
+-#else
+ #define MAX_SLEEP_AVG		(AVG_TIMESLICE * MAX_BONUS)
+ #define STARVATION_LIMIT	(MAX_SLEEP_AVG)
+-#endif
+ #define NS_MAX_SLEEP_AVG	(JIFFIES_TO_NS(MAX_SLEEP_AVG))
+ #define CREDIT_LIMIT		100
+ 
+@@ -146,7 +152,6 @@
+ 	(NS_TO_JIFFIES((p)->sleep_avg) * MAX_BONUS / \
+ 		MAX_SLEEP_AVG)
+ 
+-#ifndef CONFIG_SPA_STAIRCASE
+ #ifdef CONFIG_SMP
+ #define TIMESLICE_GRANULARITY(p)	(MIN_TIMESLICE * \
+ 		(1 << (((MAX_BONUS - CURRENT_BONUS(p)) ? : 1) - 1)) * \
+@@ -155,7 +160,6 @@
+ #define TIMESLICE_GRANULARITY(p)	(MIN_TIMESLICE * \
+ 		(1 << (((MAX_BONUS - CURRENT_BONUS(p)) ? : 1) - 1)))
+ #endif
+-#endif
+ 
+ #define SCALE(v1,v1_max,v2_max) \
+ 	(v1) * (v2_max) / (v1_max)
+@@ -163,10 +167,8 @@
+ #define DELTA(p) \
+ 	(SCALE(TASK_NICE(p), 40, MAX_BONUS) + INTERACTIVE_DELTA)
+ 
+-#ifndef CONFIG_SPA_STAIRCASE
+ #define TASK_INTERACTIVE(p) \
+ 	((p)->prio <= (p)->static_prio - DELTA(p))
+-#endif
+ 
+ #define INTERACTIVE_SLEEP(p) \
+ 	(JIFFIES_TO_NS(MAX_SLEEP_AVG * \
+@@ -177,6 +179,7 @@
+ 
+ #define LOW_CREDIT(p) \
+ 	((p)->interactive_credit < -CREDIT_LIMIT)
++#endif
+ 
+ #ifndef CONFIG_SPA_STAIRCASE
+ #define PRIO_PREEMPTS_CURR(p, rq) \
+@@ -194,10 +197,6 @@
+ #define TIME_SLICE_TICKS \
+ 	(((TIME_SLICE_MSECS * HZ) / 1000) ? ((TIME_SLICE_MSECS * HZ) / 1000) : 1)
+ 
+-static inline unsigned int task_timeslice(const task_t *p)
+-{
+-	return TIME_SLICE_TICKS;
+-}
+ #else
+ /*
+  * BASE_TIMESLICE scales user-nice values [ -20 ... 19 ]
+@@ -230,7 +229,7 @@ static unsigned int task_timeslice(task_
+ /*
+  * These are the runqueue data structures:
+  */
+-#define IDLE_PRIO (MAX_PRIO + MAX_BONUS)
++#define IDLE_PRIO MAX_PRIO
+ 
+ /*
+  * Is the run queue idle?
+@@ -240,7 +239,7 @@ static unsigned int task_timeslice(task_
+ /*
+  * Control values for niceness
+  */
+-#define PROSPECTIVE_BASE_PROM_INTERVAL ((TIME_SLICE_TICKS * 55) / 100)
++#define PROSPECTIVE_BASE_PROM_INTERVAL ((TIME_SLICE_TICKS * 255) / 100)
+ #if (PROSPECTIVE_BASE_PROM_INTERVAL > 0)
+ #define BASE_PROM_INTERVAL PROSPECTIVE_BASE_PROM_INTERVAL
+ #else
+@@ -575,6 +574,106 @@ static inline void enqueue_task_head(str
+ #endif
+ }
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++/*
++ * burst - extra intervals an interactive task can run for at best priority
++ */
++static unsigned int burst(const task_t *p)
++{
++	unsigned int task_user_prio;
++	if (rt_task(p))
++		return p->burst;
++	task_user_prio = TASK_USER_PRIO(p);
++	if (likely(task_user_prio < 40))
++		return 39 - task_user_prio;
++	else
++		return 0;
++}
++
++static void inc_burst(task_t *p)
++{
++	unsigned int best_burst;
++	best_burst = burst(p);
++	if (p->burst < best_burst)
++		p->burst++;
++}
++
++static void dec_burst(task_t *p)
++{
++	if (p->burst)
++		p->burst--;
++}
++
++/*
++ * slice - the duration a task runs before losing burst
++ */
++static unsigned int slice(const task_t *p)
++{
++	unsigned int slice = RR_INTERVAL;
++	if (!rt_task(p))
++		slice += burst(p) * RR_INTERVAL;
++	return slice;
++}
++
++/*
++ * interactive - interactive tasks get longer intervals at best priority
++ */
++int interactive = 1;
++
++/*
++ * effective_prio - dynamic priority dependent on burst.
++ * The priority normally decreases by one each RR_INTERVAL.
++ * As the burst increases the priority stays at the top "stair" or
++ * priority for longer.
++ */
++static int effective_prio(task_t *p)
++{
++	int prio;
++	unsigned int full_slice, used_slice, first_slice;
++	unsigned int best_burst;
++
++	if (rt_task(p))
++		return (MAX_USER_RT_PRIO - 1) - p->rt_priority;
++
++	best_burst = burst(p);
++	full_slice = slice(p);
++	used_slice = full_slice - p->slice;
++	if (p->burst > best_burst)
++		p->burst = best_burst;
++	first_slice = RR_INTERVAL;
++	if (interactive && !compute)
++		first_slice *= (p->burst + 1);
++	prio = MAX_PRIO - 1 - best_burst;
++
++	if (used_slice < first_slice)
++		return prio;
++	if (p->mm)
++		prio += 1 + (used_slice - first_slice) / RR_INTERVAL;
++	if (prio > MAX_PRIO - 1)
++		prio = MAX_PRIO - 1;
++	return prio;
++}
++
++static void recalc_task_prio(task_t *p, unsigned long long now)
++{
++	unsigned long sleep_time = now - p->timestamp;
++	unsigned long run_time = NS_TO_JIFFIES(p->runtime);
++	unsigned long total_run = NS_TO_JIFFIES(p->totalrun) + run_time;
++	if (!run_time && NS_TO_JIFFIES(p->runtime + sleep_time) < RR_INTERVAL) {
++		if (p->slice - total_run < 1) {
++			p->totalrun = 0;
++			dec_burst(p);
++		} else {
++			p->totalrun += p->runtime;
++			p->slice -= NS_TO_JIFFIES(p->totalrun);
++		}
++	} else {
++		inc_burst(p);
++		p->runtime = 0;
++		p->totalrun = 0;
++	}
++}
++#else
+ /*
+  * effective_prio - return the priority that is based on the static
+  * priority but is modified by bonuses/penalties.
+@@ -589,31 +688,13 @@ static inline void enqueue_task_head(str
+  *
+  * Both properties are important to certain workloads.
+  */
+-#ifdef CONFIG_SPA_STAIRCASE
+-static inline int effective_prio(const task_t *p)
+-#else
+ static int effective_prio(task_t *p)
+-#endif
+ {
+-#ifndef CONFIG_SPA_STAIRCASE
+ 	int bonus, prio;
+-#endif
++
+ 	if (rt_task(p))
+-#ifdef CONFIG_SPA_STAIRCASE
+-		return (MAX_USER_RT_PRIO - 1) - p->rt_priority;
+-#else
+ 		return p->prio;
+-#endif
+ 
+-#ifdef CONFIG_SPA_STAIRCASE
+-	/*
+-	 * Kernel tasks get the maximum bonus
+-	 */
+-	if (p->mm == NULL)
+-		return p->static_prio;
+-
+-	return p->static_prio + MAX_BONUS - CURRENT_BONUS(p);
+-#else
+ 	bonus = CURRENT_BONUS(p) - MAX_BONUS / 2;
+ 	prio = p->static_prio - bonus;
+ 	if (prio < MAX_RT_PRIO)
+@@ -621,8 +702,8 @@ static int effective_prio(task_t *p)
+ 	if (prio > MAX_PRIO-1)
+ 		prio = MAX_PRIO-1;
+ 	return prio;
+-#endif
+ }
++#endif
+ 
+ /*
+  * __activate_task - move a task to the runqueue.
+@@ -634,7 +715,6 @@ static inline void __activate_task(task_
+ 		)
+ {
+ #ifdef CONFIG_SPA_STAIRCASE
+-	p->time_slice = task_timeslice(p);
+ 	enqueue_task(p, rq, prio);
+ #else
+ 	enqueue_task(p, rq->active);
+@@ -651,6 +731,7 @@ static inline void __activate_idle_task(
+ 	rq->nr_running++;
+ }
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ static void recalc_task_prio(task_t *p, unsigned long long now)
+ {
+ 	unsigned long long __sleep_time = now - p->timestamp;
+@@ -671,11 +752,7 @@ static void recalc_task_prio(task_t *p, 
+ 		if (p->mm && p->activated != -1 &&
+ 			sleep_time > INTERACTIVE_SLEEP(p)) {
+ 				p->sleep_avg = JIFFIES_TO_NS(MAX_SLEEP_AVG -
+-#ifdef CONFIG_SPA_STAIRCASE
+-						TIME_SLICE_TICKS
+-#else
+ 						AVG_TIMESLICE
+-#endif
+ 						);
+ 				if (!HIGH_CREDIT(p))
+ 					p->interactive_credit++;
+@@ -726,10 +803,9 @@ static void recalc_task_prio(task_t *p, 
+ 			}
+ 		}
+ 	}
+-#ifndef CONFIG_SPA_STAIRCASE
+ 	p->prio = effective_prio(p);
+-#endif
+ }
++#endif
+ 
+ /*
+  * activate_task - move a task to the runqueue and do priority recalculation
+@@ -759,11 +835,17 @@ activate_task(task_t *p, runqueue_t *rq,
+ 	}
+ #endif
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++	p->slice = slice(p);
++#endif
+ 	recalc_task_prio(p, now);
+ #ifdef CONFIG_SPA_STAIRCASE
+ 	prio = effective_prio(p);
+ #endif
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++	p->time_slice = RR_INTERVAL;
++#else
+ 	/*
+ 	 * This checks to make sure it's not an uninterruptible task
+ 	 * that is now waking up.
+@@ -786,6 +868,7 @@ activate_task(task_t *p, runqueue_t *rq,
+ 			p->activated = 1;
+ 		}
+ 	}
++#endif
+ 	p->timestamp = now;
+ #ifdef CONFIG_SPA_STAIRCASE
+ 	__activate_task(p, rq, prio);
+@@ -801,9 +884,17 @@ activate_task(task_t *p, runqueue_t *rq,
+ static void deactivate_task(struct task_struct *p, runqueue_t *rq)
+ {
+ 	rq->nr_running--;
+-	if (p->state == TASK_UNINTERRUPTIBLE)
++	if (p->state == TASK_UNINTERRUPTIBLE) {
+ 		rq->nr_uninterruptible++;
+ #ifdef CONFIG_SPA_STAIRCASE
++		if (p->burst)
++			/*
++			 * waiting on i/o is not a voluntary sleep
++			 */
++			p->burst--;
++#endif
++	}
++#ifdef CONFIG_SPA_STAIRCASE
+ 	dequeue_task(p);
+ #else
+ 	dequeue_task(p, p->array);
+@@ -1169,11 +1260,13 @@ out_activate:
+ #endif /* CONFIG_SMP */
+ 	if (old_state == TASK_UNINTERRUPTIBLE) {
+ 		rq->nr_uninterruptible--;
++#ifndef CONFIG_SPA_STAIRCASE
+ 		/*
+ 		 * Tasks on involuntary sleep don't earn
+ 		 * sleep_avg beyond just interactive state.
+ 		 */
+ 		p->activated = -1;
++#endif
+ 	}
+ 
+ 	/*
+@@ -1248,7 +1341,41 @@ void fastcall sched_fork(task_t *p)
+ 	p->thread_info->preempt_count = 1;
+ #endif
+ #ifdef CONFIG_SPA_STAIRCASE
+-	p->time_slice = task_timeslice(p);
++#ifndef DONT_SHARE_TIME_SLICES
++	/*
++	 * Share the timeslice between parent and child, thus the
++	 * total amount of pending timeslices in the system doesn't change,
++	 * resulting in more scheduling fairness.
++	 */
++	local_irq_disable();
++	p->time_slice = (current->time_slice + 1) >> 1;
++	p->slice = (current->slice + 1) >> 1;
++	/*
++	 * The remainder of the first timeslice might be recovered by
++	 * the parent if the child exits early enough.
++	 */
++	p->first_time_slice = 1;
++	current->time_slice >>= 1;
++	current->slice >>= 1;
++	p->timestamp = sched_clock();
++	if (!current->time_slice) {
++		/*
++		 * This case is rare, it happens when the parent has only
++		 * a single jiffy left from its timeslice. Taking the
++		 * runqueue lock is not a problem.
++		 */
++		current->time_slice = 1;
++		preempt_disable();
++		scheduler_tick(0, 0);
++		local_irq_enable();
++		preempt_enable();
++	} else
++		local_irq_enable();
++#else
++	p->slice = slice(p);
++	rq->current_prio_slot = rq->queues + effective_prio(p);
++	p->time_slice = RR_INTERVAL;
++#endif
+ #else
+ 	/*
+ 	 * Share the timeslice between parent and child, thus the
+@@ -1291,8 +1418,15 @@ void fastcall wake_up_forked_process(tas
+ 	unsigned long flags;
+ 	runqueue_t *rq = task_rq_lock(current, &flags);
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++	/*
++	 * Forked process gets no burst to prevent fork bombs.
++	 */
++	p->burst = 0;
++#endif
+ 	BUG_ON(p->state != TASK_RUNNING);
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ 	/*
+ 	 * We decrease the sleep average of forking parents
+ 	 * and children as well, to keep max-interactive tasks
+@@ -1305,7 +1439,6 @@ void fastcall wake_up_forked_process(tas
+ 		CHILD_PENALTY / 100 * MAX_SLEEP_AVG / MAX_BONUS);
+ 
+ 	p->interactive_credit = 0;
+-#ifndef CONFIG_SPA_STAIRCASE
+ 	p->prio = effective_prio(p);
+ #endif
+ 	set_task_cpu(p, smp_processor_id());
+@@ -1336,7 +1469,6 @@ void fastcall wake_up_forked_process(tas
+ 	task_rq_unlock(rq, &flags);
+ }
+ 
+-#ifndef CONFIG_SPA_STAIRCASE
+ /*
+  * Potentially available exiting-child timeslices are
+  * retrieved here - this way the parent does not get
+@@ -1348,6 +1480,22 @@ void fastcall wake_up_forked_process(tas
+  */
+ void fastcall sched_exit(task_t * p)
+ {
++#ifdef CONFIG_SPA_STAIRCASE
++#ifndef DONT_SHARE_TIME_SLICES
++	unsigned long flags;
++	runqueue_t *rq;
++
++	local_irq_save(flags);
++	if (p->first_time_slice) {
++		p->parent->time_slice += p->time_slice;
++		if (unlikely(p->parent->time_slice > slice(p->parent)))
++			p->parent->time_slice = slice(p->parent);
++	}
++	local_irq_restore(flags);
++	rq = task_rq_lock(p->parent, &flags);
++	task_rq_unlock(rq, &flags);
++#endif
++#else
+ 	unsigned long flags;
+ 	runqueue_t *rq;
+ 
+@@ -1368,8 +1516,8 @@ void fastcall sched_exit(task_t * p)
+ 		(EXIT_WEIGHT + 1) * EXIT_WEIGHT + p->sleep_avg /
+ 		(EXIT_WEIGHT + 1);
+ 	task_rq_unlock(rq, &flags);
+-}
+ #endif
++}
+ 
+ /**
+  * finish_task_switch - clean up after a task-switch
+@@ -1635,6 +1783,7 @@ lock_again:
+ 		double_rq_unlock(this_rq, rq);
+ 		goto lock_again;
+ 	}
++#ifndef CONFIG_SPA_STAIRCASE
+ 	/*
+ 	 * We decrease the sleep average of forking parents
+ 	 * and children as well, to keep max-interactive tasks
+@@ -1648,7 +1797,6 @@ lock_again:
+ 
+ 	p->interactive_credit = 0;
+ 
+-#ifndef CONFIG_SPA_STAIRCASE
+ 	p->prio = effective_prio(p);
+ #endif
+ 	set_task_cpu(p, cpu);
+@@ -2406,8 +2554,8 @@ static void rebalance_tick(int this_cpu,
+ 		}
+ 	}
+ }
+-#ifdef CONFIG_SPA
+-static inline int needs_idle_balance(const runqueue_t *rq)
++#ifdef CONFIG_SPA_STAIRCASE
++static inline int needs_idle_balance(runqueue_t *rq)
+ {
+ 	return rq->nr_running == 0;
+ }
+@@ -2562,6 +2710,31 @@ void scheduler_tick(int user_ticks, int 
+ 	}
+ #endif
+ 	spin_lock(&rq->lock);
++#ifdef CONFIG_SPA_STAIRCASE
++	/*
++	 * SCHED_FIFO tasks never run out of timeslice.
++	 */
++	if (unlikely(p->policy == SCHED_FIFO))
++		goto out_unlock;
++	/*
++	 * Tasks lose burst each time they use up a full slice().
++	 */
++	if (!--p->slice) {
++		set_tsk_need_resched(p);
++		dequeue_task(p);
++		dec_burst(p);
++		p->slice = slice(p);
++		rq->current_prio_slot = rq->queues + effective_prio(p);
++		p->time_slice = RR_INTERVAL;
++		enqueue_task(p, rq, rq->current_prio_slot->prio);
++		p->first_time_slice = 0;
++		goto out_unlock;
++	}
++	/*
++	 * Tasks that run out of time_slice but still have slice left get
++	 * requeued with a lower priority && RR_INTERVAL time_slice.
++	 */
++#else
+ 	/*
+ 	 * The task was running during this tick - update the
+ 	 * time slice counter. Note: we do not update a thread's
+@@ -2576,22 +2749,16 @@ void scheduler_tick(int user_ticks, int 
+ 		 */
+ 		if ((p->policy == SCHED_RR) && !--p->time_slice) {
+ 			p->time_slice = task_timeslice(p);
+-#ifndef CONFIG_SPA_STAIRCASE
+ 			p->first_time_slice = 0;
+-#endif
+ 			set_tsk_need_resched(p);
+ 
+ 			/* put it at the end of the queue: */
+-#ifdef CONFIG_SPA_STAIRCASE
+-			dequeue_task(p);
+-			enqueue_task(p, rq, rq->current_prio_slot->prio);
+-#else
+ 			dequeue_task(p, rq->active);
+ 			enqueue_task(p, rq->active);
+-#endif
+ 		}
+ 		goto out_unlock;
+ 	}
++#endif
+ 	if (!--p->time_slice) {
+ #ifdef CONFIG_SPA_STAIRCASE
+ 		dequeue_task(p);
+@@ -2599,10 +2766,12 @@ void scheduler_tick(int user_ticks, int 
+ 		dequeue_task(p, rq->active);
+ #endif
+ 		set_tsk_need_resched(p);
+-#ifndef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_SPA_STAIRCASE
++		p->time_slice = RR_INTERVAL;
++#elif !defined(CONFIG_SPA_STAIRCASE)
+ 		p->prio = effective_prio(p);
+-#endif
+ 		p->time_slice = task_timeslice(p);
++#endif
+ #ifdef CONFIG_SPA_STAIRCASE
+ 		rq->current_prio_slot = rq->queues + effective_prio(p);
+ 		enqueue_task(p, rq, rq->current_prio_slot->prio);
+@@ -2719,8 +2888,14 @@ static inline int dependent_sleeper(int 
+ 		 * task from using an unfair proportion of the
+ 		 * physical cpu's resources. -ck
+ 		 */
+-		if (((smt_curr->time_slice * (100 - sd->per_cpu_gain) / 100) >
++		if (
++#ifdef CONFIG_SPA_STAIRCASE
++			((smt_curr->slice * (100 - sd->per_cpu_gain) / 100) >
++			slice(p) || rt_task(smt_curr)) &&
++#else
++			((smt_curr->time_slice * (100 - sd->per_cpu_gain) / 100) >
+ 			task_timeslice(p) || rt_task(smt_curr)) &&
++#endif
+ 			p->mm && smt_curr->mm && !rt_task(p))
+ 				ret = 1;
+ 
+@@ -2729,14 +2904,26 @@ static inline int dependent_sleeper(int 
+ 		 * or wake it up if it has been put to sleep for priority
+ 		 * reasons.
+ 		 */
+-		if ((((p->time_slice * (100 - sd->per_cpu_gain) / 100) >
++		if ((
++#ifdef CONFIG_SPA_STAIRCASE
++			((p->slice * (100 - sd->per_cpu_gain) / 100) >
++			slice(smt_curr) || rt_task(p)) &&
++#else
++			((p->time_slice * (100 - sd->per_cpu_gain) / 100) >
+ 			task_timeslice(smt_curr) || rt_task(p)) &&
++#endif
+ 			smt_curr->mm && p->mm && !rt_task(smt_curr)) ||
+ 			(smt_curr == smt_rq->idle && smt_rq->nr_running))
+ 				resched_task(smt_curr);
+ 	}
+ 	return ret;
+ }
++#ifdef CONFIG_SPA_STAIRCASE
++static inline int dependent_idle(const runqueue_t *rq, const task_t *p)
++{
++	return p == rq->idle;
++}
++#endif
+ #else
+ static inline void wake_sleeping_dependent(int cpu, runqueue_t *rq)
+ {
+@@ -2746,6 +2933,12 @@ static inline int dependent_sleeper(int 
+ {
+ 	return 0;
+ }
++#ifdef CONFIG_SPA_STAIRCASE
++static inline int dependent_idle(const runqueue_t *rq, const task_t *p)
++{
++	return 0;
++}
++#endif
+ #endif
+ 
+ /*
+@@ -2761,7 +2954,9 @@ asmlinkage void __sched schedule(void)
+ 	struct list_head *queue;
+ #endif
+ 	unsigned long long now;
++#ifndef CONFIG_SPA_STAIRCASE
+ 	unsigned long run_time;
++#endif
+ 	int cpu;
+ #ifndef CONFIG_SPA_STAIRCASE
+ 	int idx;
+@@ -2787,6 +2982,9 @@ need_resched:
+ 	release_kernel_lock(prev);
+  	schedstat_inc(rq, sched_cnt);
+ 	now = sched_clock();
++#ifdef CONFIG_SPA_STAIRCASE
++	prev->runtime = now - prev->timestamp;
++#else
+ 	if (likely(now - prev->timestamp < NS_MAX_SLEEP_AVG))
+ 		run_time = now - prev->timestamp;
+ 	else
+@@ -2799,6 +2997,7 @@ need_resched:
+ 	 */
+ 	if (HIGH_CREDIT(prev))
+ 		run_time /= (CURRENT_BONUS(prev) ? : 1);
++#endif
+ 
+ 	spin_lock_irq(&rq->lock);
+ 
+@@ -2816,7 +3015,7 @@ need_resched:
+ 			deactivate_task(prev, rq);
+ 	}
+ 
+-	icpu = smp_processor_id();
++	cpu = smp_processor_id();
+ #ifdef CONFIG_SPA_STAIRCASE
+ 	if (unlikely(needs_idle_balance(rq)))
+ #else
+@@ -2838,7 +3037,7 @@ need_resched:
+ #ifdef CONFIG_SPA_STAIRCASE
+ 	rq->current_prio_slot = rq->queues + sched_find_first_bit(rq->bitmap);
+ 	next = list_entry(rq->current_prio_slot->queue.next, task_t, run_list);
+-	if (next == rq->idle) {
++	if (dependent_idle(rq, next)) {
+ 		wake_sleeping_dependent(cpu, rq);
+ 		goto switch_tasks;
+ 	}
+@@ -2868,36 +3067,38 @@ need_resched:
+ 		rq->current_prio_slot = rq->queues + IDLE_PRIO;
+ #endif
+ 		next = rq->idle;
++#ifndef CONFIG_SPA_STAIRCASE
+ 		goto switch_tasks;
++#endif
+ 	}
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ 	if (!rt_task(next) && next->activated > 0) {
+ 		unsigned long long delta = now - next->timestamp;
+ 
+ 		if (next->activated == 1)
+ 			delta = delta * (ON_RUNQUEUE_WEIGHT * 128 / 100) / 128;
+ 
+-#ifdef CONFIG_SPA_STAIRCASE
+ 		array = next->array;
+ 		dequeue_task(next, array);
+-#endif
+ 		recalc_task_prio(next, next->timestamp + delta);
+-#ifndef CONFIG_SPA_STAIRCASE
+ 		enqueue_task(next, array);
+-#endif
+ 	}
+ 	next->activated = 0;
++#endif
+ switch_tasks:
+ 	prefetch(next);
+ 	clear_tsk_need_resched(prev);
+ 	RCU_qsctr(task_cpu(prev))++;
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ 	prev->sleep_avg -= run_time;
+ 	if ((long)prev->sleep_avg <= 0) {
+ 		prev->sleep_avg = 0;
+ 		if (!(HIGH_CREDIT(prev) || LOW_CREDIT(prev)))
+ 			prev->interactive_credit--;
+ 	}
++#endif
+ 	prev->timestamp = now;
+ 
+ 	if (likely(prev != next)) {
+@@ -3701,17 +3902,11 @@ asmlinkage long sys_sched_yield(void)
+ 	 *  array.)
+ 	 */
+ #ifdef CONFIG_SPA_STAIRCASE
+-	if (likely(!rt_task(current))) {
+-		/* If there's other tasks on this CPU make sure that as many of
+-		 * them as possible/judicious get some CPU before this task
+-		 */
+-		dequeue_task(current);
+-		rq->current_prio_slot = rq->queues + (IDLE_PRIO - 1);
+-		enqueue_task(current, rq, rq->current_prio_slot->prio);
+-	} else {
+-		list_del_init(&current->run_list);
+-		list_add_tail(&current->run_list, &rq->current_prio_slot->queue);
+-	}
++	dequeue_task(current);
++	current->slice = slice(current);
++	current->time_slice = current->slice;
++	rq->current_prio_slot = rq->queues + effective_prio(current);
++	enqueue_task(current, rq, rq->current_prio_slot->prio);
+ #else
+ 	if (unlikely(rt_task(current)))
+ 		target = rq->active;
+@@ -3857,7 +4052,12 @@ long sys_sched_rr_get_interval(pid_t pid
+ 		goto out_unlock;
+ 
+ 	jiffies_to_timespec(p->policy & SCHED_FIFO ?
+-				0 : task_timeslice(p), &t);
++#ifdef CONFIG_SPA_STAIRCASE
++				0 : slice(p),
++#else
++				0 : task_timeslice(p),
++#endif
++				&t);
+ 	read_unlock(&tasklist_lock);
+ 	retval = copy_to_user(interval, &t, sizeof(t)) ? -EFAULT : 0;
+ out_nounlock:
+@@ -3975,19 +4175,14 @@ void __devinit init_idle(task_t *idle, i
+ 
+ 	idle_rq->curr = idle_rq->idle = idle;
+ 	deactivate_task(idle, rq);
+-#ifdef CONFIG_SPA_STAIRCASE
+-	/*
+-	 * Setting "activated" to zero will reduce testing required in schedule()
+-	 */
+-	idle->activated = 0;
+-	/*
+-	 * Should be no need to initialise other EBS fields as they shouldn't be used
+-	 */
+-#else
++#ifndef CONFIG_SPA_STAIRCASE
+ 	idle->array = NULL;
+ 	idle->prio = MAX_PRIO;
+ #endif
+ 	idle->state = TASK_RUNNING;
++#ifdef CONFIG_SPA_STAIRCASE
++	idle->burst = 0;
++#endif
+ 	set_task_cpu(idle, cpu);
+ #ifdef CONFIG_SPA_STAIRCASE
+ 	/*
+diff -puN kernel/sysctl.c~spa-staircase-v0.1 kernel/sysctl.c
+--- linux-2.6.7-rc3-xx1/kernel/sysctl.c~spa-staircase-v0.1	2004-06-10 17:18:11.000000000 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/kernel/sysctl.c	2004-06-10 22:07:35.112297280 -0400
+@@ -618,6 +618,24 @@ static ctl_table kern_table[] = {
+ 		.mode		= 0444,
+ 		.proc_handler	= &proc_dointvec,
+ 	},
++#ifdef CONFIG_SPA_STAIRCASE
++	{
++		.ctl_name	= KERN_INTERACTIVE,
++		.procname	= "interactive",
++		.data		= &interactive,
++		.maxlen		= sizeof (int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
++		.ctl_name	= KERN_COMPUTE,
++		.procname	= "compute",
++		.data		= &compute,
++		.maxlen		= sizeof (int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++#endif
+ 	{ .ctl_name = 0 }
+ };
+ 
+
+_

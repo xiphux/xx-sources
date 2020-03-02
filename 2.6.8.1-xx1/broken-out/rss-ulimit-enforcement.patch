@@ -1,0 +1,137 @@
+
+From: Rik van Riel <riel@redhat.com>
+
+The patch below implements RSS ulimit enforcement.
+
+It works in a very simple way: if a process has more resident memory than
+its RSS limit allows, we pretend it didn't access any of its pages, making
+it easy for the pageout code to evict the pages.
+
+In addition to this, we don't allow a process that exceeds its RSS limit to
+have the swapout protection token.
+
+I have tested the patch on my system here and it appears to be working
+fine.
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/exec.c                 |    5 +++++
+ 25-akpm/include/linux/init_task.h |    2 ++
+ 25-akpm/include/linux/sched.h     |    2 +-
+ 25-akpm/kernel/sys.c              |    8 ++++++++
+ 25-akpm/mm/rmap.c                 |    3 +++
+ 25-akpm/mm/thrash.c               |    8 +++++---
+ 6 files changed, 24 insertions(+), 4 deletions(-)
+
+diff -puN fs/exec.c~rss-ulimit-enforcement fs/exec.c
+--- 25/fs/exec.c~rss-ulimit-enforcement	2004-08-09 22:02:25.713719968 -0700
++++ 25-akpm/fs/exec.c	2004-08-09 22:02:25.724718296 -0700
+@@ -1126,6 +1126,11 @@ int do_execve(char * filename,
+ 	retval = init_new_context(current, bprm.mm);
+ 	if (retval < 0)
+ 		goto out_mm;
++	if (likely(current->mm)) {
++		bprm.mm->rlimit_rss = current->mm->rlimit_rss;
++	} else {
++		bprm.mm->rlimit_rss = init_mm.rlimit_rss;
++	}
+ 
+ 	bprm.argc = count(argv, bprm.p / sizeof(void *));
+ 	if ((retval = bprm.argc) < 0)
+diff -puN include/linux/init_task.h~rss-ulimit-enforcement include/linux/init_task.h
+--- 25/include/linux/init_task.h~rss-ulimit-enforcement	2004-08-09 22:02:25.714719816 -0700
++++ 25-akpm/include/linux/init_task.h	2004-08-09 22:02:25.724718296 -0700
+@@ -3,6 +3,7 @@
+ 
+ #include <linux/file.h>
+ #include <linux/pagg.h>
++#include <asm/resource.h>
+ 
+ #define INIT_FILES \
+ { 							\
+@@ -43,6 +44,7 @@
+ 	.mmlist		= LIST_HEAD_INIT(name.mmlist),		\
+ 	.cpu_vm_mask	= CPU_MASK_ALL,				\
+ 	.default_kioctx = INIT_KIOCTX(name.default_kioctx, name),	\
++	.rlimit_rss	= RLIM_INFINITY,			\
+ }
+ 
+ #define INIT_SIGNALS(sig) {	\
+diff -puN include/linux/sched.h~rss-ulimit-enforcement include/linux/sched.h
+--- 25/include/linux/sched.h~rss-ulimit-enforcement	2004-08-09 22:02:25.716719512 -0700
++++ 25-akpm/include/linux/sched.h	2004-08-09 22:02:25.725718144 -0700
+@@ -225,7 +225,7 @@ struct mm_struct {
+ 	unsigned long start_code, end_code, start_data, end_data;
+ 	unsigned long start_brk, brk, start_stack;
+ 	unsigned long arg_start, arg_end, env_start, env_end;
+-	unsigned long rss, total_vm, locked_vm;
++	unsigned long rlimit_rss, rss, total_vm, locked_vm;
+ 	unsigned long def_flags;
+ 
+ 	unsigned long saved_auxv[40]; /* for /proc/PID/auxv */
+diff -puN kernel/sys.c~rss-ulimit-enforcement kernel/sys.c
+--- 25/kernel/sys.c~rss-ulimit-enforcement	2004-08-09 22:02:25.717719360 -0700
++++ 25-akpm/kernel/sys.c	2004-08-09 22:02:25.726717992 -0700
+@@ -1527,6 +1527,14 @@ asmlinkage long sys_setrlimit(unsigned i
+ 	if (retval)
+ 		return retval;
+ 
++	/* The rlimit is specified in bytes, convert to pages for mm. */
++	if (resource == RLIMIT_RSS && current->mm) {
++		unsigned long pages = RLIM_INFINITY;
++		if (new_rlim.rlim_cur != RLIM_INFINITY)
++			pages = new_rlim.rlim_cur >> PAGE_SHIFT;
++		current->mm->rlimit_rss = pages;
++	}
++
+ 	*old_rlim = new_rlim;
+ 	return 0;
+ }
+diff -puN mm/rmap.c~rss-ulimit-enforcement mm/rmap.c
+--- 25/mm/rmap.c~rss-ulimit-enforcement	2004-08-09 22:02:25.719719056 -0700
++++ 25-akpm/mm/rmap.c	2004-08-09 22:02:25.727717840 -0700
+@@ -233,6 +233,9 @@ static int page_referenced_one(struct pa
+ 	if (mm != current->mm && has_swap_token(mm))
+ 		referenced++;
+ 
++	if (mm->rss > mm->rlimit_rss)
++		referenced = 0;
++
+ 	(*mapcount)--;
+ 
+ out_unmap:
+diff -puN mm/thrash.c~rss-ulimit-enforcement mm/thrash.c
+--- 25/mm/thrash.c~rss-ulimit-enforcement	2004-08-09 22:02:25.720718904 -0700
++++ 25-akpm/mm/thrash.c	2004-08-09 22:02:25.727717840 -0700
+@@ -24,7 +24,7 @@ struct mm_struct * swap_token_mm = &init
+ /*
+  * Take the token away if the process had no page faults
+  * in the last interval, or if it has held the token for
+- * too long.
++ * too long, or if the process exceeds its RSS limit.
+  */
+ #define SWAP_TOKEN_ENOUGH_RSS 1
+ #define SWAP_TOKEN_TIMED_OUT 2
+@@ -35,6 +35,8 @@ static int should_release_swap_token(str
+ 		ret = SWAP_TOKEN_ENOUGH_RSS;
+ 	else if (time_after(jiffies, swap_token_timeout))
+ 		ret = SWAP_TOKEN_TIMED_OUT;
++	else if (mm->rss > mm->rlimit_rss)
++		ret = SWAP_TOKEN_ENOUGH_RSS;
+ 	mm->recent_pagein = 0;
+ 	return ret;
+ }
+@@ -59,8 +61,8 @@ void grab_swap_token(void)
+ 	if (time_after(jiffies, swap_token_check)) {
+ 
+ 		/* Can't get swapout protection if we exceed our RSS limit. */
+-		// if (current->mm->rss > current->mm->rlimit_rss)
+-		//	return;
++		if (current->mm->rss > current->mm->rlimit_rss)
++			return;
+ 
+ 		/* ... or if we recently held the token. */
+ 		if (time_before(jiffies, current->mm->swap_token_time))
+_

@@ -1,0 +1,36 @@
+
+From: Adam Belay <ambx1@neo.rr.com>
+
+It is not safe to use the skt_sem in pcmcia_validate_mem.  This patch fixes a
+real world bug, and without it many systems will fail to shutdown properly. 
+When pcmcia-cs calls DS_EJECT_CARD, it creates a CS_EVENT_EJECTION_REQUEST
+event.  The event is then eventually reported to the ds.c client.  DS then
+informs userspace of the ejection request and waits for userspace to reply
+with whether the request was successful.  pcmcia-cs, in turn, calls
+DS_GET_FIRST_TUPLE while verifying the ejection request.  Unfortunately, at
+this point the skt_sem semaphore is already held by pcmcia_eject_card.  This
+results in the ds event code waiting forever for skt_sem to become available.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/pcmcia/rsrc_mgr.c |    4 ----
+ 1 files changed, 4 deletions(-)
+
+diff -puN drivers/pcmcia/rsrc_mgr.c~pcmcia-fix-eject-lockup drivers/pcmcia/rsrc_mgr.c
+--- 25/drivers/pcmcia/rsrc_mgr.c~pcmcia-fix-eject-lockup	2004-08-06 00:52:56.100650712 -0700
++++ 25-akpm/drivers/pcmcia/rsrc_mgr.c	2004-08-06 00:52:56.105649952 -0700
+@@ -520,12 +520,8 @@ static void validate_mem(struct pcmcia_s
+ 
+ void pcmcia_validate_mem(struct pcmcia_socket *s)
+ {
+-	down(&s->skt_sem);
+-
+ 	if (probe_mem && s->state & SOCKET_PRESENT)
+ 		validate_mem(s);
+-
+-	up(&s->skt_sem);
+ }
+ 
+ EXPORT_SYMBOL(pcmcia_validate_mem);
+_

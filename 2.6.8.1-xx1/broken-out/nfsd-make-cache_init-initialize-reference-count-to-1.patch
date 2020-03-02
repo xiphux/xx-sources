@@ -1,0 +1,80 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+Presumably anyone creating a new cache entry is going to want a reference on
+that cache; and indeed every caller of cache_init increments the reference
+count immediately afterwards.  So may as well make cache_init set an initial
+reference count of 1.
+
+Also, note that cache_init initializes the flags; callers don't need to.
+
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/sunrpc/cache.h      |    1 -
+ 25-akpm/net/sunrpc/auth_gss/svcauth_gss.c |    2 --
+ 25-akpm/net/sunrpc/cache.c                |    2 +-
+ 25-akpm/net/sunrpc/svcauth_unix.c         |    2 --
+ 4 files changed, 1 insertion(+), 6 deletions(-)
+
+diff -puN include/linux/sunrpc/cache.h~nfsd-make-cache_init-initialize-reference-count-to-1 include/linux/sunrpc/cache.h
+--- 25/include/linux/sunrpc/cache.h~nfsd-make-cache_init-initialize-reference-count-to-1	2004-08-01 21:09:45.709058000 -0700
++++ 25-akpm/include/linux/sunrpc/cache.h	2004-08-01 21:09:45.718056632 -0700
+@@ -233,7 +233,6 @@ RTN *FNAME ARGS										\
+ 	new = kmalloc(sizeof(*new), GFP_KERNEL);					\
+ 	if (new) {									\
+ 		cache_init(&new->MEMBER);						\
+-		cache_get(&new->MEMBER);						\
+ 		goto retry;								\
+ 	}										\
+ 	return NULL;									\
+diff -puN net/sunrpc/auth_gss/svcauth_gss.c~nfsd-make-cache_init-initialize-reference-count-to-1 net/sunrpc/auth_gss/svcauth_gss.c
+--- 25/net/sunrpc/auth_gss/svcauth_gss.c~nfsd-make-cache_init-initialize-reference-count-to-1	2004-08-01 21:09:45.711057696 -0700
++++ 25-akpm/net/sunrpc/auth_gss/svcauth_gss.c	2004-08-01 21:09:45.719056480 -0700
+@@ -643,7 +643,6 @@ svcauth_gss_register_pseudoflavor(u32 ps
+ 	if (!new)
+ 		goto out;
+ 	cache_init(&new->h.h);
+-	atomic_inc(&new->h.h.refcnt);
+ 	new->h.name = kmalloc(strlen(name) + 1, GFP_KERNEL);
+ 	if (!new->h.name)
+ 		goto out_free_dom;
+@@ -651,7 +650,6 @@ svcauth_gss_register_pseudoflavor(u32 ps
+ 	new->h.flavour = RPC_AUTH_GSS;
+ 	new->pseudoflavor = pseudoflavor;
+ 	new->h.h.expiry_time = NEVER;
+-	new->h.h.flags = 0;
+ 
+ 	test = auth_domain_lookup(&new->h, 1);
+ 	if (test == &new->h) {
+diff -puN net/sunrpc/cache.c~nfsd-make-cache_init-initialize-reference-count-to-1 net/sunrpc/cache.c
+--- 25/net/sunrpc/cache.c~nfsd-make-cache_init-initialize-reference-count-to-1	2004-08-01 21:09:45.712057544 -0700
++++ 25-akpm/net/sunrpc/cache.c	2004-08-01 21:09:45.720056328 -0700
+@@ -38,7 +38,7 @@ void cache_init(struct cache_head *h)
+ 	time_t now = get_seconds();
+ 	h->next = NULL;
+ 	h->flags = 0;
+-	atomic_set(&h->refcnt, 0);
++	atomic_set(&h->refcnt, 1);
+ 	h->expiry_time = now + CACHE_NEW_EXPIRY;
+ 	h->last_refresh = now;
+ }
+diff -puN net/sunrpc/svcauth_unix.c~nfsd-make-cache_init-initialize-reference-count-to-1 net/sunrpc/svcauth_unix.c
+--- 25/net/sunrpc/svcauth_unix.c~nfsd-make-cache_init-initialize-reference-count-to-1	2004-08-01 21:09:45.714057240 -0700
++++ 25-akpm/net/sunrpc/svcauth_unix.c	2004-08-01 21:09:45.721056176 -0700
+@@ -55,12 +55,10 @@ struct auth_domain *unix_domain_find(cha
+ 	if (new == NULL)
+ 		return NULL;
+ 	cache_init(&new->h.h);
+-	atomic_inc(&new->h.h.refcnt);
+ 	new->h.name = strdup(name);
+ 	new->h.flavour = RPC_AUTH_UNIX;
+ 	new->addr_changes = 0;
+ 	new->h.h.expiry_time = NEVER;
+-	new->h.h.flags = 0;
+ 
+ 	rv = auth_domain_lookup(&new->h, 2);
+ 	if (rv == &new->h) {
+_

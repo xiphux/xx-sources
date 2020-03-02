@@ -1,0 +1,56 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Add a CPU_DOWN_PREPARE hotplug CPU notifier.  This is needed so we can dettach
+all sched-domains before a CPU goes down, thus we can build domains from
+online cpumasks, and not have to check for the possibility of a CPU coming up
+or going down.
+
+Signed-off-by: Nick Piggin <nickpiggin@yahoo.com.au>
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/notifier.h |    9 +++++----
+ 25-akpm/kernel/cpu.c             |    9 +++++++++
+ 2 files changed, 14 insertions(+), 4 deletions(-)
+
+diff -puN include/linux/notifier.h~sched-add-cpu_down_prepare-notifier include/linux/notifier.h
+--- 25/include/linux/notifier.h~sched-add-cpu_down_prepare-notifier	2004-10-03 16:42:35.039126184 -0700
++++ 25-akpm/include/linux/notifier.h	2004-10-03 16:42:35.046125120 -0700
+@@ -64,10 +64,11 @@ extern int notifier_call_chain(struct no
+ 
+ #define NETLINK_URELEASE	0x0001	/* Unicast netlink socket released */
+ 
+-#define CPU_ONLINE	0x0002 /* CPU (unsigned)v is up */
+-#define CPU_UP_PREPARE	0x0003 /* CPU (unsigned)v coming up */
+-#define CPU_UP_CANCELED	0x0004 /* CPU (unsigned)v NOT coming up */
+-#define CPU_DEAD	0x0006 /* CPU (unsigned)v dead */
++#define CPU_ONLINE		0x0002 /* CPU (unsigned)v is up */
++#define CPU_UP_PREPARE		0x0003 /* CPU (unsigned)v coming up */
++#define CPU_UP_CANCELED		0x0004 /* CPU (unsigned)v NOT coming up */
++#define CPU_DOWN_PREPARE	0x0005 /* CPU (unsigned)v going down */
++#define CPU_DEAD		0x0006 /* CPU (unsigned)v dead */
+ 
+ #endif /* __KERNEL__ */
+ #endif /* _LINUX_NOTIFIER_H */
+diff -puN kernel/cpu.c~sched-add-cpu_down_prepare-notifier kernel/cpu.c
+--- 25/kernel/cpu.c~sched-add-cpu_down_prepare-notifier	2004-10-03 16:42:35.041125880 -0700
++++ 25-akpm/kernel/cpu.c	2004-10-03 16:42:35.047124968 -0700
+@@ -124,6 +124,15 @@ int cpu_down(unsigned int cpu)
+ 		goto out;
+ 	}
+ 
++	err = notifier_call_chain(&cpu_chain, CPU_DOWN_PREPARE,
++						(void *)(long)cpu);
++	if (err == NOTIFY_BAD) {
++		printk("%s: attempt to take down CPU %u failed\n",
++				__FUNCTION__, cpu);
++		err = -EINVAL;
++		goto out;
++	}
++
+ 	/* Ensure that we are not runnable on dying cpu */
+ 	old_allowed = current->cpus_allowed;
+ 	tmp = CPU_MASK_ALL;
+_

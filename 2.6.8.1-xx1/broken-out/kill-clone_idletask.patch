@@ -1,0 +1,110 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+The sole remaining usage of CLONE_IDLETASK is to determine whether pid
+allocation should be performed in copy_process().  This patch eliminates
+that last branch on CLONE_IDLETASK in the normal process creation path,
+removes the masking of CLONE_IDLETASK from clone_flags as it's now ignored
+under all circumstances, and furthermore eliminates the symbol
+CLONE_IDLETASK entirely.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/fork.c |   30 +++++++++++-------------------
+ 1 files changed, 11 insertions(+), 19 deletions(-)
+
+diff -puN kernel/fork.c~kill-clone_idletask kernel/fork.c
+--- 25/kernel/fork.c~kill-clone_idletask	2004-08-09 23:21:46.619952208 -0700
++++ 25-akpm/kernel/fork.c	2004-08-09 23:21:46.625951296 -0700
+@@ -47,9 +47,6 @@
+ #include <asm/cacheflush.h>
+ #include <asm/tlbflush.h>
+ 
+-/* set if new pid should be 0 (kernel only)*/
+-#define CLONE_IDLETASK	0x00001000
+-
+ /* The idle threads do not count..
+  * Protected by write_lock_irq(&tasklist_lock)
+  */
+@@ -904,7 +901,8 @@ static task_t *copy_process(unsigned lon
+ 				 struct pt_regs *regs,
+ 				 unsigned long stack_size,
+ 				 int __user *parent_tidptr,
+-				 int __user *child_tidptr)
++				 int __user *child_tidptr,
++				 int pid)
+ {
+ 	int retval;
+ 	struct task_struct *p = NULL;
+@@ -964,13 +962,7 @@ static task_t *copy_process(unsigned lon
+ 
+ 	p->did_exec = 0;
+ 	copy_flags(clone_flags, p);
+-	if (clone_flags & CLONE_IDLETASK)
+-		p->pid = 0;
+-	else {
+-		p->pid = alloc_pidmap();
+-		if (p->pid == -1)
+-			goto bad_fork_cleanup;
+-	}
++	p->pid = pid;
+ 	retval = -EFAULT;
+ 	if (clone_flags & CLONE_PARENT_SETTID)
+ 		if (put_user(p->pid, parent_tidptr))
+@@ -1185,8 +1177,6 @@ bad_fork_cleanup_policy:
+ 	mpol_free(p->mempolicy);
+ #endif
+ bad_fork_cleanup:
+-	if (p->pid > 0)
+-		free_pidmap(p->pid);
+ 	if (p->binfmt)
+ 		module_put(p->binfmt->module);
+ bad_fork_cleanup_put_domain:
+@@ -1206,7 +1196,7 @@ task_t * __init fork_idle(int cpu)
+ 	struct pt_regs regs;
+ 
+ 	memset(&regs, 0, sizeof(struct pt_regs));
+-	task = copy_process(CLONE_VM|CLONE_IDLETASK, 0, &regs, 0, NULL, NULL);
++	task = copy_process(CLONE_VM, 0, &regs, 0, NULL, NULL, 0);
+ 	if (!task)
+ 		return ERR_PTR(-ENOMEM);
+ 	init_idle(task, cpu);
+@@ -1245,22 +1235,21 @@ long do_fork(unsigned long clone_flags,
+ {
+ 	struct task_struct *p;
+ 	int trace = 0;
+-	long pid;
++	long pid = alloc_pidmap();
+ 
+-	clone_flags &= ~CLONE_IDLETASK;
++	if (pid < 0)
++		return -EAGAIN;
+ 	if (unlikely(current->ptrace)) {
+ 		trace = fork_traceflag (clone_flags);
+ 		if (trace)
+ 			clone_flags |= CLONE_PTRACE;
+ 	}
+ 
+-	p = copy_process(clone_flags, stack_start, regs, stack_size, parent_tidptr, child_tidptr);
++	p = copy_process(clone_flags, stack_start, regs, stack_size, parent_tidptr, child_tidptr, pid);
+ 	/*
+ 	 * Do this prior waking up the new thread - the thread pointer
+ 	 * might get invalid after that point, if the thread exits quickly.
+ 	 */
+-	pid = IS_ERR(p) ? PTR_ERR(p) : p->pid;
+-
+ 	if (!IS_ERR(p)) {
+ 		struct completion vfork;
+ 
+@@ -1293,6 +1282,9 @@ long do_fork(unsigned long clone_flags,
+ 			if (unlikely (current->ptrace & PT_TRACE_VFORK_DONE))
+ 				ptrace_notify ((PTRACE_EVENT_VFORK_DONE << 8) | SIGTRAP);
+ 		}
++	} else {
++		free_pidmap(pid);
++		pid = PTR_ERR(p);
+ 	}
+ 	return pid;
+ }
+_

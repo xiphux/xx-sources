@@ -1,0 +1,266 @@
+
+
+Remove now-unneeded open-coded unlikelies around IS_ERR().
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ia64/sn/io/hwgfs/interface.c |    4 ++--
+ 25-akpm/arch/x86_64/ia32/sys_ia32.c       |    2 +-
+ 25-akpm/fs/ntfs/aops.c                    |    6 +++---
+ 25-akpm/fs/ntfs/attrib.c                  |    4 ++--
+ 25-akpm/fs/ntfs/dir.c                     |   10 +++++-----
+ 25-akpm/fs/ntfs/index.c                   |    2 +-
+ 25-akpm/fs/ntfs/inode.c                   |    8 ++++----
+ 25-akpm/fs/ntfs/mft.c                     |    4 ++--
+ 25-akpm/fs/ntfs/namei.c                   |    6 +++---
+ 25-akpm/ipc/mqueue.c                      |    2 +-
+ 10 files changed, 24 insertions(+), 24 deletions(-)
+
+diff -puN arch/ia64/sn/io/hwgfs/interface.c~is_err-unlikeliness-cleanup arch/ia64/sn/io/hwgfs/interface.c
+--- 25/arch/ia64/sn/io/hwgfs/interface.c~is_err-unlikeliness-cleanup	2004-08-02 21:08:31.996895072 -0700
++++ 25-akpm/arch/ia64/sn/io/hwgfs/interface.c	2004-08-02 21:08:32.013892488 -0700
+@@ -42,7 +42,7 @@ walk_parents_mkdir(
+ 
+ 		nd->dentry = lookup_create(nd, is_dir);
+ 		nd->flags |= LOOKUP_PARENT;
+-		if (unlikely(IS_ERR(nd->dentry)))
++		if (IS_ERR(nd->dentry))
+ 			return PTR_ERR(nd->dentry);
+ 
+ 		if (!nd->dentry->d_inode)
+@@ -89,7 +89,7 @@ hwgfs_decode(
+ 
+ 	*dentry = lookup_create(&nd, is_dir);
+ 
+-	if (unlikely(IS_ERR(*dentry)))
++	if (IS_ERR(*dentry))
+ 		return PTR_ERR(*dentry);
+ 	*parent_inode = (*dentry)->d_parent->d_inode;
+ 	return 0;
+diff -puN arch/x86_64/ia32/sys_ia32.c~is_err-unlikeliness-cleanup arch/x86_64/ia32/sys_ia32.c
+--- 25/arch/x86_64/ia32/sys_ia32.c~is_err-unlikeliness-cleanup	2004-08-02 21:08:31.997894920 -0700
++++ 25-akpm/arch/x86_64/ia32/sys_ia32.c	2004-08-02 21:08:32.015892184 -0700
+@@ -1263,7 +1263,7 @@ asmlinkage long sys32_open(const char __
+ 		if (fd >= 0) {
+ 			struct file *f = filp_open(tmp, flags, mode);
+ 			error = PTR_ERR(f);
+-			if (unlikely(IS_ERR(f))) {
++			if (IS_ERR(f)) {
+ 				put_unused_fd(fd); 
+ 				fd = error;
+ 			} else
+diff -puN fs/ntfs/aops.c~is_err-unlikeliness-cleanup fs/ntfs/aops.c
+--- 25/fs/ntfs/aops.c~is_err-unlikeliness-cleanup	2004-08-02 21:08:31.999894616 -0700
++++ 25-akpm/fs/ntfs/aops.c	2004-08-02 21:08:32.020891424 -0700
+@@ -393,7 +393,7 @@ int ntfs_readpage(struct file *file, str
+ 
+ 	/* Map, pin, and lock the mft record. */
+ 	mrec = map_mft_record(base_ni);
+-	if (unlikely(IS_ERR(mrec))) {
++	if (IS_ERR(mrec)) {
+ 		err = PTR_ERR(mrec);
+ 		goto err_out;
+ 	}
+@@ -1111,7 +1111,7 @@ static int ntfs_writepage(struct page *p
+ 
+ 	/* Map, pin, and lock the mft record. */
+ 	m = map_mft_record(base_ni);
+-	if (unlikely(IS_ERR(m))) {
++	if (IS_ERR(m)) {
+ 		err = PTR_ERR(m);
+ 		m = NULL;
+ 		ctx = NULL;
+@@ -1885,7 +1885,7 @@ static int ntfs_commit_write(struct file
+ 
+ 	/* Map, pin, and lock the mft record. */
+ 	m = map_mft_record(base_ni);
+-	if (unlikely(IS_ERR(m))) {
++	if (IS_ERR(m)) {
+ 		err = PTR_ERR(m);
+ 		m = NULL;
+ 		ctx = NULL;
+diff -puN fs/ntfs/attrib.c~is_err-unlikeliness-cleanup fs/ntfs/attrib.c
+--- 25/fs/ntfs/attrib.c~is_err-unlikeliness-cleanup	2004-08-02 21:08:32.001894312 -0700
++++ 25-akpm/fs/ntfs/attrib.c	2004-08-02 21:08:32.024890816 -0700
+@@ -507,7 +507,7 @@ runlist_element *ntfs_merge_runlists(run
+ 	/* Check for silly calling... */
+ 	if (unlikely(!srl))
+ 		return drl;
+-	if (unlikely(IS_ERR(srl) || IS_ERR(drl)))
++	if (IS_ERR(srl) || IS_ERR(drl))
+ 		return ERR_PTR(-EINVAL);
+ 
+ 	/* Check for the case where the first mapping is being done now. */
+@@ -980,7 +980,7 @@ int ntfs_map_runlist(ntfs_inode *ni, VCN
+ 
+ 		rl = decompress_mapping_pairs(ni->vol, ctx->attr,
+ 				ni->runlist.rl);
+-		if (unlikely(IS_ERR(rl)))
++		if (IS_ERR(rl))
+ 			err = PTR_ERR(rl);
+ 		else
+ 			ni->runlist.rl = rl;
+diff -puN fs/ntfs/dir.c~is_err-unlikeliness-cleanup fs/ntfs/dir.c
+--- 25/fs/ntfs/dir.c~is_err-unlikeliness-cleanup	2004-08-02 21:08:32.002894160 -0700
++++ 25-akpm/fs/ntfs/dir.c	2004-08-02 21:08:32.016892032 -0700
+@@ -95,7 +95,7 @@ MFT_REF ntfs_lookup_inode_by_name(ntfs_i
+ 	BUG_ON(NInoAttr(dir_ni));
+ 	/* Get hold of the mft record for the directory. */
+ 	m = map_mft_record(dir_ni);
+-	if (unlikely(IS_ERR(m))) {
++	if (IS_ERR(m)) {
+ 		ntfs_error(sb, "map_mft_record() failed with error code %ld.",
+ 				-PTR_ERR(m));
+ 		return ERR_MREF(PTR_ERR(m));
+@@ -1170,7 +1170,7 @@ static int ntfs_readdir(struct file *fil
+ 		goto skip_index_root;
+ 	/* Get hold of the mft record for the directory. */
+ 	m = map_mft_record(ndir);
+-	if (unlikely(IS_ERR(m))) {
++	if (IS_ERR(m)) {
+ 		err = PTR_ERR(m);
+ 		m = NULL;
+ 		goto err_out;
+@@ -1261,7 +1261,7 @@ skip_index_root:
+ 	if (unlikely(!bmp_vi)) {
+ 		ntfs_debug("Inode 0x%lx, regetting index bitmap.", vdir->i_ino);
+ 		bmp_vi = ntfs_attr_iget(vdir, AT_BITMAP, I30, 4);
+-		if (unlikely(IS_ERR(bmp_vi))) {
++		if (IS_ERR(bmp_vi)) {
+ 			ntfs_error(sb, "Failed to get bitmap attribute.");
+ 			err = PTR_ERR(bmp_vi);
+ 			goto err_out;
+@@ -1286,7 +1286,7 @@ get_next_bmp_page:
+ 			((PAGE_CACHE_SIZE * 8) - 1));
+ 	bmp_page = ntfs_map_page(bmp_mapping,
+ 			bmp_pos >> (3 + PAGE_CACHE_SHIFT));
+-	if (unlikely(IS_ERR(bmp_page))) {
++	if (IS_ERR(bmp_page)) {
+ 		ntfs_error(sb, "Reading index bitmap failed.");
+ 		err = PTR_ERR(bmp_page);
+ 		bmp_page = NULL;
+@@ -1327,7 +1327,7 @@ find_next_index_buffer:
+ 		 * reading it from disk if necessary.
+ 		 */
+ 		ia_page = ntfs_map_page(ia_mapping, ia_pos >> PAGE_CACHE_SHIFT);
+-		if (unlikely(IS_ERR(ia_page))) {
++		if (IS_ERR(ia_page)) {
+ 			ntfs_error(sb, "Reading index allocation data failed.");
+ 			err = PTR_ERR(ia_page);
+ 			ia_page = NULL;
+diff -puN fs/ntfs/index.c~is_err-unlikeliness-cleanup fs/ntfs/index.c
+--- 25/fs/ntfs/index.c~is_err-unlikeliness-cleanup	2004-08-02 21:08:32.004893856 -0700
++++ 25-akpm/fs/ntfs/index.c	2004-08-02 21:08:32.025890664 -0700
+@@ -157,7 +157,7 @@ int ntfs_index_lookup(const void *key, c
+ 	}
+ 	/* Get hold of the mft record for the index inode. */
+ 	m = map_mft_record(base_ni);
+-	if (unlikely(IS_ERR(m))) {
++	if (IS_ERR(m)) {
+ 		ntfs_error(sb, "map_mft_record() failed with error code %ld.",
+ 				-PTR_ERR(m));
+ 		return PTR_ERR(m);
+diff -puN fs/ntfs/inode.c~is_err-unlikeliness-cleanup fs/ntfs/inode.c
+--- 25/fs/ntfs/inode.c~is_err-unlikeliness-cleanup	2004-08-02 21:08:32.006893552 -0700
++++ 25-akpm/fs/ntfs/inode.c	2004-08-02 21:08:32.022891120 -0700
+@@ -900,7 +900,7 @@ skip_attr_list_load:
+ 		ctx = NULL;
+ 		/* Get the index bitmap attribute inode. */
+ 		bvi = ntfs_attr_iget(vi, AT_BITMAP, I30, 4);
+-		if (unlikely(IS_ERR(bvi))) {
++		if (IS_ERR(bvi)) {
+ 			ntfs_error(vi->i_sb, "Failed to get bitmap attribute.");
+ 			err = PTR_ERR(bvi);
+ 			goto unm_err_out;
+@@ -1552,7 +1552,7 @@ static int ntfs_read_locked_index_inode(
+ 	ctx = NULL;
+ 	/* Get the index bitmap attribute inode. */
+ 	bvi = ntfs_attr_iget(base_vi, AT_BITMAP, ni->name, ni->name_len);
+-	if (unlikely(IS_ERR(bvi))) {
++	if (IS_ERR(bvi)) {
+ 		ntfs_error(vi->i_sb, "Failed to get bitmap attribute.");
+ 		err = PTR_ERR(bvi);
+ 		goto unm_err_out;
+@@ -2341,7 +2341,7 @@ int ntfs_write_inode(struct inode *vi, i
+ 	}
+ 	/* Map, pin, and lock the mft record belonging to the inode. */
+ 	m = map_mft_record(ni);
+-	if (unlikely(IS_ERR(m))) {
++	if (IS_ERR(m)) {
+ 		err = PTR_ERR(m);
+ 		goto err_out;
+ 	}
+@@ -2417,7 +2417,7 @@ int ntfs_write_inode(struct inode *vi, i
+ 				MFT_RECORD *tm = map_mft_record(tni);
+ 				int ret;
+ 
+-				if (unlikely(IS_ERR(tm))) {
++				if (IS_ERR(tm)) {
+ 					if (!err || err == -ENOMEM)
+ 						err = PTR_ERR(tm);
+ 					continue;
+diff -puN fs/ntfs/mft.c~is_err-unlikeliness-cleanup fs/ntfs/mft.c
+--- 25/fs/ntfs/mft.c~is_err-unlikeliness-cleanup	2004-08-02 21:08:32.007893400 -0700
++++ 25-akpm/fs/ntfs/mft.c	2004-08-02 21:08:32.017891880 -0700
+@@ -391,7 +391,7 @@ map_err_out:
+ 	ni->ext.base_ntfs_ino = base_ni;
+ 	/* Now map the record. */
+ 	m = map_mft_record(ni);
+-	if (unlikely(IS_ERR(m))) {
++	if (IS_ERR(m)) {
+ 		up(&base_ni->extent_lock);
+ 		atomic_dec(&base_ni->count);
+ 		ntfs_clear_extent_inode(ni);
+@@ -571,7 +571,7 @@ static int sync_mft_mirror(ntfs_inode *n
+ 	/* Get the page containing the mirror copy of the mft record @m. */
+ 	page = ntfs_map_page(vol->mftmirr_ino->i_mapping, ni->mft_no >>
+ 			(PAGE_CACHE_SHIFT - vol->mft_record_size_bits));
+-	if (unlikely(IS_ERR(page))) {
++	if (IS_ERR(page)) {
+ 		ntfs_error(vol->sb, "Failed to map mft mirror page.");
+ 		err = PTR_ERR(page);
+ 		goto err_out;
+diff -puN fs/ntfs/namei.c~is_err-unlikeliness-cleanup fs/ntfs/namei.c
+--- 25/fs/ntfs/namei.c~is_err-unlikeliness-cleanup	2004-08-02 21:08:32.009893096 -0700
++++ 25-akpm/fs/ntfs/namei.c	2004-08-02 21:08:32.018891728 -0700
+@@ -376,7 +376,7 @@ struct dentry *ntfs_get_parent(struct de
+ 	ntfs_debug("Entering for inode 0x%lx.", vi->i_ino);
+ 	/* Get the mft record of the inode belonging to the child dentry. */
+ 	mrec = map_mft_record(ni);
+-	if (unlikely(IS_ERR(mrec)))
++	if (IS_ERR(mrec))
+ 		return (struct dentry *)mrec;
+ 	/* Find the first file name attribute in the mft record. */
+ 	ctx = get_attr_search_ctx(ni, mrec);
+@@ -408,7 +408,7 @@ try_next:
+ 	unmap_mft_record(ni);
+ 	/* Get the inode of the parent directory. */
+ 	parent_vi = ntfs_iget(vi->i_sb, parent_ino);
+-	if (unlikely(IS_ERR(parent_vi) || is_bad_inode(parent_vi))) {
++	if (IS_ERR(parent_vi) || unlikely(is_bad_inode(parent_vi))) {
+ 		if (!IS_ERR(parent_vi))
+ 			iput(parent_vi);
+ 		ntfs_error(vi->i_sb, "Failed to get parent directory inode "
+@@ -451,7 +451,7 @@ struct dentry *ntfs_get_dentry(struct su
+ 
+ 	ntfs_debug("Entering for inode 0x%lx, generation 0x%x.", ino, gen);
+ 	vi = ntfs_iget(sb, ino);
+-	if (unlikely(IS_ERR(vi))) {
++	if (IS_ERR(vi)) {
+ 		ntfs_error(sb, "Failed to get inode 0x%lx.", ino);
+ 		return (struct dentry *)vi;
+ 	}
+diff -puN ipc/mqueue.c~is_err-unlikeliness-cleanup ipc/mqueue.c
+--- 25/ipc/mqueue.c~is_err-unlikeliness-cleanup	2004-08-02 21:08:32.010892944 -0700
++++ 25-akpm/ipc/mqueue.c	2004-08-02 21:08:32.026890512 -0700
+@@ -828,7 +828,7 @@ asmlinkage long sys_mq_timedsend(mqd_t m
+ 	/* First try to allocate memory, before doing anything with
+ 	 * existing queues. */
+ 	msg_ptr = load_msg(u_msg_ptr, msg_len);
+-	if (unlikely(IS_ERR(msg_ptr))) {
++	if (IS_ERR(msg_ptr)) {
+ 		ret = PTR_ERR(msg_ptr);
+ 		goto out_fput;
+ 	}
+_

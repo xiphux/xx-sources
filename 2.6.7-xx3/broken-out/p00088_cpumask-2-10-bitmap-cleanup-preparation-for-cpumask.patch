@@ -1,0 +1,261 @@
+
+From: Paul Jackson <pj@sgi.com>
+
+Document the bitmap bit model and handling of unused bits.
+
+Tighten up bitmap so it does not generate nonzero bits in the unused tail if
+it is not given any on input.
+
+Add intersects, subset, xor and andnot operators.  Change bitmap_complement to
+take two operands.
+
+Add a couple of missing 'const' qualifiers on bitops test_bit and bitmap_equal
+args.
+
+Signed-off-by: Paul Jackson <pj@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/x86_64/kernel/smpboot.c        |    2 
+ 25-akpm/include/asm-generic/bitops.h        |    2 
+ 25-akpm/include/asm-generic/cpumask_array.h |    2 
+ 25-akpm/include/asm-i386/mpspec.h           |    2 
+ 25-akpm/include/asm-x86_64/mpspec.h         |    2 
+ 25-akpm/include/linux/bitmap.h              |   12 +++
+ 25-akpm/lib/bitmap.c                        |   87 ++++++++++++++++++++++++++--
+ 25-akpm/mm/mempolicy.c                      |   12 +--
+ 8 files changed, 101 insertions(+), 20 deletions(-)
+
+diff -puN arch/x86_64/kernel/smpboot.c~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask arch/x86_64/kernel/smpboot.c
+--- 25/arch/x86_64/kernel/smpboot.c~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask	Thu Jun 10 13:53:29 2004
++++ 25-akpm/arch/x86_64/kernel/smpboot.c	Thu Jun 10 13:53:29 2004
+@@ -827,7 +827,7 @@ static void __init smp_boot_cpus(unsigne
+ 		if (apicid == boot_cpu_id || (apicid == BAD_APICID))
+ 			continue;
+ 
+-		if (!cpu_isset(apicid, phys_cpu_present_map))
++		if (!physid_isset(apicid, phys_cpu_present_map))
+ 			continue;
+ 		if ((max_cpus >= 0) && (max_cpus <= cpucount+1))
+ 			continue;
+diff -puN include/asm-generic/bitops.h~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask include/asm-generic/bitops.h
+--- 25/include/asm-generic/bitops.h~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask	Thu Jun 10 13:53:29 2004
++++ 25-akpm/include/asm-generic/bitops.h	Thu Jun 10 13:53:29 2004
+@@ -42,7 +42,7 @@ extern __inline__ int clear_bit(int nr, 
+ 	return retval;
+ }
+ 
+-extern __inline__ int test_bit(int nr, long * addr)
++extern __inline__ int test_bit(int nr, const unsigned long * addr)
+ {
+ 	int	mask;
+ 
+diff -puN include/asm-generic/cpumask_array.h~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask include/asm-generic/cpumask_array.h
+--- 25/include/asm-generic/cpumask_array.h~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask	Thu Jun 10 13:53:29 2004
++++ 25-akpm/include/asm-generic/cpumask_array.h	Thu Jun 10 13:53:29 2004
+@@ -17,7 +17,7 @@
+ #define cpus_and(dst,src1,src2)	bitmap_and((dst).mask,(src1).mask, (src2).mask, NR_CPUS)
+ #define cpus_or(dst,src1,src2)	bitmap_or((dst).mask, (src1).mask, (src2).mask, NR_CPUS)
+ #define cpus_clear(map)		bitmap_zero((map).mask, NR_CPUS)
+-#define cpus_complement(map)	bitmap_complement((map).mask, NR_CPUS)
++#define cpus_complement(map)	bitmap_complement((map).mask, (map).mask, NR_CPUS)
+ #define cpus_equal(map1, map2)	bitmap_equal((map1).mask, (map2).mask, NR_CPUS)
+ #define cpus_empty(map)		bitmap_empty(map.mask, NR_CPUS)
+ #define cpus_addr(map)		((map).mask)
+diff -puN include/asm-i386/mpspec.h~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask include/asm-i386/mpspec.h
+--- 25/include/asm-i386/mpspec.h~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask	Thu Jun 10 13:53:29 2004
++++ 25-akpm/include/asm-i386/mpspec.h	Thu Jun 10 13:53:29 2004
+@@ -53,7 +53,7 @@ typedef struct physid_mask physid_mask_t
+ #define physids_and(dst, src1, src2)		bitmap_and((dst).mask, (src1).mask, (src2).mask, MAX_APICS)
+ #define physids_or(dst, src1, src2)		bitmap_or((dst).mask, (src1).mask, (src2).mask, MAX_APICS)
+ #define physids_clear(map)			bitmap_zero((map).mask, MAX_APICS)
+-#define physids_complement(map)			bitmap_complement((map).mask, MAX_APICS)
++#define physids_complement(map)			bitmap_complement((map).mask, (map).mask, MAX_APICS)
+ #define physids_empty(map)			bitmap_empty((map).mask, MAX_APICS)
+ #define physids_equal(map1, map2)		bitmap_equal((map1).mask, (map2).mask, MAX_APICS)
+ #define physids_weight(map)			bitmap_weight((map).mask, MAX_APICS)
+diff -puN include/asm-x86_64/mpspec.h~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask include/asm-x86_64/mpspec.h
+--- 25/include/asm-x86_64/mpspec.h~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask	Thu Jun 10 13:53:29 2004
++++ 25-akpm/include/asm-x86_64/mpspec.h	Thu Jun 10 13:53:29 2004
+@@ -212,7 +212,7 @@ typedef struct physid_mask physid_mask_t
+ #define physids_and(dst, src1, src2)		bitmap_and((dst).mask, (src1).mask, (src2).mask, MAX_APICS)
+ #define physids_or(dst, src1, src2)		bitmap_or((dst).mask, (src1).mask, (src2).mask, MAX_APICS)
+ #define physids_clear(map)			bitmap_zero((map).mask, MAX_APICS)
+-#define physids_complement(map)			bitmap_complement((map).mask, MAX_APICS)
++#define physids_complement(map)			bitmap_complement((map).mask, (map).mask, MAX_APICS)
+ #define physids_empty(map)			bitmap_empty((map).mask, MAX_APICS)
+ #define physids_equal(map1, map2)		bitmap_equal((map1).mask, (map2).mask, MAX_APICS)
+ #define physids_weight(map)			bitmap_weight((map).mask, MAX_APICS)
+diff -puN include/linux/bitmap.h~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask include/linux/bitmap.h
+--- 25/include/linux/bitmap.h~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask	Thu Jun 10 13:53:29 2004
++++ 25-akpm/include/linux/bitmap.h	Thu Jun 10 13:53:29 2004
+@@ -13,8 +13,8 @@
+ int bitmap_empty(const unsigned long *bitmap, int bits);
+ int bitmap_full(const unsigned long *bitmap, int bits);
+ int bitmap_equal(const unsigned long *bitmap1,
+-			unsigned long *bitmap2, int bits);
+-void bitmap_complement(unsigned long *bitmap, int bits);
++			const unsigned long *bitmap2, int bits);
++void bitmap_complement(unsigned long *dst, const unsigned long *src, int bits);
+ 
+ static inline void bitmap_zero(unsigned long *bitmap, int bits)
+ {
+@@ -41,6 +41,14 @@ void bitmap_and(unsigned long *dst, cons
+ 			const unsigned long *bitmap2, int bits);
+ void bitmap_or(unsigned long *dst, const unsigned long *bitmap1,
+ 			const unsigned long *bitmap2, int bits);
++void bitmap_xor(unsigned long *dst, const unsigned long *bitmap1,
++			const unsigned long *bitmap2, int bits);
++void bitmap_andnot(unsigned long *dst, const unsigned long *bitmap1,
++			const unsigned long *bitmap2, int bits);
++int bitmap_intersects(const unsigned long *bitmap1,
++			const unsigned long *bitmap2, int bits);
++int bitmap_subset(const unsigned long *bitmap1,
++			const unsigned long *bitmap2, int bits);
+ int bitmap_weight(const unsigned long *bitmap, int bits);
+ int bitmap_scnprintf(char *buf, unsigned int buflen,
+ 			const unsigned long *maskp, int bits);
+diff -puN lib/bitmap.c~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask lib/bitmap.c
+--- 25/lib/bitmap.c~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask	Thu Jun 10 13:53:29 2004
++++ 25-akpm/lib/bitmap.c	Thu Jun 10 13:53:29 2004
+@@ -12,6 +12,26 @@
+ #include <asm/bitops.h>
+ #include <asm/uaccess.h>
+ 
++/*
++ * bitmaps provide an array of bits, implemented using an an
++ * array of unsigned longs.  The number of valid bits in a
++ * given bitmap need not be an exact multiple of BITS_PER_LONG.
++ *
++ * The possible unused bits in the last, partially used word
++ * of a bitmap are 'don't care'.  The implementation makes
++ * no particular effort to keep them zero.  It ensures that
++ * their value will not affect the results of any operation.
++ * The bitmap operations that return Boolean (bitmap_empty,
++ * for example) or scalar (bitmap_weight, for example) results
++ * carefully filter out these unused bits from impacting their
++ * results.
++ *
++ * These operations actually hold to a slightly stronger rule:
++ * if you don't input any bitmaps to these ops that have some
++ * unused bits set, then they won't output any set unused bits
++ * in output bitmaps.
++ */
++
+ int bitmap_empty(const unsigned long *bitmap, int bits)
+ {
+ 	int k, lim = bits/BITS_PER_LONG;
+@@ -43,7 +63,7 @@ int bitmap_full(const unsigned long *bit
+ EXPORT_SYMBOL(bitmap_full);
+ 
+ int bitmap_equal(const unsigned long *bitmap1,
+-		unsigned long *bitmap2, int bits)
++		const unsigned long *bitmap2, int bits)
+ {
+ 	int k, lim = bits/BITS_PER_LONG;
+ 	for (k = 0; k < lim; ++k)
+@@ -59,13 +79,14 @@ int bitmap_equal(const unsigned long *bi
+ }
+ EXPORT_SYMBOL(bitmap_equal);
+ 
+-void bitmap_complement(unsigned long *bitmap, int bits)
++void bitmap_complement(unsigned long *dst, const unsigned long *src, int bits)
+ {
+-	int k;
+-	int nr = BITS_TO_LONGS(bits);
++	int k, lim = bits/BITS_PER_LONG;
++	for (k = 0; k < lim; ++k)
++		dst[k] = ~src[k];
+ 
+-	for (k = 0; k < nr; ++k)
+-		bitmap[k] = ~bitmap[k];
++	if (bits % BITS_PER_LONG)
++		dst[k] = ~src[k] & ((1UL << (bits % BITS_PER_LONG)) - 1);
+ }
+ EXPORT_SYMBOL(bitmap_complement);
+ 
+@@ -173,6 +194,60 @@ void bitmap_or(unsigned long *dst, const
+ }
+ EXPORT_SYMBOL(bitmap_or);
+ 
++void bitmap_xor(unsigned long *dst, const unsigned long *bitmap1,
++				const unsigned long *bitmap2, int bits)
++{
++	int k;
++	int nr = BITS_TO_LONGS(bits);
++
++	for (k = 0; k < nr; k++)
++		dst[k] = bitmap1[k] ^ bitmap2[k];
++}
++EXPORT_SYMBOL(bitmap_xor);
++
++void bitmap_andnot(unsigned long *dst, const unsigned long *bitmap1,
++				const unsigned long *bitmap2, int bits)
++{
++	int k;
++	int nr = BITS_TO_LONGS(bits);
++
++	for (k = 0; k < nr; k++)
++		dst[k] = bitmap1[k] & ~bitmap2[k];
++}
++EXPORT_SYMBOL(bitmap_andnot);
++
++int bitmap_intersects(const unsigned long *bitmap1,
++				const unsigned long *bitmap2, int bits)
++{
++	int k, lim = bits/BITS_PER_LONG;
++	for (k = 0; k < lim; ++k)
++		if (bitmap1[k] & bitmap2[k])
++			return 1;
++
++	if (bits % BITS_PER_LONG)
++		if ((bitmap1[k] & bitmap2[k]) &
++				((1UL << (bits % BITS_PER_LONG)) - 1))
++			return 1;
++	return 0;
++}
++EXPORT_SYMBOL(bitmap_intersects);
++
++int bitmap_subset(const unsigned long *bitmap1,
++				const unsigned long *bitmap2, int bits)
++{
++	int k, lim = bits/BITS_PER_LONG;
++	for (k = 0; k < lim; ++k)
++		if (bitmap1[k] & ~bitmap2[k])
++			return 0;
++
++	if (bits % BITS_PER_LONG)
++		if ((bitmap1[k] & ~bitmap2[k]) &
++				((1UL << (bits % BITS_PER_LONG)) - 1))
++			return 0;
++	return 1;
++}
++EXPORT_SYMBOL(bitmap_subset);
++
+ #if BITS_PER_LONG == 32
+ int bitmap_weight(const unsigned long *bitmap, int bits)
+ {
+diff -puN mm/mempolicy.c~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask mm/mempolicy.c
+--- 25/mm/mempolicy.c~cpumask-2-10-bitmap-cleanup-preparation-for-cpumask	Thu Jun 10 13:53:29 2004
++++ 25-akpm/mm/mempolicy.c	Thu Jun 10 13:53:29 2004
+@@ -93,14 +93,12 @@ static struct mempolicy default_policy =
+ /* Check if all specified nodes are online */
+ static int nodes_online(unsigned long *nodes)
+ {
+-	DECLARE_BITMAP(offline, MAX_NUMNODES);
++	DECLARE_BITMAP(online2, MAX_NUMNODES);
+ 
+-	bitmap_copy(offline, node_online_map, MAX_NUMNODES);
+-	if (bitmap_empty(offline, MAX_NUMNODES))
+-		set_bit(0, offline);
+-	bitmap_complement(offline, MAX_NUMNODES);
+-	bitmap_and(offline, offline, nodes, MAX_NUMNODES);
+-	if (!bitmap_empty(offline, MAX_NUMNODES))
++	bitmap_copy(online2, node_online_map, MAX_NUMNODES);
++	if (bitmap_empty(online2, MAX_NUMNODES))
++		set_bit(0, online2);
++	if (!bitmap_subset(nodes, online2, MAX_NUMNODES))
+ 		return -EINVAL;
+ 	return 0;
+ }
+_

@@ -1,0 +1,339 @@
+
+From: Dave Hansen <haveblue@us.ibm.com>
+
+Rick, I bet you didn't think your nerf weapons would be so effective in
+getting that compile error fixed, did you?
+
+Applying the attached patch and commenting out this line:
+
+arch/i386/kernel/nmi.c: In function `proc_unknown_nmi_panic':
+arch/i386/kernel/nmi.c:558: too few arguments to function
+`proc_dointvec'
+
+will let it compile.  
+
+I'm taking a look at the nmi.c error now, although I think it's
+unrelated.
+
+My testing of the original patch was flawed from the beginning because I
+never tested them in isolation.  If you haven't already, you should
+probably drop them.  I'll rework and make sure to get testing on a wider
+variety of arches. 
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Index: xx-sources/arch/alpha/mm/numa.c
+===================================================================
+--- xx-sources.orig/arch/alpha/mm/numa.c	2004-08-14 13:29:03.680520272 -0400
++++ xx-sources/arch/alpha/mm/numa.c	2004-08-14 13:30:07.548810816 -0400
+@@ -313,7 +313,7 @@
+ 			zones_size[ZONE_DMA] = dma_local_pfn;
+ 			zones_size[ZONE_NORMAL] = (end_pfn - start_pfn) - dma_local_pfn;
+ 		}
+-		free_area_init_node(nid, NODE_DATA(nid), zones_size, start_pfn, NULL);
++		free_area_init_node(nid, NODE_DATA(nid), NULL, zones_size, start_pfn, NULL);
+ 	}
+ 
+ 	/* Initialize the kernel's ZERO_PGE. */
+Index: xx-sources/arch/arm/mm/init.c
+===================================================================
+--- xx-sources.orig/arch/arm/mm/init.c	2004-08-14 13:29:25.721169584 -0400
++++ xx-sources/arch/arm/mm/init.c	2004-08-14 13:30:07.552810208 -0400
+@@ -495,7 +495,7 @@
+ 		 */
+ 		arch_adjust_zones(node, zone_size, zhole_size);
+ 
+-		free_area_init_node(node, pgdat, zone_size,
++		free_area_init_node(node, pgdat, NULL, zone_size,
+ 				bdata->node_boot_start >> PAGE_SHIFT, zhole_size);
+ 	}
+ 
+Index: xx-sources/arch/ia64/mm/contig.c
+===================================================================
+--- xx-sources.orig/arch/ia64/mm/contig.c	2004-08-14 13:29:25.722169432 -0400
++++ xx-sources/arch/ia64/mm/contig.c	2004-08-14 13:30:07.553810056 -0400
+@@ -267,7 +267,7 @@
+ 	efi_memmap_walk(find_largest_hole, (u64 *)&max_gap);
+ 	if (max_gap < LARGE_GAP) {
+ 		vmem_map = (struct page *) 0;
+-		free_area_init_node(0, &contig_page_data, zones_size, 0,
++		free_area_init_node(0, &contig_page_data, NULL, zones_size, 0,
+ 				    zholes_size);
+ 		mem_map = contig_page_data.node_mem_map;
+ 	} else {
+@@ -280,8 +280,7 @@
+ 		vmem_map = (struct page *) vmalloc_end;
+ 		efi_memmap_walk(create_mem_map_page_table, 0);
+ 
+-		contig_page_data.node_mem_map = vmem_map;
+-		free_area_init_node(0, &contig_page_data, zones_size,
++		free_area_init_node(0, &contig_page_data, vmem_map, zones_size,
+ 				    0, zholes_size);
+ 
+ 		mem_map = contig_page_data.node_mem_map;
+Index: xx-sources/arch/ia64/mm/discontig.c
+===================================================================
+--- xx-sources.orig/arch/ia64/mm/discontig.c	2004-08-14 13:30:02.055645904 -0400
++++ xx-sources/arch/ia64/mm/discontig.c	2004-08-14 13:30:07.555809752 -0400
+@@ -665,7 +665,8 @@
+ 
+ 		pfn_offset = mem_data[node].min_pfn;
+ 
+-		free_area_init_node(node, NODE_DATA(node), zones_size,
++		free_area_init_node(node, NODE_DATA(node),
++				    vmem_map + pfn_offset, zones_size,
+ 				    pfn_offset, zholes_size);
+ 	}
+ 
+Index: xx-sources/arch/ia64/mm/init.c
+===================================================================
+--- xx-sources.orig/arch/ia64/mm/init.c	2004-08-14 13:30:02.056645752 -0400
++++ xx-sources/arch/ia64/mm/init.c	2004-08-14 13:30:07.556809600 -0400
+@@ -429,22 +429,20 @@
+ 		    / sizeof(struct page));
+ 
+ 	if (map_start < map_end)
+-		memmap_init_zone((unsigned long)(map_end - map_start),
++		memmap_init_zone(map_start, (unsigned long) (map_end - map_start),
+ 				 args->nid, args->zone, page_to_pfn(map_start));
+ 	return 0;
+ }
+ 
+ void
+-memmap_init (unsigned long size, int nid, unsigned long zone,
+-	     unsigned long start_pfn)
++memmap_init (struct page *start, unsigned long size, int nid,
++	     unsigned long zone, unsigned long start_pfn)
+ {
+ 	if (!vmem_map)
+-		memmap_init_zone(size, nid, zone, start_pfn);
++		memmap_init_zone(start, size, nid, zone, start_pfn);
+ 	else {
+-		struct page *start;
+ 		struct memmap_init_callback_data args;
+ 
+-		start = pfn_to_page(start_pfn);
+ 		args.start = start;
+ 		args.end = start + size;
+ 		args.nid = nid;
+Index: xx-sources/arch/mips/sgi-ip27/ip27-memory.c
+===================================================================
+--- xx-sources.orig/arch/mips/sgi-ip27/ip27-memory.c	2004-08-14 13:29:25.723169280 -0400
++++ xx-sources/arch/mips/sgi-ip27/ip27-memory.c	2004-08-14 13:30:07.558809296 -0400
+@@ -225,7 +225,7 @@
+ 		pfn_t end_pfn = node_getmaxclick(node) + 1;
+ 
+ 		zones_size[ZONE_DMA] = end_pfn - start_pfn;
+-		free_area_init_node(node, NODE_DATA(node),
++		free_area_init_node(node, NODE_DATA(node), NULL,
+ 				zones_size, start_pfn, NULL);
+ 
+ 		if (end_pfn > max_low_pfn)
+Index: xx-sources/arch/ppc64/mm/init.c
+===================================================================
+--- xx-sources.orig/arch/ppc64/mm/init.c	2004-08-14 13:29:03.684519664 -0400
++++ xx-sources/arch/ppc64/mm/init.c	2004-08-14 13:30:07.562808688 -0400
+@@ -587,7 +587,7 @@
+ 	zones_size[ZONE_DMA] = top_of_ram >> PAGE_SHIFT;
+ 	zholes_size[ZONE_DMA] = (top_of_ram - total_ram) >> PAGE_SHIFT;
+ 
+-	free_area_init_node(0, &contig_page_data, zones_size,
++	free_area_init_node(0, &contig_page_data, NULL, zones_size,
+ 			    __pa(PAGE_OFFSET) >> PAGE_SHIFT, zholes_size);
+ 	mem_map = contig_page_data.node_mem_map;
+ }
+Index: xx-sources/arch/sh/mm/init.c
+===================================================================
+--- xx-sources.orig/arch/sh/mm/init.c	2004-08-14 13:29:03.685519512 -0400
++++ xx-sources/arch/sh/mm/init.c	2004-08-14 13:30:07.564808384 -0400
+@@ -225,7 +225,7 @@
+ 	 */
+ 	zones_size[ZONE_DMA] = __MEMORY_SIZE_2ND >> PAGE_SHIFT;
+ 	zones_size[ZONE_NORMAL] = 0;
+-	free_area_init_node(1, NODE_DATA(1), zones_size, __MEMORY_START_2ND >> PAGE_SHIFT, 0);
++	free_area_init_node(1, NODE_DATA(1), 0, zones_size, __MEMORY_START_2ND >> PAGE_SHIFT, 0);
+ #endif
+ }
+ 
+Index: xx-sources/arch/sparc/mm/srmmu.c
+===================================================================
+--- xx-sources.orig/arch/sparc/mm/srmmu.c	2004-08-14 13:29:25.736167304 -0400
++++ xx-sources/arch/sparc/mm/srmmu.c	2004-08-14 13:30:07.570807472 -0400
+@@ -1341,7 +1341,7 @@
+ 		zones_size[ZONE_HIGHMEM] = npages;
+ 		zholes_size[ZONE_HIGHMEM] = npages - calc_highpages();
+ 
+-		free_area_init_node(0, &contig_page_data, zones_size,
++		free_area_init_node(0, &contig_page_data, NULL, zones_size,
+ 				    pfn_base, zholes_size);
+ 		mem_map = contig_page_data.node_mem_map;
+ 	}
+Index: xx-sources/arch/sparc/mm/sun4c.c
+===================================================================
+--- xx-sources.orig/arch/sparc/mm/sun4c.c	2004-08-14 13:29:25.738167000 -0400
++++ xx-sources/arch/sparc/mm/sun4c.c	2004-08-14 13:30:07.575806712 -0400
+@@ -2114,7 +2114,7 @@
+ 		zones_size[ZONE_HIGHMEM] = npages;
+ 		zholes_size[ZONE_HIGHMEM] = npages - calc_highpages();
+ 
+-		free_area_init_node(0, &contig_page_data, zones_size,
++		free_area_init_node(0, &contig_page_data, NULL, zones_size,
+ 				    pfn_base, zholes_size);
+ 		mem_map = contig_page_data.node_mem_map;
+ 	}
+Index: xx-sources/arch/sparc64/mm/init.c
+===================================================================
+--- xx-sources.orig/arch/sparc64/mm/init.c	2004-08-14 13:29:25.731168064 -0400
++++ xx-sources/arch/sparc64/mm/init.c	2004-08-14 13:30:07.567807928 -0400
+@@ -1502,7 +1502,7 @@
+ 		zones_size[ZONE_DMA] = npages;
+ 		zholes_size[ZONE_DMA] = npages - pages_avail;
+ 
+-		free_area_init_node(0, &contig_page_data, zones_size,
++		free_area_init_node(0, &contig_page_data, NULL, zones_size,
+ 				    phys_base >> PAGE_SHIFT, zholes_size);
+ 		mem_map = contig_page_data.node_mem_map;
+ 	}
+Index: xx-sources/arch/x86_64/mm/numa.c
+===================================================================
+--- xx-sources.orig/arch/x86_64/mm/numa.c	2004-08-14 13:29:25.739166848 -0400
++++ xx-sources/arch/x86_64/mm/numa.c	2004-08-14 13:30:07.579806104 -0400
+@@ -136,7 +136,7 @@
+ 		zones[ZONE_NORMAL] = end_pfn - start_pfn; 
+ 	} 
+     
+-	free_area_init_node(nodeid, NODE_DATA(nodeid), zones,
++	free_area_init_node(nodeid, NODE_DATA(nodeid), NULL, zones,
+ 			    start_pfn, NULL); 
+ } 
+ 
+Index: xx-sources/include/asm-ia64/pgtable.h
+===================================================================
+--- xx-sources.orig/include/asm-ia64/pgtable.h	2004-08-14 13:29:03.832497168 -0400
++++ xx-sources/include/asm-ia64/pgtable.h	2004-08-14 13:30:07.582805648 -0400
+@@ -520,7 +520,7 @@
+ #  ifdef CONFIG_VIRTUAL_MEM_MAP
+   /* arch mem_map init routine is needed due to holes in a virtual mem_map */
+ #   define __HAVE_ARCH_MEMMAP_INIT
+-    extern void memmap_init (unsigned long size, int nid, unsigned long zone,
++    extern void memmap_init (struct page *start, unsigned long size, int nid, unsigned long zone,
+ 			     unsigned long start_pfn);
+ #  endif /* CONFIG_VIRTUAL_MEM_MAP */
+ # endif /* !__ASSEMBLY__ */
+Index: xx-sources/include/linux/mm.h
+===================================================================
+--- xx-sources.orig/include/linux/mm.h	2004-08-14 13:29:03.686519360 -0400
++++ xx-sources/include/linux/mm.h	2004-08-14 13:30:07.584805344 -0400
+@@ -590,10 +590,11 @@
+ }
+ 
+ extern void free_area_init(unsigned long * zones_size);
+-extern void free_area_init_node(int nid, pg_data_t *pgdat,
++extern void free_area_init_node(int nid, pg_data_t *pgdat, struct page *pmap,
+ 	unsigned long * zones_size, unsigned long zone_start_pfn, 
+ 	unsigned long *zholes_size);
+-extern void memmap_init_zone(unsigned long, int, unsigned long, unsigned long);
++extern void memmap_init_zone(struct page *, unsigned long, int,
++	unsigned long, unsigned long);
+ extern void mem_init(void);
+ extern void show_mem(void);
+ extern void si_meminfo(struct sysinfo * val);
+Index: xx-sources/mm/page_alloc.c
+===================================================================
+--- xx-sources.orig/mm/page_alloc.c	2004-08-14 13:30:02.104638456 -0400
++++ xx-sources/mm/page_alloc.c	2004-08-14 13:30:07.587804888 -0400
+@@ -1385,10 +1385,9 @@
+  * up by free_all_bootmem() once the early boot process is
+  * done. Non-atomic initialization, single-pass.
+  */
+-void __init memmap_init_zone(unsigned long size, int nid, unsigned long zone,
+-		unsigned long start_pfn)
++void __init memmap_init_zone(struct page *start, unsigned long size, int nid,
++		unsigned long zone, unsigned long start_pfn)
+ {
+-	struct page *start = pfn_to_page(start_pfn);
+ 	struct page *page;
+ 
+ 	for (page = start; page < (start + size); page++) {
+@@ -1452,8 +1451,8 @@
+ }
+ 
+ #ifndef __HAVE_ARCH_MEMMAP_INIT
+-#define memmap_init(size, nid, zone, start_pfn) \
+-	memmap_init_zone((size), (nid), (zone), (start_pfn))
++#define memmap_init(start, size, nid, zone, start_pfn) \
++	memmap_init_zone((start), (size), (nid), (zone), (start_pfn))
+ #endif
+ 
+ /*
+@@ -1468,6 +1467,7 @@
+ 	unsigned long i, j;
+ 	const unsigned long zone_required_alignment = 1UL << (MAX_ORDER-1);
+ 	int cpu, nid = pgdat->node_id;
++	struct page *lmem_map = pgdat->node_mem_map;
+ 	unsigned long zone_start_pfn = pgdat->node_start_pfn;
+ 
+ 	pgdat->nr_zones = 0;
+@@ -1555,41 +1555,35 @@
+ 
+ 		pgdat->nr_zones = j+1;
+ 
+-		zone->zone_mem_map = pfn_to_page(zone_start_pfn);
++		zone->zone_mem_map = lmem_map;
+ 		zone->zone_start_pfn = zone_start_pfn;
+ 
+ 		if ((zone_start_pfn) & (zone_required_alignment-1))
+ 			printk("BUG: wrong zone alignment, it will crash\n");
+ 
+-		memmap_init(size, nid, j, zone_start_pfn);
++		memmap_init(lmem_map, size, nid, j, zone_start_pfn);
+ 
+ 		zone_start_pfn += size;
++		lmem_map += size;
+ 
+ 		zone_init_free_lists(pgdat, zone, zone->spanned_pages);
+ 	}
+ }
+ 
+-void __init node_alloc_mem_map(struct pglist_data *pgdat)
++void __init free_area_init_node(int nid, struct pglist_data *pgdat,
++		struct page *node_mem_map, unsigned long *zones_size,
++		unsigned long node_start_pfn, unsigned long *zholes_size)
+ {
+ 	unsigned long size;
+ 
+-	size = (pgdat->node_spanned_pages + 1) * sizeof(struct page);
+-	pgdat->node_mem_map = alloc_bootmem_node(pgdat, size);
+-#ifndef CONFIG_DISCONTIGMEM
+-	mem_map = contig_page_data.node_mem_map;
+-#endif
+-}
+-
+-void __init free_area_init_node(int nid, struct pglist_data *pgdat,
+-		unsigned long *zones_size, unsigned long node_start_pfn,
+-		unsigned long *zholes_size)
+-{
+ 	pgdat->node_id = nid;
+ 	pgdat->node_start_pfn = node_start_pfn;
+ 	calculate_zone_totalpages(pgdat, zones_size, zholes_size);
+-
+-	if (!pfn_to_page(node_start_pfn))
+-		node_alloc_mem_map(pgdat);
++	if (!node_mem_map) {
++		size = (pgdat->node_spanned_pages + 1) * sizeof(struct page);
++		node_mem_map = alloc_bootmem_node(pgdat, size);
++	}
++	pgdat->node_mem_map = node_mem_map;
+ 
+ 	free_area_init_core(pgdat, zones_size, zholes_size);
+ }
+@@ -1602,8 +1596,9 @@
+ 
+ void __init free_area_init(unsigned long *zones_size)
+ {
+-	free_area_init_node(0, &contig_page_data, zones_size,
++	free_area_init_node(0, &contig_page_data, NULL, zones_size,
+ 			__pa(PAGE_OFFSET) >> PAGE_SHIFT, NULL);
++	mem_map = contig_page_data.node_mem_map;
+ }
+ #endif
+ 

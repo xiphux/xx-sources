@@ -1,0 +1,64 @@
+Give ingosched it's unique identity.
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+
+Index: linux-2.6.10-rc1-mm5/include/linux/scheduler.h
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/include/linux/scheduler.h	2004-11-11 21:51:49.054251869 +1100
++++ linux-2.6.10-rc1-mm5/include/linux/scheduler.h	2004-11-11 21:52:24.703757757 +1100
+@@ -1,8 +1,16 @@
+ #ifndef _LINUX_SCHEDULER_H
+ #define _LINUX_SCHEDULER_H
++/*
++ * include/linux/scheduler.h
++ * This contains the driver struct for all the exported per-cpu-scheduler
++ * functions, and the private per-scheduler data in task_struct.
++ */
+ 
+ #define SCHED_NAME_MAX	(16)
+ 
++/*
++ * This is the main scheduler driver struct.
++ */
+ struct sched_drv
+ {
+ 	char cpusched_name[SCHED_NAME_MAX];
+@@ -43,6 +51,11 @@ struct sched_drv
+ #endif
+ };
+ 
++/*
++ * All private per-scheduler entries in task_struct are defined here as
++ * separate structs placed into the cpusched union in task_struct.
++ */
++
+ struct cpusched_ingo {
+ 	int prio;
+ 	struct list_head run_list;
+Index: linux-2.6.10-rc1-mm5/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/kernel/sched.c	2004-11-11 21:51:42.376281031 +1100
++++ linux-2.6.10-rc1-mm5/kernel/sched.c	2004-11-11 21:51:59.065708967 +1100
+@@ -1,7 +1,7 @@
+ /*
+  *  kernel/sched.c
+  *
+- *  Kernel scheduler and related syscalls
++ *  This is "ingosched"; the default cpu scheduler.
+  *
+  *  Copyright (C) 1991-2002  Linus Torvalds
+  *
+Index: linux-2.6.10-rc1-mm5/kernel/scheduler.c
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/kernel/scheduler.c	2004-11-11 21:51:42.377280877 +1100
++++ linux-2.6.10-rc1-mm5/kernel/scheduler.c	2004-11-11 21:51:59.066708812 +1100
+@@ -879,7 +879,7 @@ EXPORT_SYMBOL(complete_all);
+ 
+ extern struct sched_drv ingo_sched_drv;
+ 
+-static struct sched_drv *scheduler = &ingo_sched_drv;
++struct sched_drv *scheduler = &ingo_sched_drv;
+ 
+ static int __init scheduler_setup(char *str)
+ {

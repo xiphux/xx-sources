@@ -1,0 +1,57 @@
+
+
+Make sync_dirty_buffer() return the result of its syncing.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/buffer.c                 |   12 +++++++++---
+ 25-akpm/include/linux/buffer_head.h |    2 +-
+ 2 files changed, 10 insertions(+), 4 deletions(-)
+
+diff -puN fs/buffer.c~sync_dirty_buffer-retval fs/buffer.c
+--- 25/fs/buffer.c~sync_dirty_buffer-retval	2004-07-11 14:26:04.840915912 -0700
++++ 25-akpm/fs/buffer.c	2004-07-11 14:26:04.846915000 -0700
+@@ -2868,20 +2868,26 @@ void ll_rw_block(int rw, int nr, struct 
+ 
+ /*
+  * For a data-integrity writeout, we need to wait upon any in-progress I/O
+- * and then start new I/O and then wait upon it.
++ * and then start new I/O and then wait upon it.  The caller must have a ref on
++ * the buffer_head.
+  */
+-void sync_dirty_buffer(struct buffer_head *bh)
++int sync_dirty_buffer(struct buffer_head *bh)
+ {
++	int ret = 0;
++
+ 	WARN_ON(atomic_read(&bh->b_count) < 1);
+ 	lock_buffer(bh);
+ 	if (test_clear_buffer_dirty(bh)) {
+ 		get_bh(bh);
+ 		bh->b_end_io = end_buffer_write_sync;
+-		submit_bh(WRITE, bh);
++		ret = submit_bh(WRITE, bh);
+ 		wait_on_buffer(bh);
++		if (!ret && !buffer_uptodate(bh))
++			ret = -EIO;
+ 	} else {
+ 		unlock_buffer(bh);
+ 	}
++	return ret;
+ }
+ 
+ /*
+diff -puN include/linux/buffer_head.h~sync_dirty_buffer-retval include/linux/buffer_head.h
+--- 25/include/linux/buffer_head.h~sync_dirty_buffer-retval	2004-07-11 14:26:04.841915760 -0700
++++ 25-akpm/include/linux/buffer_head.h	2004-07-11 14:26:04.847914848 -0700
+@@ -174,7 +174,7 @@ void free_buffer_head(struct buffer_head
+ void FASTCALL(unlock_buffer(struct buffer_head *bh));
+ void FASTCALL(__lock_buffer(struct buffer_head *bh));
+ void ll_rw_block(int, int, struct buffer_head * bh[]);
+-void sync_dirty_buffer(struct buffer_head *bh);
++int sync_dirty_buffer(struct buffer_head *bh);
+ int submit_bh(int, struct buffer_head *);
+ void write_boundary_block(struct block_device *bdev,
+ 			sector_t bblock, unsigned blocksize);
+_

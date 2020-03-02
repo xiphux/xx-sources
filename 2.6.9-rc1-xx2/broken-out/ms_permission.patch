@@ -1,0 +1,66 @@
+Index: xx-sources/fs/namespace.c
+===================================================================
+--- xx-sources.orig/fs/namespace.c	2004-08-23 01:44:17.000000000 -0400
++++ xx-sources/fs/namespace.c	2004-08-24 16:37:04.509210024 -0400
+@@ -507,20 +507,15 @@
+ 
+ static int mount_is_safe(struct nameidata *nd)
+ {
+-	if (capable(CAP_SYS_ADMIN))
+-		return 0;
+-	return -EPERM;
+-#ifdef notyet
+ 	if (S_ISLNK(nd->dentry->d_inode->i_mode))
+ 		return -EPERM;
+ 	if (nd->dentry->d_inode->i_mode & S_ISVTX) {
+-		if (current->uid != nd->dentry->d_inode->i_uid)
++		if (current->fsuid != nd->dentry->d_inode->i_uid)
+ 			return -EPERM;
+ 	}
+ 	if (permission(nd->dentry->d_inode, MAY_WRITE, nd))
+ 		return -EPERM;
+ 	return 0;
+-#endif
+ }
+ 
+ static int
+@@ -624,9 +619,10 @@
+ {
+ 	struct nameidata old_nd;
+ 	struct vfsmount *mnt = NULL;
+-	int err = mount_is_safe(nd);
+-	if (err)
+-		return err;
++	int err = 0;
++
++	if (!capable(CAP_SYS_ADMIN))
++		return -EPERM;
+ 	if (!old_name || !*old_name)
+ 		return -EINVAL;
+ 	err = path_lookup(old_name, LOOKUP_FOLLOW, &old_nd);
+@@ -1042,6 +1038,13 @@
+ 	if (retval)
+ 		return retval;
+ 
++	if (flags & MS_PERMISSION) {
++		retval = mount_is_safe(&nd);
++		if(retval)
++			return retval;
++	}
++	flags &= ~MS_PERMISSION;
++
+ 	retval = security_sb_mount(dev_name, &nd, type_page, flags, data_page);
+ 	if (retval)
+ 		goto dput_out;
+Index: xx-sources/include/linux/fs.h
+===================================================================
+--- xx-sources.orig/include/linux/fs.h	2004-08-23 04:53:31.000000000 -0400
++++ xx-sources/include/linux/fs.h	2004-08-24 16:39:51.776781488 -0400
+@@ -121,6 +121,7 @@
+ #define MS_POSIXACL	(1<<16)	/* VFS does not apply the umask */
+ #define MS_ONE_SECOND	(1<<17)	/* fs has 1 sec a/m/ctime resolution */
+ #define MS_SUPERMOUNTED	(1<<18)
++#define MS_PERMISSION	(1<<19)	/* Check write permission on mount target */
+ #define MS_ACTIVE	(1<<30)
+ #define MS_NOUSER	(1<<31)
+ 

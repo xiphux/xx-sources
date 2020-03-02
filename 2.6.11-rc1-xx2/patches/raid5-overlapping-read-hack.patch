@@ -1,0 +1,78 @@
+
+From: Neil Brown <neilb@cse.unsw.edu.au>
+
+Yes..  should only happen if two separate read (or write) requests for the
+same sector are concurrent, which I wouldn't have thought would happen, but
+maybe tail-packing or similar could cause two independent requests for the
+same piece of disc.
+
+This hack/patch might fix it but I'm not in a position to test it.
+
+I'll try to work out a better fix in the next week or two.
+
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/md/raid5.c |   18 ++++++++++++++----
+ 1 files changed, 14 insertions(+), 4 deletions(-)
+
+diff -puN drivers/md/raid5.c~raid5-overlapping-read-hack drivers/md/raid5.c
+--- 25/drivers/md/raid5.c~raid5-overlapping-read-hack	2005-01-09 22:20:40.211246912 -0800
++++ 25-akpm/drivers/md/raid5.c	2005-01-09 22:20:40.216246152 -0800
+@@ -232,6 +232,7 @@ static struct stripe_head *__find_stripe
+ }
+ 
+ static void unplug_slaves(mddev_t *mddev);
++static void raid5_unplug_device(request_queue_t *q);
+ 
+ static struct stripe_head *get_active_stripe(raid5_conf_t *conf, sector_t sector,
+ 					     int pd_idx, int noblock) 
+@@ -793,7 +794,7 @@ static void compute_parity(struct stripe
+  * toread/towrite point to the first in a chain. 
+  * The bi_next chain must be in order.
+  */
+-static void add_stripe_bio (struct stripe_head *sh, struct bio *bi, int dd_idx, int forwrite)
++static int add_stripe_bio (struct stripe_head *sh, struct bio *bi, int dd_idx, int forwrite)
+ {
+ 	struct bio **bip;
+ 	raid5_conf_t *conf = sh->raid_conf;
+@@ -810,10 +811,10 @@ static void add_stripe_bio (struct strip
+ 	else
+ 		bip = &sh->dev[dd_idx].toread;
+ 	while (*bip && (*bip)->bi_sector < bi->bi_sector) {
+-		BUG_ON((*bip)->bi_sector + ((*bip)->bi_size >> 9) > bi->bi_sector);
++		if ((*bip)->bi_sector + ((*bip)->bi_size >> 9) > bi->bi_sector)
++			return 0; /* cannot add just now due to overlap */
+ 		bip = & (*bip)->bi_next;
+ 	}
+-/* FIXME do I need to worry about overlapping bion */
+ 	if (*bip && bi->bi_next && (*bip) != bi->bi_next)
+ 		BUG();
+ 	if (*bip)
+@@ -840,6 +841,7 @@ static void add_stripe_bio (struct strip
+ 		if (sector >= sh->dev[dd_idx].sector + STRIPE_SECTORS)
+ 			set_bit(R5_OVERWRITE, &sh->dev[dd_idx].flags);
+ 	}
++	return 1;
+ }
+ 
+ 
+@@ -1413,7 +1415,15 @@ static int make_request (request_queue_t
+ 		sh = get_active_stripe(conf, new_sector, pd_idx, (bi->bi_rw&RWA_MASK));
+ 		if (sh) {
+ 
+-			add_stripe_bio(sh, bi, dd_idx, (bi->bi_rw&RW_MASK));
++			while (!add_stripe_bio(sh, bi, dd_idx, (bi->bi_rw&RW_MASK))) {
++				/* add failed due to overlap.  Flush everything
++				 * and wait a while
++				 * FIXME - overlapping requests should be handled better
++				 */
++				raid5_unplug_device(mddev->queue);
++				set_current_state(TASK_UNINTERRUPTIBLE);
++				schedule_timeout(1);
++			}
+ 
+ 			raid5_plug_device(conf);
+ 			handle_stripe(sh);
+_

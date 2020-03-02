@@ -1,0 +1,25 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/net/core/skbuff.c |    4 +++-
+ 1 files changed, 3 insertions(+), 1 deletion(-)
+
+diff -puN net/core/skbuff.c~kfree_skb-dump_stack net/core/skbuff.c
+--- 25/net/core/skbuff.c~kfree_skb-dump_stack	2004-12-03 20:57:06.506649640 -0800
++++ 25-akpm/net/core/skbuff.c	2004-12-03 20:57:06.510649032 -0800
+@@ -286,9 +286,11 @@ void __kfree_skb(struct sk_buff *skb)
+ 	secpath_put(skb->sp);
+ #endif
+ 	if(skb->destructor) {
+-		if (in_irq())
++		if (in_irq()) {
+ 			printk(KERN_WARNING "Warning: kfree_skb on "
+ 					    "hard IRQ %p\n", NET_CALLER(skb));
++			dump_stack();
++		}
+ 		skb->destructor(skb);
+ 	}
+ #ifdef CONFIG_NETFILTER
+_

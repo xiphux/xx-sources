@@ -1,0 +1,123 @@
+
+From: Stephen Hemminger <shemminger@osdl.org>
+
+kobject_set_name() takes a printf style argument list.  There are many
+callers that pass only one string, if this string contained a '%' character
+than bad things would happen.  The fix is simple.
+
+Signed-off-by: Stephen Hemminger <shemminger@osdl.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/base/bus.c                     |    4 ++--
+ 25-akpm/drivers/base/class.c                   |    4 ++--
+ 25-akpm/drivers/base/core.c                    |    2 +-
+ 25-akpm/drivers/firmware/efivars.c             |    2 +-
+ 25-akpm/drivers/pci/hotplug/pci_hotplug_core.c |    2 +-
+ 25-akpm/fs/sysfs/dir.c                         |    2 +-
+ 25-akpm/kernel/module.c                        |    2 +-
+ 7 files changed, 9 insertions(+), 9 deletions(-)
+
+diff -puN drivers/base/bus.c~avoid-problems-with-kobject_set_name-and-name-with-% drivers/base/bus.c
+--- 25/drivers/base/bus.c~avoid-problems-with-kobject_set_name-and-name-with-%	Fri Oct  8 15:09:57 2004
++++ 25-akpm/drivers/base/bus.c	Fri Oct  8 15:09:57 2004
+@@ -515,7 +515,7 @@ int bus_add_driver(struct device_driver 
+ 
+ 	if (bus) {
+ 		pr_debug("bus %s: add driver %s\n", bus->name, drv->name);
+-		error = kobject_set_name(&drv->kobj, drv->name);
++		error = kobject_set_name(&drv->kobj, "%s", drv->name);
+ 		if (error) {
+ 			put_bus(bus);
+ 			return error;
+@@ -666,7 +666,7 @@ int bus_register(struct bus_type * bus)
+ {
+ 	int retval;
+ 
+-	retval = kobject_set_name(&bus->subsys.kset.kobj, bus->name);
++	retval = kobject_set_name(&bus->subsys.kset.kobj, "%s", bus->name);
+ 	if (retval)
+ 		goto out;
+ 
+diff -puN drivers/base/class.c~avoid-problems-with-kobject_set_name-and-name-with-% drivers/base/class.c
+--- 25/drivers/base/class.c~avoid-problems-with-kobject_set_name-and-name-with-%	Fri Oct  8 15:09:57 2004
++++ 25-akpm/drivers/base/class.c	Fri Oct  8 15:09:57 2004
+@@ -139,7 +139,7 @@ int class_register(struct class * cls)
+ 
+ 	INIT_LIST_HEAD(&cls->children);
+ 	INIT_LIST_HEAD(&cls->interfaces);
+-	error = kobject_set_name(&cls->subsys.kset.kobj, cls->name);
++	error = kobject_set_name(&cls->subsys.kset.kobj, "%s", cls->name);
+ 	if (error)
+ 		return error;
+ 
+@@ -368,7 +368,7 @@ int class_device_add(struct class_device
+ 		 class_dev->class_id);
+ 
+ 	/* first, register with generic layer. */
+-	kobject_set_name(&class_dev->kobj, class_dev->class_id);
++	kobject_set_name(&class_dev->kobj, "%s", class_dev->class_id);
+ 	if (parent)
+ 		class_dev->kobj.parent = &parent->subsys.kset.kobj;
+ 
+diff -puN drivers/base/core.c~avoid-problems-with-kobject_set_name-and-name-with-% drivers/base/core.c
+--- 25/drivers/base/core.c~avoid-problems-with-kobject_set_name-and-name-with-%	Fri Oct  8 15:09:57 2004
++++ 25-akpm/drivers/base/core.c	Fri Oct  8 15:09:57 2004
+@@ -221,7 +221,7 @@ int device_add(struct device *dev)
+ 	pr_debug("DEV: registering device: ID = '%s'\n", dev->bus_id);
+ 
+ 	/* first, register with generic layer. */
+-	kobject_set_name(&dev->kobj, dev->bus_id);
++	kobject_set_name(&dev->kobj, "%s", dev->bus_id);
+ 	if (parent)
+ 		dev->kobj.parent = &parent->kobj;
+ 
+diff -puN drivers/firmware/efivars.c~avoid-problems-with-kobject_set_name-and-name-with-% drivers/firmware/efivars.c
+--- 25/drivers/firmware/efivars.c~avoid-problems-with-kobject_set_name-and-name-with-%	Fri Oct  8 15:09:57 2004
++++ 25-akpm/drivers/firmware/efivars.c	Fri Oct  8 15:09:57 2004
+@@ -640,7 +640,7 @@ efivar_create_sysfs_entry(unsigned long 
+ 	*(short_name + strlen(short_name)) = '-';
+ 	efi_guid_unparse(vendor_guid, short_name + strlen(short_name));
+ 
+-	kobject_set_name(&new_efivar->kobj, short_name);
++	kobject_set_name(&new_efivar->kobj, "%s", short_name);
+ 	kobj_set_kset_s(new_efivar, vars_subsys);
+ 	kobject_register(&new_efivar->kobj);
+ 
+diff -puN drivers/pci/hotplug/pci_hotplug_core.c~avoid-problems-with-kobject_set_name-and-name-with-% drivers/pci/hotplug/pci_hotplug_core.c
+--- 25/drivers/pci/hotplug/pci_hotplug_core.c~avoid-problems-with-kobject_set_name-and-name-with-%	Fri Oct  8 15:09:57 2004
++++ 25-akpm/drivers/pci/hotplug/pci_hotplug_core.c	Fri Oct  8 15:09:57 2004
+@@ -568,7 +568,7 @@ int pci_hp_register (struct hotplug_slot
+ 	if ((slot->info == NULL) || (slot->ops == NULL))
+ 		return -EINVAL;
+ 
+-	kobject_set_name(&slot->kobj, slot->name);
++	kobject_set_name(&slot->kobj, "%s", slot->name);
+ 	kobj_set_kset_s(slot, pci_hotplug_slots_subsys);
+ 
+ 	/* this can fail if we have already registered a slot with the same name */
+diff -puN fs/sysfs/dir.c~avoid-problems-with-kobject_set_name-and-name-with-% fs/sysfs/dir.c
+--- 25/fs/sysfs/dir.c~avoid-problems-with-kobject_set_name-and-name-with-%	Fri Oct  8 15:09:57 2004
++++ 25-akpm/fs/sysfs/dir.c	Fri Oct  8 15:10:27 2004
+@@ -311,7 +311,7 @@ int sysfs_rename_dir(struct kobject * ko
+ 	new_dentry = sysfs_get_dentry(parent, new_name);
+ 	if (!IS_ERR(new_dentry)) {
+   		if (!new_dentry->d_inode) {
+-			error = kobject_set_name(kobj,new_name);
++			error = kobject_set_name(kobj, "%s", new_name);
+ 			if (!error) {
+ 				d_add(new_dentry, NULL);
+ 				d_move(kobj->dentry, new_dentry);
+diff -puN kernel/module.c~avoid-problems-with-kobject_set_name-and-name-with-% kernel/module.c
+--- 25/kernel/module.c~avoid-problems-with-kobject_set_name-and-name-with-%	Fri Oct  8 15:09:57 2004
++++ 25-akpm/kernel/module.c	Fri Oct  8 15:09:57 2004
+@@ -1120,7 +1120,7 @@ static int mod_sysfs_setup(struct module
+ 		return -ENOMEM;
+ 
+ 	memset(&mod->mkobj->kobj, 0, sizeof(mod->mkobj->kobj));
+-	err = kobject_set_name(&mod->mkobj->kobj, mod->name);
++	err = kobject_set_name(&mod->mkobj->kobj, "%s", mod->name);
+ 	if (err)
+ 		goto out;
+ 	kobj_set_kset_s(mod->mkobj, module_subsys);
+_

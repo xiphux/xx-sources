@@ -1,0 +1,195 @@
+
+From: Mikael Pettersson <mikpe@csd.uu.se>
+
+- Reduce stack usage by using kmalloc() instead of the stack
+  for temporary state and control copies.
+- Eliminate some unnecessary cpumask_t copies. Use newish
+  cpus_intersects() instead of cpus_and(); !cpus_empty().
+
+Signed-off-by: Mikael Pettersson <mikpe@csd.uu.se>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/perfctr/init.c    |    6 --
+ 25-akpm/drivers/perfctr/virtual.c |   83 +++++++++++++++++++++++++-------------
+ 2 files changed, 57 insertions(+), 32 deletions(-)
+
+diff -puN drivers/perfctr/init.c~perfctr-update-5-6-reduce-stack-usage drivers/perfctr/init.c
+--- 25/drivers/perfctr/init.c~perfctr-update-5-6-reduce-stack-usage	2004-06-30 11:04:25.657032824 -0700
++++ 25-akpm/drivers/perfctr/init.c	2004-06-30 11:04:25.680029328 -0700
+@@ -54,14 +54,12 @@ asmlinkage long sys_perfctr_info(struct 
+ 	if (infop && copy_to_user(infop, &perfctr_info, sizeof perfctr_info))
+ 		return -EFAULT;
+ 	if (cpusp) {
+-		cpumask_t cpus = cpu_online_map;
+-		int err = cpus_copy_to_user(cpusp, &cpus);
++		int err = cpus_copy_to_user(cpusp, &cpu_online_map);
+ 		if (err)
+ 			return err;
+ 	}
+ 	if (forbiddenp) {
+-		cpumask_t cpus = perfctr_cpus_forbidden_mask;
+-		int err = cpus_copy_to_user(forbiddenp, &cpus);
++		int err = cpus_copy_to_user(forbiddenp, &perfctr_cpus_forbidden_mask);
+ 		if (err)
+ 			return err;
+ 	}
+diff -puN drivers/perfctr/virtual.c~perfctr-update-5-6-reduce-stack-usage drivers/perfctr/virtual.c
+--- 25/drivers/perfctr/virtual.c~perfctr-update-5-6-reduce-stack-usage	2004-06-30 11:04:25.659032520 -0700
++++ 25-akpm/drivers/perfctr/virtual.c	2004-06-30 11:04:25.682029024 -0700
+@@ -366,10 +366,7 @@ void __vperfctr_set_cpus_allowed(struct 
+ 				 struct vperfctr *perfctr,
+ 				 cpumask_t new_mask)
+ {
+-	cpumask_t tmp;
+-
+-	cpus_and(tmp, new_mask, perfctr_cpus_forbidden_mask);
+-	if (!cpus_empty(tmp)) {
++	if (cpus_intersects(new_mask, perfctr_cpus_forbidden_mask)) {
+ 		atomic_set(&perfctr->bad_cpus_allowed, 1);
+ 		if (printk_ratelimit())
+ 			printk(KERN_WARNING "perfctr: process %d (comm %s) issued unsafe"
+@@ -394,7 +391,7 @@ static int do_vperfctr_control(struct vp
+ 			       const struct vperfctr_control __user *argp,
+ 			       struct task_struct *tsk)
+ {
+-	struct vperfctr_control control;
++	struct vperfctr_control *control;
+ 	int err;
+ 	unsigned int next_cstatus;
+ 	unsigned int nrctrs, i;
+@@ -402,18 +399,29 @@ static int do_vperfctr_control(struct vp
+ 	if (!tsk)
+ 		return -ESRCH;	/* attempt to update unlinked perfctr */
+ 
+-	if (copy_from_user(&control, argp, sizeof control))
+-		return -EFAULT;
++	/* The control object can be large (over 300 bytes on i386),
++	   so kmalloc() it instead of storing it on the stack.
++	   We must use task-private storage to prevent racing with a
++	   monitor process attaching to us before the non-preemptible
++	   perfctr update step. Therefore we cannot store the copy
++	   in the perfctr object itself. */
++	control = kmalloc(sizeof(*control), GFP_USER);
++	if (!control)
++		return -ENOMEM;
++
++	err = -EFAULT;
++	if (copy_from_user(control, argp, sizeof *control))
++		goto out_kfree;
+ 
+-	if (control.cpu_control.nractrs || control.cpu_control.nrictrs) {
+-		cpumask_t tmp, old_mask, new_mask;
++	if (control->cpu_control.nractrs || control->cpu_control.nrictrs) {
++		cpumask_t old_mask, new_mask;
+ 
+-		tmp = perfctr_cpus_forbidden_mask;
+ 		old_mask = tsk->cpus_allowed;
+-		cpus_andnot(new_mask, old_mask, tmp);
++		cpus_andnot(new_mask, old_mask, perfctr_cpus_forbidden_mask);
+ 
++		err = -EINVAL;
+ 		if (cpus_empty(new_mask))
+-			return -EINVAL;
++			goto out_kfree;
+ 		if (!cpus_equal(new_mask, old_mask))
+ 			set_cpus_allowed(tsk, new_mask);
+ 	}
+@@ -427,7 +435,7 @@ static int do_vperfctr_control(struct vp
+ 		perfctr->cpu_state.cstatus = 0;
+ 		vperfctr_clear_iresume_cstatus(perfctr);
+ 	}
+-	perfctr->cpu_state.control = control.cpu_control;
++	perfctr->cpu_state.control = control->cpu_control;
+ 	/* remote access note: perfctr_cpu_update_control() is ok */
+ 	err = perfctr_cpu_update_control(&perfctr->cpu_state, 0);
+ 	if (err < 0)
+@@ -437,14 +445,14 @@ static int do_vperfctr_control(struct vp
+ 		goto out;
+ 
+ 	/* XXX: validate si_signo? */
+-	perfctr->si_signo = control.si_signo;
++	perfctr->si_signo = control->si_signo;
+ 
+ 	if (!perfctr_cstatus_has_tsc(next_cstatus))
+ 		perfctr->cpu_state.tsc_sum = 0;
+ 
+ 	nrctrs = perfctr_cstatus_nrctrs(next_cstatus);
+ 	for(i = 0; i < nrctrs; ++i)
+-		if (!(control.preserve & (1<<i)))
++		if (!(control->preserve & (1<<i)))
+ 			perfctr->cpu_state.pmc[i].sum = 0;
+ 
+ 	if (tsk == current)
+@@ -452,6 +460,8 @@ static int do_vperfctr_control(struct vp
+ 
+  out:
+ 	preempt_enable();
++ out_kfree:
++	kfree(control);
+ 	return err;
+ }
+ 
+@@ -503,8 +513,21 @@ static int do_vperfctr_read(struct vperf
+ 			    struct vperfctr_control __user *controlp,
+ 			    const struct task_struct *tsk)
+ {
+-	struct perfctr_sum_ctrs sum;
+-	struct vperfctr_control control;
++	struct {
++		struct perfctr_sum_ctrs sum;
++		struct vperfctr_control control;
++	} *tmp;
++	int ret;
++
++	/* The state snapshot can be large (almost 500 bytes on i386),
++	   so kmalloc() it instead of storing it on the stack.
++	   We must use task-private storage to prevent racing with a
++	   monitor process attaching to us during the preemptible
++	   copy_to_user() step. Therefore we cannot store the snapshot
++	   in the perfctr object itself. */
++	tmp = kmalloc(sizeof(*tmp), GFP_USER);
++	if (!tmp)
++		return -ENOMEM;
+ 
+ 	/* PREEMPT note: While we're reading our own control, another
+ 	   process may ptrace ATTACH to us and update our control.
+@@ -518,22 +541,26 @@ static int do_vperfctr_read(struct vperf
+ 	}
+ 	if (sump) { //sum = perfctr->cpu_state.sum;
+ 		int j;
+-		sum.tsc = perfctr->cpu_state.tsc_sum;
+-		for(j = 0; j < ARRAY_SIZE(sum.pmc); ++j)
+-			sum.pmc[j] = perfctr->cpu_state.pmc[j].sum;
++		tmp->sum.tsc = perfctr->cpu_state.tsc_sum;
++		for(j = 0; j < ARRAY_SIZE(tmp->sum.pmc); ++j)
++			tmp->sum.pmc[j] = perfctr->cpu_state.pmc[j].sum;
+ 	}
+ 	if (controlp) {
+-		control.si_signo = perfctr->si_signo;
+-		control.cpu_control = perfctr->cpu_state.control;
+-		control.preserve = 0;
++		tmp->control.si_signo = perfctr->si_signo;
++		tmp->control.cpu_control = perfctr->cpu_state.control;
++		tmp->control.preserve = 0;
+ 	}
+ 	if (tsk == current)
+ 		preempt_enable();
+-	if (sump && copy_to_user(sump, &sum, sizeof sum))
+-		return -EFAULT;
+-	if (controlp && copy_to_user(controlp, &control, sizeof control))
+-		return -EFAULT;
+-	return 0;
++	ret = -EFAULT;
++	if (sump && copy_to_user(sump, &tmp->sum, sizeof tmp->sum))
++		goto out;
++	if (controlp && copy_to_user(controlp, &tmp->control, sizeof tmp->control))
++		goto out;
++	ret = 0;
++ out:
++	kfree(tmp);
++	return ret;
+ }
+ 
+ /****************************************************************
+_

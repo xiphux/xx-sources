@@ -1,0 +1,27 @@
+
+From: Suparna Bhattacharya <suparna@in.ibm.com>
+
+Safeguard to make sure we break out of pagevec_lookup_tag loop if we are
+beyond the specified range.
+
+Signed-off-by: Suparna Bhattacharya <suparna@in.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/mpage.c |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletion(-)
+
+diff -puN fs/mpage.c~mpage-writepages-range-limit-fix fs/mpage.c
+--- 25/fs/mpage.c~mpage-writepages-range-limit-fix	2004-08-01 17:26:25.901138440 -0700
++++ 25-akpm/fs/mpage.c	2004-08-01 17:26:25.904137984 -0700
+@@ -654,7 +654,8 @@ mpage_writepages(struct address_space *m
+ 		scanned = 1;
+ 	}
+ retry:
+-	while (!done && (nr_pages = pagevec_lookup_tag(&pvec, mapping, &index,
++	while (!done && (index <= end) &&
++			(nr_pages = pagevec_lookup_tag(&pvec, mapping, &index,
+ 			PAGECACHE_TAG_DIRTY,
+ 			min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1))) {
+ 		unsigned i;
+_

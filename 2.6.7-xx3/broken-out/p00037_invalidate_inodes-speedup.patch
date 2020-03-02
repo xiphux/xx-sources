@@ -1,0 +1,216 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>,
+      Kirill Korotaev <kk@sw.ru>
+
+invalidate_inodes() can take a large amount of time searching the inode
+lists for inodes which belong to this fs.  Add a separate list for this
+search.
+
+DESC
+more invalidate_inodes speedup fixes
+EDESC
+From: Kirill Korotaev <dev@sw.ru>
+
+I found another bug in invalidate_inodes-speedup.patch
+introduced by WLI when doing forward porting:
+
+-			list_del(&inode->i_list);
++			list_del(&inode->i_sb_list);
+
+first list_del should be kept!!!
+
+Patch fixing this issue and hugetlbfs is attached.
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/hugetlbfs/inode.c |    2 +
+ 25-akpm/fs/inode.c           |   49 ++++++++++++++++---------------------------
+ 25-akpm/fs/super.c           |    1 
+ 25-akpm/include/linux/fs.h   |    2 +
+ 4 files changed, 24 insertions(+), 30 deletions(-)
+
+diff -puN fs/inode.c~invalidate_inodes-speedup fs/inode.c
+--- 25/fs/inode.c~invalidate_inodes-speedup	2004-06-21 00:01:05.534983912 -0700
++++ 25-akpm/fs/inode.c	2004-06-21 00:01:05.550981480 -0700
+@@ -295,7 +295,7 @@ static void dispose_list(struct list_hea
+ /*
+  * Invalidate all inodes for a device.
+  */
+-static int invalidate_list(struct list_head *head, struct super_block * sb, struct list_head * dispose)
++static int invalidate_list(struct list_head *head, struct list_head *dispose)
+ {
+ 	struct list_head *next;
+ 	int busy = 0, count = 0;
+@@ -308,12 +308,11 @@ static int invalidate_list(struct list_h
+ 		next = next->next;
+ 		if (tmp == head)
+ 			break;
+-		inode = list_entry(tmp, struct inode, i_list);
+-		if (inode->i_sb != sb)
+-			continue;
++		inode = list_entry(tmp, struct inode, i_sb_list);
+ 		invalidate_inode_buffers(inode);
+ 		if (!atomic_read(&inode->i_count)) {
+ 			hlist_del_init(&inode->i_hash);
++			list_del(&inode->i_sb_list);
+ 			list_move(&inode->i_list, dispose);
+ 			inode->i_state |= I_FREEING;
+ 			count++;
+@@ -349,10 +348,7 @@ int invalidate_inodes(struct super_block
+ 
+ 	down(&iprune_sem);
+ 	spin_lock(&inode_lock);
+-	busy = invalidate_list(&inode_in_use, sb, &throw_away);
+-	busy |= invalidate_list(&inode_unused, sb, &throw_away);
+-	busy |= invalidate_list(&sb->s_dirty, sb, &throw_away);
+-	busy |= invalidate_list(&sb->s_io, sb, &throw_away);
++	busy = invalidate_list(&sb->s_inodes, &throw_away);
+ 	spin_unlock(&inode_lock);
+ 
+ 	dispose_list(&throw_away);
+@@ -452,6 +448,7 @@ static void prune_icache(int nr_to_scan)
+ 				continue;
+ 		}
+ 		hlist_del_init(&inode->i_hash);
++		list_del_init(&inode->i_sb_list);
+ 		list_move(&inode->i_list, &freeable);
+ 		inode->i_state |= I_FREEING;
+ 		nr_pruned++;
+@@ -562,6 +559,7 @@ struct inode *new_inode(struct super_blo
+ 		spin_lock(&inode_lock);
+ 		inodes_stat.nr_inodes++;
+ 		list_add(&inode->i_list, &inode_in_use);
++		list_add(&inode->i_sb_list, &sb->s_inodes);
+ 		inode->i_ino = ++last_ino;
+ 		inode->i_state = 0;
+ 		spin_unlock(&inode_lock);
+@@ -610,6 +608,7 @@ static struct inode * get_new_inode(stru
+ 
+ 			inodes_stat.nr_inodes++;
+ 			list_add(&inode->i_list, &inode_in_use);
++			list_add(&inode->i_sb_list, &sb->s_inodes);
+ 			hlist_add_head(&inode->i_hash, head);
+ 			inode->i_state = I_LOCK|I_NEW;
+ 			spin_unlock(&inode_lock);
+@@ -658,6 +657,7 @@ static struct inode * get_new_inode_fast
+ 			inode->i_ino = ino;
+ 			inodes_stat.nr_inodes++;
+ 			list_add(&inode->i_list, &inode_in_use);
++			list_add(&inode->i_sb_list, &sb->s_inodes);
+ 			hlist_add_head(&inode->i_hash, head);
+ 			inode->i_state = I_LOCK|I_NEW;
+ 			spin_unlock(&inode_lock);
+@@ -994,6 +994,7 @@ void generic_delete_inode(struct inode *
+ 	struct super_operations *op = inode->i_sb->s_op;
+ 
+ 	list_del_init(&inode->i_list);
++	list_del_init(&inode->i_sb_list);
+ 	inode->i_state|=I_FREEING;
+ 	inodes_stat.nr_inodes--;
+ 	spin_unlock(&inode_lock);
+@@ -1039,6 +1040,7 @@ static void generic_forget_inode(struct 
+ 		hlist_del_init(&inode->i_hash);
+ 	}
+ 	list_del_init(&inode->i_list);
++	list_del_init(&inode->i_sb_list);
+ 	inode->i_state|=I_FREEING;
+ 	inodes_stat.nr_inodes--;
+ 	spin_unlock(&inode_lock);
+@@ -1227,36 +1229,23 @@ EXPORT_SYMBOL(inode_needs_sync);
+ /* Function back in dquot.c */
+ int remove_inode_dquot_ref(struct inode *, int, struct list_head *);
+ 
+-void remove_dquot_ref(struct super_block *sb, int type, struct list_head *tofree_head)
++void remove_dquot_ref(struct super_block *sb, int type,
++			struct list_head *tofree_head)
+ {
+ 	struct inode *inode;
+-	struct list_head *act_head;
+ 
+ 	if (!sb->dq_op)
+ 		return;	/* nothing to do */
+ 	spin_lock(&inode_lock);	/* This lock is for inodes code */
+-	/* We don't have to lock against quota code - test IS_QUOTAINIT is just for speedup... */
+- 
+-	list_for_each(act_head, &inode_in_use) {
+-		inode = list_entry(act_head, struct inode, i_list);
+-		if (inode->i_sb == sb && IS_QUOTAINIT(inode))
+-			remove_inode_dquot_ref(inode, type, tofree_head);
+-	}
+-	list_for_each(act_head, &inode_unused) {
+-		inode = list_entry(act_head, struct inode, i_list);
+-		if (inode->i_sb == sb && IS_QUOTAINIT(inode))
+-			remove_inode_dquot_ref(inode, type, tofree_head);
+-	}
+-	list_for_each(act_head, &sb->s_dirty) {
+-		inode = list_entry(act_head, struct inode, i_list);
+-		if (IS_QUOTAINIT(inode))
+-			remove_inode_dquot_ref(inode, type, tofree_head);
+-	}
+-	list_for_each(act_head, &sb->s_io) {
+-		inode = list_entry(act_head, struct inode, i_list);
++	/*
++	 * We don't have to lock against quota code - test IS_QUOTAINIT is
++	 * just for speedup...
++	 */
++
++	list_for_each_entry(inode, &sb->s_inodes, i_sb_list)
+ 		if (IS_QUOTAINIT(inode))
+ 			remove_inode_dquot_ref(inode, type, tofree_head);
+-	}
++
+ 	spin_unlock(&inode_lock);
+ }
+ 
+diff -puN fs/super.c~invalidate_inodes-speedup fs/super.c
+--- 25/fs/super.c~invalidate_inodes-speedup	2004-06-21 00:01:05.535983760 -0700
++++ 25-akpm/fs/super.c	2004-06-21 00:01:05.551981328 -0700
+@@ -68,6 +68,7 @@ static struct super_block *alloc_super(v
+ 		INIT_LIST_HEAD(&s->s_files);
+ 		INIT_LIST_HEAD(&s->s_instances);
+ 		INIT_HLIST_HEAD(&s->s_anon);
++		INIT_LIST_HEAD(&s->s_inodes);
+ 		init_rwsem(&s->s_umount);
+ 		sema_init(&s->s_lock, 1);
+ 		down_write(&s->s_umount);
+diff -puN include/linux/fs.h~invalidate_inodes-speedup include/linux/fs.h
+--- 25/include/linux/fs.h~invalidate_inodes-speedup	2004-06-21 00:01:05.537983456 -0700
++++ 25-akpm/include/linux/fs.h	2004-06-21 00:01:05.552981176 -0700
+@@ -413,6 +413,7 @@ static inline int mapping_writably_mappe
+ struct inode {
+ 	struct hlist_node	i_hash;
+ 	struct list_head	i_list;
++	struct list_head	i_sb_list;
+ 	struct list_head	i_dentry;
+ 	unsigned long		i_ino;
+ 	atomic_t		i_count;
+@@ -746,6 +747,7 @@ struct super_block {
+ 	atomic_t		s_active;
+ 	void                    *s_security;
+ 
++	struct list_head	s_inodes;	/* all inodes */
+ 	struct list_head	s_dirty;	/* dirty inodes */
+ 	struct list_head	s_io;		/* parked for writeback */
+ 	struct hlist_head	s_anon;		/* anonymous dentries for (nfs) exporting */
+diff -puN fs/hugetlbfs/inode.c~invalidate_inodes-speedup fs/hugetlbfs/inode.c
+--- 25/fs/hugetlbfs/inode.c~invalidate_inodes-speedup	2004-06-21 00:01:05.545982240 -0700
++++ 25-akpm/fs/hugetlbfs/inode.c	2004-06-21 00:01:05.553981024 -0700
+@@ -196,6 +196,7 @@ static void hugetlbfs_delete_inode(struc
+ 
+ 	hlist_del_init(&inode->i_hash);
+ 	list_del_init(&inode->i_list);
++	list_del_init(&inode->i_sb_list);
+ 	inode->i_state |= I_FREEING;
+ 	inodes_stat.nr_inodes--;
+ 	spin_unlock(&inode_lock);
+@@ -238,6 +239,7 @@ static void hugetlbfs_forget_inode(struc
+ 	hlist_del_init(&inode->i_hash);
+ out_truncate:
+ 	list_del_init(&inode->i_list);
++	list_del_init(&inode->i_sb_list);
+ 	inode->i_state |= I_FREEING;
+ 	inodes_stat.nr_inodes--;
+ 	spin_unlock(&inode_lock);
+_

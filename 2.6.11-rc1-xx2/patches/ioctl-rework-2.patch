@@ -1,0 +1,338 @@
+
+From: Christoph Hellwig <hch@infradead.org>
+
+- add ->unlocked_ioctl method and a do_ioctl wrapper in ioctl.c so all
+  places calling ->ioctl get it.  THis provides us a patch to migrate away
+  from holding bkl across ioctl implementations.
+
+- add ->compat_ioctl method and call it in compat_sys_ioctl before doing
+  the hash lookup for registered handlers.
+
+- streamline compat_sys_ioctl and move the complex error reporting into a
+  function of its own
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/filesystems/Locking |    7 +
+ 25-akpm/fs/compat.c                       |  120 ++++++++++++++++--------------
+ 25-akpm/fs/ioctl.c                        |   56 +++++++++-----
+ 25-akpm/include/linux/fs.h                |    6 +
+ 4 files changed, 115 insertions(+), 74 deletions(-)
+
+diff -puN Documentation/filesystems/Locking~ioctl-rework-2 Documentation/filesystems/Locking
+--- 25/Documentation/filesystems/Locking~ioctl-rework-2	2005-01-13 22:28:55.286798032 -0800
++++ 25-akpm/Documentation/filesystems/Locking	2005-01-13 22:28:55.295796664 -0800
+@@ -350,6 +350,8 @@ prototypes:
+ 	unsigned int (*poll) (struct file *, struct poll_table_struct *);
+ 	int (*ioctl) (struct inode *, struct file *, unsigned int,
+ 			unsigned long);
++	long (*unlocked_ioctl) (struct file *, unsigned int, unsigned long);
++	long (*compat_ioctl) (struct file *, unsigned int, unsigned long);
+ 	int (*mmap) (struct file *, struct vm_area_struct *);
+ 	int (*open) (struct inode *, struct file *);
+ 	int (*flush) (struct file *);
+@@ -383,6 +385,8 @@ aio_write:		no
+ readdir: 		no
+ poll:			no
+ ioctl:			yes	(see below)
++unlocked_ioctl:		no	(see below)
++compat_ioctl:		no
+ mmap:			no
+ open:			maybe	(see below)
+ flush:			no
+@@ -428,6 +432,9 @@ move ->readdir() to inode_operations and
+ anything that resembles union-mount we won't have a struct file for all
+ components. And there are other reasons why the current interface is a mess...
+ 
++->ioctl() on regular files is superceded by the ->unlocked_ioctl() that
++doesn't take the BKL.
++
+ ->read on directories probably must go away - we should just enforce -EISDIR
+ in sys_read() and friends.
+ 
+diff -puN fs/compat.c~ioctl-rework-2 fs/compat.c
+--- 25/fs/compat.c~ioctl-rework-2	2005-01-13 22:28:55.288797728 -0800
++++ 25-akpm/fs/compat.c	2005-01-13 22:28:55.297796360 -0800
+@@ -397,77 +397,87 @@ out:
+ }
+ EXPORT_SYMBOL(unregister_ioctl32_conversion); 
+ 
++static void compat_ioctl_error(struct file *filp, unsigned int fd,
++		unsigned int cmd, unsigned long arg)
++{
++	char buf[10];
++	char *fn = "?";
++	char *path;
++
++	/* find the name of the device. */
++	path = (char *)__get_free_page(GFP_KERNEL);
++	if (path) {
++		fn = d_path(filp->f_dentry, filp->f_vfsmnt, path, PAGE_SIZE);
++		if (IS_ERR(fn))
++			fn = "?";
++	}
++
++	sprintf(buf,"'%c'", (cmd>>24) & 0x3f);
++	if (!isprint(buf[1]))
++		sprintf(buf, "%02x", buf[1]);
++	printk("ioctl32(%s:%d): Unknown cmd fd(%d) "
++			"cmd(%08x){%s} arg(%08x) on %s\n",
++			current->comm, current->pid,
++			(int)fd, (unsigned int)cmd, buf,
++			(unsigned int)arg, fn);
++
++	if (path)
++		free_page((unsigned long)path);
++}
++
+ asmlinkage long compat_sys_ioctl(unsigned int fd, unsigned int cmd,
+ 				unsigned long arg)
+ {
+-	struct file * filp;
++	struct file *filp;
+ 	int error = -EBADF;
+ 	struct ioctl_trans *t;
+ 
+ 	filp = fget(fd);
+-	if(!filp)
+-		goto out2;
+-
+-	if (!filp->f_op || !filp->f_op->ioctl) {
+-		error = sys_ioctl (fd, cmd, arg);
++	if (!filp)
+ 		goto out;
++
++	if (!filp->f_op) {
++		if (!filp->f_op->ioctl)
++			goto do_ioctl;
++	} else if (filp->f_op->compat_ioctl) {
++		error = filp->f_op->compat_ioctl(filp, cmd, arg);
++		goto out_fput;
+ 	}
+ 
+ 	down_read(&ioctl32_sem);
++	for (t = ioctl32_hash_table[ioctl32_hash(cmd)]; t; t = t->next) {
++		if (t->cmd == cmd)
++			goto found_handler;
++	}
++	up_read(&ioctl32_sem);
+ 
+-	t = ioctl32_hash_table[ioctl32_hash (cmd)];
+-
+-	while (t && t->cmd != cmd)
+-		t = t->next;
+-	if (t) {
+-		if (t->handler) { 
+-			lock_kernel();
+-			error = t->handler(fd, cmd, arg, filp);
+-			unlock_kernel();
+-			up_read(&ioctl32_sem);
+-		} else {
+-			up_read(&ioctl32_sem);
+-			error = sys_ioctl(fd, cmd, arg);
+-		}
++	if (cmd >= SIOCDEVPRIVATE && cmd <= (SIOCDEVPRIVATE + 15)) {
++		error = siocdevprivate_ioctl(fd, cmd, arg);
+ 	} else {
+-		up_read(&ioctl32_sem);
+-		if (cmd >= SIOCDEVPRIVATE && cmd <= (SIOCDEVPRIVATE + 15)) {
+-			error = siocdevprivate_ioctl(fd, cmd, arg);
+-		} else {
+-			static int count;
+-			if (++count <= 50) {
+-				char buf[10];
+-				char *fn = "?";
+-				char *path;
+-
+-				path = (char *)__get_free_page(GFP_KERNEL);
+-
+-				/* find the name of the device. */
+-				if (path) {
+-			       		fn = d_path(filp->f_dentry,
+-						filp->f_vfsmnt, path,
+-						PAGE_SIZE);
+-					if (IS_ERR(fn))
+-						fn = "?";
+-				}
++		static int count;
+ 
+-				sprintf(buf,"'%c'", (cmd>>24) & 0x3f);
+-				if (!isprint(buf[1]))
+-				    sprintf(buf, "%02x", buf[1]);
+-				printk("ioctl32(%s:%d): Unknown cmd fd(%d) "
+-					"cmd(%08x){%s} arg(%08x) on %s\n",
+-					current->comm, current->pid,
+-					(int)fd, (unsigned int)cmd, buf,
+-					(unsigned int)arg, fn);
+-				if (path)
+-					free_page((unsigned long)path);
+-			}
+-			error = -EINVAL;
+-		}
++		if (++count <= 50)
++			compat_ioctl_error(filp, fd, cmd, arg);
++		error = -EINVAL;
+ 	}
+-out:
++
++	goto out_fput;
++
++ found_handler:
++	if (t->handler) {
++		lock_kernel();
++		error = t->handler(fd, cmd, arg, filp);
++		unlock_kernel();
++		up_read(&ioctl32_sem);
++		goto out_fput;
++	}
++
++	up_read(&ioctl32_sem);
++ do_ioctl:
++	error = sys_ioctl(fd, cmd, arg);
++ out_fput:
+ 	fput(filp);
+-out2:
++ out:
+ 	return error;
+ }
+ 
+diff -puN fs/ioctl.c~ioctl-rework-2 fs/ioctl.c
+--- 25/fs/ioctl.c~ioctl-rework-2	2005-01-13 22:28:55.289797576 -0800
++++ 25-akpm/fs/ioctl.c	2005-01-13 22:29:42.367640656 -0800
+@@ -17,7 +17,29 @@
+ #include <asm/uaccess.h>
+ #include <asm/ioctls.h>
+ 
+-static int file_ioctl(struct file *filp,unsigned int cmd,unsigned long arg)
++static long do_ioctl(struct file *filp, unsigned int cmd,
++		unsigned long arg)
++{
++	int error = -ENOTTY;
++
++	if (!filp->f_op)
++		goto out;
++
++	if (filp->f_op->unlocked_ioctl) {
++		error = filp->f_op->unlocked_ioctl(filp, cmd, arg);
++	} else if (filp->f_op->ioctl) {
++		lock_kernel();
++		error = filp->f_op->ioctl(filp->f_dentry->d_inode,
++					  filp, cmd, arg);
++		unlock_kernel();
++	}
++
++ out:
++	return error;
++}
++
++static int file_ioctl(struct file *filp, unsigned int cmd,
++		unsigned long arg)
+ {
+ 	int error;
+ 	int block;
+@@ -37,7 +59,9 @@ static int file_ioctl(struct file *filp,
+ 			if ((error = get_user(block, p)) != 0)
+ 				return error;
+ 
++			lock_kernel();
+ 			res = mapping->a_ops->bmap(mapping, block);
++			unlock_kernel();
+ 			return put_user(res, p);
+ 		}
+ 		case FIGETBSZ:
+@@ -47,14 +71,13 @@ static int file_ioctl(struct file *filp,
+ 		case FIONREAD:
+ 			return put_user(i_size_read(inode) - filp->f_pos, p);
+ 	}
+-	if (filp->f_op && filp->f_op->ioctl)
+-		return filp->f_op->ioctl(inode, filp, cmd, arg);
+-	return -ENOTTY;
++
++	return do_ioctl(filp, cmd, arg);
+ }
+ 
+ 
+ asmlinkage long sys_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg)
+-{	
++{
+ 	struct file * filp;
+ 	unsigned int flag;
+ 	int on, error = -EBADF;
+@@ -64,14 +87,11 @@ asmlinkage long sys_ioctl(unsigned int f
+ 		goto out;
+ 
+ 	error = security_file_ioctl(filp, cmd, arg);
+-	if (error) {
+-                fput(filp);
+-                goto out;
+-        }
++	if (error)
++		goto out_fput;
+ 
+ 	ltt_ev_file_system(LTT_EV_FILE_SYSTEM_IOCTL, fd, cmd, NULL);
+ 
+-	lock_kernel();
+ 	switch (cmd) {
+ 		case FIOCLEX:
+ 			set_close_on_exec(fd, 1);
+@@ -103,8 +123,11 @@ asmlinkage long sys_ioctl(unsigned int f
+ 
+ 			/* Did FASYNC state change ? */
+ 			if ((flag ^ filp->f_flags) & FASYNC) {
+-				if (filp->f_op && filp->f_op->fasync)
++				if (filp->f_op && filp->f_op->fasync) {
++					lock_kernel();
+ 					error = filp->f_op->fasync(fd, filp, on);
++					unlock_kernel();
++				}
+ 				else error = -ENOTTY;
+ 			}
+ 			if (error != 0)
+@@ -127,16 +150,15 @@ asmlinkage long sys_ioctl(unsigned int f
+ 				error = -ENOTTY;
+ 			break;
+ 		default:
+-			error = -ENOTTY;
+ 			if (S_ISREG(filp->f_dentry->d_inode->i_mode))
+ 				error = file_ioctl(filp, cmd, arg);
+-			else if (filp->f_op && filp->f_op->ioctl)
+-				error = filp->f_op->ioctl(filp->f_dentry->d_inode, filp, cmd, arg);
++			else
++				error = do_ioctl(filp, cmd, arg);
++			break;
+ 	}
+-	unlock_kernel();
++ out_fput:
+ 	fput(filp);
+-
+-out:
++ out:
+ 	return error;
+ }
+ 
+diff -puN include/linux/fs.h~ioctl-rework-2 include/linux/fs.h
+--- 25/include/linux/fs.h~ioctl-rework-2	2005-01-13 22:28:55.291797272 -0800
++++ 25-akpm/include/linux/fs.h	2005-01-13 22:28:55.300795904 -0800
+@@ -912,8 +912,8 @@ typedef int (*read_actor_t)(read_descrip
+ 
+ /*
+  * NOTE:
+- * read, write, poll, fsync, readv, writev can be called
+- *   without the big kernel lock held in all filesystems.
++ * read, write, poll, fsync, readv, writev, unlocked_ioctl and compat_ioctl
++ * can be called without the big kernel lock held in all filesystems.
+  */
+ struct file_operations {
+ 	struct module *owner;
+@@ -925,6 +925,8 @@ struct file_operations {
+ 	int (*readdir) (struct file *, void *, filldir_t);
+ 	unsigned int (*poll) (struct file *, struct poll_table_struct *);
+ 	int (*ioctl) (struct inode *, struct file *, unsigned int, unsigned long);
++	long (*unlocked_ioctl) (struct file *, unsigned int, unsigned long);
++	long (*compat_ioctl) (struct file *, unsigned int, unsigned long);
+ 	int (*mmap) (struct file *, struct vm_area_struct *);
+ 	int (*open) (struct inode *, struct file *);
+ 	int (*flush) (struct file *);
+_

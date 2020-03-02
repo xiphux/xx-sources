@@ -1,0 +1,1173 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+The attached patch contains a shared Reed-Solomon Library analogous to the
+shared zlib.
+
+(N)AND FLASH is gaining popularity and there are a lot of ASIC/SoC/FPGA
+controllers around which implement hardware support for Reed-Solomon error
+correction.  As usual they use different implementations (polynomials etc.). 
+So it's obvious to use a shared library for the common tasks of error
+correction.
+
+A short scan through the kernel revealed that at least the ftape driver uses
+Reed-Solomon error correction.  It could be easily converted to use the shared
+library code.  
+
+The encoder/decoder code is lifted from the GPL'd userspace RS-library written
+by Phil Karn.  I modified/wrapped it to provide the different functions which
+we need in the MTD/NAND code.
+
+The library is tested in extenso under various MTD/NAND configurations.
+
+The lib should be usable for other purposes right out of the box.  Adjustment
+for currently not implemented functionality is an easy task.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/DocBook/Makefile   |    2 
+ 25-akpm/Documentation/DocBook/librs.tmpl |  287 ++++++++++++++++++++++++++
+ 25-akpm/include/linux/rslib.h            |  105 +++++++++
+ 25-akpm/lib/Kconfig                      |   18 +
+ 25-akpm/lib/Makefile                     |    1 
+ 25-akpm/lib/reed_solomon/Makefile        |    6 
+ 25-akpm/lib/reed_solomon/decode_rs.c     |  272 +++++++++++++++++++++++++
+ 25-akpm/lib/reed_solomon/encode_rs.c     |   54 ++++
+ 25-akpm/lib/reed_solomon/reed_solomon.c  |  335 +++++++++++++++++++++++++++++++
+ 9 files changed, 1079 insertions(+), 1 deletion(-)
+
+diff -puN /dev/null Documentation/DocBook/librs.tmpl
+--- /dev/null	Thu Apr 11 07:25:15 2002
++++ 25-akpm/Documentation/DocBook/librs.tmpl	Tue Oct  5 15:57:09 2004
+@@ -0,0 +1,287 @@
++<!DOCTYPE book PUBLIC "-//OASIS//DTD DocBook V3.1//EN"[]>
++
++<book id="Reed-Solomon-Library-Guide">
++ <bookinfo>
++  <title>Reed-Solomon Library Programming Interface</title>
++
++  <authorgroup>
++   <author>
++    <firstname>Thomas</firstname>
++    <surname>Gleixner</surname>
++    <affiliation>
++     <address>
++      <email>tglx@linutronix.de</email>
++     </address>
++    </affiliation>
++   </author>
++  </authorgroup>
++
++  <copyright>
++   <year>2004</year>
++   <holder>Thomas Gleixner</holder>
++  </copyright>
++
++  <legalnotice>
++   <para>
++     This documentation is free software; you can redistribute
++     it and/or modify it under the terms of the GNU General Public
++     License version 2 as published by the Free Software Foundation.
++   </para>
++
++   <para>
++     This program is distributed in the hope that it will be
++     useful, but WITHOUT ANY WARRANTY; without even the implied
++     warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++     See the GNU General Public License for more details.
++   </para>
++
++   <para>
++     You should have received a copy of the GNU General Public
++     License along with this program; if not, write to the Free
++     Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
++     MA 02111-1307 USA
++   </para>
++
++   <para>
++     For more details see the file COPYING in the source
++     distribution of Linux.
++   </para>
++  </legalnotice>
++ </bookinfo>
++
++<toc></toc>
++
++  <chapter id="intro">
++      <title>Introduction</title>
++  <para>
++  	The generic Reed-Solomon Library provides encoding, decoding
++	and error correction functions.
++  </para>
++  <para>
++  	Reed-Solomon codes are used in communication and storage
++	applications to ensure data integrity.
++  </para>
++  <para>
++  	This documentation is provided for developers who want to utilize
++	the functions provided by the library.
++  </para>
++  </chapter>
++
++  <chapter id="bugs">
++     <title>Known Bugs And Assumptions</title>
++  <para>
++	None.
++  </para>
++  </chapter>
++
++  <chapter id="usage">
++     	<title>Usage</title>
++	<para>
++		This chapter provides examples how to use the library.
++	</para>
++	<sect1>
++		<title>Initializing</title>
++		<para>
++			The init function init_rs returns a pointer to a
++			rs decoder structure, which holds the neccecary
++			information for encoding, decoding and error correction
++			with the given polynomial. It either uses an existing
++			matching decoder or creates a new one. On creation all
++			the lookup tables for fast en/decoding are created.
++			The function may take a while, so make sure not to
++			call it in critical code pathes.
++		</para>
++		<programlisting>
++/* the Reed Solomon control structure */
++static struct rs_control *rs_decoder;
++
++/* Symbolsize is 10 (bits)
++ * Primitve polynomial is x^10+x^3+1
++ * first consecutive root is 0
++ * primitve element to generate roots = 1
++ * generator polinomial degree (number of roots) = 6
++ */
++rs_decoder = init_rs (10, 0x409, 0, 1, 6);
++		</programlisting>
++	</sect1>
++	<sect1>
++		<title>Encoding</title>
++		<para>
++			The encoder calculates the Reed-Solomon code over
++			the given data length and stores the result in
++			the parity buffer. Note that the parity buffer must
++			be initialized before calling the encoder.
++		</para>
++		<para>
++			The expanded data can be inverted on the fly by
++			providing a non zero inversion mask. The expanded data is
++			XOR'ed with the mask. This is used e.g. for FLASH
++			ECC, where the all 0xFF is inverted to an all 0x00.
++			The Reed-Solomon code for all 0x00 is all 0x00. The
++			code is inverted before storing to FLASH so it is 0xFF
++			too. This prevent's that reading from an erased FLASH
++			results in ECC errors.
++		</para>
++		<para>
++			The databytes are expanded to the given symbolsize
++			on the fly. There is no support for encoding continuos
++			bitstreams with a symbolsize != 8 at the moment. If
++			it is neccecary it should be not a big deal to implement
++			such functionality.
++		</para>
++		<programlisting>
++/* Parity buffer. Size = number of roots */
++uint16_t par[6];
++/* Initialize the parity buffer */
++memset(par, 0, sizeof(par));
++/* Encode 512 byte in data8. Store parity in buffer par */
++encode_rs8 (rs_decoder, data8, 512, par, 0);
++		</programlisting>
++	</sect1>
++	<sect1>
++		<title>Decoding</title>
++		<para>
++			The decoder calculates the syndrome over
++			the given data length and the received parity symbols
++			and corrects errors in the data.
++		</para>
++		<para>
++			If a syndrome is available from a hardware decoder
++			then the syndrome calculation is skipped.
++		</para>
++		<para>
++			The correction of the data buffer can be suppressed
++			by providing a correction pattern buffer and an error
++			location buffer to the decoder. The decoder stores the
++			calculated error location and the correction bitmask
++			in the given buffers. This is useful for hardware
++			decoders which use a weird bitordering scheme.
++		</para>
++		<para>
++			The databytes are expanded to the given symbolsize
++			on the fly. There is no support for decoding continuos
++			bitstreams with a symbolsize != 8 at the moment. If
++			it is neccecary it should be not a big deal to implement
++			such functionality.
++		</para>
++
++		<sect2>
++		<title>
++			Decoding with syndrome calculation, direct data correction
++		</title>
++		<programlisting>
++/* Parity buffer. Size = number of roots */
++uint16_t par[6];
++uint8_t  data[512];
++int numerr;
++/* Receive data */
++.....
++/* Receive parity */
++.....
++/* Decode 512 byte in data8.*/
++numerr = decode_rs8 (rs_decoder, data8, par, 512, NULL, 0, NULL, 0, NULL);
++		</programlisting>
++		</sect2>
++
++		<sect2>
++		<title>
++			Decoding with syndrome given by hardware decoder, direct data correction
++		</title>
++		<programlisting>
++/* Parity buffer. Size = number of roots */
++uint16_t par[6], syn[6];
++uint8_t  data[512];
++int numerr;
++/* Receive data */
++.....
++/* Receive parity */
++.....
++/* Get syndrome from hardware decoder */
++.....
++/* Decode 512 byte in data8.*/
++numerr = decode_rs8 (rs_decoder, data8, par, 512, syn, 0, NULL, 0, NULL);
++		</programlisting>
++		</sect2>
++
++		<sect2>
++		<title>
++			Decoding with syndrome given by hardware decoder, no direct data correction.
++		</title>
++		<para>
++			Note: It's not neccecary to give data and recieved parity to the decoder.
++		</para>
++		<programlisting>
++/* Parity buffer. Size = number of roots */
++uint16_t par[6], syn[6], corr[8];
++uint8_t  data[512];
++int numerr, errpos[8];
++/* Receive data */
++.....
++/* Receive parity */
++.....
++/* Get syndrome from hardware decoder */
++.....
++/* Decode 512 byte in data8.*/
++numerr = decode_rs8 (rs_decoder, NULL, NULL, 512, syn, 0, errpos, 0, corr);
++for (i = 0; i < numerr; i++) {
++	do_error_correction_in_your_buffer(errpos[i], corr[i]);
++}
++		</programlisting>
++		</sect2>
++	</sect1>
++	<sect1>
++		<title>Cleanup</title>
++		<para>
++			The function free_rs frees the allocated resources,
++			if the caller is the last user of the decoder.
++		</para>
++		<programlisting>
++/* Release resources */
++free_rs(rs_decoder);
++		</programlisting>
++	</sect1>
++
++  </chapter>
++
++  <chapter id="structs">
++     <title>Structures</title>
++     <para>
++     This chapter contains the autogenerated documentation of the structures which are
++     used in the Reed-Solomon Library and are relevant for a developer.
++     </para>
++!Iinclude/linux/rslib.h
++  </chapter>
++
++  <chapter id="pubfunctions">
++     <title>Public Functions Provided</title>
++     <para>
++     This chapter contains the autogenerated documentation of the Reed-Solomon functions
++     which are exported.
++     </para>
++!Elib/reed_solomon/reed_solomon.c
++  </chapter>
++
++  <chapter id="credits">
++     <title>Credits</title>
++	<para>
++		The library code for encoding and decoding was written by Phil Karn.
++	</para>
++	<programlisting>
++		Copyright 2002, Phil Karn, KA9Q
++ 		May be used under the terms of the GNU General Public License (GPL)
++	</programlisting>
++	<para>
++		The wrapper functions and interfaces are written by Thomas Gleixner
++	</para>
++	<para>
++		Many users have provided bugfixes, improvements and helping hands for testing.
++		Thanks a lot.
++	</para>
++	<para>
++		The following people have contributed to this document:
++	</para>
++	<para>
++		Thomas Gleixner<email>tglx@linutronix.de</email>
++	</para>
++  </chapter>
++</book>
+diff -puN Documentation/DocBook/Makefile~shared-reed-solomon-ecc-library Documentation/DocBook/Makefile
+--- 25/Documentation/DocBook/Makefile~shared-reed-solomon-ecc-library	Tue Oct  5 15:57:09 2004
++++ 25-akpm/Documentation/DocBook/Makefile	Tue Oct  5 15:57:09 2004
+@@ -11,7 +11,7 @@ DOCBOOKS := wanbook.sgml z8530book.sgml 
+ 	    mousedrivers.sgml deviceiobook.sgml procfs-guide.sgml \
+ 	    tulip-user.sgml writing_usb_driver.sgml scsidrivers.sgml \
+ 	    sis900.sgml kernel-api.sgml journal-api.sgml lsm.sgml usb.sgml \
+-	    gadget.sgml libata.sgml
++	    gadget.sgml libata.sgml librs.sgml
+ 
+ ###
+ # The build process is as follows (targets):
+diff -puN /dev/null include/linux/rslib.h
+--- /dev/null	Thu Apr 11 07:25:15 2002
++++ 25-akpm/include/linux/rslib.h	Tue Oct  5 15:57:09 2004
+@@ -0,0 +1,105 @@
++/*
++ * include/linux/rslib.h
++ *
++ * Overview:
++ *   Generic Reed Solomon encoder / decoder library
++ *
++ * Copyright (C) 2004 Thomas Gleixner (tglx@linutronix.de)
++ *
++ * RS code lifted from reed solomon library written by Phil Karn
++ * Copyright 2002 Phil Karn, KA9Q
++ *
++ * $Id: rslib.h,v 1.2 2004/10/01 21:43:50 gleixner Exp $
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ */
++
++#ifndef _RSLIB_H_
++#define _RSLIB_H_
++
++#include <linux/list.h>
++
++/**
++ * struct rs_control - rs control structure
++ *
++ * @mm:		Bits per symbol
++ * @nn:		Symbols per block (= (1<<mm)-1)
++ * @alpha_to:	log lookup table
++ * @index_of:	Antilog lookup table
++ * @genpoly:	Generator polynomial
++ * @nroots:	Number of generator roots = number of parity symbols
++ * @fcr:	First consecutive root, index form
++ * @prim:	Primitive element, index form
++ * @iprim:	prim-th root of 1, index form
++ * @gfpoly:	The primitive generator polynominal
++ * @users:	Users of this structure
++ * @list:	List entry for the rs control list
++*/
++struct rs_control {
++	int 		mm;
++	int 		nn;
++	uint16_t	*alpha_to;
++	uint16_t	*index_of;
++	uint16_t	*genpoly;
++	int 		nroots;
++	int 		fcr;
++	int 		prim;
++	int 		iprim;
++	int		gfpoly;
++	int		users;
++	struct list_head list;
++};
++
++/* General purpose RS codec, 8-bit data width, symbol width 1-15 bit  */
++#ifdef CONFIG_REED_SOLOMON_ENC8
++int encode_rs8(struct rs_control *rs, uint8_t *data, int len, uint16_t *par,
++	       uint16_t invmsk);
++#endif
++#ifdef CONFIG_REED_SOLOMON_DEC8
++int decode_rs8(struct rs_control *rs, uint8_t *data, uint16_t *par, int len,
++		uint16_t *s, int no_eras, int *eras_pos, uint16_t invmsk,
++	       uint16_t *corr);
++#endif
++
++/* General purpose RS codec, 16-bit data width, symbol width 1-15 bit  */
++#ifdef CONFIG_REED_SOLOMON_ENC16
++int encode_rs16(struct rs_control *rs, uint16_t *data, int len, uint16_t *par,
++		uint16_t invmsk);
++#endif
++#ifdef CONFIG_REED_SOLOMON_DEC16
++int decode_rs16(struct rs_control *rs, uint16_t *data, uint16_t *par, int len,
++		uint16_t *s, int no_eras, int *eras_pos, uint16_t invmsk,
++		uint16_t *corr);
++#endif
++
++/* Create or get a matching rs control structure */
++struct rs_control *init_rs(int symsize, int gfpoly, int fcr, int prim,
++			   int nroots);
++
++/* Release a rs control structure */
++void free_rs(struct rs_control *rs);
++
++/** modulo replacement for galois field arithmetics
++ *
++ *  @rs:	the rs control structure
++ *  @x:		the value to reduce
++ *
++ *  where
++ *  rs->mm = number of bits per symbol
++ *  rs->nn = (2^rs->mm) - 1
++ *
++ *  Simple arithmetic modulo would return a wrong result for values
++ *  >= 3 * rs->nn
++*/
++static inline int rs_modnn(struct rs_control *rs, int x)
++{
++	while (x >= rs->nn) {
++		x -= rs->nn;
++		x = (x >> rs->mm) + (x & rs->nn);
++	}
++	return x;
++}
++
++#endif
+diff -puN lib/Kconfig~shared-reed-solomon-ecc-library lib/Kconfig
+--- 25/lib/Kconfig~shared-reed-solomon-ecc-library	Tue Oct  5 15:57:09 2004
++++ 25-akpm/lib/Kconfig	Tue Oct  5 15:57:09 2004
+@@ -39,5 +39,23 @@ config ZLIB_INFLATE
+ config ZLIB_DEFLATE
+ 	tristate
+ 
++#
++# reed solomon support is select'ed if needed
++#
++config REED_SOLOMON
++	tristate
++
++config REED_SOLOMON_ENC8
++	boolean
++
++config REED_SOLOMON_DEC8
++	boolean
++
++config REED_SOLOMON_ENC16
++	boolean
++
++config REED_SOLOMON_DEC16
++	boolean
++
+ endmenu
+ 
+diff -puN lib/Makefile~shared-reed-solomon-ecc-library lib/Makefile
+--- 25/lib/Makefile~shared-reed-solomon-ecc-library	Tue Oct  5 15:57:09 2004
++++ 25-akpm/lib/Makefile	Tue Oct  5 15:57:09 2004
+@@ -22,6 +22,7 @@ obj-$(CONFIG_GENERIC_IOMAP) += iomap.o
+ 
+ obj-$(CONFIG_ZLIB_INFLATE) += zlib_inflate/
+ obj-$(CONFIG_ZLIB_DEFLATE) += zlib_deflate/
++obj-$(CONFIG_REED_SOLOMON) += reed_solomon/
+ 
+ hostprogs-y	:= gen_crc32table
+ clean-files	:= crc32table.h
+diff -puN /dev/null lib/reed_solomon/decode_rs.c
+--- /dev/null	Thu Apr 11 07:25:15 2002
++++ 25-akpm/lib/reed_solomon/decode_rs.c	Tue Oct  5 15:57:09 2004
+@@ -0,0 +1,272 @@
++/*
++ * lib/reed_solomon/decode_rs.c
++ *
++ * Overview:
++ *   Generic Reed Solomon encoder / decoder library
++ *
++ * Copyright 2002, Phil Karn, KA9Q
++ * May be used under the terms of the GNU General Public License (GPL)
++ *
++ * Adaption to the kernel by Thomas Gleixner (tglx@linutronix.de)
++ *
++ * $Id: decode_rs.c,v 1.4 2004/10/01 21:44:39 gleixner Exp $
++ *
++ */
++
++/* Generic data witdh independend code which is included by the
++ * wrappers.
++ */
++{
++	int deg_lambda, el, deg_omega;
++	int i, j, r, k, pad;
++	int nn = rs->nn;
++	int nroots = rs->nroots;
++	int fcr = rs->fcr;
++	int prim = rs->prim;
++	int iprim = rs->iprim;
++	uint16_t *alpha_to = rs->alpha_to;
++	uint16_t *index_of = rs->index_of;
++	uint16_t u, q, tmp, num1, num2, den, discr_r, syn_error;
++	/* Err+Eras Locator poly and syndrome poly The maximum value
++	 * of nroots is 8. So the neccecary stacksize will be about
++	 * 220 bytes max.
++	 */
++	uint16_t lambda[nroots + 1], syn[nroots];
++	uint16_t b[nroots + 1], t[nroots + 1], omega[nroots + 1];
++	uint16_t root[nroots], reg[nroots + 1], loc[nroots];
++	int count = 0;
++	uint16_t msk = (uint16_t) rs->nn;
++
++	/* Check length parameter for validity */
++	pad = nn - nroots - len;
++	if (pad < 0 || pad >= nn)
++		return -ERANGE;
++
++	/* Deos the caller provide the syndrome ? */
++	if (s != NULL)
++		goto decode;
++
++	/* form the syndromes; i.e., evaluate data(x) at roots of
++	 * g(x) */
++	for (i = 0; i < nroots; i++)
++		syn[i] = (((uint16_t) data[0]) ^ invmsk) & msk;
++
++	for (j = 1; j < len; j++) {
++		for (i = 0; i < nroots; i++) {
++			if (syn[i] == 0) {
++				syn[i] = (((uint16_t) data[j]) ^
++					  invmsk) & msk;
++			} else {
++				syn[i] = ((((uint16_t) data[j]) ^
++					   invmsk) & msk) ^
++					alpha_to[rs_modnn(rs, index_of[syn[i]] +
++						       (fcr + i) * prim)];
++			}
++		}
++	}
++
++	for (j = 0; j < nroots; j++) {
++		for (i = 0; i < nroots; i++) {
++			if (syn[i] == 0) {
++				syn[i] = ((uint16_t) par[j]) & msk;
++			} else {
++				syn[i] = (((uint16_t) par[j]) & msk) ^
++					alpha_to[rs_modnn(rs, index_of[syn[i]] +
++						       (fcr+i)*prim)];
++			}
++		}
++	}
++	s = syn;
++
++	/* Convert syndromes to index form, checking for nonzero condition */
++	syn_error = 0;
++	for (i = 0; i < nroots; i++) {
++		syn_error |= s[i];
++		s[i] = index_of[s[i]];
++	}
++
++	if (!syn_error) {
++		/* if syndrome is zero, data[] is a codeword and there are no
++		 * errors to correct. So return data[] unmodified
++		 */
++		count = 0;
++		goto finish;
++	}
++
++ decode:
++	memset(&lambda[1], 0, nroots * sizeof(lambda[0]));
++	lambda[0] = 1;
++
++	if (no_eras > 0) {
++		/* Init lambda to be the erasure locator polynomial */
++		lambda[1] = alpha_to[rs_modnn(rs,
++					      prim * (nn - 1 - eras_pos[0]))];
++		for (i = 1; i < no_eras; i++) {
++			u = rs_modnn(rs, prim * (nn - 1 - eras_pos[i]));
++			for (j = i + 1; j > 0; j--) {
++				tmp = index_of[lambda[j - 1]];
++				if (tmp != nn) {
++					lambda[j] ^=
++						alpha_to[rs_modnn(rs, u + tmp)];
++				}
++			}
++		}
++	}
++
++	for (i = 0; i < nroots + 1; i++)
++		b[i] = index_of[lambda[i]];
++
++	/*
++	 * Begin Berlekamp-Massey algorithm to determine error+erasure
++	 * locator polynomial
++	 */
++	r = no_eras;
++	el = no_eras;
++	while (++r <= nroots) {	/* r is the step number */
++		/* Compute discrepancy at the r-th step in poly-form */
++		discr_r = 0;
++		for (i = 0; i < r; i++) {
++			if ((lambda[i] != 0) && (s[r - i - 1] != nn)) {
++				discr_r ^=
++					alpha_to[rs_modnn(rs,
++							  index_of[lambda[i]] +
++							  s[r - i - 1])];
++			}
++		}
++		discr_r = index_of[discr_r];	/* Index form */
++		if (discr_r == nn) {
++			/* 2 lines below: B(x) <-- x*B(x) */
++			memmove (&b[1], b, nroots * sizeof (b[0]));
++			b[0] = nn;
++		} else {
++			/* 7 lines below: T(x) <-- lambda(x)-discr_r*x*b(x) */
++			t[0] = lambda[0];
++			for (i = 0; i < nroots; i++) {
++				if (b[i] != nn) {
++					t[i + 1] = lambda[i + 1] ^
++						alpha_to[rs_modnn(rs, discr_r +
++								  b[i])];
++				} else
++					t[i + 1] = lambda[i + 1];
++			}
++			if (2 * el <= r + no_eras - 1) {
++				el = r + no_eras - el;
++				/*
++				 * 2 lines below: B(x) <-- inv(discr_r) *
++				 * lambda(x)
++				 */
++				for (i = 0; i <= nroots; i++) {
++					b[i] = (lambda[i] == 0) ? nn :
++						rs_modnn(rs, index_of[lambda[i]]
++							 - discr_r + nn);
++				}
++			} else {
++				/* 2 lines below: B(x) <-- x*B(x) */
++				memmove(&b[1], b, nroots * sizeof(b[0]));
++				b[0] = nn;
++			}
++			memcpy(lambda, t, (nroots + 1) * sizeof(t[0]));
++		}
++	}
++
++	/* Convert lambda to index form and compute deg(lambda(x)) */
++	deg_lambda = 0;
++	for (i = 0; i < nroots + 1; i++) {
++		lambda[i] = index_of[lambda[i]];
++		if (lambda[i] != nn)
++			deg_lambda = i;
++	}
++	/* Find roots of error+erasure locator polynomial by Chien search */
++	memcpy(&reg[1], &lambda[1], nroots * sizeof(reg[0]));
++	count = 0;		/* Number of roots of lambda(x) */
++	for (i = 1, k = iprim - 1; i <= nn; i++, k = rs_modnn(rs, k + iprim)) {
++		q = 1;		/* lambda[0] is always 0 */
++		for (j = deg_lambda; j > 0; j--) {
++			if (reg[j] != nn) {
++				reg[j] = rs_modnn(rs, reg[j] + j);
++				q ^= alpha_to[reg[j]];
++			}
++		}
++		if (q != 0)
++			continue;	/* Not a root */
++		/* store root (index-form) and error location number */
++		root[count] = i;
++		loc[count] = k;
++		/* If we've already found max possible roots,
++		 * abort the search to save time
++		 */
++		if (++count == deg_lambda)
++			break;
++	}
++	if (deg_lambda != count) {
++		/*
++		 * deg(lambda) unequal to number of roots => uncorrectable
++		 * error detected
++		 */
++		count = -1;
++		goto finish;
++	}
++	/*
++	 * Compute err+eras evaluator poly omega(x) = s(x)*lambda(x) (modulo
++	 * x**nroots). in index form. Also find deg(omega).
++	 */
++	deg_omega = deg_lambda - 1;
++	for (i = 0; i <= deg_omega; i++) {
++		tmp = 0;
++		for (j = i; j >= 0; j--) {
++			if ((s[i - j] != nn) && (lambda[j] != nn))
++				tmp ^=
++				    alpha_to[rs_modnn(rs, s[i - j] + lambda[j])];
++		}
++		omega[i] = index_of[tmp];
++	}
++
++	/*
++	 * Compute error values in poly-form. num1 = omega(inv(X(l))), num2 =
++	 * inv(X(l))**(fcr-1) and den = lambda_pr(inv(X(l))) all in poly-form
++	 */
++	for (j = count - 1; j >= 0; j--) {
++		num1 = 0;
++		for (i = deg_omega; i >= 0; i--) {
++			if (omega[i] != nn)
++				num1 ^= alpha_to[rs_modnn(rs, omega[i] +
++							i * root[j])];
++		}
++		num2 = alpha_to[rs_modnn(rs, root[j] * (fcr - 1) + nn)];
++		den = 0;
++
++		/* lambda[i+1] for i even is the formal derivative
++		 * lambda_pr of lambda[i] */
++		for (i = min(deg_lambda, nroots - 1) & ~1; i >= 0; i -= 2) {
++			if (lambda[i + 1] != nn) {
++				den ^= alpha_to[rs_modnn(rs, lambda[i + 1] +
++						       i * root[j])];
++			}
++		}
++		/* Apply error to data */
++		if (num1 != 0 && loc[j] >= pad) {
++			uint16_t cor = alpha_to[rs_modnn(rs,index_of[num1] +
++						       index_of[num2] +
++						       nn - index_of[den])];
++			/* Store the error correction pattern, if a
++			 * correction buffer is available */
++			if (corr) {
++				corr[j] = cor;
++			} else {
++				/* If a data buffer is given and the
++				 * error is inside the message,
++				 * correct it */
++				if (data && (loc[j] < (nn - nroots)))
++					data[loc[j] - pad] ^= cor;
++			}
++		}
++	}
++
++finish:
++	if (eras_pos != NULL) {
++		for (i = 0; i < count; i++)
++			eras_pos[i] = loc[i] - pad;
++	}
++	return count;
++
++}
+diff -puN /dev/null lib/reed_solomon/encode_rs.c
+--- /dev/null	Thu Apr 11 07:25:15 2002
++++ 25-akpm/lib/reed_solomon/encode_rs.c	Tue Oct  5 15:57:09 2004
+@@ -0,0 +1,54 @@
++/*
++ * lib/reed_solomon/encode_rs.c
++ *
++ * Overview:
++ *   Generic Reed Solomon encoder / decoder library
++ *
++ * Copyright 2002, Phil Karn, KA9Q
++ * May be used under the terms of the GNU General Public License (GPL)
++ *
++ * Adaption to the kernel by Thomas Gleixner (tglx@linutronix.de)
++ *
++ * $Id: encode_rs.c,v 1.2 2004/09/19 12:09:40 gleixner Exp $
++ *
++ */
++
++/* Generic data witdh independend code which is included by the
++ * wrappers.
++ * int encode_rsX (struct rs_control *rs, uintX_t *data, int len, uintY_t *par)
++ */
++{
++	int i, j, pad;
++	int nn = rs->nn;
++	int nroots = rs->nroots;
++	uint16_t *alpha_to = rs->alpha_to;
++	uint16_t *index_of = rs->index_of;
++	uint16_t *genpoly = rs->genpoly;
++	uint16_t fb;
++	uint16_t msk = (uint16_t) rs->nn;
++
++	/* Check length parameter for validity */
++	pad = nn - nroots - len;
++	if (pad < 0 || pad >= nn)
++		return -ERANGE;
++
++	for (i = 0; i < len; i++) {
++		fb = index_of[((((uint16_t) data[i])^invmsk) & msk) ^ par[0]];
++		/* feedback term is non-zero */
++		if (fb != nn) {
++			for (j = 1; j < nroots; j++) {
++				par[j] ^= alpha_to[rs_modnn(rs, fb +
++							 genpoly[nroots - j])];
++			}
++		}
++		/* Shift */
++		memmove(&par[0], &par[1], sizeof(uint16_t) * (nroots - 1));
++		if (fb != nn) {
++			par[nroots - 1] = alpha_to[rs_modnn(rs,
++							    fb + genpoly[0])];
++		} else {
++			par[nroots - 1] = 0;
++		}
++	}
++	return 0;
++}
+diff -puN /dev/null lib/reed_solomon/Makefile
+--- /dev/null	Thu Apr 11 07:25:15 2002
++++ 25-akpm/lib/reed_solomon/Makefile	Tue Oct  5 15:57:09 2004
+@@ -0,0 +1,6 @@
++#
++# This is a modified version of reed solomon lib,
++#
++
++obj-$(CONFIG_REED_SOLOMON) += reed_solomon.o
++
+diff -puN /dev/null lib/reed_solomon/reed_solomon.c
+--- /dev/null	Thu Apr 11 07:25:15 2002
++++ 25-akpm/lib/reed_solomon/reed_solomon.c	Tue Oct  5 15:57:09 2004
+@@ -0,0 +1,335 @@
++/*
++ * lib/reed_solomon/rslib.c
++ *
++ * Overview:
++ *   Generic Reed Solomon encoder / decoder library
++ *
++ * Copyright (C) 2004 Thomas Gleixner (tglx@linutronix.de)
++ *
++ * Reed Solomon code lifted from reed solomon library written by Phil Karn
++ * Copyright 2002 Phil Karn, KA9Q
++ *
++ * $Id: rslib.c,v 1.3 2004/10/01 21:44:39 gleixner Exp $
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * Description:
++ *
++ * The generic Reed Solomon library provides runtime configurable
++ * encoding / decoding of RS codes.
++ * Each user must call init_rs to get a pointer to a rs_control
++ * structure for the given rs parameters. This structure is either
++ * generated or a already available matching control structure is used.
++ * If a structure is generated then the polynominal arrays for
++ * fast encoding / decoding are built. This can take some time so
++ * make sure not to call this function from a timecritical path.
++ * Usually a module / driver should initialize the neccecary
++ * rs_control structure on module / driver init and release it
++ * on exit.
++ * The encoding puts the calculated syndrome into a given syndrom
++ * buffer.
++ * The decoding is a two step process. The first step calculates
++ * the syndrome over the received (data + syndrom) and calls the
++ * second stage, which does the decoding / error correction itself.
++ * Many hw encoders provide a syndrom calculation over the received
++ * data + syndrom and can call the second stage directly.
++ *
++ */
++
++#include <linux/errno.h>
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/rslib.h>
++#include <linux/slab.h>
++#include <asm/semaphore.h>
++
++/* This list holds all currently allocated rs control structures */
++static LIST_HEAD (rslist);
++/* Protection for the list */
++static DECLARE_MUTEX(rslistlock);
++
++/**
++ * rs_init - Initialize a Reed-Solomon codec
++ *
++ * @symsize:	symbol size, bits (1-8)
++ * @gfpoly:	Field generator polynomial coefficients
++ * @fcr:	first root of RS code generator polynomial, index form
++ * @prim:	primitive element to generate polynomial roots
++ * @nroots:	RS code generator polynomial degree (number of roots)
++ *
++ * Allocate a control structure and the polynom arrays for faster
++ * en/decoding. Fill the arrays according to the given parameters
++ */
++static struct rs_control *rs_init(int symsize, int gfpoly, int fcr,
++				   int prim, int nroots)
++{
++	struct rs_control *rs;
++	int i, j, sr, root, iprim;
++
++	/* Allocate the control structure */
++	rs = kmalloc(sizeof (struct rs_control), GFP_KERNEL);
++	if (rs == NULL)
++		return NULL;
++
++	INIT_LIST_HEAD(&rs->list);
++
++	rs->mm = symsize;
++	rs->nn = (1 << symsize) - 1;
++	rs->fcr = fcr;
++	rs->prim = prim;
++	rs->nroots = nroots;
++	rs->gfpoly = gfpoly;
++
++	/* Allocate the arrays */
++	rs->alpha_to = kmalloc(sizeof(uint16_t) * (rs->nn + 1), GFP_KERNEL);
++	if (rs->alpha_to == NULL)
++		goto errrs;
++
++	rs->index_of = kmalloc(sizeof(uint16_t) * (rs->nn + 1), GFP_KERNEL);
++	if (rs->index_of == NULL)
++		goto erralp;
++
++	rs->genpoly = kmalloc(sizeof(uint16_t) * (rs->nroots + 1), GFP_KERNEL);
++	if(rs->genpoly == NULL)
++		goto erridx;
++
++	/* Generate Galois field lookup tables */
++	rs->index_of[0] = rs->nn;	/* log(zero) = -inf */
++	rs->alpha_to[rs->nn] = 0;	/* alpha**-inf = 0 */
++	sr = 1;
++	for (i = 0; i < rs->nn; i++) {
++		rs->index_of[sr] = i;
++		rs->alpha_to[i] = sr;
++		sr <<= 1;
++		if (sr & (1 << symsize))
++			sr ^= gfpoly;
++		sr &= rs->nn;
++	}
++	/* If it's not primitive, exit */
++	if(sr != 1)
++		goto errpol;
++
++	/* Find prim-th root of 1, used in decoding */
++	for(iprim = 1; (iprim % prim) != 0; iprim += rs->nn);
++	/* prim-th root of 1, index form */
++	rs->iprim = iprim / prim;
++
++	/* Form RS code generator polynomial from its roots */
++	rs->genpoly[0] = 1;
++	for (i = 0, root = fcr * prim; i < nroots; i++, root += prim) {
++		rs->genpoly[i + 1] = 1;
++		/* Multiply rs->genpoly[] by  @**(root + x) */
++		for (j = i; j > 0; j--) {
++			if (rs->genpoly[j] != 0) {
++				rs->genpoly[j] = rs->genpoly[j -1] ^
++					rs->alpha_to[rs_modnn(rs,
++					rs->index_of[rs->genpoly[j]] + root)];
++			} else
++				rs->genpoly[j] = rs->genpoly[j - 1];
++		}
++		/* rs->genpoly[0] can never be zero */
++		rs->genpoly[0] =
++			rs->alpha_to[rs_modnn(rs,
++				rs->index_of[rs->genpoly[0]] + root)];
++	}
++	/* convert rs->genpoly[] to index form for quicker encoding */
++	for (i = 0; i <= nroots; i++)
++		rs->genpoly[i] = rs->index_of[rs->genpoly[i]];
++	return rs;
++
++	/* Error exit */
++errpol:
++	kfree(rs->genpoly);
++erridx:
++	kfree(rs->index_of);
++erralp:
++	kfree(rs->alpha_to);
++errrs:
++	kfree(rs);
++	return NULL;
++}
++
++
++/**
++ *  free_rs - Free the rs control structure, if its not longer used
++ *
++ *  @rs:	the control structure which is not longer used by the
++ *		caller
++ */
++void free_rs(struct rs_control *rs)
++{
++	down(&rslistlock);
++	rs->users--;
++	if(!rs->users) {
++		list_del(&rs->list);
++		kfree(rs->alpha_to);
++		kfree(rs->index_of);
++		kfree(rs->genpoly);
++		kfree(rs);
++	}
++	up(&rslistlock);
++}
++
++/**
++ * init_rs - Find a matching or allocate a new rs control structure
++ *
++ *  @symsize:	the symbol size (number of bits)
++ *  @gfpoly:	the extended Galois field generator polynomial coefficients,
++ *		with the 0th coefficient in the low order bit. The polynomial
++ *		must be primitive;
++ *  @fcr:  	the first consecutive root of the rs code generator polynomial
++ *		in index form
++ *  @prim:	primitive element to generate polynomial roots
++ *  @nroots:	RS code generator polynomial degree (number of roots)
++ */
++struct rs_control *init_rs(int symsize, int gfpoly, int fcr, int prim,
++			   int nroots)
++{
++	struct list_head	*tmp;
++	struct rs_control	*rs;
++
++	/* Sanity checks */
++	if (symsize < 1)
++		return NULL;
++	if (fcr < 0 || fcr >= (1<<symsize))
++    		return NULL;
++	if (prim <= 0 || prim >= (1<<symsize))
++    		return NULL;
++	if (nroots < 0 || nroots >= (1<<symsize) || nroots > 8)
++		return NULL;
++
++	down(&rslistlock);
++
++	/* Walk through the list and look for a matching entry */
++	list_for_each(tmp, &rslist) {
++		rs = list_entry(tmp, struct rs_control, list);
++		if (symsize != rs->mm)
++			continue;
++		if (gfpoly != rs->gfpoly)
++			continue;
++		if (fcr != rs->fcr)
++			continue;
++		if (prim != rs->prim)
++			continue;
++		if (nroots != rs->nroots)
++			continue;
++		/* We have a matching one already */
++		rs->users++;
++		goto out;
++	}
++
++	/* Create a new one */
++	rs = rs_init(symsize, gfpoly, fcr, prim, nroots);
++	if (rs) {
++		rs->users = 1;
++		list_add(&rs->list, &rslist);
++	}
++out:
++	up(&rslistlock);
++	return rs;
++}
++
++#ifdef CONFIG_REED_SOLOMON_ENC8
++/**
++ *  encode_rs8 - Calculate the parity for data values (8bit data width)
++ *
++ *  @rs:	the rs control structure
++ *  @data:	data field of a given type
++ *  @len:	data length
++ *  @par:	parity data, must be initialized by caller (usually all 0)
++ *  @invmsk:	invert data mask (will be xored on data)
++ *
++ *  The parity uses a uint16_t data type to enable
++ *  symbol size > 8. The calling code must take care of encoding of the
++ *  syndrome result for storage itself.
++ */
++int encode_rs8(struct rs_control *rs, uint8_t *data, int len, uint16_t *par,
++	       uint16_t invmsk)
++{
++#include "encode_rs.c"
++}
++EXPORT_SYMBOL_GPL(encode_rs8);
++#endif
++
++#ifdef CONFIG_REED_SOLOMON_DEC8
++/**
++ *  decode_rs8 - Decode codeword (8bit data width)
++ *
++ *  @rs:	the rs control structure
++ *  @data:	data field of a given type
++ *  @par:	received parity data field
++ *  @len:	data length
++ *  @s:		syndrome data field (if NULL, syndrome is calculated)
++ *  @no_eras:	number of erasures
++ *  @eras_pos:	position of erasures, can be NULL
++ *  @invmsk:	invert data mask (will be xored on data, not on parity!)
++ *  @corr:	buffer to store correction bitmask on eras_pos
++ *
++ *  The syndrome and parity uses a uint16_t data type to enable
++ *  symbol size > 8. The calling code must take care of decoding of the
++ *  syndrome result and the received parity before calling this code.
++ */
++int decode_rs8(struct rs_control *rs, uint8_t *data, uint16_t *par, int len,
++	       uint16_t *s, int no_eras, int *eras_pos, uint16_t invmsk,
++	       uint16_t *corr)
++{
++#include "decode_rs.c"
++}
++EXPORT_SYMBOL_GPL(decode_rs8);
++#endif
++
++#ifdef CONFIG_REED_SOLOMON_ENC16
++/**
++ *  encode_rs16 - Calculate the parity for data values (16bit data width)
++ *
++ *  @rs:	the rs control structure
++ *  @data:	data field of a given type
++ *  @len:	data length
++ *  @par:	parity data, must be initialized by caller (usually all 0)
++ *  @invmsk:	invert data mask (will be xored on data, not on parity!)
++ *
++ *  Each field in the data array contains up to symbol size bits of valid data.
++ */
++int encode_rs16(struct rs_control *rs, uint16_t *data, int len, uint16_t *par,
++	uint16_t invmsk)
++{
++#include "encode_rs.c"
++}
++EXPORT_SYMBOL_GPL(encode_rs16);
++#endif
++
++#ifdef CONFIG_REED_SOLOMON_DEC16
++/**
++ *  decode_rs16 - Decode codeword (16bit data width)
++ *
++ *  @rs:	the rs control structure
++ *  @data:	data field of a given type
++ *  @par:	received parity data field
++ *  @len:	data length
++ *  @s:		syndrome data field (if NULL, syndrome is calculated)
++ *  @no_eras:	number of erasures
++ *  @eras_pos:	position of erasures, can be NULL
++ *  @invmsk:	invert data mask (will be xored on data, not on parity!)
++ *  @corr:	buffer to store correction bitmask on eras_pos
++ *
++ *  Each field in the data array contains up to symbol size bits of valid data.
++ */
++int decode_rs16(struct rs_control *rs, uint16_t *data, uint16_t *par, int len,
++		uint16_t *s, int no_eras, int *eras_pos, uint16_t invmsk,
++		uint16_t *corr)
++{
++#include "decode_rs.c"
++}
++EXPORT_SYMBOL_GPL(decode_rs16);
++#endif
++
++EXPORT_SYMBOL_GPL(init_rs);
++EXPORT_SYMBOL_GPL(free_rs);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Reed Solomon encoder/decoder");
++MODULE_AUTHOR("Phil Karn, Thomas Gleixner");
++
+_

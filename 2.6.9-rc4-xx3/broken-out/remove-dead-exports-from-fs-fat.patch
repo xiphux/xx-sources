@@ -1,0 +1,156 @@
+
+From: OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>
+
+ From: Christoph Hellwig <hch@lst.de>
+
+These were used by the defunct umsdos code only.
+
+Signed-off-by: OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/fat/dir.c             |    8 ++++++--
+ 25-akpm/fs/fat/fatfs_syms.c      |    9 ---------
+ 25-akpm/fs/fat/inode.c           |   11 +++++++----
+ 25-akpm/include/linux/msdos_fs.h |    8 --------
+ 4 files changed, 13 insertions(+), 23 deletions(-)
+
+diff -puN fs/fat/dir.c~remove-dead-exports-from-fs-fat fs/fat/dir.c
+--- 25/fs/fat/dir.c~remove-dead-exports-from-fs-fat	Tue Sep 14 15:57:20 2004
++++ 25-akpm/fs/fat/dir.c	Tue Sep 14 15:57:20 2004
+@@ -22,6 +22,10 @@
+ 
+ #include <asm/uaccess.h>
+ 
++static int fat_dir_ioctl(struct inode * inode, struct file * filp,
++		  unsigned int cmd, unsigned long arg);
++static int fat_readdir(struct file *filp, void *dirent, filldir_t filldir);
++
+ struct file_operations fat_dir_operations = {
+ 	.read		= generic_read_dir,
+ 	.readdir	= fat_readdir,
+@@ -567,7 +571,7 @@ out:
+ 	return ret;
+ }
+ 
+-int fat_readdir(struct file *filp, void *dirent, filldir_t filldir)
++static int fat_readdir(struct file *filp, void *dirent, filldir_t filldir)
+ {
+ 	struct inode *inode = filp->f_dentry->d_inode;
+ 	return fat_readdirx(inode, filp, dirent, filldir, 0, 0);
+@@ -624,7 +628,7 @@ efault:
+ 	return -EFAULT;
+ }
+ 
+-int fat_dir_ioctl(struct inode * inode, struct file * filp,
++static int fat_dir_ioctl(struct inode * inode, struct file * filp,
+ 		  unsigned int cmd, unsigned long arg)
+ {
+ 	struct fat_ioctl_filldir_callback buf;
+diff -puN fs/fat/fatfs_syms.c~remove-dead-exports-from-fs-fat fs/fat/fatfs_syms.c
+--- 25/fs/fat/fatfs_syms.c~remove-dead-exports-from-fs-fat	Tue Sep 14 15:57:20 2004
++++ 25-akpm/fs/fat/fatfs_syms.c	Tue Sep 14 15:57:20 2004
+@@ -12,26 +12,17 @@
+ #include <linux/msdos_fs.h>
+ 
+ EXPORT_SYMBOL(fat_new_dir);
+-EXPORT_SYMBOL(fat_get_block);
+-EXPORT_SYMBOL(fat_clear_inode);
+ EXPORT_SYMBOL(fat_date_unix2dos);
+-EXPORT_SYMBOL(fat_delete_inode);
+ EXPORT_SYMBOL(fat__get_entry);
+ EXPORT_SYMBOL(fat_notify_change);
+-EXPORT_SYMBOL(fat_put_super);
+ EXPORT_SYMBOL(fat_attach);
+ EXPORT_SYMBOL(fat_detach);
+ EXPORT_SYMBOL(fat_build_inode);
+ EXPORT_SYMBOL(fat_fill_super);
+ EXPORT_SYMBOL(fat_search_long);
+-EXPORT_SYMBOL(fat_readdir);
+ EXPORT_SYMBOL(fat_scan);
+-EXPORT_SYMBOL(fat_statfs);
+-EXPORT_SYMBOL(fat_write_inode);
+-EXPORT_SYMBOL(fat_dir_ioctl);
+ EXPORT_SYMBOL(fat_add_entries);
+ EXPORT_SYMBOL(fat_dir_empty);
+-EXPORT_SYMBOL(fat_truncate);
+ 
+ int __init fat_init_inodecache(void);
+ void __exit fat_destroy_inodecache(void);
+diff -puN fs/fat/inode.c~remove-dead-exports-from-fs-fat fs/fat/inode.c
+--- 25/fs/fat/inode.c~remove-dead-exports-from-fs-fat	Tue Sep 14 15:57:20 2004
++++ 25-akpm/fs/fat/inode.c	Tue Sep 14 15:57:20 2004
+@@ -31,6 +31,9 @@
+ static int fat_default_codepage = CONFIG_FAT_DEFAULT_CODEPAGE;
+ static char fat_default_iocharset[] = CONFIG_FAT_DEFAULT_IOCHARSET;
+ 
++static int fat_statfs(struct super_block *sb, struct kstatfs *buf);
++static void fat_write_inode(struct inode *inode, int wait);
++
+ /*
+  * New FAT inode stuff. We do the following:
+  *	a) i_ino is constant and has nothing with on-disk location.
+@@ -143,7 +146,7 @@ out:
+ 	return inode;
+ }
+ 
+-void fat_delete_inode(struct inode *inode)
++static void fat_delete_inode(struct inode *inode)
+ {
+ 	if (!is_bad_inode(inode)) {
+ 		inode->i_size = 0;
+@@ -152,7 +155,7 @@ void fat_delete_inode(struct inode *inod
+ 	clear_inode(inode);
+ }
+ 
+-void fat_clear_inode(struct inode *inode)
++static void fat_clear_inode(struct inode *inode)
+ {
+ 	if (is_bad_inode(inode))
+ 		return;
+@@ -164,7 +167,7 @@ void fat_clear_inode(struct inode *inode
+ 	unlock_kernel();
+ }
+ 
+-void fat_put_super(struct super_block *sb)
++static void fat_put_super(struct super_block *sb)
+ {
+ 	struct msdos_sb_info *sbi = MSDOS_SB(sb);
+ 
+@@ -1072,7 +1075,7 @@ out_fail:
+ 	return error;
+ }
+ 
+-int fat_statfs(struct super_block *sb, struct kstatfs *buf)
++static int fat_statfs(struct super_block *sb, struct kstatfs *buf)
+ {
+ 	int free, nr, ret;
+        
+diff -puN include/linux/msdos_fs.h~remove-dead-exports-from-fs-fat include/linux/msdos_fs.h
+--- 25/include/linux/msdos_fs.h~remove-dead-exports-from-fs-fat	Tue Sep 14 15:57:20 2004
++++ 25-akpm/include/linux/msdos_fs.h	Tue Sep 14 15:57:47 2004
+@@ -244,9 +244,6 @@ extern struct file_operations fat_dir_op
+ extern int fat_search_long(struct inode *inode, const unsigned char *name,
+ 			   int name_len, int anycase,
+ 			   loff_t *spos, loff_t *lpos);
+-extern int fat_readdir(struct file *filp, void *dirent, filldir_t filldir);
+-extern int fat_dir_ioctl(struct inode * inode, struct file * filp,
+-			 unsigned int cmd, unsigned long arg);
+ extern int fat_add_entries(struct inode *dir, int slots, struct buffer_head **bh,
+ 			struct msdos_dir_entry **de, loff_t *i_pos);
+ extern int fat_new_dir(struct inode *dir, struct inode *parent, int is_vfat);
+@@ -270,13 +267,8 @@ extern void fat_detach(struct inode *ino
+ extern struct inode *fat_iget(struct super_block *sb, loff_t i_pos);
+ extern struct inode *fat_build_inode(struct super_block *sb,
+ 			struct msdos_dir_entry *de, loff_t i_pos, int *res);
+-extern void fat_delete_inode(struct inode *inode);
+-extern void fat_clear_inode(struct inode *inode);
+-extern void fat_put_super(struct super_block *sb);
+ int fat_fill_super(struct super_block *sb, void *data, int silent,
+ 		   struct inode_operations *fs_dir_inode_ops, int isvfat);
+-extern int fat_statfs(struct super_block *sb, struct kstatfs *buf);
+-extern int fat_write_inode(struct inode *inode, int wait);
+ extern int fat_notify_change(struct dentry * dentry, struct iattr * attr);
+ 
+ /* fat/misc.c */
+_

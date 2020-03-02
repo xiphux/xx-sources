@@ -1,0 +1,61 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Add some likely/unliklies, a comment, and a for_each_cpu =>
+for_each_cpu_online.
+
+Signed-off-by: Nick Piggin <nickpiggin@yahoo.com.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/sched.c |    9 +++++----
+ 1 files changed, 5 insertions(+), 4 deletions(-)
+
+diff -puN kernel/sched.c~sched-misc-changes kernel/sched.c
+--- 25/kernel/sched.c~sched-misc-changes	2004-06-25 02:50:07.372452384 -0700
++++ 25-akpm/kernel/sched.c	2004-06-25 02:50:07.378451472 -0700
+@@ -943,7 +943,7 @@ void fastcall sched_fork(task_t *p, unsi
+ 	p->first_time_slice = 1;
+ 	current->time_slice >>= 1;
+ 	p->timestamp = sched_clock();
+-	if (!current->time_slice) {
++	if (unlikely(!current->time_slice)) {
+ 		/*
+ 		 * This case is rare, it happens when the parent has only
+ 		 * a single jiffy left from its timeslice. Taking the
+@@ -1053,6 +1053,7 @@ void fastcall sched_exit(task_t * p)
+ 
+ 	local_irq_save(flags);
+ 	if (p->first_time_slice) {
++		/* FIXME: updates to ->parent are racy */
+ 		p->parent->time_slice += p->time_slice;
+ 		if (unlikely(p->parent->time_slice > MAX_TIMESLICE))
+ 			p->parent->time_slice = MAX_TIMESLICE;
+@@ -1162,7 +1163,7 @@ unsigned long nr_running(void)
+ {
+ 	unsigned long i, sum = 0;
+ 
+-	for_each_cpu(i)
++	for_each_online_cpu(i)
+ 		sum += cpu_rq(i)->nr_running;
+ 
+ 	return sum;
+@@ -2275,7 +2276,7 @@ need_resched:
+ 		goto switch_tasks;
+ 	}
+ 
+-	if (!rt_task(next) && next->activated > 0) {
++	if (likely(!rt_task(next)) && next->activated > 0) {
+ 		unsigned long long delta = now - next->timestamp;
+ 
+ 		if (next->activated == 1)
+@@ -2316,7 +2317,7 @@ switch_tasks:
+ 
+ 	reacquire_kernel_lock(current);
+ 	preempt_enable_no_resched();
+-	if (test_thread_flag(TIF_NEED_RESCHED))
++	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
+ 		goto need_resched;
+ }
+ 
+_

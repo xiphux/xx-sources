@@ -1,0 +1,56 @@
+
+From: "Antonino A. Daplas" <adaplas@hotpop.com>
+
+Do not tap VGA ports if arch is not X86.
+
+Signed-off-by: Antonino Daplas <adaplas@pol.net>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/video/riva/fbdev.c  |    5 ++++-
+ 25-akpm/drivers/video/riva/rivafb.h |    2 ++
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff -puN drivers/video/riva/fbdev.c~rivafb-do-not-tap-vga-ports-if-not-x86 drivers/video/riva/fbdev.c
+--- 25/drivers/video/riva/fbdev.c~rivafb-do-not-tap-vga-ports-if-not-x86	2004-07-28 20:42:10.269908960 -0700
++++ 25-akpm/drivers/video/riva/fbdev.c	2004-07-28 20:42:10.284906680 -0700
+@@ -1090,13 +1090,14 @@ static int rivafb_open(struct fb_info *i
+ 
+ 	NVTRACE_ENTER();
+ 	if (!cnt) {
++#ifdef CONFIG_X86
+ 		memset(&par->state, 0, sizeof(struct vgastate));
+ 		par->state.flags = VGA_SAVE_MODE  | VGA_SAVE_FONTS;
+ 		/* save the DAC for Riva128 */
+ 		if (par->riva.Architecture == NV_ARCH_03)
+ 			par->state.flags |= VGA_SAVE_CMAP;
+ 		save_vga(&par->state);
+-
++#endif
+ 		RivaGetConfig(&par->riva, par->Chipset);
+ 		/* vgaHWunlock() + riva unlock (0x7F) */
+ 		CRTCout(par, 0x11, 0xFF);
+@@ -1121,7 +1122,9 @@ static int rivafb_release(struct fb_info
+ 		par->riva.LockUnlock(&par->riva, 0);
+ 		par->riva.LoadStateExt(&par->riva, &par->initial_state.ext);
+ 		riva_load_state(par, &par->initial_state);
++#ifdef CONFIG_X86
+ 		restore_vga(&par->state);
++#endif
+ 		par->riva.LockUnlock(&par->riva, 1);
+ 	}
+ 	atomic_dec(&par->ref_count);
+diff -puN drivers/video/riva/rivafb.h~rivafb-do-not-tap-vga-ports-if-not-x86 drivers/video/riva/rivafb.h
+--- 25/drivers/video/riva/rivafb.h~rivafb-do-not-tap-vga-ports-if-not-x86	2004-07-28 20:42:10.279907440 -0700
++++ 25-akpm/drivers/video/riva/rivafb.h	2004-07-28 20:42:10.284906680 -0700
+@@ -50,7 +50,9 @@ struct riva_par {
+ 
+ 	struct riva_regs initial_state;	/* initial startup video mode */
+ 	struct riva_regs current_state;
++#ifdef CONFIG_X86
+ 	struct vgastate state;
++#endif
+ 	atomic_t ref_count;
+ 	u32 cursor_data[32 * 32/4];
+ 	int cursor_reset;
+_

@@ -1,0 +1,125 @@
+
+From: Hugh Dickins <hugh@veritas.com>
+
+Clarify mmgrab by collapsing it into get_task_mm (in fork.c not inline),
+and commenting on the special case it is guarding against: when use_mm in
+an AIO daemon temporarily adopts the mm while it's on its way out.
+
+Signed-off-by: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/proc/array.c       |    6 +-----
+ 25-akpm/include/linux/sched.h |   24 ++----------------------
+ 25-akpm/kernel/fork.c         |   38 ++++++++++++++++++++++++++------------
+ 3 files changed, 29 insertions(+), 39 deletions(-)
+
+diff -puN fs/proc/array.c~clarify-get_task_mm-mmgrab fs/proc/array.c
+--- 25/fs/proc/array.c~clarify-get_task_mm-mmgrab	2004-08-09 22:02:31.133895976 -0700
++++ 25-akpm/fs/proc/array.c	2004-08-09 22:02:31.140894912 -0700
+@@ -316,11 +316,7 @@ int proc_pid_stat(struct task_struct *ta
+ 
+ 	state = *get_task_state(task);
+ 	vsize = eip = esp = 0;
+-	task_lock(task);
+-	mm = task->mm;
+-	if(mm)
+-		mm = mmgrab(mm);
+-	task_unlock(task);
++	mm = get_task_mm(task);
+ 	if (mm) {
+ 		down_read(&mm->mmap_sem);
+ 		vsize = task_vsize(mm);
+diff -puN include/linux/sched.h~clarify-get_task_mm-mmgrab include/linux/sched.h
+--- 25/include/linux/sched.h~clarify-get_task_mm-mmgrab	2004-08-09 22:02:31.135895672 -0700
++++ 25-akpm/include/linux/sched.h	2004-08-09 22:02:31.141894760 -0700
+@@ -795,8 +795,8 @@ static inline void mmdrop(struct mm_stru
+ 
+ /* mmput gets rid of the mappings and all user-space */
+ extern void mmput(struct mm_struct *);
+-/* Grab a reference to the mm if its not already going away */
+-extern struct mm_struct *mmgrab(struct mm_struct *);
++/* Grab a reference to a task's mm, if it is not already going away */
++extern struct mm_struct *get_task_mm(struct task_struct *task);
+ /* Remove the current tasks stale references to the old mm_struct */
+ extern void mm_release(struct task_struct *, struct mm_struct *);
+ 
+@@ -900,27 +900,7 @@ static inline void task_unlock(struct ta
+ {
+ 	spin_unlock(&p->alloc_lock);
+ }
+- 
+-/**
+- * get_task_mm - acquire a reference to the task's mm
+- *
+- * Returns %NULL if the task has no mm. User must release
+- * the mm via mmput() after use.
+- */
+-static inline struct mm_struct * get_task_mm(struct task_struct * task)
+-{
+-	struct mm_struct * mm;
+- 
+-	task_lock(task);
+-	mm = task->mm;
+-	if (mm)
+-		mm = mmgrab(mm);
+-	task_unlock(task);
+ 
+-	return mm;
+-}
+- 
+- 
+ /* set thread flags in other task's structures
+  * - see asm/thread_info.h for TIF_xxxx flags available
+  */
+diff -puN kernel/fork.c~clarify-get_task_mm-mmgrab kernel/fork.c
+--- 25/kernel/fork.c~clarify-get_task_mm-mmgrab	2004-08-09 22:02:31.137895368 -0700
++++ 25-akpm/kernel/fork.c	2004-08-09 22:02:31.143894456 -0700
+@@ -483,20 +483,34 @@ void mmput(struct mm_struct *mm)
+ 	}
+ }
+ 
+-/*
+- * Checks if the use count of an mm is non-zero and if so
+- * returns a reference to it after bumping up the use count.
+- * If the use count is zero, it means this mm is going away,
+- * so return NULL.
++/**
++ * get_task_mm - acquire a reference to the task's mm
++ *
++ * Returns %NULL if the task has no mm.  Checks if the use count
++ * of the mm is non-zero and if so returns a reference to it, after
++ * bumping up the use count.  User must release the mm via mmput()
++ * after use.  Typically used by /proc and ptrace.
++ *
++ * If the use count is zero, it means that this mm is going away,
++ * so return %NULL.  This only happens in the case of an AIO daemon
++ * which has temporarily adopted an mm (see use_mm), in the course
++ * of its final mmput, before exit_aio has completed.
+  */
+-struct mm_struct *mmgrab(struct mm_struct *mm)
++struct mm_struct *get_task_mm(struct task_struct *task)
+ {
+-	spin_lock(&mmlist_lock);
+-	if (!atomic_read(&mm->mm_users))
+-		mm = NULL;
+-	else
+-		atomic_inc(&mm->mm_users);
+-	spin_unlock(&mmlist_lock);
++	struct mm_struct *mm;
++
++	task_lock(task);
++	mm = task->mm;
++	if (mm) {
++		spin_lock(&mmlist_lock);
++		if (!atomic_read(&mm->mm_users))
++			mm = NULL;
++		else
++			atomic_inc(&mm->mm_users);
++		spin_unlock(&mmlist_lock);
++	}
++	task_unlock(task);
+ 	return mm;
+ }
+ 
+_

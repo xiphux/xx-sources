@@ -1,0 +1,26 @@
+---
+
+ kernel/sched.c                          |    0 
+ linux-2.6.7-rc3-xx1-xiphux/ipc/mqueue.c |    7 ++++++-
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff -puN ipc/mqueue.c~ebs-fix-xx ipc/mqueue.c
+--- linux-2.6.7-rc3-xx1/ipc/mqueue.c~ebs-fix-xx	2004-06-09 06:30:47.968913480 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/ipc/mqueue.c	2004-06-09 07:07:10.904056896 -0400
+@@ -391,7 +391,12 @@ static void wq_add(struct mqueue_inode_i
+ 	ewp->task = current;
+ 
+ 	list_for_each_entry(walk, &info->e_wait_q[sr].list, list) {
+-		if (walk->task->static_prio <= current->static_prio) {
++#ifdef CONFIG_EBS
++		if (walk->task->cpu_shares <= current->cpu_shares)
++#else
++		if (walk->task->static_prio <= current->static_prio)
++#endif
++		{
+ 			list_add_tail(&ewp->list, &walk->list);
+ 			return;
+ 		}
+diff -puN kernel/sched.c~ebs-fix-xx kernel/sched.c
+
+_

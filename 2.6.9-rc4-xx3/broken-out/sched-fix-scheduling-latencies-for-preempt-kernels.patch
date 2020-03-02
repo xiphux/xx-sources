@@ -1,0 +1,130 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+This patch adds a handful of cond_resched() points to a number of key,
+scheduling-latency related non-inlined functions.
+
+This reduces preemption latency for !PREEMPT kernels.  These are scheduling
+points complementary to PREEMPT_VOLUNTARY scheduling points (might_sleep()
+places) - i.e.  these are all points where an explicit cond_resched() had
+to be added.
+
+Has been tested as part of the -VP patchset.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/exec.c         |    1 +
+ 25-akpm/fs/fs-writeback.c |    1 +
+ 25-akpm/fs/select.c       |    1 +
+ 25-akpm/kernel/printk.c   |    3 +++
+ 25-akpm/mm/memory.c       |    1 +
+ 25-akpm/mm/slab.c         |    2 +-
+ 25-akpm/mm/vmscan.c       |    3 +++
+ 7 files changed, 11 insertions(+), 1 deletion(-)
+
+diff -puN fs/exec.c~sched-fix-scheduling-latencies-for-preempt-kernels fs/exec.c
+--- 25/fs/exec.c~sched-fix-scheduling-latencies-for-preempt-kernels	2004-10-05 01:47:21.857178040 -0700
++++ 25-akpm/fs/exec.c	2004-10-05 01:47:21.869176216 -0700
+@@ -184,6 +184,7 @@ static int count(char __user * __user * 
+ 			argv++;
+ 			if(++i > max)
+ 				return -E2BIG;
++			cond_resched();
+ 		}
+ 	}
+ 	return i;
+diff -puN fs/fs-writeback.c~sched-fix-scheduling-latencies-for-preempt-kernels fs/fs-writeback.c
+--- 25/fs/fs-writeback.c~sched-fix-scheduling-latencies-for-preempt-kernels	2004-10-05 01:47:21.858177888 -0700
++++ 25-akpm/fs/fs-writeback.c	2004-10-05 01:47:21.870176064 -0700
+@@ -370,6 +370,7 @@ sync_sb_inodes(struct super_block *sb, s
+ 			list_move(&inode->i_list, &sb->s_dirty);
+ 		}
+ 		spin_unlock(&inode_lock);
++		cond_resched();
+ 		iput(inode);
+ 		spin_lock(&inode_lock);
+ 		if (wbc->nr_to_write <= 0)
+diff -puN fs/select.c~sched-fix-scheduling-latencies-for-preempt-kernels fs/select.c
+--- 25/fs/select.c~sched-fix-scheduling-latencies-for-preempt-kernels	2004-10-05 01:47:21.859177736 -0700
++++ 25-akpm/fs/select.c	2004-10-05 01:47:21.870176064 -0700
+@@ -240,6 +240,7 @@ int do_select(int n, fd_set_bits *fds, l
+ 						retval++;
+ 					}
+ 				}
++				cond_resched();
+ 			}
+ 			if (res_in)
+ 				*rinp = res_in;
+diff -puN kernel/printk.c~sched-fix-scheduling-latencies-for-preempt-kernels kernel/printk.c
+--- 25/kernel/printk.c~sched-fix-scheduling-latencies-for-preempt-kernels	2004-10-05 01:47:21.861177432 -0700
++++ 25-akpm/kernel/printk.c	2004-10-05 01:47:21.871175912 -0700
+@@ -283,6 +283,7 @@ int do_syslog(int type, char __user * bu
+ 			error = __put_user(c,buf);
+ 			buf++;
+ 			i++;
++			cond_resched();
+ 			spin_lock_irq(&logbuf_lock);
+ 		}
+ 		spin_unlock_irq(&logbuf_lock);
+@@ -324,6 +325,7 @@ int do_syslog(int type, char __user * bu
+ 			c = LOG_BUF(j);
+ 			spin_unlock_irq(&logbuf_lock);
+ 			error = __put_user(c,&buf[count-1-i]);
++			cond_resched();
+ 			spin_lock_irq(&logbuf_lock);
+ 		}
+ 		spin_unlock_irq(&logbuf_lock);
+@@ -339,6 +341,7 @@ int do_syslog(int type, char __user * bu
+ 					error = -EFAULT;
+ 					break;
+ 				}
++				cond_resched();
+ 			}
+ 		}
+ 		break;
+diff -puN mm/memory.c~sched-fix-scheduling-latencies-for-preempt-kernels mm/memory.c
+--- 25/mm/memory.c~sched-fix-scheduling-latencies-for-preempt-kernels	2004-10-05 01:47:21.862177280 -0700
++++ 25-akpm/mm/memory.c	2004-10-05 01:47:21.872175760 -0700
+@@ -1526,6 +1526,7 @@ do_no_page(struct mm_struct *mm, struct 
+ 	}
+ 	smp_rmb();  /* Prevent CPU from reordering lock-free ->nopage() */
+ retry:
++	cond_resched();
+ 	new_page = vma->vm_ops->nopage(vma, address & PAGE_MASK, &ret);
+ 
+ 	/* no page was available -- either SIGBUS or OOM */
+diff -puN mm/slab.c~sched-fix-scheduling-latencies-for-preempt-kernels mm/slab.c
+--- 25/mm/slab.c~sched-fix-scheduling-latencies-for-preempt-kernels	2004-10-05 01:47:21.864176976 -0700
++++ 25-akpm/mm/slab.c	2004-10-05 01:47:21.875175304 -0700
+@@ -2790,7 +2790,7 @@ static void cache_reap(void *unused)
+ next_unlock:
+ 		spin_unlock_irq(&searchp->spinlock);
+ next:
+-		;
++		cond_resched();
+ 	}
+ 	check_irq_on();
+ 	up(&cache_chain_sem);
+diff -puN mm/vmscan.c~sched-fix-scheduling-latencies-for-preempt-kernels mm/vmscan.c
+--- 25/mm/vmscan.c~sched-fix-scheduling-latencies-for-preempt-kernels	2004-10-05 01:47:21.865176824 -0700
++++ 25-akpm/mm/vmscan.c	2004-10-05 01:47:21.876175152 -0700
+@@ -361,6 +361,8 @@ static int shrink_list(struct list_head 
+ 		int may_enter_fs;
+ 		int referenced;
+ 
++		cond_resched();
++
+ 		page = lru_to_page(page_list);
+ 		list_del(&page->lru);
+ 
+@@ -710,6 +712,7 @@ refill_inactive_zone(struct zone *zone, 
+ 		reclaim_mapped = 1;
+ 
+ 	while (!list_empty(&l_hold)) {
++		cond_resched();
+ 		page = lru_to_page(&l_hold);
+ 		list_del(&page->lru);
+ 		if (page_mapped(page)) {
+_

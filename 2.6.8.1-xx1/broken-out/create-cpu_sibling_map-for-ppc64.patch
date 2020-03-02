@@ -1,0 +1,57 @@
+
+From: Matthew Dobson <colpatch@us.ibm.com>
+
+In light of some proposed changes in the sched_domains code, I coded up
+this little ditty that simply creates and populates a cpu_sibling_map for
+PPC64 machines.  The patch just checks the CPU flags to determine if the
+CPU supports SMT (aka Hyper-Threading aka Multi-Threading aka ...) and
+fills in a mask of the siblings for each CPU in the system.  This should
+allow us to build sched_domains for PPC64 with generic code in
+kernel/sched.c for the SMT systems.  SMT is becoming more popular and is
+turning up in more and more architectures.  I don't think it will be too
+long until this feature is supported by most arches...
+
+Signed-off-by: Matthew Dobson <colpatch@us.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc64/kernel/smp.c |    7 +++++++
+ 25-akpm/include/asm-ppc64/smp.h |    1 +
+ 2 files changed, 8 insertions(+)
+
+diff -puN arch/ppc64/kernel/smp.c~create-cpu_sibling_map-for-ppc64 arch/ppc64/kernel/smp.c
+--- 25/arch/ppc64/kernel/smp.c~create-cpu_sibling_map-for-ppc64	Wed Aug  4 14:52:06 2004
++++ 25-akpm/arch/ppc64/kernel/smp.c	Wed Aug  4 14:52:06 2004
+@@ -61,6 +61,7 @@ cpumask_t cpu_possible_map = CPU_MASK_NO
+ cpumask_t cpu_online_map = CPU_MASK_NONE;
+ cpumask_t cpu_available_map = CPU_MASK_NONE;
+ cpumask_t cpu_present_at_boot = CPU_MASK_NONE;
++cpumask_t cpu_sibling_map[NR_CPUS] = { [0 .. NR_CPUS-1] = CPU_MASK_NONE };
+ 
+ EXPORT_SYMBOL(cpu_online_map);
+ EXPORT_SYMBOL(cpu_possible_map);
+@@ -856,6 +857,12 @@ void __init smp_prepare_cpus(unsigned in
+ 	for_each_cpu(cpu)
+ 		if (cpu != boot_cpuid)
+ 			smp_create_idle(cpu);
++
++	for_each_cpu(cpu) {
++		cpu_set(cpu, cpu_sibling_map[cpu]);
++		if (cur_cpu_spec->cpu_features & CPU_FTR_SMT)
++			cpu_set(cpu ^ 0x1, cpu_sibling_map[cpu]);
++	}
+ }
+ 
+ void __devinit smp_prepare_boot_cpu(void)
+diff -puN include/asm-ppc64/smp.h~create-cpu_sibling_map-for-ppc64 include/asm-ppc64/smp.h
+--- 25/include/asm-ppc64/smp.h~create-cpu_sibling_map-for-ppc64	Wed Aug  4 14:52:06 2004
++++ 25-akpm/include/asm-ppc64/smp.h	Wed Aug  4 14:52:06 2004
+@@ -49,6 +49,7 @@ extern cpumask_t cpu_present_at_boot;
+ extern cpumask_t cpu_online_map;
+ extern cpumask_t cpu_possible_map;
+ extern cpumask_t cpu_available_map;
++extern cpumask_t cpu_sibling_map[NR_CPUS];
+ 
+ #define cpu_present_at_boot(cpu) cpu_isset(cpu, cpu_present_at_boot)
+ #define cpu_available(cpu)       cpu_isset(cpu, cpu_available_map) 
+_

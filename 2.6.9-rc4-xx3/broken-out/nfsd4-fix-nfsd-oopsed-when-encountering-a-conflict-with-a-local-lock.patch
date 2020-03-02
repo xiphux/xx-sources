@@ -1,0 +1,44 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+Bug Fix: Non NFSD conflicting byte-range locks were causing an Oops.
+
+Encode a zero length owner and zero clientid for non NFSD conflicting locks in
+the lock_denied response.
+
+Signed-off-by: Andy Adamson <andros@umich.edu>
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/nfsd/nfs4xdr.c |   13 +++++++++----
+ 1 files changed, 9 insertions(+), 4 deletions(-)
+
+diff -puN fs/nfsd/nfs4xdr.c~nfsd4-fix-nfsd-oopsed-when-encountering-a-conflict-with-a-local-lock fs/nfsd/nfs4xdr.c
+--- 25/fs/nfsd/nfs4xdr.c~nfsd4-fix-nfsd-oopsed-when-encountering-a-conflict-with-a-local-lock	2004-09-23 22:06:09.760604784 -0700
++++ 25-akpm/fs/nfsd/nfs4xdr.c	2004-09-23 22:06:09.765604024 -0700
+@@ -1995,13 +1995,18 @@ nfsd4_encode_lock_denied(struct nfsd4_co
+ {
+ 	ENCODE_HEAD;
+ 
+-	RESERVE_SPACE(32 + XDR_LEN(ld->ld_sop->so_owner.len));
++	RESERVE_SPACE(32 + XDR_LEN(ld->ld_sop ? ld->ld_sop->so_owner.len : 0));
+ 	WRITE64(ld->ld_start);
+ 	WRITE64(ld->ld_length);
+ 	WRITE32(ld->ld_type);
+-	WRITEMEM(&ld->ld_sop->so_client->cl_clientid, 8);
+-	WRITE32(ld->ld_sop->so_owner.len);
+-	WRITEMEM(ld->ld_sop->so_owner.data, ld->ld_sop->so_owner.len);
++	if (ld->ld_sop) {
++		WRITEMEM(&ld->ld_sop->so_client->cl_clientid, 8);
++		WRITE32(ld->ld_sop->so_owner.len);
++		WRITEMEM(ld->ld_sop->so_owner.data, ld->ld_sop->so_owner.len);
++	}  else {  /* non - nfsv4 lock in conflict, no clientid nor owner */
++		WRITE64((u64)0); /* clientid */
++		WRITE32(0); /* length of owner name */
++	}
+ 	ADJUST_ARGS();
+ }
+ 
+_

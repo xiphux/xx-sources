@@ -1,0 +1,57 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/fs-writeback.c |   19 +++++++++++++++----
+ 1 files changed, 15 insertions(+), 4 deletions(-)
+
+diff -puN fs/fs-writeback.c~dont-writeback-fd-bdev-inodes fs/fs-writeback.c
+--- 25/fs/fs-writeback.c~dont-writeback-fd-bdev-inodes	Fri Jun 18 12:54:08 2004
++++ 25-akpm/fs/fs-writeback.c	Fri Jun 18 13:25:16 2004
+@@ -156,7 +156,8 @@ __sync_single_inode(struct inode *inode,
+ 	struct address_space *mapping = inode->i_mapping;
+ 	struct super_block *sb = inode->i_sb;
+ 	int wait = wbc->sync_mode == WB_SYNC_ALL;
+-	int ret;
++	int is_fs_bdev;		/* Is a block-special node */
++	int ret = 0;
+ 
+ 	BUG_ON(inode->i_state & I_LOCK);
+ 
+@@ -167,13 +168,23 @@ __sync_single_inode(struct inode *inode,
+ 
+ 	spin_unlock(&inode_lock);
+ 
+-	ret = do_writepages(mapping, wbc);
++	/*
++	 * blockdev address_spaces are always written back via their internal
++	 * inodes, not via their /dev/hdXX inodes, so use is_fs_bdev to skip
++	 * them here.  We still need to write back the inode itself.
++	 * And we cannot touch ->i_mapping of /dev/hdXX inodes at all, because
++	 * umount can change their ->i_mapping.
++	 */
++	is_fs_bdev = S_ISBLK(inode->i_mode) && (sb != blockdev_superblock);
++
++	if (!is_fs_bdev)
++		ret = do_writepages(mapping, wbc);
+ 
+ 	/* Don't write the inode if only I_DIRTY_PAGES was set */
+ 	if (dirty & (I_DIRTY_SYNC | I_DIRTY_DATASYNC))
+ 		write_inode(inode, wait);
+ 
+-	if (wait) {
++	if (wait && !is_fs_bdev) {
+ 		int err = filemap_fdatawait(mapping);
+ 		if (ret == 0)
+ 			ret = err;
+@@ -182,7 +193,7 @@ __sync_single_inode(struct inode *inode,
+ 	spin_lock(&inode_lock);
+ 	inode->i_state &= ~I_LOCK;
+ 	if (!(inode->i_state & I_FREEING)) {
+-		if (!(inode->i_state & I_DIRTY) &&
++		if (!(inode->i_state & I_DIRTY) && !is_fs_bdev &&
+ 		    mapping_tagged(mapping, PAGECACHE_TAG_DIRTY)) {
+ 			/*
+ 			 * We didn't write back all the pages.  nfs_writepages()
+_

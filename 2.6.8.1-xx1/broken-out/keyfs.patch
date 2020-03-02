@@ -1,0 +1,1727 @@
+Index: xx-sources/fs/Makefile
+===================================================================
+--- xx-sources.orig/fs/Makefile	2004-08-11 17:47:29.436502912 -0400
++++ xx-sources/fs/Makefile	2004-08-11 18:39:16.020230400 -0400
+@@ -104,3 +104,4 @@
+ obj-$(CONFIG_SUBFS)		+= subfs.o
+ obj-$(CONFIG_LOCK_HARNESS)	+= gfs_locking/
+ obj-$(CONFIG_GFS_FS)		+= gfs/
++obj-$(CONFIG_KEYS)		+= keyfs/
+Index: xx-sources/fs/keyfs/Makefile
+===================================================================
+--- xx-sources.orig/fs/keyfs/Makefile	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/fs/keyfs/Makefile	2004-08-11 18:38:58.985820024 -0400
+@@ -0,0 +1,13 @@
++#
++# Makefile for Key view filesystem
++#
++
++keyfs-objs := \
++	super.o \
++	root.o \
++	rootlink.o \
++	keydir.o \
++	keyfile.o \
++	ringdir.o
++
++obj-$(CONFIG_KEYS)  := keyfs.o
+Index: xx-sources/fs/keyfs/keydir.c
+===================================================================
+--- xx-sources.orig/fs/keyfs/keydir.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/fs/keyfs/keydir.c	2004-08-11 18:38:58.981820632 -0400
+@@ -0,0 +1,324 @@
++/* keydir.c: key representation directory operations
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/fs.h>
++#include <linux/err.h>
++#include <linux/key.h>
++#include <asm/uaccess.h>
++#include "keyfs.h"
++
++/* key directory ops tables */
++static int keyfs_dir_readdir(struct file *, void *, filldir_t);
++
++static struct file_operations keyfs_dir_file_operations = {
++	.readdir	= keyfs_dir_readdir,
++};
++
++static int keyfs_dir_getattr(struct vfsmount *, struct dentry *,
++			     struct kstat *);
++
++static struct dentry *keyfs_dir_lookup(struct inode *, struct dentry *,
++				       struct nameidata *);
++
++static struct inode_operations keyfs_dir_inode_operations = {
++	.getattr	= keyfs_dir_getattr,
++	.lookup		= keyfs_dir_lookup,
++};
++
++static int keyfs_dir_d_revalidate(struct dentry *, struct nameidata *);
++
++struct dentry_operations keyfs_dir_dentry_operations = {
++	.d_revalidate	= keyfs_dir_d_revalidate,
++};
++
++/*****************************************************************************/
++/*
++ * update the attributes on a key management directory
++ */
++static void keyfs_dir_update_inode(struct inode *inode)
++{
++	struct key *key = inode->u.generic_ip;
++
++	/* update the inode from the key */
++	down_read(&key->sem);
++
++	inode->i_uid	= key->uid;
++	inode->i_gid	= key->gid;
++	inode->i_mode	&= S_IFMT;
++
++	/* we have to provide access to a keys control files if any of
++	 * them can be accessed for any reason */
++	if (key->mode & S_IRWXU)
++		inode->i_mode |= S_IRUSR | S_IXUSR;
++
++	if (key->mode & S_IRWXG)
++		inode->i_mode |= S_IRGRP | S_IXGRP;
++
++	if (key->mode & S_IRWXO)
++		inode->i_mode |= S_IROTH | S_IXOTH;
++
++	up_read(&key->sem);
++
++} /* end keyfs_dir_update_inode() */
++
++/*****************************************************************************/
++/*
++ * get the directory for a key
++ */
++struct inode *keyfs_get_keydir(struct super_block *super, key_serial_t id)
++{
++	struct inode *inode;
++	struct key *key;
++
++	key = key_lookup(id);
++	if (IS_ERR(key)) {
++		inode = NULL;
++		goto error;
++	}
++
++	/* get the key dir inode */
++	inode = iget_locked(super, (id << 16) + KEYFS_INO_K_DIR);
++	if (inode && inode->i_state & I_NEW) {
++		/* initialise it */
++		inode->i_mtime	= inode->i_atime = inode->i_ctime =
++			CURRENT_TIME;
++		inode->i_blocks	= 0;
++		inode->i_blksize = 1024;
++		inode->i_uid	= key->uid;
++		inode->i_gid	= key->gid;
++		inode->i_mode	= S_IFDIR;
++		inode->i_op	= &keyfs_dir_inode_operations;
++		inode->i_fop	= &keyfs_dir_file_operations;
++		inode->i_nlink	= 2;
++		inode->u.generic_ip = key;
++
++		/* transfer the ownership and permissions */
++		keyfs_dir_update_inode(inode);
++
++		/* success */
++		unlock_new_inode(inode);
++	}
++	else {
++		/* error */
++		key_put(key);
++	}
++
++ error:
++	return inode;
++
++} /* end keyfs_get_keydir() */
++
++/*****************************************************************************/
++/*
++ * update the attributes on a key management directory during pathwalk
++ */
++static int keyfs_dir_d_revalidate(struct dentry *dentry, struct nameidata *nd)
++{
++	keyfs_dir_update_inode(dentry->d_inode);
++	return 1;
++
++} /* end keyfs_dir_d_revalidate() */
++
++/*****************************************************************************/
++/*
++ * read the attributes of an inode, updating from the key
++ */
++static int keyfs_dir_getattr(struct vfsmount *mnt, struct dentry *dentry,
++			      struct kstat *stat)
++{
++	/* update the inode */
++	keyfs_dir_update_inode(dentry->d_inode);
++
++	/* transfer attributes from the inode structure to the stat
++	 * structure */
++	generic_fillattr(dentry->d_inode, stat);
++
++	return 0;
++
++} /* end keyfs_dir_getattr() */
++
++/*****************************************************************************/
++/*
++ * enumerate the keys in a key directory
++ */
++static int keyfs_dir_readdir(struct file *file, void *cookie, filldir_t filldir)
++{
++	struct key *key;
++	ino_t ino;
++	int ret;
++
++	key = file->f_dentry->d_inode->u.generic_ip;
++	ino = file->f_dentry->d_inode->i_ino & ~0xffffULL;
++
++	/* read the usual "." and ".." first and then the special symlinks, one
++	 * for each process keyring and user keyring
++	 */
++	switch (file->f_pos) {
++	case 0:
++		ret = filldir(cookie, ".", 1, file->f_pos,
++			      file->f_dentry->d_inode->i_ino, DT_DIR);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	case 1:
++		ret = filldir(cookie, "..", 2, file->f_pos,
++			      parent_ino(file->f_dentry), DT_DIR);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	case 2:
++		ret = filldir(cookie, "type", 4, file->f_pos,
++			      ino | KEYFS_INO_K_TYPE, DT_REG);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	case 3:
++		ret = filldir(cookie, "description", 11, file->f_pos,
++			      ino | KEYFS_INO_K_DESC, DT_REG);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	case 4:
++		ret = filldir(cookie, "expiry", 6, file->f_pos,
++			      ino | KEYFS_INO_K_EXPIRY, DT_REG);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	case 5:
++		ret = filldir(cookie, "perm", 4, file->f_pos,
++			      ino | KEYFS_INO_K_PERM, DT_REG);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	case 6:
++		if (key->type == &key_type_keyring)
++			ret = filldir(cookie, "keyring", 7, file->f_pos,
++				      ino | KEYFS_INO_K_PAYLOAD, DT_DIR);
++		else
++			ret = filldir(cookie, "payload", 7, file->f_pos,
++				      ino | KEYFS_INO_K_PAYLOAD, DT_REG);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	default:
++		break;
++	}
++
++ done:
++	return 0;
++
++} /* end keyfs_dir_readdir() */
++
++/*****************************************************************************/
++/*
++ * look up an inode in a key directory
++ */
++static struct dentry *keyfs_dir_lookup(struct inode *dir,
++				       struct dentry *dentry,
++				       struct nameidata *nd)
++{
++	struct dentry *ret;
++	struct inode *target;
++	struct key *key;
++	const char *name;
++
++	key = dir->u.generic_ip;
++
++	/* decide which virtual files they want */
++	name = dentry->d_name.name;
++
++	switch (dentry->d_name.len) {
++	case 1:
++		if (memcmp(name, ".", 1) == 0) {
++			target = igrab(dir);
++			goto instantiate;
++		}
++		break;
++
++	case 2:
++		if (memcmp(name, "..", 2)==0) {
++			target = igrab(dir);
++			goto instantiate;
++		}
++		break;
++
++	case 4:
++		if (memcmp(name, "type", 4) == 0) {
++			target = keyfs_get_keyfile(dir, KEYFS_INO_K_TYPE);
++			goto instantiate;
++		}
++		if (memcmp(name, "perm", 4) == 0) {
++			target = keyfs_get_keyfile(dir, KEYFS_INO_K_PERM);
++			goto instantiate;
++		}
++		break;
++
++	case 6:
++		if (memcmp(name, "expiry", 6) == 0) {
++			target = keyfs_get_keyfile(dir, KEYFS_INO_K_EXPIRY);
++			goto instantiate;
++		}
++		break;
++
++	case 7:
++		if (key->type == &key_type_keyring) {
++			if (memcmp(name, "keyring", 7) == 0) {
++				target = keyfs_get_keyfile(
++					dir,
++					KEYFS_INO_K_PAYLOAD);
++				goto instantiate;
++			}
++		}
++		else {
++			if (memcmp(name, "payload", 7) == 0) {
++				target = keyfs_get_keyfile(
++					dir,
++					KEYFS_INO_K_PAYLOAD);
++				goto instantiate;
++			}
++		}
++		break;
++
++	case 11:
++		if (memcmp(name, "description", 11) == 0) {
++			target = keyfs_get_keyfile(dir, KEYFS_INO_K_DESC);
++			goto instantiate;
++		}
++		break;
++
++	default:
++		break;
++	}
++
++	ret = ERR_PTR(-ENOENT);
++	goto out;
++
++	/* instantiate the dentry */
++ instantiate:
++	dentry->d_op = &keyfs_file_dentry_operations;
++	d_add(dentry, target);
++	ret = NULL;
++
++ out:
++	return ret;
++
++} /* end keyfs_dir_lookup() */
+Index: xx-sources/fs/keyfs/keyfile.c
+===================================================================
+--- xx-sources.orig/fs/keyfs/keyfile.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/fs/keyfs/keyfile.c	2004-08-11 18:38:58.983820328 -0400
+@@ -0,0 +1,354 @@
++/* keyfile.c: keyring management files
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/fs.h>
++#include <linux/err.h>
++#include <linux/key.h>
++#include <asm/uaccess.h>
++#include "keyfs.h"
++
++/* key file ops table */
++static ssize_t keyfs_file_read(struct file *, char __user *, size_t, loff_t *);
++static ssize_t keyfs_file_write(struct file *, const char __user *, size_t,
++				loff_t *);
++
++static struct file_operations keyfs_file_file_operations = {
++	.read		= keyfs_file_read,
++	.write		= keyfs_file_write,
++};
++
++static struct inode_operations keyfs_file_inode_operations = {
++	.getattr	= keyfs_file_getattr,
++};
++
++static int keyfs_file_d_revalidate(struct dentry *, struct nameidata *);
++
++struct dentry_operations keyfs_file_dentry_operations = {
++	.d_revalidate	= keyfs_file_d_revalidate,
++};
++
++/*****************************************************************************/
++/*
++ * update the attributes on a key management file
++ */
++static void keyfs_file_update_inode(struct inode *inode)
++{
++	struct key *key = inode->u.generic_ip;
++
++	/* update the inode from the key */
++	down_read(&key->sem);
++
++	inode->i_uid	= key->uid;
++	inode->i_gid	= key->gid;
++	inode->i_mode	&= S_IFMT;
++
++	/* we have to provide access to key management files in various ways
++	 * depending on various factors */
++	switch (inode->i_ino & 0xffff) {
++	case KEYFS_INO_K_PAYLOAD:
++		/* the payload is a file if it's an ordinary key and a
++		 * directory if it's a keyring, so we need to adjust
++		 * appropriately */
++		inode->i_mode |= key->mode & (S_IRUGO | S_IWUGO);
++
++		if (key->type == &key_type_keyring) {
++			/* copy R->X bits on a keyring */
++			inode->i_mode |= (key->mode & S_IRUGO) >> 2;
++		}
++		else {
++			/* turn off write on the payload if they can't
++			 * write to it */
++			if (key->flags & KEY_FLAG_INSTANTIATED &&
++			    !key->type->update)
++				inode->i_mode &= ~S_IWUGO;
++
++			/* turn off read if they can't read it */
++			if (!key->type->read)
++				inode->i_mode &= ~S_IRUGO;
++		}
++		break;
++
++	case KEYFS_INO_K_PERM:
++		/* only the owner can change the mode */
++		inode->i_mode |= key->mode & S_IWUSR;
++
++	default:
++		if (key->mode & S_IRWXU)
++			inode->i_mode |= S_IRUSR;
++		if (key->mode & S_IRWXG)
++			inode->i_mode |= S_IRGRP;
++		if (key->mode & S_IRWXO)
++			inode->i_mode |= S_IROTH;
++		break;
++	}
++
++	up_read(&key->sem);
++
++} /* end keyfs_file_update_inode() */
++
++/*****************************************************************************/
++/*
++ * get a key control/access file
++ */
++struct inode *keyfs_get_keyfile(struct inode *dir, ino_t ino)
++{
++	struct inode *inode;
++	struct key *key;
++
++	key = dir->u.generic_ip;
++
++	/* get the key file inode */
++	inode = iget_locked(dir->i_sb, (dir->i_ino & ~(ino_t)0xffffU) | ino);
++	if (inode && inode->i_state & I_NEW) {
++		atomic_inc(&key->usage);
++		inode->u.generic_ip = key;
++
++		/* initialise it */
++		inode->i_mtime	= inode->i_atime = inode->i_ctime =
++			CURRENT_TIME;
++		inode->i_blocks	= 0;
++		inode->i_blksize = 1024;
++
++		if (key->type == &key_type_keyring &&
++		    (inode->i_ino & 0xffff) == KEYFS_INO_K_PAYLOAD
++		    ) {
++			inode->i_mode	= S_IFDIR;
++			inode->i_nlink	= 2;
++			inode->i_op	= &keyfs_ring_inode_operations;
++			inode->i_fop	= &keyfs_ring_file_operations;
++		}
++		else {
++			inode->i_mode	= S_IFREG;
++			inode->i_nlink	= 1;
++			inode->i_op	= &keyfs_file_inode_operations;
++			inode->i_fop	= &keyfs_file_file_operations;
++		}
++
++		/* transfer the ownership and permissions */
++		keyfs_file_update_inode(inode);
++
++		/* success */
++		unlock_new_inode(inode);
++	}
++	else {
++		/* error */
++		key_put(key);
++	}
++
++	return inode;
++
++} /* end keyfs_get_keyfile() */
++
++/*****************************************************************************/
++/*
++ * update the attributes on a key management file during pathwalk
++ */
++static int keyfs_file_d_revalidate(struct dentry *dentry, struct nameidata *nd)
++{
++	keyfs_file_update_inode(dentry->d_inode);
++	return 1;
++
++} /* end keyfs_file_d_revalidate() */
++
++/*****************************************************************************/
++/*
++ * read the attributes of an inode, updating from the key
++ */
++int keyfs_file_getattr(struct vfsmount *mnt, struct dentry *dentry,
++		       struct kstat *stat)
++{
++	keyfs_file_update_inode(dentry->d_inode);
++
++	/* transfer attributes from the inode structure to the stat
++	 * structure */
++	generic_fillattr(dentry->d_inode, stat);
++
++	return 0;
++
++} /* end keyfs_file_getattr() */
++
++/*****************************************************************************/
++/*
++ * read from a key file
++ */
++static ssize_t keyfs_file_read(struct file *file, char __user *_buffer,
++			       size_t buflen, loff_t *fpos)
++{
++	struct key *key;
++	const char *data;
++	char buffer[30];
++	ssize_t ret;
++	size_t len;
++
++	ret = 0;
++	if (*fpos > 0)
++		goto error;
++
++	key = file->f_dentry->d_inode->u.generic_ip;
++
++	switch (file->f_dentry->d_inode->i_ino & 0xffff) {
++	case KEYFS_INO_K_TYPE:
++		data = key->type->name;
++		goto copyout;
++
++	case KEYFS_INO_K_DESC:
++		data = key->description;
++		goto copyout;
++
++	case KEYFS_INO_K_EXPIRY:
++		sprintf(buffer, "%lu", key->expiry);
++		data = buffer;
++		goto copyout;
++
++	case KEYFS_INO_K_PERM:
++		sprintf(buffer, "0%03o", key->mode);
++		data = buffer;
++		goto copyout;
++
++	case KEYFS_INO_K_PAYLOAD:
++		ret = -EOPNOTSUPP;
++		if (!key->type->read)
++			goto error;
++
++		/* read the data with the semaphore held (since we
++		 * might sleep) */
++		down_read(&key->sem);
++		ret = key->type->read(key, _buffer, buflen);
++		up_read(&key->sem);
++
++		if (ret > 0) {
++			if (ret > buflen)
++				ret = buflen;
++			*fpos += ret;
++		}
++		goto error;
++
++	default:
++		BUG();
++	}
++
++ error:
++	return ret;
++
++	/* copy a simple string to userspace */
++ copyout:
++	len = strlen(data);
++	if (len > buflen)
++		len = buflen;
++
++	ret = -EFAULT;
++	if (copy_to_user(_buffer, data, len) == 0) {
++		if (len < buflen && put_user('\n', _buffer + len) == 0)
++			ret = len + 1;
++		else
++			ret = len;
++	}
++
++	*fpos += ret;
++	goto error;
++
++} /* end keyfs_file_read() */
++
++/*****************************************************************************/
++/*
++ * allow userspace to write to certain files
++ */
++static ssize_t keyfs_file_write(struct file *file, const char __user *_buffer,
++				size_t buflen, loff_t *fpos)
++{
++	struct key *key;
++	char buffer[30], *buff;
++	ssize_t ret;
++	mode_t mode;
++	char *p;
++
++	ret = 0;
++	if (*fpos > 0)
++		goto error;
++
++	key = file->f_dentry->d_inode->u.generic_ip;
++
++	switch (file->f_dentry->d_inode->i_ino & 0xffff) {
++	case KEYFS_INO_K_TYPE:
++	case KEYFS_INO_K_DESC:
++	case KEYFS_INO_K_EXPIRY:
++		ret = -EPERM;
++		goto error;
++
++	case KEYFS_INO_K_PERM:
++		ret = -EINVAL;
++		if (buflen > sizeof(buffer) - 1)
++			goto error;
++
++		ret = -EFAULT;
++		if (copy_from_user(buffer, _buffer, buflen) != 0)
++			goto error;
++		buffer[buflen] = 0;
++
++		ret = -EINVAL;
++		mode = simple_strtoul(buffer, &p, 0);
++		if (*p)
++			goto error;
++
++		/* make the changes with the locks held to prevent chown/chmod
++		 * races */
++		down_write(&key->sem);
++		write_lock(&key->lock);
++		key->mode = mode;
++		write_unlock(&key->lock);
++		up_write(&key->sem);
++
++		ret = buflen;
++		break;
++
++	case KEYFS_INO_K_PAYLOAD:
++		ret = -EINVAL;
++		if (buflen == 0 || buflen > 32767)
++			goto error;
++
++		ret = -EPERM;
++		if (key->flags & KEY_FLAG_INSTANTIATED && !key->type->update)
++			goto error;
++
++		ret = -ENOMEM;
++		buff = kmalloc(buflen, GFP_KERNEL);
++		if (!buff)
++			goto error;
++
++		ret = -EFAULT;
++		if (copy_from_user(buffer, _buffer, buflen) == 0) {
++			if (key->flags & KEY_FLAG_INSTANTIATED) {
++				ret = key_update(key, buff, buflen);
++				if (ret == 0)
++					ret = buflen;
++			}
++			else {
++				ret = key_instantiate_and_link(key, buff,
++							       buflen, NULL);
++				if (ret == 0)
++					ret = buflen;
++			}
++		}
++
++		kfree(buff);
++		break;
++
++	default:
++		BUG();
++	}
++
++ error:
++	return ret;
++} /* end keyfs_file_write() */
+Index: xx-sources/fs/keyfs/keyfs.h
+===================================================================
+--- xx-sources.orig/fs/keyfs/keyfs.h	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/fs/keyfs/keyfs.h	2004-08-11 18:38:58.984820176 -0400
+@@ -0,0 +1,55 @@
++/* keyfs.h: keyfs defines
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++extern struct rb_root key_serial_tree;
++extern spinlock_t key_serial_lock;
++
++/* special inodes */
++#define KEYFS_INO_ROOT		1
++#define KEYFS_INO_THREAD	2
++#define KEYFS_INO_PROCESS	3
++#define KEYFS_INO_SESSION	4
++#define KEYFS_INO_USER_SESSION	5
++#define KEYFS_INO_USER		6
++
++/* key dir inodes added to keyid << 16 */
++#define KEYFS_INO_K_SYMLINK	0	/* symlink to key's directory */
++#define KEYFS_INO_K_DIR		1	/* key's directory */
++#define KEYFS_INO_K_TYPE	2
++#define KEYFS_INO_K_DESC	3
++#define KEYFS_INO_K_EXPIRY	4
++#define KEYFS_INO_K_PERM	5
++#define KEYFS_INO_K_PAYLOAD	6
++
++/* root.c */
++extern struct inode *keyfs_get_rootdir(struct super_block *super);
++
++/* keydir.c */
++extern struct dentry_operations keyfs_dir_dentry_operations;
++
++extern struct inode *keyfs_get_keydir(struct super_block *super,
++				      key_serial_t id);
++
++/* rootlink.c */
++extern struct inode *keyfs_get_rootlink(struct super_block *super,
++					ino_t ino);
++
++/* keyfile.c */
++extern struct dentry_operations keyfs_file_dentry_operations;
++
++extern struct inode *keyfs_get_keyfile(struct inode *dir, ino_t ino);
++
++extern int keyfs_file_getattr(struct vfsmount *mnt, struct dentry *dentry,
++			      struct kstat *stat);
++
++/* ringdir.c */
++extern struct file_operations keyfs_ring_file_operations;
++extern struct inode_operations keyfs_ring_inode_operations;
+Index: xx-sources/fs/keyfs/ringdir.c
+===================================================================
+--- xx-sources.orig/fs/keyfs/ringdir.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/fs/keyfs/ringdir.c	2004-08-11 18:38:58.986819872 -0400
+@@ -0,0 +1,355 @@
++/* ringdir.c: keyring directory
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/fs.h>
++#include <linux/namei.h>
++#include <linux/err.h>
++#include <linux/key.h>
++#include <asm/uaccess.h>
++#include "keyfs.h"
++
++/*
++ * the keyring payload contains a list of the keys to which the keyring is
++ * subscribed
++ */
++struct keyring_list {
++	unsigned	maxkeys;	/* max keys this list can hold */
++	unsigned	nkeys;		/* number of keys currently held */
++	struct key	*keys[0];
++};
++
++/* keyring dir operations */
++static int keyfs_ring_readdir(struct file *, void *, filldir_t);
++static struct dentry *keyfs_ring_lookup(struct inode *, struct dentry *,
++					struct nameidata *);
++
++struct file_operations keyfs_ring_file_operations = {
++	.readdir	= keyfs_ring_readdir,
++};
++
++struct inode_operations keyfs_ring_inode_operations = {
++	.getattr	= keyfs_file_getattr,
++	.lookup		= keyfs_ring_lookup,
++};
++
++/* key link operations */
++static struct file_operations keyfs_keylink_file_operations = {
++};
++
++static int keyfs_keylink_getattr(struct vfsmount *, struct dentry *,
++				 struct kstat *);
++
++static int keyfs_keylink_readlink(struct dentry *, char __user *, int);
++static int keyfs_keylink_follow_link(struct dentry *, struct nameidata *);
++
++static struct inode_operations keyfs_keylink_inode_operations = {
++	.getattr	= keyfs_keylink_getattr,
++	.follow_link	= keyfs_keylink_follow_link,
++	.readlink	= keyfs_keylink_readlink,
++};
++
++static int keyfs_keylink_d_revalidate(struct dentry *, struct nameidata *);
++
++static struct dentry_operations keyfs_keylink_dentry_operations = {
++	.d_revalidate	= keyfs_keylink_d_revalidate,
++};
++
++/*****************************************************************************/
++/*
++ * get a key symlink
++ */
++static struct inode *keyfs_get_keylink(struct super_block *super,
++				       key_serial_t id)
++{
++	struct inode *inode;
++	struct key *key;
++
++	key = key_lookup(id);
++	if (IS_ERR(key)) {
++		inode = NULL;
++		goto error;
++	}
++
++	/* get the key symlink inode */
++	inode = iget_locked(super, (id << 16) + KEYFS_INO_K_SYMLINK);
++	if (inode && inode->i_state & I_NEW) {
++		/* initialise it */
++		down_read(&key->sem);
++
++		inode->i_mtime	= inode->i_atime = inode->i_ctime =
++			CURRENT_TIME;
++		inode->i_blocks	= 0;
++		inode->i_blksize = 1024;
++		inode->i_uid	= key->uid;
++		inode->i_gid	= key->gid;
++		inode->i_mode	= S_IFLNK | S_IRWXUGO;
++		inode->i_op	= &keyfs_keylink_inode_operations;
++		inode->i_fop	= &keyfs_keylink_file_operations;
++		inode->i_nlink	= 2;
++		inode->u.generic_ip = key;
++
++		up_read(&key->sem);
++
++		/* success */
++		unlock_new_inode(inode);
++	}
++	else {
++		/* error */
++		key_put(key);
++	}
++
++ error:
++	return inode;
++
++} /* end keyfs_get_keylink() */
++
++/*****************************************************************************/
++/*
++ * update the attributes on a keyring symlink
++ */
++static int keyfs_keylink_d_revalidate(struct dentry *dentry, struct nameidata *nd)
++{
++	struct inode *inode;
++	struct key *key;
++
++	inode = dentry->d_inode;
++	key = inode->u.generic_ip;
++
++	/* update the inode from the key */
++	down_read(&key->sem);
++
++	inode->i_uid	= key->uid;
++	inode->i_gid	= key->gid;
++
++	up_read(&key->sem);
++
++	return 1;
++
++} /* end keyfs_keylink_d_revalidate() */
++
++/*****************************************************************************/
++/*
++ * read the attributes of an inode, updating from the key
++ */
++static int keyfs_keylink_getattr(struct vfsmount *mnt, struct dentry *dentry,
++			      struct kstat *stat)
++{
++	/* update the inode */
++	keyfs_keylink_d_revalidate(dentry, NULL);
++
++	/* transfer attributes from the inode structure to the stat
++	 * structure */
++	generic_fillattr(dentry->d_inode, stat);
++
++	return 0;
++
++} /* end keyfs_keylink_getattr() */
++
++/*****************************************************************************/
++/*
++ * enumerate the keys in the ring directory
++ */
++static int keyfs_ring_readdir(struct file *file, void *cookie, filldir_t filldir)
++{
++	struct keyring_list *klist;
++	struct key *key;
++	loff_t pos;
++	char id[16];
++	int ret, loop, n;
++
++	key = file->f_dentry->d_inode->u.generic_ip;
++	pos = file->f_pos;
++
++	/* read the usual "." and ".." first and then the special symlinks, one
++	 * for each process keyring and user keyring
++	 */
++	switch (file->f_pos) {
++	case 0:
++		ret = filldir(cookie, ".", 1, file->f_pos,
++			      file->f_dentry->d_inode->i_ino, DT_DIR);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	case 1:
++		ret = filldir(cookie, "..", 2, file->f_pos,
++			      parent_ino(file->f_dentry), DT_DIR);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++		pos--;
++
++	default:
++		break;
++	}
++
++	pos -= 2;
++
++	/* then come the key links, a symlink for each */
++	read_lock(&key->lock);
++
++	klist = key->payload.subscriptions;
++	if (pos > klist->nkeys)
++		goto done_unlock;
++
++	/* enumerate keys */
++	for (loop = pos; loop < klist->nkeys; loop++) {
++		/* each symlink's name is the corresponding key serial
++		 * number, and the inode number is based on that too */
++		n = sprintf(id, "%d", klist->keys[loop]->serial);
++
++		ret = filldir(cookie, id, n, file->f_pos,
++			      (ino_t) klist->keys[loop] << 16 |
++			      KEYFS_INO_K_SYMLINK,
++			      DT_LNK);
++		if (ret < 0)
++			goto done_unlock;
++
++		file->f_pos++;
++	}
++
++ done_unlock:
++	read_unlock(&key->lock);
++
++ done:
++	return 0;
++
++} /* end keyfs_ring_readdir() */
++
++/*****************************************************************************/
++/*
++ * look up an inode in the ring directory
++ */
++static struct dentry *keyfs_ring_lookup(struct inode *dir,
++					struct dentry *dentry,
++					struct nameidata *nd)
++{
++	struct keyring_list *klist;
++	struct dentry *ret;
++	struct inode *target;
++	struct key *key;
++	key_serial_t id;
++	const char *name;
++	char *p;
++	int loop;
++
++	key = dir->u.generic_ip;
++
++	/* decide which virtual files they want */
++	name = dentry->d_name.name;
++
++	switch (dentry->d_name.len) {
++	case 1:
++		if (memcmp(name, ".", 1) == 0) {
++			target = igrab(dir);
++			goto instantiate;
++		}
++		break;
++
++	case 2:
++		if (memcmp(name, "..", 2)==0) {
++			target = igrab(dir);
++			goto instantiate;
++		}
++		break;
++
++
++	default:
++		break;
++	}
++
++	/* it's going to be a virtual keyring symlink then */
++	id = simple_strtoul(name, &p, 10);
++	if (*p)
++		goto noent; /* not a decimal number */
++
++	/* check the keyring has a link to that key */
++	ret = ERR_PTR(-ENOENT);
++	read_lock(&key->lock);
++
++	klist = key->payload.subscriptions;
++	for (loop = 0; loop < klist->nkeys; loop++)
++		if (klist->keys[loop]->serial == id)
++			break;
++
++	if (loop < klist->nkeys)
++		ret = NULL;
++
++	read_unlock(&key->lock);
++	if (IS_ERR(ret))
++		goto error;
++
++	/* get the symlink inode */
++	target = keyfs_get_keylink(dir->i_sb, id);
++	if (target)
++		goto instantiate;
++
++ noent:
++	ret = ERR_PTR(-ENOENT);
++	goto error;
++
++	/* instantiate the dentry */
++ instantiate:
++	dentry->d_op = &keyfs_keylink_dentry_operations;
++	d_add(dentry, target);
++	ret = NULL;
++
++ error:
++	return ret;
++
++} /* end keyfs_ring_lookup() */
++
++/*****************************************************************************/
++/*
++ * read a symlink that goes from a keyring to a key
++ */
++static int keyfs_keylink_readlink(struct dentry *dentry, char __user *_buffer,
++				  int buflen)
++{
++	key_serial_t id;
++	char buffer[30];
++	int n;
++
++	id = dentry->d_inode->i_ino >> 16;
++
++	n = sprintf(buffer, "../../%d", id);
++	if (buflen > n)
++		buflen = n;
++
++	if (copy_to_user(_buffer, buffer, buflen) != 0)
++		buflen = -EFAULT;
++
++	return buflen;
++
++} /* end keyfs_keylink_readlink() */
++
++/*****************************************************************************/
++/*
++ * follow a symlink from a keyring to a key
++ */
++static int keyfs_keylink_follow_link(struct dentry *dentry,
++				     struct nameidata *nd)
++{
++	key_serial_t id;
++	char buffer[30];
++
++	id = dentry->d_inode->i_ino >> 16;
++
++	sprintf(buffer, "../../%d", id);
++	nd_set_link(nd, buffer);
++
++	return 0;
++
++} /* end keyfs_keylink_follow_link() */
+Index: xx-sources/fs/keyfs/root.c
+===================================================================
+--- xx-sources.orig/fs/keyfs/root.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/fs/keyfs/root.c	2004-08-11 18:38:58.988819568 -0400
+@@ -0,0 +1,281 @@
++/* root.c: keyfs root inode operations
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/fs.h>
++#include <linux/err.h>
++#include <linux/key.h>
++#include <asm/uaccess.h>
++#include "keyfs.h"
++
++static int keyfs_root_readdir(struct file *, void *, filldir_t);
++static struct dentry *keyfs_root_lookup(struct inode *, struct dentry *,
++					struct nameidata *);
++
++static struct file_operations keyfs_root_file_operations = {
++	.readdir	= keyfs_root_readdir,
++};
++
++static struct inode_operations keyfs_root_inode_operations = {
++	.lookup		= keyfs_root_lookup,
++};
++
++/*****************************************************************************/
++/*
++ * get the root directory
++ */
++struct inode *keyfs_get_rootdir(struct super_block *super)
++{
++	struct inode *inode;
++
++	/* get the root inode */
++	inode = iget_locked(super, KEYFS_INO_ROOT);
++	if (inode && inode->i_state & I_NEW) {
++		/* initialise it */
++		inode->i_mtime	= inode->i_atime = inode->i_ctime =
++			CURRENT_TIME;
++		inode->i_blocks	= 0;
++		inode->i_blksize = 1024;
++		inode->i_uid	= 0;
++		inode->i_gid	= 0;
++		inode->i_mode	= S_IFDIR | S_IRUGO | S_IXUGO;
++		inode->i_op	= &keyfs_root_inode_operations;
++		inode->i_fop	= &keyfs_root_file_operations;
++		inode->i_nlink	= 2;
++
++		/* success */
++		unlock_new_inode(inode);
++	}
++
++	return inode;
++
++} /* end keyfs_get_rootdir() */
++
++/*****************************************************************************/
++/*
++ * enumerate the keys in the root directory
++ */
++static int keyfs_root_readdir(struct file *file, void *cookie, filldir_t filldir)
++{
++	struct rb_node *_p;
++	key_serial_t id;
++	struct key *key;
++	loff_t pos;
++	char buf[16];
++	int ret, n;
++
++	pos = file->f_pos;
++
++	/* read the usual "." and ".." first and then the special symlinks, one
++	 * for each process keyring and user keyring
++	 */
++	switch (file->f_pos) {
++	case 0:
++		ret = filldir(cookie, ".", 1, file->f_pos,
++			      file->f_dentry->d_inode->i_ino, DT_DIR);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	case 1:
++		ret = filldir(cookie, "..", 2, file->f_pos,
++			      parent_ino(file->f_dentry), DT_DIR);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++		pos--;
++
++	case 2:
++		ret = filldir(cookie, "thread", 6, file->f_pos,
++			      KEYFS_INO_THREAD, DT_LNK);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	case 3:
++		ret = filldir(cookie, "process", 7, file->f_pos,
++			      KEYFS_INO_PROCESS, DT_LNK);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	case 4:
++		ret = filldir(cookie, "session", 7, file->f_pos,
++			      KEYFS_INO_SESSION, DT_LNK);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	case 5:
++		ret = filldir(cookie, "user-session", 12, file->f_pos,
++			      KEYFS_INO_USER_SESSION, DT_LNK);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	case 6:
++		ret = filldir(cookie, "user", 4, file->f_pos,
++			      KEYFS_INO_USER, DT_LNK);
++		if (ret < 0)
++			goto done;
++		file->f_pos++;
++
++	default:
++		break;
++	}
++
++	/* then come the keys, a directory for each */
++	ret = 0;
++
++	for (;;) {
++		/* we have to search afresh after every key we enumerate to the
++		 * caller because we need to drop the lock around the call to
++		 * filldir (it may sleep) */
++		pos = file->f_pos - 7;
++
++		spin_lock(&key_serial_lock);
++
++		_p = rb_first(&key_serial_tree);
++		while (pos > 0) {
++			pos--;
++			_p = rb_next(_p);
++			if (!_p)
++				goto done_unlock;
++		}
++
++		key = rb_entry(_p, struct key, serial_node);
++		id = key->serial;
++
++		spin_unlock(&key_serial_lock);
++
++		/* each directory's name is the corresponding key serial
++		 * number, and the inode number is based on that too */
++		n = sprintf(buf, "%d", id);
++
++		ret = filldir(cookie, buf, n, file->f_pos,
++			      (ino_t) id << 16 | KEYFS_INO_K_DIR,
++			      DT_DIR);
++		if (ret < 0)
++			goto done;
++
++		file->f_pos++;
++	}
++
++ done_unlock:
++	spin_unlock(&key_serial_lock);
++
++ done:
++	return 0;
++
++} /* end keyfs_root_readdir() */
++
++/*****************************************************************************/
++/*
++ * look up an inode in the root directory
++ */
++static struct dentry *keyfs_root_lookup(struct inode *dir,
++					struct dentry *dentry,
++					struct nameidata *nd)
++{
++	struct dentry_operations *dops = NULL;
++	struct dentry *ret;
++	struct inode *target;
++	key_serial_t id;
++	const char *name;
++	char *p;
++
++	/* decide which virtual files they want */
++	name = dentry->d_name.name;
++
++	switch (dentry->d_name.len) {
++	case 1:
++		if (memcmp(name, ".", 1) == 0) {
++			target = igrab(dir);
++			goto instantiate;
++		}
++		break;
++
++	case 2:
++		if (memcmp(name, "..", 2)==0) {
++			target = igrab(dir);
++			goto instantiate;
++		}
++		break;
++
++	case 4:
++		if (memcmp(name, "user", 4) == 0) {
++			target = keyfs_get_rootlink(dir->i_sb,
++						    KEYFS_INO_USER);
++			goto instantiate;
++		}
++		break;
++
++	case 6:
++		if (memcmp(name, "thread", 6) == 0) {
++			target = keyfs_get_rootlink(dir->i_sb,
++						    KEYFS_INO_THREAD);
++			goto instantiate;
++		}
++		break;
++
++	case 7:
++		if (memcmp(name, "process", 7) == 0) {
++			target = keyfs_get_rootlink(dir->i_sb,
++						    KEYFS_INO_PROCESS);
++			goto instantiate;
++		}
++		if (memcmp(name, "session", 7) == 0) {
++			target = keyfs_get_rootlink(dir->i_sb,
++						    KEYFS_INO_SESSION);
++			goto instantiate;
++		}
++		break;
++
++	case 12:
++		if (memcmp(name, "user-session", 12) == 0) {
++			target = keyfs_get_rootlink(dir->i_sb,
++						    KEYFS_INO_USER_SESSION);
++			goto instantiate;
++		}
++		break;
++
++	default:
++		break;
++	}
++
++	/* it's going to be a virtual keyring directory then */
++	id = simple_strtoul(name, &p, 10);
++	if (*p)
++		goto noent; /* not a decimal number */
++
++	target = keyfs_get_keydir(dir->i_sb, id);
++	if (target) {
++		dops = &keyfs_dir_dentry_operations;
++		goto instantiate;
++	}
++
++ noent:
++	ret = ERR_PTR(-ENOENT);
++	goto out;
++
++	/* instantiate the dentry */
++ instantiate:
++	dentry->d_op = dops;
++	d_add(dentry, target);
++	ret = NULL;
++
++ out:
++	return ret;
++
++} /* end keyfs_root_lookup() */
+Index: xx-sources/fs/keyfs/rootlink.c
+===================================================================
+--- xx-sources.orig/fs/keyfs/rootlink.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/fs/keyfs/rootlink.c	2004-08-11 18:38:58.989819416 -0400
+@@ -0,0 +1,179 @@
++/* rootlink.c: special root symlinks for process & user keyrings
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/fs.h>
++#include <linux/namei.h>
++#include <linux/err.h>
++#include <linux/key.h>
++#include <asm/uaccess.h>
++#include "keyfs.h"
++
++static struct file_operations keyfs_rootlink_file_operations = {
++};
++
++static int keyfs_rootlink_readlink(struct dentry *, char __user *, int);
++static int keyfs_rootlink_follow_link(struct dentry *, struct nameidata *);
++
++static struct inode_operations keyfs_rootlink_inode_operations = {
++	.follow_link	= keyfs_rootlink_follow_link,
++	.readlink	= keyfs_rootlink_readlink,
++};
++
++/*****************************************************************************/
++/*
++ * get a special root keyring inode
++ */
++struct inode *keyfs_get_rootlink(struct super_block *super, ino_t ino)
++{
++	struct inode *inode;
++
++	/* get the inode */
++	inode = iget_locked(super, ino);
++	if (inode && inode->i_state & I_NEW) {
++		/* initialise it */
++		inode->i_mtime	= inode->i_atime = inode->i_ctime =
++			CURRENT_TIME;
++		inode->i_blocks	= 0;
++		inode->i_blksize = 1024;
++		inode->i_uid	= 0;
++		inode->i_gid	= 0;
++		inode->i_mode	= S_IFLNK | S_IRUGO | S_IXUGO;
++		inode->i_op	= &keyfs_rootlink_inode_operations;
++		inode->i_fop	= &keyfs_rootlink_file_operations;
++		inode->i_nlink	= 2;
++
++		/* success */
++		unlock_new_inode(inode);
++	}
++
++	return inode;
++
++} /* end keyfs_get_rootlink() */
++
++/*****************************************************************************/
++/*
++ * read the symlink
++ */
++static int keyfs_rootlink_readlink(struct dentry *dentry,
++				   char __user *_buffer,
++				   int buflen)
++{
++	key_serial_t id;
++	char buffer[12];
++	int n;
++
++	id = 0;
++
++	/* get the appropriate keyring ID */
++	switch (dentry->d_inode->i_ino) {
++	case KEYFS_INO_THREAD:
++		if (current->thread_keyring)
++			id = current->thread_keyring->serial;
++		break;
++
++	case KEYFS_INO_PROCESS:
++		if (current->process_keyring)
++			id = current->process_keyring->serial;
++		break;
++
++	case KEYFS_INO_SESSION:
++		if (current->session_keyring)
++			id = current->session_keyring->serial;
++		break;
++
++	case KEYFS_INO_USER_SESSION:
++		if (current->user->uid_keyring)
++			id = current->user->uid_keyring->serial;
++		break;
++
++	case KEYFS_INO_USER:
++		if (current->user->session_keyring)
++			id = current->user->session_keyring->serial;
++		break;
++
++	default:
++		BUG();
++	}
++
++	/* render as a string and write to userspace */
++	n = sprintf(buffer, "%d", id);
++	if (buflen > n)
++		buflen = n;
++
++	if (copy_to_user(_buffer, buffer, buflen) != 0)
++		buflen = -EFAULT;
++
++	return buflen;
++
++} /* end keyfs_rootlink_readlink() */
++
++/*****************************************************************************/
++/*
++ * follow the symlink to the appropriate directory
++ */
++static int keyfs_rootlink_follow_link(struct dentry *dentry, struct nameidata *nd)
++{
++	key_serial_t id;
++	char buffer[13];
++	int ret;
++
++	id = 0;
++	ret = -ENOENT;
++
++	/* get the appropriate keyring ID */
++	switch (dentry->d_inode->i_ino) {
++	case KEYFS_INO_THREAD:
++		if (!current->thread_keyring)
++			goto no_keyring;
++		id = current->thread_keyring->serial;
++		break;
++
++	case KEYFS_INO_PROCESS:
++		if (!current->process_keyring)
++			goto no_keyring;
++		id = current->process_keyring->serial;
++		break;
++
++	case KEYFS_INO_SESSION:
++		if (!current->session_keyring)
++			goto no_keyring;
++		id = current->session_keyring->serial;
++		break;
++
++	case KEYFS_INO_USER_SESSION:
++		if (!current->user->uid_keyring)
++			goto no_keyring;
++		id = current->user->uid_keyring->serial;
++		break;
++
++	case KEYFS_INO_USER:
++		if (!current->user->session_keyring)
++			goto no_keyring;
++		id = current->user->session_keyring->serial;
++		break;
++
++	default:
++		BUG();
++	}
++
++	/* we label the symlink appropriately */
++	sprintf(buffer, "%d", id);
++	nd_set_link(nd, buffer);
++	ret = 0;
++
++ no_keyring:
++	return ret;
++
++} /* end keyfs_rootlink_follow_link() */
+Index: xx-sources/fs/keyfs/super.c
+===================================================================
+--- xx-sources.orig/fs/keyfs/super.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/fs/keyfs/super.c	2004-08-11 18:38:58.990819264 -0400
+@@ -0,0 +1,117 @@
++/* super.c: key management filesystme
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/fs.h>
++#include <linux/err.h>
++#include <linux/key.h>
++#include <asm/uaccess.h>
++#include "keyfs.h"
++
++#define KEYFS_FS_MAGIC	0x4B455953 /* 'KEYS' */
++
++static struct super_block *keyfs_get_sb(struct file_system_type *fs_type,
++					int flags, const char *dev_name,
++					void *data);
++
++static int keyfs_fill_super(struct super_block *s, void *data, int silent);
++
++static struct file_system_type keyfs_fs_type = {
++	.owner		= THIS_MODULE,
++	.name		= "keyfs",
++	.get_sb		= keyfs_get_sb,
++	.kill_sb	= kill_anon_super,
++};
++
++static void keyfs_clear_inode(struct inode *vfs_inode);
++
++static struct super_operations keyfs_super_ops = {
++	.statfs		= simple_statfs,
++	.clear_inode	= keyfs_clear_inode,
++};
++
++
++/*****************************************************************************/
++/*
++ * initialise the filesystem
++ */
++static int __init keyfs_fs_init(void)
++{
++	/* export our filesystem to lesser mortals */
++	return register_filesystem(&keyfs_fs_type);
++
++} /* end keyfs_fs_init() */
++
++fs_initcall(keyfs_fs_init);
++
++/*****************************************************************************/
++/*
++ * create the keyfs superblock (one time only)
++ */
++static struct super_block *keyfs_get_sb(struct file_system_type *fs_type,
++					int flags, const char *dev_name,
++					void *data)
++{
++	return get_sb_single(&keyfs_fs_type, flags, data, keyfs_fill_super);
++
++} /* end keyfs_get_sb() */
++
++/*****************************************************************************/
++/*
++ * fill out the superblock
++ */
++static int keyfs_fill_super(struct super_block *s, void *data, int silent)
++{
++	struct inode *inode;
++	int ret;
++
++	s->s_blocksize = 1024;
++	s->s_blocksize_bits = 10;
++	s->s_magic = KEYFS_FS_MAGIC;
++	s->s_op = &keyfs_super_ops;
++
++	/* allocate the root inode */
++	ret = -ENOMEM;
++	inode = keyfs_get_rootdir(s);
++
++	if (!IS_ERR(inode)) {
++		/* allocate a root dentry */
++		s->s_root = d_alloc_root(inode);
++		if (s->s_root) {
++			ret = 0;
++		}
++		else {
++			printk("keyfs: get root dentry failed\n");
++			iput(inode);
++		}
++	}
++
++
++	return ret;
++
++} /* end keyfs_fill_super() */
++
++/*****************************************************************************/
++/*
++ * clear an inode
++ */
++static void keyfs_clear_inode(struct inode *inode)
++{
++	struct key *key = inode->u.generic_ip;
++
++	inode->u.generic_ip = NULL;
++
++	key_put(key);
++
++} /* end keyfs_clear_inode() */

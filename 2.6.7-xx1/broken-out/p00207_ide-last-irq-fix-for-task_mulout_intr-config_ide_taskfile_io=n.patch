@@ -1,0 +1,30 @@
+
+From: Bartlomiej Zolnierkiewicz <B.Zolnierkiewicz@elka.pw.edu.pl>
+
+We should wait for the last IRQ after all data is sent.
+
+Signed-off-by: Bartlomiej Zolnierkiewicz <bzolnier@elka.pw.edu.pl>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/ide/ide-taskfile.c |    7 -------
+ 1 files changed, 7 deletions(-)
+
+diff -puN drivers/ide/ide-taskfile.c~ide-last-irq-fix-for-task_mulout_intr-config_ide_taskfile_io=n drivers/ide/ide-taskfile.c
+--- 25/drivers/ide/ide-taskfile.c~ide-last-irq-fix-for-task_mulout_intr-config_ide_taskfile_io=n	2004-06-20 13:57:26.517111560 -0700
++++ 25-akpm/drivers/ide/ide-taskfile.c	2004-06-20 13:57:26.522110800 -0700
+@@ -520,13 +520,6 @@ ide_startstop_t task_mulout_intr (ide_dr
+ 		msect -= nsect;
+ 		taskfile_output_data(drive, pBuf, nsect * SECTOR_WORDS);
+ 		rq->current_nr_sectors -= nsect;
+-
+-		/* FIXME: check drive status */
+-		if (!rq->current_nr_sectors) {
+-			if (!DRIVER(drive)->end_request(drive, 1, 0))
+-				if (!rq->bio)
+-					return ide_stopped;
+-		}
+ 	} while (msect);
+ 	rq->errors = 0;
+ 	if (HWGROUP(drive)->handler == NULL)
+_

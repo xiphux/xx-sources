@@ -1,0 +1,89 @@
+Return-Path: <steiner@sgi.com>
+Received: from localhost (bix [127.0.0.1])
+	by localhost.localdomain (8.12.10/8.12.10) with ESMTP id i5OD0G3Z013312
+	for <akpm@localhost>; Thu, 24 Jun 2004 06:00:16 -0700
+Received: from bix [127.0.0.1]
+	by localhost with POP3 (fetchmail-6.2.0)
+	for akpm@localhost (single-drop); Thu, 24 Jun 2004 06:00:16 -0700 (PDT)
+Received: from fire-2.osdl.org (air1.pdx.osdl.net [172.20.0.5])
+	by mail.osdl.org (8.11.6/8.11.6) with ESMTP id i5OCuOZ18522
+	for <akpm@mail.gateway.osdl.net>; Thu, 24 Jun 2004 05:56:24 -0700
+Received: from omx1.americas.sgi.com (cfcafw.sgi.com [198.149.23.1])
+	by fire-2.osdl.org (8.12.8/8.12.8) with ESMTP id i5OCuNwr008384
+	for <akpm@osdl.org>; Thu, 24 Jun 2004 05:56:23 -0700
+Received: from flecktone.americas.sgi.com (flecktone.americas.sgi.com [192.48.203.135])
+	by omx1.americas.sgi.com (8.12.10/8.12.9/linux-outbound_gateway-1.1) with ESMTP id i5OCtkiv009796;
+	Thu, 24 Jun 2004 07:55:46 -0500
+Received: from thistle-e236.americas.sgi.com (thistle-e236.americas.sgi.com [128.162.236.204])
+	by flecktone.americas.sgi.com (8.12.9/8.12.10/SGI_generic_relay-1.2) with ESMTP id i5OCtkKe41188893;
+	Thu, 24 Jun 2004 07:55:46 -0500 (CDT)
+Received: from attica.americas.sgi.com (attica.americas.sgi.com [128.162.236.44]) by thistle-e236.americas.sgi.com (8.12.9/SGI-server-1.8) with ESMTP id i5OCtjet2804135; Thu, 24 Jun 2004 07:55:45 -0500 (CDT)
+Received: from attica.americas.sgi.com (localhost.localdomain [127.0.0.1])
+	by attica.americas.sgi.com (8.12.10/8.12.10/erikj-RedHat-7.2-Eagan) with ESMTP id i5OCtiE8025056;
+	Thu, 24 Jun 2004 07:55:45 -0500
+Received: (from steiner@localhost)
+	by attica.americas.sgi.com (8.12.10/8.12.10/Submit) id i5OCtiMe025054;
+	Thu, 24 Jun 2004 07:55:44 -0500
+Date: Thu, 24 Jun 2004 07:55:44 -0500
+From: Jack Steiner <steiner@sgi.com>
+To: Andrew Morton <akpm@osdl.org>
+Cc: davidm@hpl.hp.com, linux-kernel@vger.kernel.org
+Subject: Re: [PATCH] - Reduce TLB flushing during process migration
+Message-ID: <20040624125544.GA15742@sgi.com>
+References: <20040623143844.GA15670@sgi.com> <20040623143318.07932255.akpm@osdl.org>
+Mime-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: inline
+In-Reply-To: <20040623143318.07932255.akpm@osdl.org>
+User-Agent: Mutt/1.4.1i
+X-MIMEDefang-Filter: osdl$Revision: 1.70 $
+X-Scanned-By: MIMEDefang 2.36
+X-Spam-Status: No, hits=-4.9 required=1.0 tests=BAYES_00 autolearn=ham 
+	version=2.60
+X-Spam-Level: 
+X-Spam-Checker-Version: SpamAssassin 2.60 (1.212-2003-09-23-exp) on bix
+
+On Wed, Jun 23, 2004 at 02:33:18PM -0700, Andrew Morton wrote:
+> Jack Steiner <steiner@sgi.com> wrote:
+> >
+> > This patch adds a platform specific hook to allow an arch-specific
+> > function to be called after an explicit migration.
+> 
+> OK by me.  David, could you please merge this up?
+> 
+> Jack, please prepare an update for Documentation/cachetlb.txt.
+
+
+
+
+Signed-off-by: Jack Steiner <steiner@sgi.com>
+
+
+
+
+--- linuxbase/Documentation/cachetlb.txt	2004-06-22 07:15:46.000000000 -0500
++++ linux/Documentation/cachetlb.txt	2004-06-24 07:54:50.000000000 -0500
+@@ -132,6 +132,17 @@
+ 	translations for software managed TLB configurations.
+ 	The sparc64 port currently does this.
+ 
++7) void tlb_migrate_finish(struct mm_struct *mm)
++
++	This interface is called at the end of an explicit
++	process migration. This interface provides a hook
++	to allow a platform to update TLB or context-specific
++	information for the address space.
++
++	The ia64 sn2 platform is one example of a platform
++	that uses this interface.
++
++
+ Next, we have the cache flushing interfaces.  In general, when Linux
+ is changing an existing virtual-->physical mapping to a new value,
+ the sequence will be in one of the following forms:
+
+-- 
+Thanks
+
+Jack Steiner (steiner@sgi.com)          651-683-5302
+Principal Engineer                      SGI - Silicon Graphics, Inc.

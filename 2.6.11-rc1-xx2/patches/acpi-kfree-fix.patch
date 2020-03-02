@@ -1,0 +1,32 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/acpi/executer/exconfig.c |    9 ++++++++-
+ 1 files changed, 8 insertions(+), 1 deletion(-)
+
+diff -puN drivers/acpi/executer/exconfig.c~acpi-kfree-fix drivers/acpi/executer/exconfig.c
+--- 25/drivers/acpi/executer/exconfig.c~acpi-kfree-fix	2005-01-05 18:42:44.000000000 -0800
++++ 25-akpm/drivers/acpi/executer/exconfig.c	2005-01-05 18:58:30.437438776 -0800
+@@ -371,11 +371,18 @@ acpi_ex_load_op (
+ 			goto cleanup;
+ 		}
+ 
+-		table_ptr = ACPI_CAST_PTR (struct acpi_table_header, buffer_desc->buffer.pointer);
++		table_ptr = ACPI_MEM_ALLOCATE(sizeof(struct acpi_table_header));
++		if (!table_ptr)
++			return_ACPI_STATUS (AE_NO_MEMORY);
++		memcpy(table_ptr,
++			ACPI_CAST_PTR (struct acpi_table_header,
++					buffer_desc->buffer.pointer),
++			sizeof(struct acpi_table_header));
+ 
+ 		 /* Sanity check the table length */
+ 
+ 		if (table_ptr->length < sizeof (struct acpi_table_header)) {
++			ACPI_MEM_FREE (table_ptr);
+ 			return_ACPI_STATUS (AE_BAD_HEADER);
+ 		}
+ 		break;
+_

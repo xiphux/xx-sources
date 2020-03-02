@@ -1,0 +1,45 @@
+
+From: Badari Pulavarty <pbadari@us.ibm.com>
+
+alloc_percpu() calls kmem_cache_alloc_node() to allocate memory on a
+particular node.  But for non-NUMA cases, it doesn't matter all the memory
+comes from same node.  This patch short-cuts and calls kmalloc() if its
+non-NUMA.  I hate to add #ifdefs in the mainline code, but I don't see easy
+way around.
+
+kmem_cache_alloc_node()allocates a new slab to satisfy allocation from that
+node instead of doing it from a partial slab from that node - which causes
+fragmentation (with my scsi-debug tests).  Thats my next problem to deal
+with.
+
+BTW, with this patch size-64 cache is no longer fragmented for scsi-debug
+test case.
+
+size-64            76920  76921     64   61    1 : tunables  120   60   
+8 : slabdata   1261   1261   0
+
+Signed-off-by: <pbadari@us.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/slab.c |    4 ++++
+ 1 files changed, 4 insertions(+)
+
+diff -puN mm/slab.c~alloc_percpu-fix-for-non-numa mm/slab.c
+--- 25/mm/slab.c~alloc_percpu-fix-for-non-numa	Thu Oct  7 14:02:04 2004
++++ 25-akpm/mm/slab.c	Thu Oct  7 14:02:04 2004
+@@ -2451,9 +2451,13 @@ void *__alloc_percpu(size_t size, size_t
+ 	for (i = 0; i < NR_CPUS; i++) {
+ 		if (!cpu_possible(i))
+ 			continue;
++#ifdef CONFIG_NUMA
+ 		pdata->ptrs[i] = kmem_cache_alloc_node(
+ 				kmem_find_general_cachep(size, GFP_KERNEL),
+ 				cpu_to_node(i));
++#else
++		pdata->ptrs[i] = kmalloc(size, GFP_KERNEL);
++#endif
+ 
+ 		if (!pdata->ptrs[i])
+ 			goto unwind_oom;
+_

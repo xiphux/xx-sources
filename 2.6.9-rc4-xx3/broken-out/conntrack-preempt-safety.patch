@@ -1,0 +1,32 @@
+
+
+The debug patch which detects the use of smp_processor_id() in preempt-enabled
+regions is triggering due to CONNTRACK_STAT_INC.
+
+And it does need to be preempt-safe, becuase even if the compiler takes a copy
+of the per-cpu data's address into a register, preemption between the read and
+the write could cause us to lose counts.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/netfilter_ipv4/ip_conntrack.h |    6 +++++-
+ 1 files changed, 5 insertions(+), 1 deletion(-)
+
+diff -puN include/linux/netfilter_ipv4/ip_conntrack.h~conntrack-preempt-safety include/linux/netfilter_ipv4/ip_conntrack.h
+--- 25/include/linux/netfilter_ipv4/ip_conntrack.h~conntrack-preempt-safety	2004-10-03 10:59:55.814603384 -0700
++++ 25-akpm/include/linux/netfilter_ipv4/ip_conntrack.h	2004-10-03 11:01:36.554288624 -0700
+@@ -311,7 +311,11 @@ struct ip_conntrack_stat
+ 	unsigned int expect_delete;
+ };
+ 
+-#define CONNTRACK_STAT_INC(count) (__get_cpu_var(ip_conntrack_stat).count++)
++#define CONNTRACK_STAT_INC(count)				\
++	do {							\
++		per_cpu(ip_conntrack_stat, get_cpu()).count++;	\
++		put_cpu();					\
++	} while (0)
+ 
+ /* eg. PROVIDES_CONNTRACK(ftp); */
+ #define PROVIDES_CONNTRACK(name)                        \
+_

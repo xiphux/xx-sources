@@ -1,0 +1,104 @@
+
+From: Hirokazu Takata <takata@linux-m32r.org>
+
+* include/asm-m32r/checksum.h: build fix
+
+* arch/m32r/lib/csum_partial_copy.c:
+  - update comment
+  - cosmetic changes: change indentation
+
+Signed-off-by: Hirokazu Takata <takata@linux-m32r.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/m32r/lib/csum_partial_copy.c |   27 +++++++++++++++------------
+ 25-akpm/include/asm-m32r/checksum.h       |   10 ++++++----
+ 2 files changed, 21 insertions(+), 16 deletions(-)
+
+diff -puN arch/m32r/lib/csum_partial_copy.c~csum_and_copy_from_user-gcc4-warning-fixes-m32r-fix arch/m32r/lib/csum_partial_copy.c
+--- 25/arch/m32r/lib/csum_partial_copy.c~csum_and_copy_from_user-gcc4-warning-fixes-m32r-fix	Wed Jan 12 14:58:33 2005
++++ 25-akpm/arch/m32r/lib/csum_partial_copy.c	Wed Jan 12 14:58:33 2005
+@@ -3,16 +3,16 @@
+  *		operating system.  INET is implemented using the  BSD Socket
+  *		interface as the means of communication with the user level.
+  *
+- *		MIPS specific IP/TCP/UDP checksumming routines
++ *		M32R specific IP/TCP/UDP checksumming routines
++ *		(Some code taken from MIPS architecture)
+  *
+- * Authors:	Ralf Baechle, <ralf@waldorf-gmbh.de>
+- *		Lots of code moved from tcp.c and ip.c; see those files
+- *		for more names.
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
+  *
+- *		This program is free software; you can redistribute it and/or
+- *		modify it under the terms of the GNU General Public License
+- *		as published by the Free Software Foundation; either version
+- *		2 of the License, or (at your option) any later version.
++ * Copyright (C) 1994, 1995  Waldorf Electronics GmbH
++ * Copyright (C) 1998, 1999  Ralf Baechle
++ * Copyright (C) 2001-2005  Hiroyuki Kondo, Hirokazu Takata
+  *
+  */
+ 
+@@ -27,8 +27,9 @@
+ /*
+  * Copy while checksumming, otherwise like csum_partial
+  */
+-unsigned int csum_partial_copy_nocheck (const unsigned char *src, unsigned char *dst,
+-                                        int len, unsigned int sum)
++unsigned int
++csum_partial_copy_nocheck (const unsigned char *src, unsigned char *dst,
++                           int len, unsigned int sum)
+ {
+ 	sum = csum_partial(src, len, sum);
+ 	memcpy(dst, src, len);
+@@ -41,8 +42,10 @@ EXPORT_SYMBOL(csum_partial_copy_nocheck)
+  * Copy from userspace and compute checksum.  If we catch an exception
+  * then zero the rest of the buffer.
+  */
+-unsigned int csum_partial_copy_from_user (const unsigned char __user *src, unsigned char *dst,
+-                                          int len, unsigned int sum, int *err_ptr)
++unsigned int
++csum_partial_copy_from_user (const unsigned char __user *src,
++			     unsigned char *dst,
++			     int len, unsigned int sum, int *err_ptr)
+ {
+ 	int missing;
+ 
+diff -puN include/asm-m32r/checksum.h~csum_and_copy_from_user-gcc4-warning-fixes-m32r-fix include/asm-m32r/checksum.h
+--- 25/include/asm-m32r/checksum.h~csum_and_copy_from_user-gcc4-warning-fixes-m32r-fix	Wed Jan 12 14:58:33 2005
++++ 25-akpm/include/asm-m32r/checksum.h	Wed Jan 12 14:58:33 2005
+@@ -31,7 +31,8 @@
+  *
+  * it's best to have buff aligned on a 32-bit boundary
+  */
+-asmlinkage unsigned int csum_partial(const unsigned char *buff, int len, unsigned int sum);
++asmlinkage unsigned int csum_partial(const unsigned char *buff,
++				     int len, unsigned int sum);
+ 
+ /*
+  * The same as csum_partial, but copies from src while it checksums.
+@@ -39,15 +40,16 @@ asmlinkage unsigned int csum_partial(con
+  * Here even more important to align src and dst on a 32-bit (or even
+  * better 64-bit) boundary
+  */
+-extern unsigned int csum_partial_copy_nocheck(const char *src, char *dst,
++extern unsigned int csum_partial_copy_nocheck(const unsigned char *src,
++					      unsigned char *dst,
+                                               int len, unsigned int sum);
+ 
+ /*
+  * This is a new version of the above that records errors it finds in *errp,
+  * but continues and zeros thre rest of the buffer.
+  */
+-extern unsigned int csum_partial_copy_from_user(const char __user *src,
+-                                                char *dst,
++extern unsigned int csum_partial_copy_from_user(const unsigned char __user *src,
++                                                unsigned char *dst,
+                                                 int len, unsigned int sum,
+                                                 int *err_ptr);
+ 
+_

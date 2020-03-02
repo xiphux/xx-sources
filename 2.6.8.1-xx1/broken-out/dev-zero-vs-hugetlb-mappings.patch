@@ -1,0 +1,37 @@
+
+From: Oleg Nesterov <oleg@tv-sign.ru>
+
+Hugetlbfs mmap with MAP_PRIVATE becomes MAP_SHARED silently, but
+vma->vm_flags have no VM_SHARED bit.  Reading from /dev/zero into hugetlb
+area will do:
+
+read_zero()
+    read_zero_pagealigned()
+        if (vma->vm_flags & VM_SHARED)
+            break;                      // fallback to clear_user()
+        zap_page_range();
+        zeromap_page_range();
+
+It will hit BUG_ON() in unmap_hugepage_range() if region is not huge page
+aligned, or silently convert it into the private anonymous mapping.
+
+Signed-off-by: Oleg Nesterov <oleg@tv-sign.ru>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-sparc64-akpm/drivers/char/mem.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN drivers/char/mem.c~dev-zero-vs-hugetlb-mappings drivers/char/mem.c
+--- 25-sparc64/drivers/char/mem.c~dev-zero-vs-hugetlb-mappings	2004-07-31 20:57:35.137918184 -0700
++++ 25-sparc64-akpm/drivers/char/mem.c	2004-07-31 20:57:35.141917576 -0700
+@@ -380,7 +380,7 @@ static inline size_t read_zero_pagealign
+ 
+ 		if (vma->vm_start > addr || (vma->vm_flags & VM_WRITE) == 0)
+ 			goto out_up;
+-		if (vma->vm_flags & VM_SHARED)
++		if (vma->vm_flags & (VM_SHARED | VM_HUGETLB))
+ 			break;
+ 		count = vma->vm_end - addr;
+ 		if (count > size)
+_

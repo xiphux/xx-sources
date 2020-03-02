@@ -1,0 +1,37 @@
+
+From: Folke Ashberg <folke@ashberg.de>
+
+I have an HPT372A (rev 02) (PCI_DEVICE_ID_TTI_HPT372) and since 2.6.8 i've
+got an Ooooops.
+
+I saw that hpt366.c got support for HPT372_N_ and its special timings, but
+that timings have been used for my HPT372_A_ and caused the Oops.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/ide/pci/hpt366.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN drivers/ide/pci/hpt366.c~hpt366c-wrong-timings-used-since-268 drivers/ide/pci/hpt366.c
+--- 25/drivers/ide/pci/hpt366.c~hpt366c-wrong-timings-used-since-268	2004-08-26 19:15:07.483680640 -0700
++++ 25-akpm/drivers/ide/pci/hpt366.c	2004-08-26 19:15:07.487680032 -0700
+@@ -881,7 +881,7 @@ static int __devinit init_hpt37x(struct 
+ 	/* interrupt force enable */
+ 	pci_write_config_byte(dev, 0x5a, (reg5ah & ~0x10));
+ 
+-	if(dmabase)
++	if (dev->device == PCI_DEVICE_ID_TTI_HPT372N && dmabase)
+ 	{
+ 		did = inb(dmabase + 0x22);
+ 		rid = inb(dmabase + 0x28);
+@@ -1132,7 +1132,7 @@ static void __devinit init_hwif_hpt366(i
+ 	unsigned long dmabase		= hwif->dma_base;
+ 	int is_372n = 0;
+ 	
+-	if(dmabase)
++	if (dev->device == PCI_DEVICE_ID_TTI_HPT372N && dmabase)
+ 	{
+ 		did = inb(dmabase + 0x22);
+ 		rid = inb(dmabase + 0x28);
+_

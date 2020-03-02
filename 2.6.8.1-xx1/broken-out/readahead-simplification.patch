@@ -1,0 +1,36 @@
+
+From: Ram Pai <linuxram@us.ibm.com>
+
+Ok I have enclosed the results for the recent readahead fixes.  The summary
+is: there is no significant improvement or decrease in performance of (DSS
+workload, iozone, sysbench) The increase or decrease is in the margin of
+errors.
+
+I have enclosed a patch that partially backs off Miklos's fix.  Shane
+Shrybman correctly pointed out that the real fix is to set ra->average
+value to max/2 when we move from readahead-off mode to readahead-on mode. 
+The other part of Miklos's fix becomes irrelevent.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/readahead.c |    6 +-----
+ 1 files changed, 1 insertion(+), 5 deletions(-)
+
+diff -puN mm/readahead.c~readahead-simplification mm/readahead.c
+--- 25/mm/readahead.c~readahead-simplification	Wed Aug  4 16:05:48 2004
++++ 25-akpm/mm/readahead.c	Wed Aug  4 16:05:48 2004
+@@ -468,11 +468,7 @@ do_io:
+ 			  * pages shall be accessed in the next
+ 			  * current window.
+ 			  */
+-			average = ra->average;
+-			if (ra->serial_cnt > average)
+-				average = (ra->serial_cnt + ra->average + 1) / 2;
+-
+-			ra->next_size = min(average , (unsigned long)max);
++			ra->next_size = min(ra->average , (unsigned long)max);
+ 		}
+ 		ra->start = offset;
+ 		ra->size = ra->next_size;
+_

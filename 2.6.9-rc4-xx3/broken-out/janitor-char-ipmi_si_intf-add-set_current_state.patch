@@ -1,0 +1,26 @@
+
+From: <janitor@sternwelten.at>
+
+Add set_current_state() before schedule_timeout() so a delay is achieved. 
+Without the addition, schedule_timeout() returns immediately.
+
+Signed-off-by: Nishanth Aravamudan <nacc@us.ibm.com>
+Signed-off-by: Maximilian Attems <janitor@sternwelten.at>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/ipmi/ipmi_si_intf.c |    1 +
+ 1 files changed, 1 insertion(+)
+
+diff -puN drivers/char/ipmi/ipmi_si_intf.c~janitor-char-ipmi_si_intf-add-set_current_state drivers/char/ipmi/ipmi_si_intf.c
+--- 25/drivers/char/ipmi/ipmi_si_intf.c~janitor-char-ipmi_si_intf-add-set_current_state	Thu Sep 23 15:39:25 2004
++++ 25-akpm/drivers/char/ipmi/ipmi_si_intf.c	Thu Sep 23 15:39:25 2004
+@@ -2287,6 +2287,7 @@ void __exit cleanup_one_si(struct smi_in
+ 	   interface is in a clean state. */
+ 	while ((to_clean->curr_msg) || (to_clean->si_state != SI_NORMAL)) {
+ 		poll(to_clean);
++		set_current_state(TASK_UNINTERRUPTIBLE);
+ 		schedule_timeout(1);
+ 	}
+ 
+_

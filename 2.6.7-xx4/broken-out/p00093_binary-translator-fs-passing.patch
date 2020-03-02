@@ -1,0 +1,145 @@
+
+From: Yoav Zach <yoav_zach@yahoo.com>
+
+The proposed patch uses the aux-vector to pass the fd of the open misc
+binary to the interpreter, instead of using argv[1] for that purpose.
+
+Previous patch - open_nonreadable_binaries, offered the option of
+binfmt_misc opening the binary on behalf of the interpreter.  In case
+binfmt_misc is requested to do that it would pass the file-descriptor of
+the open binary to the interpreter as its second argument (argv[1]).  This
+method of passing the file descriptor was suspected to be problematic,
+since it changes the command line that users expect to see when using tools
+such as 'ps' and 'top'.  
+
+The proposed patch changes the method of passing the fd of the open binary
+to the translator.  Instead of passing it as an argument, binfmt_misc will
+request the ELF loader to pass it as a new element in the aux-vector that
+it prepares on the stack for ELF interpreter.  With this patch, argv[1]
+will hold the full path to the binary regardless of whether it opened it or
+not.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/binfmt_elf.c         |    3 +++
+ 25-akpm/fs/binfmt_misc.c        |   25 ++++++++++++-------------
+ 25-akpm/fs/exec.c               |    1 +
+ 25-akpm/include/linux/binfmts.h |    8 +++++++-
+ 4 files changed, 23 insertions(+), 14 deletions(-)
+
+diff -puN fs/binfmt_elf.c~binary-translator-fs-passing fs/binfmt_elf.c
+--- 25/fs/binfmt_elf.c~binary-translator-fs-passing	2004-06-28 13:14:51.559907728 -0700
++++ 25-akpm/fs/binfmt_elf.c	2004-06-28 13:14:51.568906360 -0700
+@@ -203,6 +203,9 @@ create_elf_tables(struct linux_binprm *b
+ 	if (k_platform) {
+ 		NEW_AUX_ENT(AT_PLATFORM, (elf_addr_t)(long)u_platform);
+ 	}
++	if (bprm->interp_flags & BINPRM_FLAGS_EXECFD) {
++		NEW_AUX_ENT(AT_EXECFD, (elf_addr_t) bprm->interp_data);
++	}
+ #undef NEW_AUX_ENT
+ 	/* AT_NULL is zero; clear the rest too */
+ 	memset(&elf_info[ei_index], 0,
+diff -puN fs/binfmt_misc.c~binary-translator-fs-passing fs/binfmt_misc.c
+--- 25/fs/binfmt_misc.c~binary-translator-fs-passing	2004-06-28 13:14:51.560907576 -0700
++++ 25-akpm/fs/binfmt_misc.c	2004-06-28 13:14:51.569906208 -0700
+@@ -109,7 +109,6 @@ static int load_misc_binary(struct linux
+ 	char *iname_addr = iname;
+ 	int retval;
+ 	int fd_binary = -1;
+-	char fd_str[12];
+ 	struct files_struct *files = NULL;
+ 
+ 	retval = -ENOEXEC;
+@@ -130,7 +129,6 @@ static int load_misc_binary(struct linux
+ 	}
+ 
+ 	if (fmt->flags & MISC_FMT_OPEN_BINARY) {
+-		char *fdsp = fd_str;
+ 
+ 		files = current->files;
+ 		retval = unshare_files();
+@@ -158,27 +156,27 @@ static int load_misc_binary(struct linux
+ 		allow_write_access(bprm->file);
+ 		bprm->file = NULL;
+ 
+-		/* make argv[1] be the file descriptor of the binary */
+- 		snprintf(fd_str, sizeof(fd_str), "%d", fd_binary);
+- 		retval = copy_strings_kernel(1, &fdsp, bprm);
+-		if (retval < 0)
+-			goto _error;
+-		bprm->argc++;
++		/* mark the bprm that fd should be passed to interp */
++		bprm->interp_flags |= BINPRM_FLAGS_EXECFD;
++		bprm->interp_data = fd_binary;
+ 
+  	} else {
+  		allow_write_access(bprm->file);
+  		fput(bprm->file);
+  		bprm->file = NULL;
+-		/* make argv[1] be the path to the binary */
+- 		retval = copy_strings_kernel (1, &bprm->interp, bprm);
+-		if (retval < 0)
+-			goto _error;
+-		bprm->argc++;
+  	}
++	/* make argv[1] be the path to the binary */
++	retval = copy_strings_kernel (1, &bprm->interp, bprm);
++	if (retval < 0)
++		goto _error;
++	bprm->argc++;
++
++	/* add the interp as argv[0] */
+ 	retval = copy_strings_kernel (1, &iname_addr, bprm);
+ 	if (retval < 0)
+ 		goto _error;
+ 	bprm->argc ++;
++
+ 	bprm->interp = iname;	/* for binfmt_script */
+ 
+ 	interp_file = open_exec (iname);
+@@ -215,6 +213,7 @@ _error:
+ 	if (fd_binary > 0)
+ 		sys_close(fd_binary);
+ 	bprm->interp_flags = 0;
++	bprm->interp_data = 0;
+ _unshare:
+ 	if (files) {
+ 		put_files_struct(current->files);
+diff -puN fs/exec.c~binary-translator-fs-passing fs/exec.c
+--- 25/fs/exec.c~binary-translator-fs-passing	2004-06-28 13:14:51.562907272 -0700
++++ 25-akpm/fs/exec.c	2004-06-28 13:14:51.570906056 -0700
+@@ -1090,6 +1090,7 @@ int do_execve(char * filename,
+ 	bprm.filename = filename;
+ 	bprm.interp = filename;
+ 	bprm.interp_flags = 0;
++	bprm.interp_data = 0;
+ 	bprm.sh_bang = 0;
+ 	bprm.loader = 0;
+ 	bprm.exec = 0;
+diff -puN include/linux/binfmts.h~binary-translator-fs-passing include/linux/binfmts.h
+--- 25/include/linux/binfmts.h~binary-translator-fs-passing	2004-06-28 13:14:51.564906968 -0700
++++ 25-akpm/include/linux/binfmts.h	2004-06-28 13:14:51.570906056 -0700
+@@ -35,13 +35,19 @@ struct linux_binprm{
+ 	char * interp;		/* Name of the binary really executed. Most
+ 				   of the time same as filename, but could be
+ 				   different for binfmt_{misc,script} */
+-	unsigned long interp_flags;
++	unsigned interp_flags;
++	unsigned interp_data;
+ 	unsigned long loader, exec;
+ };
+ 
+ #define BINPRM_FLAGS_ENFORCE_NONDUMP_BIT 0
+ #define BINPRM_FLAGS_ENFORCE_NONDUMP (1 << BINPRM_FLAGS_ENFORCE_NONDUMP_BIT)
+ 
++/* fd of the binary should be passed to the interpreter */
++#define BINPRM_FLAGS_EXECFD_BIT 1
++#define BINPRM_FLAGS_EXECFD (1 << BINPRM_FLAGS_EXECFD_BIT)
++
++
+ /*
+  * This structure defines the functions that are used to load the binary formats that
+  * linux accepts.
+_

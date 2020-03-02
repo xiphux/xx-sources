@@ -1,0 +1,32 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/aio.h |   13 ++++++++-----
+ 1 files changed, 8 insertions(+), 5 deletions(-)
+
+diff -puN include/linux/aio.h~collected-aio-retry-fixes-and-enhancements-cleanup include/linux/aio.h
+--- 25/include/linux/aio.h~collected-aio-retry-fixes-and-enhancements-cleanup	2004-08-04 21:55:10.796819832 -0700
++++ 25-akpm/include/linux/aio.h	2004-08-04 21:56:05.510502088 -0700
+@@ -175,11 +175,14 @@ int FASTCALL(io_submit_one(struct kioctx
+ 
+ #define in_aio() !is_sync_wait(current->io_wait)
+ /* may be used for debugging */
+-#define warn_if_async()	if (in_aio()) {\
+-	printk(KERN_ERR "%s(%s:%d) called in async context!\n", \
+-	__FUNCTION__, __FILE__, __LINE__); \
+-	dump_stack(); \
+-	}
++#define warn_if_async()							\
++do {									\
++	if (in_aio()) {							\
++		printk(KERN_ERR "%s(%s:%d) called in async context!\n",	\
++			__FUNCTION__, __FILE__, __LINE__);		\
++		dump_stack();						\
++	}								\
++} while (0)
+ 
+ #define io_wait_to_kiocb(wait) container_of(wait, struct kiocb, ki_wait)
+ #define is_retried_kiocb(iocb) ((iocb)->ki_retried > 1)
+_

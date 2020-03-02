@@ -1,0 +1,32 @@
+
+From: Zwane Mwaikambo <zwane@fsmlabs.com>
+
+I seem to have broken this when I moved the clearing of the dying cpu to 
+arch specific code.
+
+Signed-off-by: Zwane Mwaikambo <zwane@fsmlabs.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc64/kernel/pSeries_smp.c |    5 ++++-
+ 1 files changed, 4 insertions(+), 1 deletion(-)
+
+diff -puN arch/ppc64/kernel/pSeries_smp.c~ppc64-fix-cpu-hotplug arch/ppc64/kernel/pSeries_smp.c
+--- 25/arch/ppc64/kernel/pSeries_smp.c~ppc64-fix-cpu-hotplug	2005-01-10 21:09:45.376283656 -0800
++++ 25-akpm/arch/ppc64/kernel/pSeries_smp.c	2005-01-10 21:10:40.452910736 -0800
+@@ -86,10 +86,13 @@ static int query_cpu_stopped(unsigned in
+ 
+ int pSeries_cpu_disable(void)
+ {
++	int cpu = smp_processor_id();
++
++	cpu_clear(cpu, cpu_online_map);
+ 	systemcfg->processorCount--;
+ 
+ 	/*fix boot_cpuid here*/
+-	if (smp_processor_id() == boot_cpuid)
++	if (cpu == boot_cpuid)
+ 		boot_cpuid = any_online_cpu(cpu_online_map);
+ 
+ 	/* FIXME: abstract this to not be platform specific later on */
+_

@@ -1,0 +1,40 @@
+
+From: Paul Mackerras <paulus@samba.org>
+
+With earlier setup of cpu_possible_map the number of irqstacks shrinks from
+NR_CPUS to the number of possible cpus.
+
+Signed-off-by: Nathan Lynch <nathanl@austin.ibm.com>
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc64/kernel/irq.c   |    2 +-
+ 25-akpm/arch/ppc64/kernel/setup.c |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN arch/ppc64/kernel/irq.c~ppc64-3-3-allocate-irqstacks-only-for-possible-cpus arch/ppc64/kernel/irq.c
+--- 25/arch/ppc64/kernel/irq.c~ppc64-3-3-allocate-irqstacks-only-for-possible-cpus	2004-08-30 00:22:28.032901576 -0700
++++ 25-akpm/arch/ppc64/kernel/irq.c	2004-08-30 00:22:28.039900512 -0700
+@@ -931,7 +931,7 @@ void irq_ctx_init(void)
+ 	struct thread_info *tp;
+ 	int i;
+ 
+-	for (i = 0; i < NR_CPUS; i++) {
++	for_each_cpu(i) {
+ 		memset((void *)softirq_ctx[i], 0, THREAD_SIZE);
+ 		tp = softirq_ctx[i];
+ 		tp->cpu = i;
+diff -puN arch/ppc64/kernel/setup.c~ppc64-3-3-allocate-irqstacks-only-for-possible-cpus arch/ppc64/kernel/setup.c
+--- 25/arch/ppc64/kernel/setup.c~ppc64-3-3-allocate-irqstacks-only-for-possible-cpus	2004-08-30 00:22:28.034901272 -0700
++++ 25-akpm/arch/ppc64/kernel/setup.c	2004-08-30 00:22:28.040900360 -0700
+@@ -701,7 +701,7 @@ static void __init irqstack_early_init(v
+ 	int i;
+ 
+ 	/* interrupt stacks must be under 256MB, we cannot afford to take SLB misses on them */
+-	for (i = 0; i < NR_CPUS; i++) {
++	for_each_cpu(i) {
+ 		softirq_ctx[i] = (struct thread_info *)__va(lmb_alloc_base(THREAD_SIZE,
+ 					THREAD_SIZE, 0x10000000));
+ 		hardirq_ctx[i] = (struct thread_info *)__va(lmb_alloc_base(THREAD_SIZE,
+_

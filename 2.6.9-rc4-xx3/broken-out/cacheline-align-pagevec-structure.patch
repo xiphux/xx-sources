@@ -1,0 +1,97 @@
+Return-Path: <marcelo.tosatti@cyclades.com>
+Received: from localhost (bix [127.0.0.1])
+	by localhost.localdomain (8.12.10/8.12.10) with ESMTP id i89I37Gf011228
+	for <akpm@localhost>; Thu, 9 Sep 2004 11:03:07 -0700
+Received: from bix [127.0.0.1]
+	by localhost with POP3 (fetchmail-6.2.0)
+	for akpm@localhost (single-drop); Thu, 09 Sep 2004 11:03:07 -0700 (PDT)
+Received: from fire-1.osdl.org (fire.osdl.org [65.172.181.4])
+	by mail.osdl.org (8.11.6/8.11.6) with ESMTP id i89I3A117239
+	for <akpm@mail.gateway.osdl.net>; Thu, 9 Sep 2004 11:03:10 -0700
+Received: from www.linux.org.uk (IDENT:93@parcelfarce.linux.theplanet.co.uk [195.92.249.252])
+	by fire-1.osdl.org (8.12.8/8.12.8) with ESMTP id i89I37Sf031971
+	(version=TLSv1/SSLv3 cipher=EDH-RSA-DES-CBC3-SHA bits=168 verify=NO)
+	for <akpm@osdl.org>; Thu, 9 Sep 2004 11:03:09 -0700
+Received: from [127.0.0.1] (helo=logos.cnet)
+	by www.linux.org.uk with esmtp (Exim 4.33)
+	id 1C5TGD-0005fu-2H; Thu, 09 Sep 2004 19:03:06 +0100
+Received: by logos.cnet (Postfix, from userid 500)
+	id 8444DF30C4; Thu,  9 Sep 2004 13:39:30 -0300 (BRT)
+Date: Thu, 9 Sep 2004 13:39:29 -0300
+From: Marcelo Tosatti <marcelo.tosatti@cyclades.com>
+To: akpm@osdl.org
+Cc: linux-kernel@vger.kernel.org
+Subject: [PATCH] cacheline align pagevec structure
+Message-ID: <20040909163929.GA4484@logos.cnet>
+Mime-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: inline
+User-Agent: Mutt/1.5.5.1i
+X-MIMEDefang-Filter: osdl$Revision: 1.73 $
+X-Scanned-By: MIMEDefang 2.36
+X-Spam-Checker-Version: SpamAssassin 2.60 (1.212-2003-09-23-exp) on bix
+X-Spam-Level: 
+X-Spam-Status: No, hits=-4.9 required=1.0 tests=BAYES_00 autolearn=ham 
+	version=2.60
+
+Hi, 
+
+I commented this with Andrew before, we can shrink the pagevec structure to 
+cacheline align it. It is used all over VM reclaiming and mpage 
+pagecache read code.
+
+Right now it is 140 bytes on 64-bit and 72 bytes on 32-bit. Thats just a little bit more 
+than a power of 2 (which will cacheline align), so shrink it to be aligned: 64 bytes on 
+32bit and 124bytes on 64-bit. 
+
+It now occupies two cachelines most of the time instead of three. 
+
+I changed nr and cold to "unsigned short" because they'll never reach 2 ^ 16.
+
+I do not see a problem with changing pagevec to "15" page pointers either, 
+Andrew, is there a special reason for that "16"? Is intentional to align
+to 64 kbytes (IO device alignment)? I dont think that matters much because
+of the elevator which sorts and merges requests anyway?
+
+
+
+Did some reaim benchmarking on 4way PIII (32byte cacheline), with 512MB RAM:
+
+#### stock 2.6.9-rc1-mm4 ####
+
+Peak load Test: Maximum Jobs per Minute 4144.44 (average of 3 runs)
+Quick Convergence Test: Maximum Jobs per Minute 4007.86 (average of 3 runs)
+
+Peak load Test: Maximum Jobs per Minute 4207.48 (average of 3 runs)
+Quick Convergence Test: Maximum Jobs per Minute 3999.28 (average of 3 runs)
+
+#### shrink-pagevec #####
+
+Peak load Test: Maximum Jobs per Minute 4717.88 (average of 3 runs)
+Quick Convergence Test: Maximum Jobs per Minute 4360.59 (average of 3 runs)
+
+Peak load Test: Maximum Jobs per Minute 4493.18 (average of 3 runs)
+Quick Convergence Test: Maximum Jobs per Minute 4327.77 (average of 3 runs)
+
+
+--- linux-2.6.9-rc1-mm4.orig/include/linux/pagevec.h	2004-09-08 16:13:14.000000000 -0300
++++ linux-2.6.9-rc1-mm4/include/linux/pagevec.h	2004-09-08 16:48:51.703401288 -0300
+@@ -5,14 +5,14 @@
+  * pages.  A pagevec is a multipage container which is used for that.
+  */
+ 
+-#define PAGEVEC_SIZE	16
++#define PAGEVEC_SIZE	15
+ 
+ struct page;
+ struct address_space;
+ 
+ struct pagevec {
+-	unsigned nr;
+-	int cold;
++	unsigned short nr;
++	unsigned short cold;
+ 	struct page *pages[PAGEVEC_SIZE];
+ };
+ 
+

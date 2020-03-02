@@ -1,0 +1,90 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/mmzone.h |    5 +++--
+ 25-akpm/mm/vmscan.c            |   27 ++++++++++++++++++++++-----
+ 2 files changed, 25 insertions(+), 7 deletions(-)
+
+diff -puN mm/vmscan.c~no-wild-kswapd-2 mm/vmscan.c
+--- 25/mm/vmscan.c~no-wild-kswapd-2	2004-10-07 23:46:22.870851856 -0700
++++ 25-akpm/mm/vmscan.c	2004-10-07 23:46:22.876850944 -0700
+@@ -990,6 +990,17 @@ out:
+  * of the number of free pages in the lower zones.  This interoperates with
+  * the page allocator fallback scheme to ensure that aging of pages is balanced
+  * across the zones.
++ *
++ * kswapd can be semi-livelocked if some other process is allocating pages
++ * while kswapd is simultaneously trying to balance the same zone.  That's OK,
++ * because we _want_ kswapd to work continuously in this situation.  But a
++ * side-effect of kswapd's ongoing work is that the pageout priority keeps on
++ * winding up so we bogusly start doing swapout.
++ *
++ * To fix this we take a snapshot of the number of pages which need to be
++ * reclaimed from each zone in zone->pages_to_reclaim and never reclaim more
++ * pages than that.  Once the required number of pages have been reclaimed from
++ * each zone, we're done.  kwsapd will go back to sleep until someone wakes it.
+  */
+ static int balance_pgdat(pg_data_t *pgdat, int nr_pages)
+ {
+@@ -1010,6 +1021,7 @@ static int balance_pgdat(pg_data_t *pgda
+ 		struct zone *zone = pgdat->node_zones + i;
+ 
+ 		zone->temp_priority = DEF_PRIORITY;
++		zone->pages_to_reclaim = zone->pages_high - zone->free_pages;
+ 	}
+ 
+ 	for (priority = DEF_PRIORITY; priority >= 0; priority--) {
+@@ -1032,7 +1044,7 @@ static int balance_pgdat(pg_data_t *pgda
+ 						priority != DEF_PRIORITY)
+ 					continue;
+ 
+-				if (zone->free_pages <= zone->pages_high) {
++				if (zone->pages_to_reclaim > 0) {
+ 					end_zone = i;
+ 					break;
+ 				}
+@@ -1068,10 +1080,11 @@ static int balance_pgdat(pg_data_t *pgda
+ 			if (zone->all_unreclaimable && priority != DEF_PRIORITY)
+ 				continue;
+ 
+-			if (nr_pages == 0) {	/* Not software suspend */
+-				if (zone->free_pages <= zone->pages_high)
+-					all_zones_ok = 0;
+-			}
++			if (zone->pages_to_reclaim <= 0)
++				continue;
++
++			if (nr_pages == 0)	/* Not software suspend */
++				all_zones_ok = 0;
+ 			zone->temp_priority = priority;
+ 			if (zone->prev_priority > priority)
+ 				zone->prev_priority = priority;
+@@ -1081,6 +1094,10 @@ static int balance_pgdat(pg_data_t *pgda
+ 			shrink_zone(zone, &sc);
+ 			reclaim_state->reclaimed_slab = 0;
+ 			shrink_slab(sc.nr_scanned, GFP_KERNEL, lru_pages);
++
++			/* This fails to account for slab reclaim */
++			zone->pages_to_reclaim -= sc.nr_reclaimed;
++
+ 			sc.nr_reclaimed += reclaim_state->reclaimed_slab;
+ 			total_reclaimed += sc.nr_reclaimed;
+ 			total_scanned += sc.nr_scanned;
+diff -puN include/linux/mmzone.h~no-wild-kswapd-2 include/linux/mmzone.h
+--- 25/include/linux/mmzone.h~no-wild-kswapd-2	2004-10-07 23:46:22.872851552 -0700
++++ 25-akpm/include/linux/mmzone.h	2004-10-07 23:46:22.877850792 -0700
+@@ -137,8 +137,9 @@ struct zone {
+ 	unsigned long		nr_scan_inactive;
+ 	unsigned long		nr_active;
+ 	unsigned long		nr_inactive;
+-	int			all_unreclaimable; /* All pages pinned */
+-	unsigned long		pages_scanned;	   /* since last reclaim */
++	long			pages_to_reclaim;	/* kswapd usage */
++	int			all_unreclaimable;	/* All pages pinned */
++	unsigned long		pages_scanned;		/* since last reclaim */
+ 
+ 	ZONE_PADDING(_pad2_)
+ 
+_

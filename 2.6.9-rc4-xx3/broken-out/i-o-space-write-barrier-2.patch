@@ -1,0 +1,656 @@
+
+From: Jesse Barnes <jbarnes@engr.sgi.com>
+
+I've integrated BenH's latest comments.  If it turns out they actually need
+this (they may in the future if they implement the other barriers they'd
+like), then they can trivially update their definition of mmiowb().
+
+On some platforms (e.g.  SGI Challenge, Origin, and Altix machines), writes
+to I/O space aren't ordered coming from different CPUs.  For the most part,
+this isn't a problem since drivers generally spinlock around code that does
+writeX calls, but if the last operation a driver does before it releases a
+lock is a write and some other CPU takes the lock and immediately does a
+write, it's possible the second CPU's write could arrive before the
+first's.
+
+This patch adds a mmiowb() call to deal with this sort of situation, and
+adds some documentation describing I/O ordering issues to
+deviceiobook.tmpl.  The idea is to mirror the regular, cacheable memory
+barrier operation, wmb.  Example of the problem this new macro solves:
+
+CPU A:  spin_lock_irqsave(&dev_lock, flags)
+CPU A:  ...
+CPU A:  writel(newval, ring_ptr);
+CPU A:  spin_unlock_irqrestore(&dev_lock, flags)
+        ...
+CPU B:  spin_lock_irqsave(&dev_lock, flags)
+CPU B:  writel(newval2, ring_ptr);
+CPU B:  ...
+CPU B:  spin_unlock_irqrestore(&dev_lock, flags)
+
+In this case, newval2 could be written to ring_ptr before newval.  Fixing it 
+is easy though:
+
+CPU A:  spin_lock_irqsave(&dev_lock, flags)
+CPU A:  ...
+CPU A:  writel(newval, ring_ptr);
+CPU A:  mmiowb(); /* ensure no other writes beat us to the device */
+CPU A:  spin_unlock_irqrestore(&dev_lock, flags)
+        ...
+CPU B:  spin_lock_irqsave(&dev_lock, flags)
+CPU B:  writel(newval2, ring_ptr);
+CPU B:  ...
+CPU B:  mmiowb();
+CPU B:  spin_unlock_irqrestore(&dev_lock, flags)
+
+Note that this doesn't address a related case where the driver may want to
+actually make a given write get to the device before proceeding.  This
+should be dealt with by immediately reading a register from the card that
+has no side effects.  According to the PCI spec, that will guarantee that
+all writes have arrived before being sent to the target bus.  If no such
+register is available (in the case of card resets perhaps), reading from
+config space is sufficient (though it may return all ones if the card isn't
+responding to read cycles).  I've tried to describe how mmiowb() differs
+from PCI posted write flushing in the patch to deviceiobook.tmpl.
+
+Patches to use this new primitive in various drivers will come separately,
+probably via the SCSI tree.
+
+Signed-off-by: Jesse Barnes <jbarnes@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/DocBook/deviceiobook.tmpl |   71 ++++++++++++++++++++++--
+ 25-akpm/arch/ia64/sn/io/machvec/iomv.c          |   14 +---
+ 25-akpm/include/asm-alpha/io.h                  |    2 
+ 25-akpm/include/asm-arm/io.h                    |    2 
+ 25-akpm/include/asm-arm26/io.h                  |    2 
+ 25-akpm/include/asm-cris/io.h                   |    2 
+ 25-akpm/include/asm-h8300/io.h                  |    2 
+ 25-akpm/include/asm-i386/io.h                   |    2 
+ 25-akpm/include/asm-ia64/io.h                   |   16 +++++
+ 25-akpm/include/asm-ia64/machvec.h              |    7 ++
+ 25-akpm/include/asm-ia64/machvec_init.h         |    1 
+ 25-akpm/include/asm-ia64/machvec_sn2.h          |    2 
+ 25-akpm/include/asm-ia64/sn/io.h                |    4 -
+ 25-akpm/include/asm-ia64/sn/sn2/io.h            |   12 ++--
+ 25-akpm/include/asm-m32r/io.h                   |    5 +
+ 25-akpm/include/asm-m68k/io.h                   |    1 
+ 25-akpm/include/asm-m68knommu/io.h              |    2 
+ 25-akpm/include/asm-mips/io.h                   |    4 +
+ 25-akpm/include/asm-parisc/io.h                 |    2 
+ 25-akpm/include/asm-ppc/io.h                    |    2 
+ 25-akpm/include/asm-ppc64/io.h                  |    2 
+ 25-akpm/include/asm-s390/io.h                   |    2 
+ 25-akpm/include/asm-sh/io.h                     |    2 
+ 25-akpm/include/asm-sh64/io.h                   |    5 +
+ 25-akpm/include/asm-sparc/io.h                  |    2 
+ 25-akpm/include/asm-sparc64/io.h                |    2 
+ 25-akpm/include/asm-v850/io.h                   |    2 
+ 25-akpm/include/asm-x86_64/io.h                 |    2 
+ 28 files changed, 154 insertions(+), 20 deletions(-)
+
+diff -puN arch/ia64/sn/io/machvec/iomv.c~i-o-space-write-barrier-2 arch/ia64/sn/io/machvec/iomv.c
+--- 25/arch/ia64/sn/io/machvec/iomv.c~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/arch/ia64/sn/io/machvec/iomv.c	Tue Oct  5 15:51:47 2004
+@@ -54,23 +54,19 @@ sn_io_addr(unsigned long port)
+ EXPORT_SYMBOL(sn_io_addr);
+ 
+ /**
+- * sn_mmiob - I/O space memory barrier
++ * __sn_mmiowb - I/O space write barrier
+  *
+- * Acts as a memory mapped I/O barrier for platforms that queue writes to 
+- * I/O space.  This ensures that subsequent writes to I/O space arrive after
+- * all previous writes.  For most ia64 platforms, this is a simple
+- * 'mf.a' instruction.  For other platforms, mmiob() may have to read
+- * a chipset register to ensure ordering.
++ * See include/asm-ia64/io.h and Documentation/DocBook/deviceiobook.tmpl
++ * for details.
+  *
+  * On SN2, we wait for the PIO_WRITE_STATUS SHub register to clear.
+  * See PV 871084 for details about the WAR about zero value.
+  *
+  */
+-void
+-sn_mmiob (void)
++void __sn_mmiowb(void)
+ {
+ 	while ((((volatile unsigned long) (*pda->pio_write_status_addr)) & SH_PIO_WRITE_STATUS_0_PENDING_WRITE_COUNT_MASK) != 
+ 				SH_PIO_WRITE_STATUS_0_PENDING_WRITE_COUNT_MASK)
+ 		cpu_relax();
+ }
+-EXPORT_SYMBOL(sn_mmiob);
++EXPORT_SYMBOL(__sn_mmiowb);
+diff -puN Documentation/DocBook/deviceiobook.tmpl~i-o-space-write-barrier-2 Documentation/DocBook/deviceiobook.tmpl
+--- 25/Documentation/DocBook/deviceiobook.tmpl~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/Documentation/DocBook/deviceiobook.tmpl	Tue Oct  5 15:51:47 2004
+@@ -147,8 +147,7 @@
+ 	compiler is not permitted to reorder the I/O sequence. When the 
+ 	ordering can be compiler optimised, you can use <function>
+ 	__readb</function> and friends to indicate the relaxed ordering. Use 
+-	this with care. The <function>rmb</function> provides a read memory 
+-	barrier. The <function>wmb</function> provides a write memory barrier.
++	this with care.
+       </para>
+ 
+       <para>
+@@ -159,10 +158,72 @@
+ 	asynchronously. A driver author must issue a read from the same
+ 	device to ensure that writes have occurred in the specific cases the
+ 	author cares. This kind of property cannot be hidden from driver
+-	writers in the API.
++	writers in the API.  In some cases, the read used to flush the device
++	may be expected to fail (if the card is resetting, for example).  In
++	that case, the read should be done from config space, which is
++	guaranteed to soft-fail if the card doesn't respond.
+       </para>
+ 
+       <para>
++	The following is an example of flushing a write to a device when
++	the driver would like to ensure the write's effects are visible prior
++	to continuing execution.
++      </para>
++
++<programlisting>
++static inline void
++qla1280_disable_intrs(struct scsi_qla_host *ha)
++{
++	struct device_reg *reg;
++
++	reg = ha->iobase;
++	/* disable risc and host interrupts */
++	WRT_REG_WORD(&amp;reg->ictrl, 0);
++	/*
++	 * The following read will ensure that the above write
++	 * has been received by the device before we return from this
++	 * function.
++	 */
++	RD_REG_WORD(&amp;reg->ictrl);
++	ha->flags.ints_enabled = 0;
++}
++</programlisting>
++
++      <para>
++	In addition to write posting, on some large multiprocessing systems
++	(e.g. SGI Challenge, Origin and Altix machines) posted writes won't
++	be strongly ordered coming from different CPUs.  Thus it's important
++	to properly protect parts of your driver that do memory-mapped writes
++	with locks and use the <function>mmiowb</function> to make sure they
++	arrive in the order intended.
++      </para>
++
++      <para>
++	Generally, one should use <function>mmiowb</function> prior to
++	releasing a spinlock that protects regions using <function>writeb
++	</function> or similar functions that aren't surrounded by <function>
++	readb</function> calls, which will ensure ordering and flushing.  The
++	following example (again from qla1280.c) illustrates its use.
++      </para>
++
++<programlisting>
++       sp->flags |= SRB_SENT;
++       ha->actthreads++;
++       WRT_REG_WORD(&amp;reg->mailbox4, ha->req_ring_index);
++
++       /*
++        * A Memory Mapped I/O Write Barrier is needed to ensure that this write
++        * of the request queue in register is ordered ahead of writes issued
++        * after this one by other CPUs.  Access to the register is protected
++        * by the host_lock.  Without the mmiowb, however, it is possible for
++        * this CPU to release the host lock, another CPU acquire the host lock,
++        * and write to the request queue in, and have the second write make it
++        * to the chip first.
++        */
++       mmiowb(); /* posted write ordering */
++</programlisting>
++
++      <para>
+ 	PCI ordering rules also guarantee that PIO read responses arrive
+ 	after any outstanding DMA writes on that bus, since for some devices
+ 	the result of a <function>readb</function> call may signal to the
+@@ -171,7 +232,9 @@
+ 	<function>readb</function> call has no relation to any previous DMA
+ 	writes performed by the device.  The driver can use
+ 	<function>readb_relaxed</function> for these cases, although only
+-	some platforms will honor the relaxed semantics.
++	some platforms will honor the relaxed semantics.  Using the relaxed
++	read functions will provide significant performance benefits on
++	platforms that support it.
+       </para>
+     </sect1>
+ 
+diff -puN include/asm-alpha/io.h~i-o-space-write-barrier-2 include/asm-alpha/io.h
+--- 25/include/asm-alpha/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-alpha/io.h	Tue Oct  5 15:51:47 2004
+@@ -489,6 +489,8 @@ extern inline void writeq(u64 b, volatil
+ #define readl_relaxed(addr) __raw_readl(addr)
+ #define readq_relaxed(addr) __raw_readq(addr)
+ 
++#define mmiowb()
++
+ /*
+  * String version of IO memory access ops:
+  */
+diff -puN include/asm-arm26/io.h~i-o-space-write-barrier-2 include/asm-arm26/io.h
+--- 25/include/asm-arm26/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-arm26/io.h	Tue Oct  5 15:51:47 2004
+@@ -320,6 +320,8 @@ DECLARE_IO(int,l,"")
+ #define writesw(p,d,l)                        __readwrite_bug("writesw")
+ #define writesl(p,d,l)                        __readwrite_bug("writesl")
+ 
++#define mmiowb()
++
+ /* the following macro is depreciated */
+ #define ioaddr(port)                    __ioaddr((port))
+ 
+diff -puN include/asm-arm/io.h~i-o-space-write-barrier-2 include/asm-arm/io.h
+--- 25/include/asm-arm/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-arm/io.h	Tue Oct  5 15:51:47 2004
+@@ -135,6 +135,8 @@ extern void _memcpy_fromio(void *, unsig
+ extern void _memcpy_toio(unsigned long, const void *, size_t);
+ extern void _memset_io(unsigned long, int, size_t);
+ 
++#define mmiowb()
++
+ /*
+  *  Memory access primitives
+  *  ------------------------
+diff -puN include/asm-cris/io.h~i-o-space-write-barrier-2 include/asm-cris/io.h
+--- 25/include/asm-cris/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-cris/io.h	Tue Oct  5 15:51:47 2004
+@@ -56,6 +56,8 @@ extern void iounmap(void *addr);
+ #define __raw_writew writew
+ #define __raw_writel writel
+ 
++#define mmiowb()
++
+ #define memset_io(a,b,c)	memset((void *)(a),(b),(c))
+ #define memcpy_fromio(a,b,c)	memcpy((a),(void *)(b),(c))
+ #define memcpy_toio(a,b,c)	memcpy((void *)(a),(b),(c))
+diff -puN include/asm-h8300/io.h~i-o-space-write-barrier-2 include/asm-h8300/io.h
+--- 25/include/asm-h8300/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-h8300/io.h	Tue Oct  5 15:51:47 2004
+@@ -200,6 +200,8 @@ static inline void io_insl_noswap(unsign
+ #define memcpy_fromio(a,b,c)	memcpy((a),(void *)(b),(c))
+ #define memcpy_toio(a,b,c)	memcpy((void *)(a),(b),(c))
+ 
++#define mmiowb()
++
+ #define inb(addr)    ((h8300_buswidth(addr))?readw((addr) & ~1) & 0xff:readb(addr))
+ #define inw(addr)    _swapw(readw(addr))
+ #define inl(addr)    _swapl(readl(addr))
+diff -puN include/asm-i386/io.h~i-o-space-write-barrier-2 include/asm-i386/io.h
+--- 25/include/asm-i386/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-i386/io.h	Tue Oct  5 15:51:47 2004
+@@ -178,6 +178,8 @@ static inline void writel(unsigned int b
+ #define __raw_writew writew
+ #define __raw_writel writel
+ 
++#define mmiowb()
++
+ static inline void memset_io(volatile void __iomem *addr, unsigned char val, int count)
+ {
+ 	memset((void __force *) addr, val, count);
+diff -puN include/asm-ia64/io.h~i-o-space-write-barrier-2 include/asm-ia64/io.h
+--- 25/include/asm-ia64/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-ia64/io.h	Tue Oct  5 15:51:47 2004
+@@ -91,6 +91,20 @@ extern int valid_phys_addr_range (unsign
+  */
+ #define __ia64_mf_a()	ia64_mfa()
+ 
++/**
++ * __ia64_mmiowb - I/O write barrier
++ *
++ * Ensure ordering of I/O space writes.  This will make sure that writes
++ * following the barrier will arrive after all previous writes.  For most
++ * ia64 platforms, this is a simple 'mf.a' instruction.
++ *
++ * See Documentation/DocBook/deviceiobook.tmpl for more information.
++ */
++static inline void __ia64_mmiowb(void)
++{
++	ia64_mfa();
++}
++
+ static inline const unsigned long
+ __ia64_get_io_port_base (void)
+ {
+@@ -267,6 +281,7 @@ __outsl (unsigned long port, void *src, 
+ #define __outb		platform_outb
+ #define __outw		platform_outw
+ #define __outl		platform_outl
++#define __mmiowb	platform_mmiowb
+ 
+ #define inb(p)		__inb(p)
+ #define inw(p)		__inw(p)
+@@ -280,6 +295,7 @@ __outsl (unsigned long port, void *src, 
+ #define outsb(p,s,c)	__outsb(p,s,c)
+ #define outsw(p,s,c)	__outsw(p,s,c)
+ #define outsl(p,s,c)	__outsl(p,s,c)
++#define mmiowb()	__mmiowb()
+ 
+ /*
+  * The address passed to these functions are ioremap()ped already.
+diff -puN include/asm-ia64/machvec.h~i-o-space-write-barrier-2 include/asm-ia64/machvec.h
+--- 25/include/asm-ia64/machvec.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-ia64/machvec.h	Tue Oct  5 15:51:47 2004
+@@ -62,6 +62,7 @@ typedef unsigned int ia64_mv_inl_t (unsi
+ typedef void ia64_mv_outb_t (unsigned char, unsigned long);
+ typedef void ia64_mv_outw_t (unsigned short, unsigned long);
+ typedef void ia64_mv_outl_t (unsigned int, unsigned long);
++typedef void ia64_mv_mmiowb_t (void);
+ typedef unsigned char ia64_mv_readb_t (void *);
+ typedef unsigned short ia64_mv_readw_t (void *);
+ typedef unsigned int ia64_mv_readl_t (void *);
+@@ -130,6 +131,7 @@ extern void machvec_tlb_migrate_finish (
+ #  define platform_outb		ia64_mv.outb
+ #  define platform_outw		ia64_mv.outw
+ #  define platform_outl		ia64_mv.outl
++#  define platform_mmiowb	ia64_mv.mmiowb
+ #  define platform_readb        ia64_mv.readb
+ #  define platform_readw        ia64_mv.readw
+ #  define platform_readl        ia64_mv.readl
+@@ -176,6 +178,7 @@ struct ia64_machine_vector {
+ 	ia64_mv_outb_t *outb;
+ 	ia64_mv_outw_t *outw;
+ 	ia64_mv_outl_t *outl;
++	ia64_mv_mmiowb_t *mmiowb;
+ 	ia64_mv_readb_t *readb;
+ 	ia64_mv_readw_t *readw;
+ 	ia64_mv_readl_t *readl;
+@@ -218,6 +221,7 @@ struct ia64_machine_vector {
+ 	platform_outb,				\
+ 	platform_outw,				\
+ 	platform_outl,				\
++	platform_mmiowb,			\
+ 	platform_readb,				\
+ 	platform_readw,				\
+ 	platform_readl,				\
+@@ -344,6 +348,9 @@ extern ia64_mv_dma_supported		swiotlb_dm
+ #ifndef platform_outl
+ # define platform_outl		__ia64_outl
+ #endif
++#ifndef platform_mmiowb
++# define platform_mmiowb	__ia64_mmiowb
++#endif
+ #ifndef platform_readb
+ # define platform_readb		__ia64_readb
+ #endif
+diff -puN include/asm-ia64/machvec_init.h~i-o-space-write-barrier-2 include/asm-ia64/machvec_init.h
+--- 25/include/asm-ia64/machvec_init.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-ia64/machvec_init.h	Tue Oct  5 15:51:47 2004
+@@ -12,6 +12,7 @@ extern ia64_mv_inl_t __ia64_inl;
+ extern ia64_mv_outb_t __ia64_outb;
+ extern ia64_mv_outw_t __ia64_outw;
+ extern ia64_mv_outl_t __ia64_outl;
++extern ia64_mv_mmiowb_t __ia64_mmiowb;
+ extern ia64_mv_readb_t __ia64_readb;
+ extern ia64_mv_readw_t __ia64_readw;
+ extern ia64_mv_readl_t __ia64_readl;
+diff -puN include/asm-ia64/machvec_sn2.h~i-o-space-write-barrier-2 include/asm-ia64/machvec_sn2.h
+--- 25/include/asm-ia64/machvec_sn2.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-ia64/machvec_sn2.h	Tue Oct  5 15:51:47 2004
+@@ -49,6 +49,7 @@ extern ia64_mv_inl_t __sn_inl;
+ extern ia64_mv_outb_t __sn_outb;
+ extern ia64_mv_outw_t __sn_outw;
+ extern ia64_mv_outl_t __sn_outl;
++extern ia64_mv_mmiowb_t __sn_mmiowb;
+ extern ia64_mv_readb_t __sn_readb;
+ extern ia64_mv_readw_t __sn_readw;
+ extern ia64_mv_readl_t __sn_readl;
+@@ -92,6 +93,7 @@ extern ia64_mv_dma_supported		sn_dma_sup
+ #define platform_outb			__sn_outb
+ #define platform_outw			__sn_outw
+ #define platform_outl			__sn_outl
++#define platform_mmiowb			__sn_mmiowb
+ #define platform_readb			__sn_readb
+ #define platform_readw			__sn_readw
+ #define platform_readl			__sn_readl
+diff -puN include/asm-ia64/sn/io.h~i-o-space-write-barrier-2 include/asm-ia64/sn/io.h
+--- 25/include/asm-ia64/sn/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-ia64/sn/io.h	Tue Oct  5 15:51:47 2004
+@@ -58,8 +58,8 @@
+ #include <asm/sn/sn2/shubio.h>
+ 
+ /*
+- * Used to ensure write ordering (like mb(), but for I/O space)
++ * Used to ensure write ordering
+  */
+-extern void sn_mmiob(void);
++extern void __sn_mmiowb(void);
+ 
+ #endif /* _ASM_IA64_SN_IO_H */
+diff -puN include/asm-ia64/sn/sn2/io.h~i-o-space-write-barrier-2 include/asm-ia64/sn/sn2/io.h
+--- 25/include/asm-ia64/sn/sn2/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-ia64/sn/sn2/io.h	Tue Oct  5 15:51:47 2004
+@@ -11,8 +11,10 @@
+ #include <linux/compiler.h>
+ #include <asm/intrinsics.h>
+ 
+-extern void * sn_io_addr(unsigned long port) __attribute_const__; /* Forward definition */
+-extern void sn_mmiob(void); /* Forward definition */
++/* Forward declarations */
++struct device;
++extern void *sn_io_addr(unsigned long port) __attribute_const__;
++extern void __sn_mmiowb(void);
+ 
+ #define __sn_mf_a()   ia64_mfa()
+ 
+@@ -91,7 +93,7 @@ ___sn_outb (unsigned char val, unsigned 
+ 
+ 	if ((addr = sn_io_addr(port))) {
+ 		*addr = val;
+-		sn_mmiob();
++		__sn_mmiowb();
+ 	}
+ }
+ 
+@@ -102,7 +104,7 @@ ___sn_outw (unsigned short val, unsigned
+ 
+ 	if ((addr = sn_io_addr(port))) {
+ 		*addr = val;
+-		sn_mmiob();
++		__sn_mmiowb();
+ 	}
+ }
+ 
+@@ -113,7 +115,7 @@ ___sn_outl (unsigned int val, unsigned l
+ 
+ 	if ((addr = sn_io_addr(port))) {
+ 		*addr = val;
+-		sn_mmiob();
++		__sn_mmiowb();
+ 	}
+ }
+ 
+diff -puN include/asm-m32r/io.h~i-o-space-write-barrier-2 include/asm-m32r/io.h
+--- 25/include/asm-m32r/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-m32r/io.h	Tue Oct  5 15:51:47 2004
+@@ -150,6 +150,9 @@ static inline void _writel(unsigned long
+ #define __raw_readb readb
+ #define __raw_readw readw
+ #define __raw_readl readl
++#define readb_relaxed readb
++#define readw_relaxed readw
++#define readl_relaxed readl
+ 
+ #define writeb(val, addr)  _writeb((val), (unsigned long)(addr))
+ #define writew(val, addr)  _writew((val), (unsigned long)(addr))
+@@ -158,6 +161,8 @@ static inline void _writel(unsigned long
+ #define __raw_writew writew
+ #define __raw_writel writel
+ 
++#define mmiowb()
++
+ #define flush_write_buffers() do { } while (0)  /* M32R_FIXME */
+ 
+ /**
+diff -puN include/asm-m68k/io.h~i-o-space-write-barrier-2 include/asm-m68k/io.h
+--- 25/include/asm-m68k/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-m68k/io.h	Tue Oct  5 15:51:47 2004
+@@ -306,6 +306,7 @@ static inline void isa_delay(void)
+ #endif
+ #endif /* CONFIG_PCI */
+ 
++#define mmiowb()
+ 
+ static inline void *ioremap(unsigned long physaddr, unsigned long size)
+ {
+diff -puN include/asm-m68knommu/io.h~i-o-space-write-barrier-2 include/asm-m68knommu/io.h
+--- 25/include/asm-m68knommu/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-m68knommu/io.h	Tue Oct  5 15:51:47 2004
+@@ -102,6 +102,8 @@ static inline void io_insl(unsigned int 
+ 		*bp++ = _swapl(*ap);
+ }
+ 
++#define mmiowb()
++
+ /*
+  *	make the short names macros so specific devices
+  *	can override them as required
+diff -puN include/asm-mips/io.h~i-o-space-write-barrier-2 include/asm-mips/io.h
+--- 25/include/asm-mips/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-mips/io.h	Tue Oct  5 15:51:47 2004
+@@ -290,6 +290,10 @@ static inline void iounmap(void *addr)
+ #define __raw_writeb(b,addr)	((*(volatile unsigned char *)(addr)) = (b))
+ #define __raw_writew(w,addr)	((*(volatile unsigned short *)(addr)) = (w))
+ #define __raw_writel(l,addr)	((*(volatile unsigned int *)(addr)) = (l))
++
++/* Depends on MIPS III instruction set */
++#define mmiowb() asm volatile ("sync" ::: "memory")
++
+ #ifdef CONFIG_MIPS32
+ #define ____raw_writeq(val,addr)						\
+ ({									\
+diff -puN include/asm-parisc/io.h~i-o-space-write-barrier-2 include/asm-parisc/io.h
+--- 25/include/asm-parisc/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-parisc/io.h	Tue Oct  5 15:51:47 2004
+@@ -177,6 +177,8 @@ extern __inline__ void ___raw_writeq(uns
+ #define readl_relaxed(addr) readl(addr)
+ #define readq_relaxed(addr) readq(addr)
+ 
++#define mmiowb()
++
+ extern void __memcpy_fromio(unsigned long dest, unsigned long src, int count);
+ extern void __memcpy_toio(unsigned long dest, unsigned long src, int count);
+ extern void __memset_io(unsigned long dest, char fill, int count);
+diff -puN include/asm-ppc64/io.h~i-o-space-write-barrier-2 include/asm-ppc64/io.h
+--- 25/include/asm-ppc64/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-ppc64/io.h	Tue Oct  5 15:51:47 2004
+@@ -152,6 +152,8 @@ extern void _outsw_ns(volatile u16 *port
+ extern void _insl_ns(volatile u32 *port, void *buf, int nl);
+ extern void _outsl_ns(volatile u32 *port, const void *buf, int nl);
+ 
++#define mmiowb()
++
+ /*
+  * output pause versions need a delay at least for the
+  * w83c105 ide controller in a p610.
+diff -puN include/asm-ppc/io.h~i-o-space-write-barrier-2 include/asm-ppc/io.h
+--- 25/include/asm-ppc/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-ppc/io.h	Tue Oct  5 15:51:47 2004
+@@ -197,6 +197,8 @@ extern void _outsl_ns(volatile u32 *port
+ #define memcpy_fromio(a,b,c)   memcpy((a),(void *)(b),(c))
+ #define memcpy_toio(a,b,c)	memcpy((void *)(a),(b),(c))
+ 
++#define mmiowb()
++
+ /*
+  * Map in an area of physical address space, for accessing
+  * I/O devices etc.
+diff -puN include/asm-s390/io.h~i-o-space-write-barrier-2 include/asm-s390/io.h
+--- 25/include/asm-s390/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-s390/io.h	Tue Oct  5 15:51:47 2004
+@@ -105,6 +105,8 @@ extern void iounmap(void *addr);
+ #define outb(x,addr) ((void) writeb(x,addr))
+ #define outb_p(x,addr) outb(x,addr)
+ 
++#define mmiowb()
++
+ #endif /* __KERNEL__ */
+ 
+ #endif
+diff -puN include/asm-sh64/io.h~i-o-space-write-barrier-2 include/asm-sh64/io.h
+--- 25/include/asm-sh64/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-sh64/io.h	Tue Oct  5 15:51:47 2004
+@@ -86,6 +86,9 @@ static inline void sh64_out64(unsigned l
+ #define readb(addr)		sh64_in8(addr)
+ #define readw(addr)		sh64_in16(addr)
+ #define readl(addr)		sh64_in32(addr)
++#define readb_relaxed(addr)		sh64_in8(addr)
++#define readw_relaxed(addr)		sh64_in16(addr)
++#define readl_relaxed(addr)		sh64_in32(addr)
+ 
+ #define writeb(b, addr)		sh64_out8(b, addr)
+ #define writew(b, addr)		sh64_out16(b, addr)
+@@ -106,6 +109,8 @@ void outb(unsigned long value, unsigned 
+ void outw(unsigned long value, unsigned long port);
+ void outl(unsigned long value, unsigned long port);
+ 
++#define mmiowb()
++
+ #ifdef __KERNEL__
+ 
+ #ifdef CONFIG_SH_CAYMAN
+diff -puN include/asm-sh/io.h~i-o-space-write-barrier-2 include/asm-sh/io.h
+--- 25/include/asm-sh/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-sh/io.h	Tue Oct  5 15:51:47 2004
+@@ -134,6 +134,8 @@
+ #define readw_relaxed(a) readw(a)
+ #define readl_relaxed(a) readl(a)
+ 
++#define mmiowb()
++
+ /*
+  * If the platform has PC-like I/O, this function converts the offset into
+  * an address.
+diff -puN include/asm-sparc64/io.h~i-o-space-write-barrier-2 include/asm-sparc64/io.h
+--- 25/include/asm-sparc64/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-sparc64/io.h	Tue Oct  5 15:51:47 2004
+@@ -439,6 +439,8 @@ out:
+ 	return retval;
+ }
+ 
++#define mmiowb()
++
+ #ifdef __KERNEL__
+ 
+ /* On sparc64 we have the whole physical IO address space accessible
+diff -puN include/asm-sparc/io.h~i-o-space-write-barrier-2 include/asm-sparc/io.h
+--- 25/include/asm-sparc/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-sparc/io.h	Tue Oct  5 15:51:47 2004
+@@ -23,6 +23,8 @@ static inline u16 flip_word (u16 w)
+ 	return ((w&0xff) << 8) | ((w>>8)&0xff);
+ }
+ 
++#define mmiowb()
++
+ /*
+  * Memory mapped I/O to PCI
+  *
+diff -puN include/asm-v850/io.h~i-o-space-write-barrier-2 include/asm-v850/io.h
+--- 25/include/asm-v850/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-v850/io.h	Tue Oct  5 15:51:47 2004
+@@ -102,6 +102,8 @@ outsl (unsigned long port, const void *s
+ #define ioremap_writethrough(physaddr, size)	(physaddr)
+ #define ioremap_fullcache(physaddr, size)	(physaddr)
+ 
++#define mmiowb()
++
+ #define page_to_phys(page)      ((page - mem_map) << PAGE_SHIFT)
+ #if 0
+ /* This is really stupid; don't define it.  */
+diff -puN include/asm-x86_64/io.h~i-o-space-write-barrier-2 include/asm-x86_64/io.h
+--- 25/include/asm-x86_64/io.h~i-o-space-write-barrier-2	Tue Oct  5 15:51:47 2004
++++ 25-akpm/include/asm-x86_64/io.h	Tue Oct  5 15:51:47 2004
+@@ -186,6 +186,8 @@ extern void iounmap(void *addr);
+ #define __raw_readl readl
+ #define __raw_readq readq
+ 
++#define mmiowb()
++
+ #ifdef CONFIG_UNORDERED_IO
+ static inline void __writel(u32 val, void *addr)
+ {
+_

@@ -1,0 +1,70 @@
+
+From: Marcelo Tosatti <marcelo.tosatti@cyclades.com>
+
+Use find_*_page helpers in swap code instead handcoding it.
+
+Signed-off-by: Marcelo Tosatti <marcelo.tosatti@cyclades.com>
+Acked-by: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/swap_state.c |   17 +++++------------
+ 25-akpm/mm/swapfile.c   |   10 ++--------
+ 2 files changed, 7 insertions(+), 20 deletions(-)
+
+diff -puN mm/swapfile.c~use-find_trylock_page-in-free_swap_and_cache-instead-of-hand-coding mm/swapfile.c
+--- 25/mm/swapfile.c~use-find_trylock_page-in-free_swap_and_cache-instead-of-hand-coding	2004-11-10 20:44:10.986190728 -0800
++++ 25-akpm/mm/swapfile.c	2004-11-10 20:44:10.992189816 -0800
+@@ -392,14 +392,8 @@ void free_swap_and_cache(swp_entry_t ent
+ 
+ 	p = swap_info_get(entry);
+ 	if (p) {
+-		if (swap_entry_free(p, swp_offset(entry)) == 1) {
+-			read_lock_irq(&swapper_space.tree_lock);
+-			page = radix_tree_lookup(&swapper_space.page_tree,
+-				entry.val);
+-			if (page && TestSetPageLocked(page))
+-				page = NULL;
+-			read_unlock_irq(&swapper_space.tree_lock);
+-		}
++		if (swap_entry_free(p, swp_offset(entry)) == 1)
++			page = find_trylock_page(&swapper_space, entry.val);
+ 		swap_info_put(p);
+ 	}
+ 	if (page) {
+diff -puN mm/swap_state.c~use-find_trylock_page-in-free_swap_and_cache-instead-of-hand-coding mm/swap_state.c
+--- 25/mm/swap_state.c~use-find_trylock_page-in-free_swap_and_cache-instead-of-hand-coding	2004-11-10 20:44:10.987190576 -0800
++++ 25-akpm/mm/swap_state.c	2004-11-10 20:44:10.992189816 -0800
+@@ -313,13 +313,11 @@ struct page * lookup_swap_cache(swp_entr
+ {
+ 	struct page *page;
+ 
+-	read_lock_irq(&swapper_space.tree_lock);
+-	page = radix_tree_lookup(&swapper_space.page_tree, entry.val);
+-	if (page) {
+-		page_cache_get(page);
++	page = find_get_page(&swapper_space, entry.val);
++
++	if (page)
+ 		INC_CACHE_INFO(find_success);
+-	}
+-	read_unlock_irq(&swapper_space.tree_lock);
++
+ 	INC_CACHE_INFO(find_total);
+ 	return page;
+ }
+@@ -342,12 +340,7 @@ struct page *read_swap_cache_async(swp_e
+ 		 * called after lookup_swap_cache() failed, re-calling
+ 		 * that would confuse statistics.
+ 		 */
+-		read_lock_irq(&swapper_space.tree_lock);
+-		found_page = radix_tree_lookup(&swapper_space.page_tree,
+-						entry.val);
+-		if (found_page)
+-			page_cache_get(found_page);
+-		read_unlock_irq(&swapper_space.tree_lock);
++		found_page = find_get_page(&swapper_space, entry.val);
+ 		if (found_page)
+ 			break;
+ 
+_

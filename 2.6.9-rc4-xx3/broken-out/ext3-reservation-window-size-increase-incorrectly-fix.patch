@@ -1,0 +1,32 @@
+
+From: Mingming Cao <cmm@us.ibm.com>
+
+In current reservation code (with or without the recent red-black tree
+changes), when an existing old reservation is re-used as the new window
+without adjusting it's position in the current per-filesystem tree, we just
+need to update window's start and end block value, without any
+remove/insert business.  But we missed the the allocation hit ratio bit, it
+is not reset.
+
+Since this is the magic number used to determine whether the window size
+should be doubled next time, this will cause the window size increase
+incorrectly or too quickly.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/ext3/balloc.c |    1 +
+ 1 files changed, 1 insertion(+)
+
+diff -puN fs/ext3/balloc.c~ext3-reservation-window-size-increase-incorrectly-fix fs/ext3/balloc.c
+--- 25/fs/ext3/balloc.c~ext3-reservation-window-size-increase-incorrectly-fix	Tue Sep 14 18:47:34 2004
++++ 25-akpm/fs/ext3/balloc.c	Tue Sep 14 18:47:34 2004
+@@ -931,6 +931,7 @@ found_rsv_window:
+ 	}
+ 	my_rsv->rsv_start = reservable_space_start;
+ 	my_rsv->rsv_end = my_rsv->rsv_start + size - 1;
++	atomic_set(&my_rsv->rsv_alloc_hit, 0);
+ 	if (my_rsv != prev_rsv)  {
+ 		rsv_window_add(sb, my_rsv);
+ 	}
+_

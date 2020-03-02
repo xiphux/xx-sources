@@ -1,0 +1,78 @@
+
+From: "Perez-Gonzalez, Inaky" <inaky.perez-gonzalez@intel.com>
+
+This patch renames fs/aio.c:'struct timeout' to 'struct aio_timeout'.  The
+rationale behind this decision is this type is used only inside the
+aforementioned aio.c file and being the type name very generic, it is
+likely to cause namespace conflicts in the future.
+
+I actually found it while working on an extended schedule_timeout()- like
+API used by robust mutexes but usable by anyone.  There I declared a
+'struct timeout' and aio.c complained about it.  I could have also renamed
+the struct for the schedule_timeout() like API, but being the aio.c one
+specific to the file, I thought it might make more sense to rename the
+later.
+
+Signed-off-by: Inaky Perez-Gonzalez <inaky.perez-gonzalez@intel.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/aio.c |   12 ++++++------
+ 1 files changed, 6 insertions(+), 6 deletions(-)
+
+diff -puN fs/aio.c~aioc-rename-struct-timeout-to-struct-aio_timeout fs/aio.c
+--- 25/fs/aio.c~aioc-rename-struct-timeout-to-struct-aio_timeout	Wed Aug  4 15:19:45 2004
++++ 25-akpm/fs/aio.c	Wed Aug  4 15:19:45 2004
+@@ -759,7 +759,7 @@ out:
+ 	return ret;
+ }
+ 
+-struct timeout {
++struct aio_timeout {
+ 	struct timer_list	timer;
+ 	int			timed_out;
+ 	struct task_struct	*p;
+@@ -767,13 +767,13 @@ struct timeout {
+ 
+ static void timeout_func(unsigned long data)
+ {
+-	struct timeout *to = (struct timeout *)data;
++	struct aio_timeout *to = (struct aio_timeout *)data;
+ 
+ 	to->timed_out = 1;
+ 	wake_up_process(to->p);
+ }
+ 
+-static inline void init_timeout(struct timeout *to)
++static inline void init_timeout(struct aio_timeout *to)
+ {
+ 	init_timer(&to->timer);
+ 	to->timer.data = (unsigned long)to;
+@@ -782,7 +782,7 @@ static inline void init_timeout(struct t
+ 	to->p = current;
+ }
+ 
+-static inline void set_timeout(long start_jiffies, struct timeout *to,
++static inline void set_timeout(long start_jiffies, struct aio_timeout *to,
+ 			       const struct timespec *ts)
+ {
+ 	to->timer.expires = start_jiffies + timespec_to_jiffies(ts);
+@@ -792,7 +792,7 @@ static inline void set_timeout(long star
+ 		to->timed_out = 1;
+ }
+ 
+-static inline void clear_timeout(struct timeout *to)
++static inline void clear_timeout(struct aio_timeout *to)
+ {
+ 	del_singleshot_timer_sync(&to->timer);
+ }
+@@ -808,7 +808,7 @@ static int read_events(struct kioctx *ct
+ 	int			ret;
+ 	int			i = 0;
+ 	struct io_event		ent;
+-	struct timeout		to;
++	struct aio_timeout	to;
+ 
+ 	/* needed to zero any padding within an entry (there shouldn't be 
+ 	 * any, but C is fun!
+_

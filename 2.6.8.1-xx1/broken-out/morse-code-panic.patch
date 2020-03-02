@@ -1,0 +1,276 @@
+---
+
+ linux-2.6.7-xx4-xiphux/drivers/char/keyboard.c  |   21 ++++
+ linux-2.6.7-xx4-xiphux/include/linux/morseops.h |   26 ++++
+ linux-2.6.7-xx4-xiphux/include/linux/vt_kern.h  |    3 
+ linux-2.6.7-xx4-xiphux/init/Kconfig             |   15 ++
+ linux-2.6.7-xx4-xiphux/kernel/Makefile          |    1 
+ linux-2.6.7-xx4-xiphux/kernel/morse.c           |  125 ++++++++++++++++++++++++
+ linux-2.6.7-xx4-xiphux/kernel/panic.c           |    6 -
+ 7 files changed, 195 insertions(+), 2 deletions(-)
+
+diff -puN drivers/char/keyboard.c~morse-code-panic drivers/char/keyboard.c
+--- linux-2.6.7-xx4/drivers/char/keyboard.c~morse-code-panic	2004-06-27 18:42:29.708609784 -0400
++++ linux-2.6.7-xx4-xiphux/drivers/char/keyboard.c	2004-06-27 18:42:29.722607656 -0400
+@@ -267,6 +267,27 @@ void kd_mksound(unsigned int hz, unsigne
+ }
+ 
+ /*
++ * Turn all possible leds on or off.
++ */
++void kd_turn_all_leds(int on_or_off)
++{
++	struct list_head *node;
++	on_or_off = on_or_off ? 1 : 0;
++
++	list_for_each(node, &kbd_handler.h_list) {
++		struct input_handle *handle = to_handle_h(node);
++		if (test_bit(EV_LED, handle->dev->evbit)) {
++			int led;
++			for (led = 0; led <= LED_MAX; led++) {
++				if (test_bit(led, handle->dev->ledbit))
++					input_event(handle->dev, EV_LED, led,
++						on_or_off);
++			}
++		}
++	}
++}
++
++/*
+  * Setting the keyboard rate.
+  */
+ 
+diff -puN /dev/null include/linux/morseops.h
+--- /dev/null	2004-05-31 17:36:38.000000000 -0400
++++ linux-2.6.7-xx4-xiphux/include/linux/morseops.h	2004-06-27 18:42:29.724607352 -0400
+@@ -0,0 +1,26 @@
++/* Yes, it's morse code ops indeed. */
++
++#ifndef _LINUX_MORSEOPS_H
++#define _LINUX_MORSEOPS_H
++
++#include <linux/config.h>
++
++#if defined(CONFIG_MORSE_PANICS)
++
++extern const unsigned char morsetable[];	/* in kernel/morse.c */
++void panic_morseblink(char *buf);		/* in kernel/morse.c */
++
++static inline unsigned char tomorse(char c) {
++	if (c >= 'a' && c <= 'z')
++		c = c - 'a' + 'A';
++	if (c >= '"' && c <= '_') {
++		return morsetable[c - '"'];
++	} else
++		return 0;
++}
++
++#else	/* CONFIG_MORSE_PANICS */
++ #define panic_morseblink(buf)
++#endif	/* CONFIG_MORSE_PANICS */
++
++#endif	/* _LINUX_MORSEOPS_H */
+diff -puN include/linux/vt_kern.h~morse-code-panic include/linux/vt_kern.h
+--- linux-2.6.7-xx4/include/linux/vt_kern.h~morse-code-panic	2004-06-27 18:42:29.711609328 -0400
++++ linux-2.6.7-xx4-xiphux/include/linux/vt_kern.h	2004-06-27 18:42:29.727606896 -0400
+@@ -34,7 +34,10 @@ extern struct vt_struct {
+ 	wait_queue_head_t paste_wait;
+ } *vt_cons[MAX_NR_CONSOLES];
+ 
++/* keyboard.c */
++
+ extern void kd_mksound(unsigned int hz, unsigned int ticks);
++extern void kd_turn_all_leds(int on_or_off);
+ extern int kbd_rate(struct kbd_repeat *rep);
+ 
+ /* console.c */
+diff -puN init/Kconfig~morse-code-panic init/Kconfig
+--- linux-2.6.7-xx4/init/Kconfig~morse-code-panic	2004-06-27 18:42:29.713609024 -0400
++++ linux-2.6.7-xx4-xiphux/init/Kconfig	2004-06-27 18:42:29.729606592 -0400
+@@ -60,6 +60,21 @@ config BROKEN_ON_SMP
+ 	depends on BROKEN || !SMP
+ 	default y
+ 
++config MORSE_PANICS
++	bool "Morse code panics"
++	depends on VT
++	help
++	  When enabled, this code will make a panicking kernel cry for
++	  help in morse code, signalling on the leds of a possibly attached
++	  keyboard and/or a bleeper.  You can enable/disable your morse
++	  output devices of choice using the "panicmorse" kernel boot
++	  parameter.  Currently, "panicmorse=0" will disable the signalling
++	  completely, "panicmorse=1" (the default) will only blink the leds,
++	  "panicmorse=2" will only beep, and "panicmorse=3" will do both.
++
++	  If unsure, say Y.  This feature is very helpful to those who
++	  spend most of their time in X.
++
+ endmenu
+ 
+ 
+diff -puN kernel/Makefile~morse-code-panic kernel/Makefile
+--- linux-2.6.7-xx4/kernel/Makefile~morse-code-panic	2004-06-27 18:42:29.715608720 -0400
++++ linux-2.6.7-xx4-xiphux/kernel/Makefile	2004-06-27 18:42:29.730606440 -0400
+@@ -24,6 +24,7 @@ obj-$(CONFIG_IKCONFIG_PROC) += configs.o
+ obj-$(CONFIG_STOP_MACHINE) += stop_machine.o
+ obj-$(CONFIG_AUDIT) += audit.o
+ obj-$(CONFIG_AUDITSYSCALL) += auditsc.o
++obj-$(CONFIG_MORSE_PANICS) += morse.o
+ 
+ ifneq ($(CONFIG_IA64),y)
+ # According to Alan Modra <alan@linuxcare.com.au>, the -fno-omit-frame-pointer is
+diff -puN /dev/null kernel/morse.c
+--- /dev/null	2004-05-31 17:36:38.000000000 -0400
++++ linux-2.6.7-xx4-xiphux/kernel/morse.c	2004-06-27 18:42:29.731606288 -0400
+@@ -0,0 +1,125 @@
++/*
++ *  kernel/morse.c
++ *
++ *  Copyright (C) 2002 Andrew Rodland <arodland@noln.com>
++ *  Copyright (C) 2003 Tomas Szepe <szepe@pinerecords.com>
++ *
++ *  Tell the user who may be running in X and not see the console that
++ *  we have panic'd.  This is to distingush panics from "real lockups."
++ *  Could in theory send the panic message as morse, but that is left
++ *  as an exercise for the reader.
++ *
++ *  And now it's done! LED and speaker morse code by Andrew Rodland
++ *  <arodland@noln.com>, with improvements based on suggestions from
++ *  linux@horizon.com and a host of others.
++ *
++ *  Initial 2.5 morsepanics port and cleanup by
++ *  Tomas Szepe <szepe@pinerecords.com>, January 2003.
++ */
++
++#include <linux/config.h>
++#include <linux/morseops.h>
++#include <linux/init.h>
++#include <linux/jiffies.h>
++#include <linux/vt_kern.h>
++
++#define DITLEN		(HZ / 5)
++#define DAHLEN		(3 * DITLEN)
++#define SPACELEN	(7 * DITLEN)
++#define FREQ		844
++
++static int morse_setting = 1;
++
++const unsigned char morsetable[] = {
++	0122, 0, 0310, 0, 0, 0163,				/* "#$%&' */
++	055, 0155, 0, 0, 0163, 0141, 0152, 0051, 		/* ()*+,-./ */
++	077, 076, 074, 070, 060, 040, 041, 043, 047, 057,	/* 0-9 */
++	0107, 0125, 0, 0061, 0, 0114, 0, 			/* :;<=>?@ */
++	006, 021, 025, 011, 002, 024, 013, 020, 004,		/* A-I */
++	036, 015, 022, 007, 005, 017, 026, 033, 012,		/* J-R */
++	010, 003, 014, 030, 016, 031, 035, 023,			/* S-Z */
++	0, 0, 0, 0, 0154					/* [\]^_ */
++};
++
++void panic_morseblink(char *buf)
++{
++	static unsigned long next_jiffie = 0;
++	static char * bufpos = 0;
++	static unsigned char morse = 0;
++	static char state = 1;
++
++	if (!morse_setting)
++		return;
++
++	if (!buf)
++		buf = "Uh oh, we lost the panic msg.";
++
++	/* Waiting for something? */
++	if (bufpos && time_after(next_jiffie, jiffies))
++		return;
++
++	if (state) {	/* Coming off of a blink. */
++		if (morse_setting & 0x01)
++			kd_turn_all_leds(0);
++
++		state = 0;
++
++		if (morse > 1) {
++			/* Not done yet, just a one-dit pause. */
++			next_jiffie = jiffies + DITLEN;
++		} else {
++			/* Get a new char, figure out how much space. */
++
++			/* First time through */
++			if (!bufpos)
++				bufpos = (char *) buf;
++
++			if (!*bufpos) {
++				/* Repeating */
++				bufpos = (char *) buf;
++				next_jiffie = jiffies + SPACELEN;
++			} else {
++				/* Inter-letter space */
++				next_jiffie = jiffies + DAHLEN;
++			}
++
++			if (!(morse = tomorse(*bufpos))) {
++				next_jiffie = jiffies + SPACELEN;
++				state = 1;	/* And get us back here */
++			}
++			bufpos++;
++		}
++	} else {
++		/* Starting a new blink.  We have a valid code in morse. */
++		int len;
++
++		len = (morse & 001) ? DAHLEN : DITLEN;
++
++		if (morse_setting & 0x02)
++			kd_mksound(FREQ, len);
++
++		next_jiffie = jiffies + len;
++
++		if (morse_setting & 0x01)
++			kd_turn_all_leds(1);
++
++		state = 1;
++		morse >>= 1;
++	}
++}
++
++static int __init panicmorse_setup(char *str)
++{
++	int par;
++	if (get_option(&str, &par))
++		morse_setting = par;
++	return 1;
++}
++
++/*  "panicmorse=0" disables the blinking as it caused problems with
++ *  certain console switches.
++ *
++ *  "panicmorse | 1" does the show using kbd leds.
++ *  "panicmorse | 2" throws in bleeping via kd_mksound().
++ */
++__setup("panicmorse=", panicmorse_setup);
+diff -puN kernel/panic.c~morse-code-panic kernel/panic.c
+--- linux-2.6.7-xx4/kernel/panic.c~morse-code-panic	2004-06-27 18:42:29.717608416 -0400
++++ linux-2.6.7-xx4-xiphux/kernel/panic.c	2004-06-27 18:42:58.292264408 -0400
+@@ -20,6 +20,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/suspend.h>
+ #include <linux/nmi.h>
++#include <linux/morseops.h>
+ 
+ int panic_timeout;
+ int panic_on_oops;
+@@ -110,8 +111,9 @@ NORET_TYPE void panic(const char * fmt, 
+         disabled_wait(caller);
+ #endif
+ 	local_irq_enable();
+-	for (;;)
+-		;
++	for (;;) {
++		panic_morseblink(buf);
++  	}
+ }
+ 
+ EXPORT_SYMBOL(panic);
+
+_

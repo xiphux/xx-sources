@@ -1,0 +1,682 @@
+---
+
+ linux-2.6.7-xx2-xiphux/arch/arm/common/Makefile                 |    1 
+ linux-2.6.7-xx2-xiphux/arch/arm/mach-ebsa110/core.c             |    3 
+ linux-2.6.7-xx2-xiphux/arch/arm/mach-footbridge/time.c          |    6 
+ linux-2.6.7-xx2-xiphux/arch/arm/mach-integrator/core.c          |  139 +++++++++
+ linux-2.6.7-xx2-xiphux/arch/arm/mach-integrator/integrator_ap.c |    2 
+ linux-2.6.7-xx2-xiphux/arch/arm/mach-integrator/integrator_cp.c |    2 
+ linux-2.6.7-xx2-xiphux/arch/arm/mach-integrator/time.c          |  144 ----------
+ linux-2.6.7-xx2-xiphux/arch/arm/mach-omap/bus.c                 |   39 --
+ linux-2.6.7-xx2-xiphux/arch/arm/mach-omap/time.c                |    5 
+ linux-2.6.7-xx2-xiphux/arch/arm/mach-versatile/core.c           |    4 
+ linux-2.6.7-xx2-xiphux/drivers/video/acornfb.c                  |    4 
+ linux-2.6.7-xx2/arch/arm/common/platform.c                      |   35 --
+ linux-2.6.7-xx2/arch/arm/mach-ebsa110/time.c                    |  118 --------
+ 13 files changed, 157 insertions(+), 345 deletions(-)
+
+diff -puN arch/arm/common/Makefile~bk-arm arch/arm/common/Makefile
+--- linux-2.6.7-xx2/arch/arm/common/Makefile~bk-arm	2004-06-24 06:19:22.545367304 -0400
++++ linux-2.6.7-xx2-xiphux/arch/arm/common/Makefile	2004-06-24 06:19:22.636353472 -0400
+@@ -2,7 +2,6 @@
+ # Makefile for the linux kernel.
+ #
+ 
+-obj-y				+= platform.o
+ obj-$(CONFIG_ARM_AMBA)		+= amba.o
+ obj-$(CONFIG_ICST525)		+= icst525.o
+ obj-$(CONFIG_SA1111)		+= sa1111.o
+diff -puN -L arch/arm/common/platform.c arch/arm/common/platform.c~bk-arm /dev/null
+--- linux-2.6.7-xx2/arch/arm/common/platform.c
++++ /dev/null	2004-05-31 17:36:38.000000000 -0400
+@@ -1,35 +0,0 @@
+-#include <linux/ioport.h>
+-#include <linux/device.h>
+-#include <linux/init.h>
+-
+-int __init platform_add_device(struct platform_device *dev)
+-{
+-	int i;
+-
+-	for (i = 0; i < dev->num_resources; i++) {
+-		struct resource *r = &dev->resource[i];
+-
+-		r->name = dev->dev.bus_id;
+-
+-		if (r->flags & IORESOURCE_MEM &&
+-		    request_resource(&iomem_resource, r)) {
+-			printk(KERN_ERR
+-			       "%s%d: failed to claim resource %d\n",
+-			       dev->name, dev->id, i);
+-			break;
+-		}
+-	}
+-	if (i == dev->num_resources)
+-		platform_device_register(dev);
+-	return 0;
+-}
+-
+-int __init platform_add_devices(struct platform_device **devs, int num)
+-{
+-	int i;
+-
+-	for (i = 0; i < num; i++)
+-		platform_add_device(devs[i]);
+-
+-	return 0;
+-}
+diff -puN arch/arm/mach-ebsa110/core.c~bk-arm arch/arm/mach-ebsa110/core.c
+--- linux-2.6.7-xx2/arch/arm/mach-ebsa110/core.c~bk-arm	2004-06-24 06:19:22.611357272 -0400
++++ linux-2.6.7-xx2-xiphux/arch/arm/mach-ebsa110/core.c	2004-06-24 06:19:22.639353016 -0400
+@@ -11,6 +11,7 @@
+  */
+ #include <linux/kernel.h>
+ #include <linux/mm.h>
++#include <linux/interrupt.h>
+ #include <linux/init.h>
+ 
+ #include <asm/hardware.h>
+@@ -174,7 +175,7 @@ static struct irqaction ebsa110_timer_ir
+ /*
+  * Set up timer interrupt.
+  */
+-void __init ebsa110_time_init(void)
++static void __init ebsa110_init_time(void)
+ {
+ 	/*
+ 	 * Timer 1, mode 2, LSB/MSB
+diff -puN -L arch/arm/mach-ebsa110/time.c arch/arm/mach-ebsa110/time.c~bk-arm /dev/null
+--- linux-2.6.7-xx2/arch/arm/mach-ebsa110/time.c
++++ /dev/null	2004-05-31 17:36:38.000000000 -0400
+@@ -1,118 +0,0 @@
+-/*
+- *  linux/include/asm-arm/arch-ebsa110/time.h
+- *
+- *  Copyright (C) 1996,1997,1998 Russell King.
+- *
+- * This program is free software; you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License version 2 as
+- * published by the Free Software Foundation.
+- *
+- * No real time clock on the evalulation board!
+- *
+- * Changelog:
+- *  10-Oct-1996	RMK	Created
+- *  04-Dec-1997	RMK	Updated for new arch/arm/kernel/time.c
+- *  07-Aug-1998	RMK	Updated for arch/arm/kernel/leds.c
+- *  28-Dec-1998	APH	Made leds code optional
+- */
+-
+-#include <asm/leds.h>
+-#include <asm/io.h>
+-
+-extern unsigned long (*gettimeoffset)(void);
+-
+-#define PIT_CTRL		(PIT_BASE + 0x0d)
+-#define PIT_T2			(PIT_BASE + 0x09)
+-#define PIT_T1			(PIT_BASE + 0x05)
+-#define PIT_T0			(PIT_BASE + 0x01)
+-
+-/*
+- * This is the rate at which your MCLK signal toggles (in Hz)
+- * This was measured on a 10 digit frequency counter sampling
+- * over 1 second.
+- */
+-#define MCLK	47894000
+-
+-/*
+- * This is the rate at which the PIT timers get clocked
+- */
+-#define CLKBY7	(MCLK / 7)
+-
+-/*
+- * This is the counter value.  We tick at 200Hz on this platform.
+- */
+-#define COUNT	((CLKBY7 + (HZ / 2)) / HZ)
+-
+-/*
+- * Get the time offset from the system PIT.  Note that if we have missed an
+- * interrupt, then the PIT counter will roll over (ie, be negative).
+- * This actually works out to be convenient.
+- */
+-static unsigned long ebsa110_gettimeoffset(void)
+-{
+-	unsigned long offset, count;
+-
+-	__raw_writeb(0x40, PIT_CTRL);
+-	count = __raw_readb(PIT_T1);
+-	count |= __raw_readb(PIT_T1) << 8;
+-
+-	/*
+-	 * If count > COUNT, make the number negative.
+-	 */
+-	if (count > COUNT)
+-		count |= 0xffff0000;
+-
+-	offset = COUNT;
+-	offset -= count;
+-
+-	/*
+-	 * `offset' is in units of timer counts.  Convert
+-	 * offset to units of microseconds.
+-	 */
+-	offset = offset * (1000000 / HZ) / COUNT;
+-
+-	return offset;
+-}
+-
+-static irqreturn_t
+-timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+-{
+-	u32 count;
+-
+-	/* latch and read timer 1 */
+-	__raw_writeb(0x40, PIT_CTRL);
+-	count = __raw_readb(PIT_T1);
+-	count |= __raw_readb(PIT_T1) << 8;
+-
+-	count += COUNT;
+-
+-	__raw_writeb(count & 0xff, PIT_T1);
+-	__raw_writeb(count >> 8, PIT_T1);
+-
+-	do_leds();
+-	do_timer(regs);
+-	do_profile(regs);
+-
+-	return IRQ_HANDLED;
+-}
+-
+-/*
+- * Set up timer interrupt.
+- */
+-void __init time_init(void)
+-{
+-	/*
+-	 * Timer 1, mode 2, LSB/MSB
+-	 */
+-	__raw_writeb(0x70, PIT_CTRL);
+-	__raw_writeb(COUNT & 0xff, PIT_T1);
+-	__raw_writeb(COUNT >> 8, PIT_T1);
+-
+-	gettimeoffset = ebsa110_gettimeoffset;
+-
+-	timer_irq.handler = timer_interrupt;
+-
+-	setup_irq(IRQ_EBSA110_TIMER0, &timer_irq);
+-}
+-
+-
+diff -puN arch/arm/mach-footbridge/time.c~bk-arm arch/arm/mach-footbridge/time.c
+--- linux-2.6.7-xx2/arch/arm/mach-footbridge/time.c~bk-arm	2004-06-24 06:19:22.615356664 -0400
++++ linux-2.6.7-xx2-xiphux/arch/arm/mach-footbridge/time.c	2004-06-24 06:19:22.641352712 -0400
+@@ -275,7 +275,7 @@ void __init footbridge_init_time(void)
+ 		*CSR_TIMER1_CNTL = TIMER_CNTL_ENABLE | TIMER_CNTL_AUTORELOAD | TIMER_CNTL_DIV16;
+ 
+ 		footbridge_timer_irq.name = "Timer1 Timer Tick";
+-		footbrdige_timer_irq.handler = timer1_interrupt;
++		footbridge_timer_irq.handler = timer1_interrupt;
+ 
+ 		setup_irq(IRQ_TIMER1, &footbridge_timer_irq);
+ 
+@@ -289,8 +289,8 @@ void __init footbridge_init_time(void)
+ 		gettimeoffset = isa_gettimeoffset;
+ 
+ 		footbridge_timer_irq.name = "ISA Timer Tick";
+-		footbrdige_timer_irq.handler = isa_timer_interrupt;
++		footbridge_timer_irq.handler = isa_timer_interrupt;
+ 
+-		setup_irq(IRQ_ISA, &footbridge_timer_irq);
++		setup_irq(IRQ_ISA_TIMER, &footbridge_timer_irq);
+ 	}
+ }
+diff -puN arch/arm/mach-integrator/core.c~bk-arm arch/arm/mach-integrator/core.c
+--- linux-2.6.7-xx2/arch/arm/mach-integrator/core.c~bk-arm	2004-06-24 06:19:22.617356360 -0400
++++ linux-2.6.7-xx2-xiphux/arch/arm/mach-integrator/core.c	2004-06-24 06:19:22.642352560 -0400
+@@ -12,12 +12,17 @@
+ #include <linux/init.h>
+ #include <linux/device.h>
+ #include <linux/spinlock.h>
++#include <linux/interrupt.h>
++#include <linux/sched.h>
+ 
+ #include <asm/hardware.h>
+ #include <asm/irq.h>
+ #include <asm/io.h>
+ #include <asm/hardware/amba.h>
+ #include <asm/arch/cm.h>
++#include <asm/system.h>
++#include <asm/leds.h>
++#include <asm/mach/time.h>
+ 
+ static struct amba_device rtc_device = {
+ 	.dev		= {
+@@ -127,3 +132,137 @@ void cm_control(u32 mask, u32 set)
+ }
+ 
+ EXPORT_SYMBOL(cm_control);
++
++/*
++ * Where is the timer (VA)?
++ */
++#define TIMER0_VA_BASE (IO_ADDRESS(INTEGRATOR_CT_BASE)+0x00000000)
++#define TIMER1_VA_BASE (IO_ADDRESS(INTEGRATOR_CT_BASE)+0x00000100)
++#define TIMER2_VA_BASE (IO_ADDRESS(INTEGRATOR_CT_BASE)+0x00000200)
++#define VA_IC_BASE     IO_ADDRESS(INTEGRATOR_IC_BASE)
++
++/*
++ * How long is the timer interval?
++ */
++#define TIMER_INTERVAL	(TICKS_PER_uSEC * mSEC_10)
++#if TIMER_INTERVAL >= 0x100000
++#define TICKS2USECS(x)	(256 * (x) / TICKS_PER_uSEC)
++#elif TIMER_INTERVAL >= 0x10000
++#define TICKS2USECS(x)	(16 * (x) / TICKS_PER_uSEC)
++#else
++#define TICKS2USECS(x)	((x) / TICKS_PER_uSEC)
++#endif
++
++/*
++ * What does it look like?
++ */
++typedef struct TimerStruct {
++	unsigned long TimerLoad;
++	unsigned long TimerValue;
++	unsigned long TimerControl;
++	unsigned long TimerClear;
++} TimerStruct_t;
++
++extern unsigned long (*gettimeoffset)(void);
++
++static unsigned long timer_reload;
++
++/*
++ * Returns number of ms since last clock interrupt.  Note that interrupts
++ * will have been disabled by do_gettimeoffset()
++ */
++static unsigned long integrator_gettimeoffset(void)
++{
++	volatile TimerStruct_t *timer1 = (TimerStruct_t *)TIMER1_VA_BASE;
++	unsigned long ticks1, ticks2, status;
++
++	/*
++	 * Get the current number of ticks.  Note that there is a race
++	 * condition between us reading the timer and checking for
++	 * an interrupt.  We get around this by ensuring that the
++	 * counter has not reloaded between our two reads.
++	 */
++	ticks2 = timer1->TimerValue & 0xffff;
++	do {
++		ticks1 = ticks2;
++		status = __raw_readl(VA_IC_BASE + IRQ_RAW_STATUS);
++		ticks2 = timer1->TimerValue & 0xffff;
++	} while (ticks2 > ticks1);
++
++	/*
++	 * Number of ticks since last interrupt.
++	 */
++	ticks1 = timer_reload - ticks2;
++
++	/*
++	 * Interrupt pending?  If so, we've reloaded once already.
++	 */
++	if (status & (1 << IRQ_TIMERINT1))
++		ticks1 += timer_reload;
++
++	/*
++	 * Convert the ticks to usecs
++	 */
++	return TICKS2USECS(ticks1);
++}
++
++/*
++ * IRQ handler for the timer
++ */
++static irqreturn_t
++integrator_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
++{
++	volatile TimerStruct_t *timer1 = (volatile TimerStruct_t *)TIMER1_VA_BASE;
++
++	// ...clear the interrupt
++	timer1->TimerClear = 1;
++
++	timer_tick(regs);
++
++	return IRQ_HANDLED;
++}
++
++static struct irqaction integrator_timer_irq = {
++	.name		= "Integrator Timer Tick",
++	.flags		= SA_INTERRUPT,
++	.handler	= integrator_timer_interrupt
++};
++
++/*
++ * Set up timer interrupt, and return the current time in seconds.
++ */
++void __init integrator_time_init(unsigned long reload, unsigned int ctrl)
++{
++	volatile TimerStruct_t *timer0 = (volatile TimerStruct_t *)TIMER0_VA_BASE;
++	volatile TimerStruct_t *timer1 = (volatile TimerStruct_t *)TIMER1_VA_BASE;
++	volatile TimerStruct_t *timer2 = (volatile TimerStruct_t *)TIMER2_VA_BASE;
++	unsigned int timer_ctrl = 0x80 | 0x40;	/* periodic */
++
++	timer_reload = reload;
++	timer_ctrl |= ctrl;
++
++	if (timer_reload > 0x100000) {
++		timer_reload >>= 8;
++		timer_ctrl |= 0x08; /* /256 */
++	} else if (timer_reload > 0x010000) {
++		timer_reload >>= 4;
++		timer_ctrl |= 0x04; /* /16 */
++	}
++
++	/*
++	 * Initialise to a known state (all timers off)
++	 */
++	timer0->TimerControl = 0;
++	timer1->TimerControl = 0;
++	timer2->TimerControl = 0;
++
++	timer1->TimerLoad    = timer_reload;
++	timer1->TimerValue   = timer_reload;
++	timer1->TimerControl = timer_ctrl;
++
++	/*
++	 * Make irqs happen for the system timer
++	 */
++	setup_irq(IRQ_TIMERINT1, &integrator_timer_irq);
++	gettimeoffset = integrator_gettimeoffset;
++}
+diff -puN arch/arm/mach-integrator/integrator_ap.c~bk-arm arch/arm/mach-integrator/integrator_ap.c
+--- linux-2.6.7-xx2/arch/arm/mach-integrator/integrator_ap.c~bk-arm	2004-06-24 06:19:22.620355904 -0400
++++ linux-2.6.7-xx2-xiphux/arch/arm/mach-integrator/integrator_ap.c	2004-06-24 06:19:22.644352256 -0400
+@@ -256,7 +256,7 @@ static void __init ap_init(void)
+ 	unsigned long sc_dec;
+ 	int i;
+ 
+-	platform_add_device(&cfi_flash_device);
++	platform_device_register(&cfi_flash_device);
+ 
+ 	sc_dec = readl(VA_SC_BASE + INTEGRATOR_SC_DEC_OFFSET);
+ 	for (i = 0; i < 4; i++) {
+diff -puN arch/arm/mach-integrator/integrator_cp.c~bk-arm arch/arm/mach-integrator/integrator_cp.c
+--- linux-2.6.7-xx2/arch/arm/mach-integrator/integrator_cp.c~bk-arm	2004-06-24 06:19:22.623355448 -0400
++++ linux-2.6.7-xx2-xiphux/arch/arm/mach-integrator/integrator_cp.c	2004-06-24 06:19:22.645352104 -0400
+@@ -419,6 +419,8 @@ static void __init intcp_init(void)
+ 	}
+ }
+ 
++#define TIMER_CTRL_IE	(1 << 5)			/* Interrupt Enable */
++
+ static void __init intcp_init_time(void)
+ {
+ 	integrator_time_init(1000000 / HZ, TIMER_CTRL_IE);
+diff -puN arch/arm/mach-integrator/time.c~bk-arm arch/arm/mach-integrator/time.c
+--- linux-2.6.7-xx2/arch/arm/mach-integrator/time.c~bk-arm	2004-06-24 06:19:22.624355296 -0400
++++ linux-2.6.7-xx2-xiphux/arch/arm/mach-integrator/time.c	2004-06-24 06:19:22.646351952 -0400
+@@ -10,16 +10,9 @@
+ #include <linux/kernel.h>
+ #include <linux/time.h>
+ #include <linux/init.h>
+-#include <linux/interrupt.h>
+-#include <linux/sched.h>
+ 
+ #include <asm/hardware.h>
+ #include <asm/io.h>
+-#include <asm/system.h>
+-#include <asm/leds.h>
+-#include <asm/mach-types.h>
+-
+-#include <asm/mach/time.h>
+ 
+ #define RTC_DR		(IO_ADDRESS(INTEGRATOR_RTC_BASE) + 0)
+ #define RTC_MR		(IO_ADDRESS(INTEGRATOR_RTC_BASE) + 4)
+@@ -51,140 +44,3 @@ static int integrator_rtc_init(void)
+ }
+ 
+ __initcall(integrator_rtc_init);
+-
+-
+-/*
+- * Where is the timer (VA)?
+- */
+-#define TIMER0_VA_BASE (IO_ADDRESS(INTEGRATOR_CT_BASE)+0x00000000)
+-#define TIMER1_VA_BASE (IO_ADDRESS(INTEGRATOR_CT_BASE)+0x00000100)
+-#define TIMER2_VA_BASE (IO_ADDRESS(INTEGRATOR_CT_BASE)+0x00000200)
+-#define VA_IC_BASE     IO_ADDRESS(INTEGRATOR_IC_BASE)
+-
+-/*
+- * How long is the timer interval?
+- */
+-#define TIMER_INTERVAL	(TICKS_PER_uSEC * mSEC_10)
+-#if TIMER_INTERVAL >= 0x100000
+-#define TICKS2USECS(x)	(256 * (x) / TICKS_PER_uSEC)
+-#elif TIMER_INTERVAL >= 0x10000
+-#define TICKS2USECS(x)	(16 * (x) / TICKS_PER_uSEC)
+-#else
+-#define TICKS2USECS(x)	((x) / TICKS_PER_uSEC)
+-#endif
+-
+-#define TIMER_CTRL_IE	(1 << 5)			/* Interrupt Enable */
+-
+-/*
+- * What does it look like?
+- */
+-typedef struct TimerStruct {
+-	unsigned long TimerLoad;
+-	unsigned long TimerValue;
+-	unsigned long TimerControl;
+-	unsigned long TimerClear;
+-} TimerStruct_t;
+-
+-extern unsigned long (*gettimeoffset)(void);
+-
+-static unsigned long timer_reload;
+-
+-/*
+- * Returns number of ms since last clock interrupt.  Note that interrupts
+- * will have been disabled by do_gettimeoffset()
+- */
+-static unsigned long integrator_gettimeoffset(void)
+-{
+-	volatile TimerStruct_t *timer1 = (TimerStruct_t *)TIMER1_VA_BASE;
+-	unsigned long ticks1, ticks2, status;
+-
+-	/*
+-	 * Get the current number of ticks.  Note that there is a race
+-	 * condition between us reading the timer and checking for
+-	 * an interrupt.  We get around this by ensuring that the
+-	 * counter has not reloaded between our two reads.
+-	 */
+-	ticks2 = timer1->TimerValue & 0xffff;
+-	do {
+-		ticks1 = ticks2;
+-		status = __raw_readl(VA_IC_BASE + IRQ_RAW_STATUS);
+-		ticks2 = timer1->TimerValue & 0xffff;
+-	} while (ticks2 > ticks1);
+-
+-	/*
+-	 * Number of ticks since last interrupt.
+-	 */
+-	ticks1 = timer_reload - ticks2;
+-
+-	/*
+-	 * Interrupt pending?  If so, we've reloaded once already.
+-	 */
+-	if (status & (1 << IRQ_TIMERINT1))
+-		ticks1 += timer_reload;
+-
+-	/*
+-	 * Convert the ticks to usecs
+-	 */
+-	return TICKS2USECS(ticks1);
+-}
+-
+-/*
+- * IRQ handler for the timer
+- */
+-static irqreturn_t
+-integrator_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+-{
+-	volatile TimerStruct_t *timer1 = (volatile TimerStruct_t *)TIMER1_VA_BASE;
+-
+-	// ...clear the interrupt
+-	timer1->TimerClear = 1;
+-
+-	timer_tick(regs);
+-
+-	return IRQ_HANDLED;
+-}
+-
+-static struct irqaction integrator_timer_irq = {
+-	.name		= "Integrator Timer Tick",
+-	.flags		= SA_INTERRUPT,
+-	.handler	= integrator_timer_interrupt
+-};
+-
+-/*
+- * Set up timer interrupt, and return the current time in seconds.
+- */
+-void __init integrator_time_init(unsigned long reload, unsigned int ctrl)
+-{
+-	volatile TimerStruct_t *timer0 = (volatile TimerStruct_t *)TIMER0_VA_BASE;
+-	volatile TimerStruct_t *timer1 = (volatile TimerStruct_t *)TIMER1_VA_BASE;
+-	volatile TimerStruct_t *timer2 = (volatile TimerStruct_t *)TIMER2_VA_BASE;
+-	unsigned int timer_ctrl = 0x80 | 0x40;	/* periodic */
+-
+-	timer_reload = reload;
+-	timer_ctrl |= ctrl;
+-
+-	if (timer_reload > 0x100000) {
+-		timer_reload >>= 8;
+-		timer_ctrl |= 0x08; /* /256 */
+-	} else if (timer_reload > 0x010000) {
+-		timer_reload >>= 4;
+-		timer_ctrl |= 0x04; /* /16 */
+-	}
+-
+-	/*
+-	 * Initialise to a known state (all timers off)
+-	 */
+-	timer0->TimerControl = 0;
+-	timer1->TimerControl = 0;
+-	timer2->TimerControl = 0;
+-
+-	timer1->TimerLoad    = timer_reload;
+-	timer1->TimerValue   = timer_reload;
+-	timer1->TimerControl = timer_ctrl;
+-
+-	/*
+-	 * Make irqs happen for the system timer
+-	 */
+-	setup_irq(IRQ_TIMERINT1, &integrator_timer_irq);
+-	gettimeoffset = integrator_gettimeoffset;
+-}
+diff -puN arch/arm/mach-omap/bus.c~bk-arm arch/arm/mach-omap/bus.c
+--- linux-2.6.7-xx2/arch/arm/mach-omap/bus.c~bk-arm	2004-06-24 06:19:22.626354992 -0400
++++ linux-2.6.7-xx2-xiphux/arch/arm/mach-omap/bus.c	2004-06-24 06:19:22.647351800 -0400
+@@ -81,40 +81,6 @@ static struct bus_type omap_bus_types[OM
+ 	},
+ };
+ 
+-#ifdef CONFIG_ARCH_OMAP1510
+-/*
+- * NOTE: This code _should_ go somewhere else. But let's wait for the
+- *	 dma-mapping code to settle down first.
+- */
+-
+-/*
+- * Test for Local Bus device in order to do address translation between
+- * dma_handle and Local Bus address.
+- */
+-inline int dmadev_uses_omap_lbus(struct device * dev)
+-{
+-	if (dev == NULL || !cpu_is_omap1510())
+-		return 0;
+-	return dev->bus == &omap_bus_types[OMAP_BUS_LBUS] ? 1 : 0;
+-}
+-
+-/*
+- * Translate bus address to Local Bus address for dma-mapping
+- */
+-inline int dmadev_to_lbus(dma_addr_t addr)
+-{
+-	return bus_to_lbus(addr);
+-}
+-
+-/*
+- * Translate Local Bus address to bus address for dma-mapping
+- */
+-inline int lbus_to_dmadev(dma_addr_t addr)
+-{
+-	return lbus_to_bus(addr);
+-}
+-#endif
+-
+ static int omap_bus_match(struct device *dev, struct device_driver *drv)
+ {
+ 	struct omap_dev *omapdev = OMAP_DEV(dev);
+@@ -278,8 +244,3 @@ EXPORT_SYMBOL(omap_driver_unregister);
+ EXPORT_SYMBOL(omap_device_register);
+ EXPORT_SYMBOL(omap_device_unregister);
+ 
+-#ifdef CONFIG_ARCH_OMAP1510
+-EXPORT_SYMBOL(dmadev_uses_omap_lbus);
+-EXPORT_SYMBOL(dmadev_to_lbus);
+-EXPORT_SYMBOL(lbus_to_dmadev);
+-#endif
+diff -puN arch/arm/mach-omap/time.c~bk-arm arch/arm/mach-omap/time.c
+--- linux-2.6.7-xx2/arch/arm/mach-omap/time.c~bk-arm	2004-06-24 06:19:22.628354688 -0400
++++ linux-2.6.7-xx2-xiphux/arch/arm/mach-omap/time.c	2004-06-24 06:19:22.648351648 -0400
+@@ -28,7 +28,12 @@
+  */
+ 
+ #include <linux/config.h>
++#include <linux/kernel.h>
++#include <linux/init.h>
+ #include <linux/delay.h>
++#include <linux/interrupt.h>
++#include <linux/sched.h>
++
+ #include <asm/system.h>
+ #include <asm/hardware.h>
+ #include <asm/io.h>
+diff -puN arch/arm/mach-versatile/core.c~bk-arm arch/arm/mach-versatile/core.c
+--- linux-2.6.7-xx2/arch/arm/mach-versatile/core.c~bk-arm	2004-06-24 06:19:22.630354384 -0400
++++ linux-2.6.7-xx2-xiphux/arch/arm/mach-versatile/core.c	2004-06-24 06:19:22.650351344 -0400
+@@ -503,8 +503,8 @@ static void __init versatile_init(void)
+ {
+ 	int i;
+ 
+-	platform_add_device(&versatile_flash_device);
+-	platform_add_device(&smc91x_device);
++	platform_device_register(&versatile_flash_device);
++	platform_device_register(&smc91x_device);
+ 
+ 	for (i = 0; i < ARRAY_SIZE(amba_devs); i++) {
+ 		struct amba_device *d = amba_devs[i];
+diff -puN drivers/video/acornfb.c~bk-arm drivers/video/acornfb.c
+--- linux-2.6.7-xx2/drivers/video/acornfb.c~bk-arm	2004-06-24 06:19:22.633353928 -0400
++++ linux-2.6.7-xx2-xiphux/drivers/video/acornfb.c	2004-06-24 06:19:22.652351040 -0400
+@@ -1246,6 +1246,8 @@ acornfb_detect_monitortype(void)
+ 
+ /*
+  * This enables the unused memory to be freed on older Acorn machines.
++ * We are freeing memory on behalf of the architecture initialisation
++ * code here.
+  */
+ static inline void
+ free_unused_pages(unsigned int virtual_start, unsigned int virtual_end)
+@@ -1268,7 +1270,7 @@ free_unused_pages(unsigned int virtual_s
+ 		 */
+ 		page = virt_to_page(virtual_start);
+ 		ClearPageReserved(page);
+-		atomic_set(&page->count, 1);
++		set_page_count(page, 1);
+ 		free_page(virtual_start);
+ 
+ 		virtual_start += PAGE_SIZE;
+
+_

@@ -1,0 +1,32 @@
+
+From: <fgalea@prism.uvsq.fr>
+
+http://bugme.osdl.org/show_bug.cgi?id=3286
+
+The kernel keeps printing "Lost sync on frames" error messages as soon as a
+program tries to access the webcam.  No video data can be retrieved from
+the webcam.
+
+The following patch seems enough to solve the problem.  (just inverting the
+order at which the old and new data blocks are sent to the user).
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/usb/media/konicawc.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN drivers/usb/media/konicawc.c~new-lost-sync-on-frames-error-in-konicawc drivers/usb/media/konicawc.c
+--- 25/drivers/usb/media/konicawc.c~new-lost-sync-on-frames-error-in-konicawc	2004-08-27 23:58:20.771511728 -0700
++++ 25-akpm/drivers/usb/media/konicawc.c	2004-08-27 23:58:20.776510968 -0700
+@@ -362,8 +362,8 @@ static void konicawc_isoc_irq(struct urb
+ 		else if (!urb->status && !cam->last_data_urb->status)
+ 			len = konicawc_compress_iso(uvd, cam->last_data_urb, urb);
+ 
+-		resubmit_urb(uvd, urb);
+ 		resubmit_urb(uvd, cam->last_data_urb);
++		resubmit_urb(uvd, urb);
+ 		cam->last_data_urb = NULL;
+ 		uvd->stats.urb_length = len;
+ 		uvd->stats.data_count += len;
+_

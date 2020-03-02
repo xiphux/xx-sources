@@ -1,0 +1,29 @@
+
+From: Stephen Tweedie <sct@redhat.com>
+
+There's not much to be gained from making the resize group-add operation fully
+synchronous.  It's already atomic by virtue of the journal, and a resize
+operation usually doesn't add just one group, but many.  The real need is to
+sync things up at the end of the *entire* resize, not after each individual
+group-add; and by syncing each group separately, the whole resize operation is
+made much, much slower if we're running on a live filesystem.
+
+Signed-off-by: Stephen Tweedie <sct@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/ext3/resize.c |    1 -
+ 1 files changed, 1 deletion(-)
+
+diff -puN fs/ext3/resize.c~ext3-online-resize-make-group-add-asynchronous fs/ext3/resize.c
+--- 25/fs/ext3/resize.c~ext3-online-resize-make-group-add-asynchronous	Thu Sep 30 17:33:51 2004
++++ 25-akpm/fs/ext3/resize.c	Thu Sep 30 17:33:51 2004
+@@ -872,7 +872,6 @@ int ext3_group_add(struct super_block *s
+ 
+ exit_journal:
+ 	unlock_super(sb);
+-	handle->h_sync = 1;
+ 	if ((err2 = ext3_journal_stop(handle)) && !err)
+ 		err = err2;
+ 	if (!err) {
+_

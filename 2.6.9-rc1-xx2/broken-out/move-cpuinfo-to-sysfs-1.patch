@@ -1,0 +1,36 @@
+- Add printk to cpuinfo_open reminding user to transition to sysfs
+- Add arch_cpuinfo field to struct cpu
+
+diff -Nru a/fs/proc/proc_misc.c b/fs/proc/proc_misc.c
+--- a/fs/proc/proc_misc.c	Wed Aug 11 14:46:15 2004
++++ b/fs/proc/proc_misc.c	Wed Aug 11 14:46:15 2004
+@@ -258,11 +258,18 @@
+ 	return proc_calc_metrics(page, start, off, count, eof, len);
+ }
+ 
++#define	CPUINFO_REMOVAL_DATE "September 1st, 2005"
+ extern struct seq_operations cpuinfo_op;
+ static int cpuinfo_open(struct inode *inode, struct file *file)
+ {
++	printk(KERN_WARNING "Using depecrated /proc/cpuinfo interface\n");
++	printk(KERN_WARNING "This interface will be deleted on %s\n",
++			CPUINFO_REMOVAL_DATE);
++	printk(KERN_WARNING "Please use syfs interface instead\n");
++
+ 	return seq_open(file, &cpuinfo_op);
+ }
++
+ static struct file_operations proc_cpuinfo_operations = {
+ 	.open		= cpuinfo_open,
+ 	.read		= seq_read,
+diff -Nru a/include/linux/cpu.h b/include/linux/cpu.h
+--- a/include/linux/cpu.h	Wed Aug 11 14:46:15 2004
++++ b/include/linux/cpu.h	Wed Aug 11 14:46:15 2004
+@@ -28,6 +28,7 @@
+ struct cpu {
+ 	int node_id;		/* The node which contains the CPU */
+ 	int no_control;		/* Should the sysfs control file be created? */
++	void *arch_cpuinfo;	/* Per-cpu arch data */
+ 	struct sys_device sysdev;
+ };
+ 

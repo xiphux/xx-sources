@@ -1,0 +1,31 @@
+
+From: Chris Mason <mason@suse.com>
+
+jbd needs to wait for any io to complete on the buffer before changing the
+end_io function.  Using set_buffer_locked means that it can change the
+end_io function while the page is in the middle of writeback, and the
+writeback bit on the page will never get cleared.
+
+Since we set the buffer dirty earlier on, if the page was previously dirty,
+pdflush or memory pressure might trigger a writepage call, which will race
+with jbd's set_buffer_locked.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/jbd/commit.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN fs/jbd/commit.c~ext3-jbd-needs-to-wait-for-locked-buffers fs/jbd/commit.c
+--- 25/fs/jbd/commit.c~ext3-jbd-needs-to-wait-for-locked-buffers	2004-06-17 18:44:08.079466064 -0700
++++ 25-akpm/fs/jbd/commit.c	2004-06-17 18:44:08.085465152 -0700
+@@ -503,7 +503,7 @@ write_out_data:
+ start_journal_io:
+ 			for (i = 0; i < bufs; i++) {
+ 				struct buffer_head *bh = wbuf[i];
+-				set_buffer_locked(bh);
++				lock_buffer(bh);
+ 				clear_buffer_dirty(bh);
+ 				set_buffer_uptodate(bh);
+ 				bh->b_end_io = journal_end_buffer_io_sync;
+_

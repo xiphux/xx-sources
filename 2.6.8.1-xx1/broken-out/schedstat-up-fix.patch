@@ -1,0 +1,71 @@
+
+DESC
+schedstat: UP fix
+
+SMP fix --
+    for_each_domain() is not defined if not CONFIG_SMP, so show_schedstat
+    needed a couple of extra ifdefs.
+
+Signed-off-by: Rick Lindsley <ricklind@us.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/sched-stats.txt |    8 ++++++--
+ 25-akpm/kernel/sched.c                |    4 ++++
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+
+diff -puN Documentation/sched-stats.txt~schedstat-up-fix Documentation/sched-stats.txt
+--- 25/Documentation/sched-stats.txt~schedstat-up-fix	2004-08-06 01:33:42.454748360 -0700
++++ 25-akpm/Documentation/sched-stats.txt	2004-08-06 01:33:42.460747448 -0700
+@@ -1,6 +1,8 @@
+ Version 10 of schedstats includes support for sched_domains, which
+ hit the mainline kernel in 2.6.7.  Some counters make more sense to be
+-per-runqueue; other to be per-domain.
++per-runqueue; other to be per-domain.  Note that domains (and their associated
++information) will only be pertinent and available on machines utilizing
++CONFIG_SMP.
+ 
+ In version 10 of schedstat, there is at least one level of domain
+ statistics for each cpu listed, and there may well be more than one
+@@ -83,7 +85,9 @@ The last six are statistics dealing with
+ 
+ Domain statistics
+ -----------------
+-One of these is produced per domain for each cpu described.
++One of these is produced per domain for each cpu described. (Note that if
++CONFIG_SMP is not defined, *no* domains are utilized and these lines
++will not appear in the output.)
+ 
+ domain<N> 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+ 
+diff -puN kernel/sched.c~schedstat-up-fix kernel/sched.c
+--- 25/kernel/sched.c~schedstat-up-fix	2004-08-06 01:33:42.457747904 -0700
++++ 25-akpm/kernel/sched.c	2004-08-06 01:33:42.472745624 -0700
+@@ -484,8 +484,10 @@ static int show_schedstat(struct seq_fil
+ 	seq_printf(seq, "timestamp %lu\n", jiffies);
+ 	for_each_online_cpu(cpu) {
+ 		runqueue_t *rq = cpu_rq(cpu);
++#ifdef CONFIG_SMP
+ 		struct sched_domain *sd;
+ 		int dcnt = 0;
++#endif
+ 
+ 		/* runqueue-specific stats */
+ 		seq_printf(seq,
+@@ -507,6 +509,7 @@ static int show_schedstat(struct seq_fil
+ 						    rq->pt_lost[itype]);
+ 		seq_printf(seq, "\n");
+ 
++#ifdef CONFIG_SMP
+ 		/* domain-specific stats */
+ 		for_each_domain(cpu, sd) {
+ 			char mask_str[NR_CPUS];
+@@ -525,6 +528,7 @@ static int show_schedstat(struct seq_fil
+ 			    sd->sbe_pushed, sd->sbe_attempts,
+ 			    sd->ttwu_wake_affine, sd->ttwu_wake_balance);
+ 		}
++#endif
+ 	}
+ 	return 0;
+ }
+_

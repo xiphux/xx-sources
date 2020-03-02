@@ -1,0 +1,111 @@
+
+From: Markus Lidel <Markus.Lidel@shadowconnect.com>
+
+Okay, reviewed each patch made after my clone. Now i'm pretty sure, 
+everything is in (at least i hope :-S)...
+
+And i really understand, what you mean with "argh" :-)
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/message/i2o/config-osm.c |   25 +++++++++++++++++--------
+ 25-akpm/drivers/message/i2o/pci.c        |    2 --
+ 25-akpm/drivers/message/i2o/proc-osm.c   |    4 ++--
+ 3 files changed, 19 insertions(+), 12 deletions(-)
+
+diff -puN drivers/message/i2o/config-osm.c~i2o-resync-with-post-266-changes-2 drivers/message/i2o/config-osm.c
+--- 25/drivers/message/i2o/config-osm.c~i2o-resync-with-post-266-changes-2	Thu Jul 29 16:37:09 2004
++++ 25-akpm/drivers/message/i2o/config-osm.c	Thu Jul 29 16:37:09 2004
+@@ -711,9 +711,9 @@ static int i2o_cfg_evt_get(unsigned long
+ #if BITS_PER_LONG == 64
+ static int i2o_cfg_passthru32(unsigned fd, unsigned cmnd, unsigned long arg, struct file *file)
+ {
+-	struct i2o_cmd_passthru32 *cmd = (struct i2o_cmd_passthru32 *)arg;
++	struct i2o_cmd_passthru32 __user *cmd;
+ 	struct i2o_controller *c;
+-	u32 *user_msg = (u32*)(u64)cmd->msg;
++	u32 *user_msg;
+ 	u32 *reply = NULL;
+ 	u32 *user_reply = NULL;
+ 	u32 size = 0;
+@@ -726,10 +726,16 @@ static int i2o_cfg_passthru32(unsigned f
+ 	i2o_status_block *sb;
+ 	struct i2o_message *msg;
+ 	u32 m;
++	unsigned int iop;
+ 
+-	c = i2o_find_iop(cmd->iop);
++	cmd = (struct i2o_cmd_passthru32 __user *)arg;
++
++	if (get_user(iop, &cmd->iop) || get_user(user_msg, &cmd->msg))
++		return -EFAULT;
++
++	c = i2o_find_iop(iop);
+ 	if(!c) {
+-		DBG("controller %d not found\n", cmd->iop);
++		DBG("controller %d not found\n", iop);
+                 return -ENXIO;
+ 	}
+ 
+@@ -896,7 +902,7 @@ static int i2o_cfg_passthru(unsigned lon
+ {
+ 	struct i2o_cmd_passthru __user*cmd=(struct i2o_cmd_passthru __user*)arg;
+ 	struct i2o_controller *c;
+-	u32 __user *user_msg = (u32 __user *)cmd->msg;
++	u32 __user *user_msg;
+ 	u32 *reply = NULL;
+ 	u32 __user *user_reply = NULL;
+ 	u32 size = 0;
+@@ -911,11 +917,14 @@ static int i2o_cfg_passthru(unsigned lon
+ 	i2o_status_block *sb;
+ 	struct i2o_message *msg;
+ 	u32 m;
++	unsigned int iop;
++
++	if (get_user(iop, &cmd->iop) || get_user(user_msg, &cmd->msg))
++		return -EFAULT;
+ 
+-	printk(KERN_INFO "iop: %d\n", cmd->iop);
+-	c = i2o_find_iop(cmd->iop);
++	c = i2o_find_iop(iop);
+ 	if(!c) {
+-		DBG("controller %d not found\n", cmd->iop);
++		DBG("controller %d not found\n", iop);
+                 return -ENXIO;
+ 	}
+ 
+diff -puN drivers/message/i2o/pci.c~i2o-resync-with-post-266-changes-2 drivers/message/i2o/pci.c
+--- 25/drivers/message/i2o/pci.c~i2o-resync-with-post-266-changes-2	Thu Jul 29 16:37:09 2004
++++ 25-akpm/drivers/message/i2o/pci.c	Thu Jul 29 16:37:09 2004
+@@ -480,8 +480,6 @@ static irqreturn_t i2o_pci_interrupt(int
+ 	if(mv == I2O_QUEUE_EMPTY) {
+ 		mv=I2O_REPLY_READ32(c);
+ 		if(unlikely(mv == I2O_QUEUE_EMPTY)) {
+-			printk(KERN_INFO "i2o: interrupt and message queue "
+-			       "empty!\n");
+ 			return IRQ_NONE;
+ 		} else
+ 			DBG("960 bug detected\n");
+diff -puN drivers/message/i2o/proc-osm.c~i2o-resync-with-post-266-changes-2 drivers/message/i2o/proc-osm.c
+--- 25/drivers/message/i2o/proc-osm.c~i2o-resync-with-post-266-changes-2	Thu Jul 29 16:37:09 2004
++++ 25-akpm/drivers/message/i2o/proc-osm.c	Thu Jul 29 16:37:09 2004
+@@ -2049,7 +2049,7 @@ static int __init i2o_proc_fs_create(voi
+ {
+ 	struct i2o_controller *c;
+ 
+-	i2o_proc_dir_root = proc_mkdir("i2o", 0);
++	i2o_proc_dir_root = proc_mkdir("i2o", NULL);
+ 	if(!i2o_proc_dir_root)
+ 		return -1;
+ 
+@@ -2075,7 +2075,7 @@ static int __exit i2o_proc_fs_destroy(vo
+ 	list_for_each_entry(c, &i2o_controllers, list)
+ 		i2o_proc_iop_remove(i2o_proc_dir_root, c);
+ 
+-	remove_proc_entry("i2o", 0);
++	remove_proc_entry("i2o", NULL);
+ 
+ 	return 0;
+ };
+_

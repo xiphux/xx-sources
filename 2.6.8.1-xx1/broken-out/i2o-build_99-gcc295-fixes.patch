@@ -1,0 +1,698 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/message/i2o/block-osm.c  |   42 +++++++++++----------
+ 25-akpm/drivers/message/i2o/config-osm.c |   56 ++++++++++++++--------------
+ 25-akpm/drivers/message/i2o/device.c     |    8 ++--
+ 25-akpm/drivers/message/i2o/driver.c     |   12 +++---
+ 25-akpm/drivers/message/i2o/exec-osm.c   |   32 ++++++++--------
+ 25-akpm/drivers/message/i2o/iop.c        |   60 +++++++++++++++----------------
+ 25-akpm/drivers/message/i2o/scsi-osm.c   |   30 ++++++++-------
+ 25-akpm/include/linux/i2o.h              |    4 +-
+ 8 files changed, 125 insertions(+), 119 deletions(-)
+
+diff -puN include/linux/i2o.h~i2o-build_99-gcc295-fixes include/linux/i2o.h
+--- 25/include/linux/i2o.h~i2o-build_99-gcc295-fixes	2004-07-31 22:50:54.000000000 -0700
++++ 25-akpm/include/linux/i2o.h	2004-07-31 23:28:59.034854648 -0700
+@@ -50,9 +50,9 @@ struct i2o_message
+ 			u32	function:8;
+ 			u32	icntxt; /* initiator context */
+ 			u32	tcntxt; /* transaction context */
+-		};
++		} s;
+ 		u32	head[4];
+-	};
++	} u;
+ 	/* List follows */
+ 	u32 body[0];
+ };
+diff -puN drivers/message/i2o/block-osm.c~i2o-build_99-gcc295-fixes drivers/message/i2o/block-osm.c
+--- 25/drivers/message/i2o/block-osm.c~i2o-build_99-gcc295-fixes	2004-07-31 22:50:54.000000000 -0700
++++ 25-akpm/drivers/message/i2o/block-osm.c	2004-07-31 22:50:54.000000000 -0700
+@@ -133,8 +133,10 @@ static struct i2o_driver i2o_block_drive
+ 	.event		= i2o_block_event,
+ 	.reply		= i2o_block_reply,
+ 	.classes	= i2o_block_class_id,
+-	.driver.probe	= i2o_block_probe,
+-	.driver.remove	= i2o_block_remove
++	.driver		= {
++				.probe = i2o_block_probe,
++				.remove = i2o_block_remove,
++			},
+ };
+ 
+ 
+@@ -384,9 +386,9 @@ static int i2o_block_device_flush(struct
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -ETIMEDOUT;
+ 
+-	writel(FIVE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
++	writel(FIVE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
+ 	writel(I2O_CMD_BLOCK_CFLUSH<<24|HOST_TID<<12|dev->lct_data.tid,
+-	       &msg->head[1]);
++	       &msg->u.head[1]);
+ 	writel(60<<16, &msg->body[0]);
+ 	DBG("Flushing...\n");
+ 
+@@ -412,9 +414,9 @@ static int i2o_block_device_mount(struct
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -ETIMEDOUT;
+ 
+-	writel(FIVE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
++	writel(FIVE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
+ 	writel(I2O_CMD_BLOCK_MMOUNT<<24|HOST_TID<<12|dev->lct_data.tid,
+-	       &msg->head[1]);
++	       &msg->u.head[1]);
+ 	writel(-1, &msg->body[0]);
+ 	writel(0, &msg->body[1]);
+ 	DBG("Mounting...\n");
+@@ -441,9 +443,9 @@ static int i2o_block_device_lock(struct 
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -ETIMEDOUT;
+ 
+-	writel(FIVE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
++	writel(FIVE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
+ 	writel(I2O_CMD_BLOCK_MLOCK<<24|HOST_TID<<12|dev->lct_data.tid,
+-	       &msg->head[1]);
++	       &msg->u.head[1]);
+ 	writel(-1, &msg->body[0]);
+ 	DBG("Locking...\n");
+ 
+@@ -469,9 +471,9 @@ static int i2o_block_device_unlock(struc
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -ETIMEDOUT;
+ 
+-	writel(FIVE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
++	writel(FIVE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
+ 	writel(I2O_CMD_BLOCK_MUNLOCK<<24|HOST_TID<<12|dev->lct_data.tid,
+-	       &msg->head[1]);
++	       &msg->u.head[1]);
+ 	writel(media_id, &msg->body[0]);
+ 	DBG("Unlocking...\n");
+ 
+@@ -499,9 +501,9 @@ static int i2o_block_device_power(struct
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -ETIMEDOUT;
+ 
+-	writel(FOUR_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
++	writel(FOUR_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
+ 	writel(I2O_CMD_BLOCK_POWER<<24|HOST_TID<<12|i2o_dev->lct_data.tid,
+-	       &msg->head[1]);
++	       &msg->u.head[1]);
+ 	writel(op << 24, &msg->body[0]);
+ 	DBG("Power...\n");
+ 
+@@ -746,8 +748,8 @@ static int i2o_block_transfer(struct req
+ 	}
+ 
+ 	/* Build the message based on the request. */
+-	writel(i2o_block_driver.context, &msg->icntxt);
+-	writel(tcntxt, &msg->tcntxt);
++	writel(i2o_block_driver.context, &msg->u.s.icntxt);
++	writel(tcntxt, &msg->u.s.tcntxt);
+ 	writel(req->nr_sectors << 9, &msg->body[1]);
+ 
+ 	writel((((u64)req->sector) << 9) & 0xffffffff, &msg->body[2]);
+@@ -758,7 +760,7 @@ static int i2o_block_transfer(struct req
+ 	sg = ireq->sg_table;
+ 
+ 	if(rq_data_dir(req) == READ) {
+-		writel(I2O_CMD_BLOCK_READ<<24|HOST_TID<<12|tid, &msg->head[1]);
++		writel(I2O_CMD_BLOCK_READ<<24|HOST_TID<<12|tid, &msg->u.head[1]);
+ 		sg_flags = 0x10000000;
+ 		switch(dev->rcache) {
+ 			case CACHE_NULL:
+@@ -773,7 +775,7 @@ static int i2o_block_transfer(struct req
+ 				break;
+ 		}
+ 	} else {
+-		writel(I2O_CMD_BLOCK_WRITE<<24|HOST_TID<<12|tid, &msg->head[1]);
++		writel(I2O_CMD_BLOCK_WRITE<<24|HOST_TID<<12|tid, &msg->u.head[1]);
+ 		sg_flags = 0x14000000;
+ 		switch(dev->wcache) {
+ 			case CACHE_NULL:
+@@ -805,7 +807,7 @@ static int i2o_block_transfer(struct req
+ 		sg++;
+ 	}
+ 
+-	writel(I2O_MESSAGE_SIZE(((unsigned long)mptr-(unsigned long)&msg->head[0])>>2) | SGL_OFFSET_8, &msg->head[0]);
++	writel(I2O_MESSAGE_SIZE(((unsigned long)mptr-(unsigned long)&msg->u.head[0])>>2) | SGL_OFFSET_8, &msg->u.head[0]);
+ 
+ 	i2o_msg_post(c,m);
+ 
+@@ -845,7 +847,7 @@ static int i2o_block_reply(struct i2o_co
+ 	unsigned long flags;
+ 
+ 	/* FAILed message */
+-	if(unlikely(readl(&msg->head[0]) & (1<<13))) {
++	if(unlikely(readl(&msg->u.head[0]) & (1<<13))) {
+ 		struct i2o_message *pmsg;
+ 		u32 pm;
+ 
+@@ -863,7 +865,7 @@ static int i2o_block_reply(struct i2o_co
+ 		pm = readl(&msg->body[3]);
+ 		pmsg = c->in_queue.virt + pm;
+ 
+-		req = i2o_cntxt_list_get(c, readl(&pmsg->tcntxt));
++		req = i2o_cntxt_list_get(c, readl(&pmsg->u.s.tcntxt));
+ 		if(unlikely(!req)) {
+ 			printk(KERN_ERR "block-osm: NULL reply received!\n");
+ 			return -1;
+@@ -893,7 +895,7 @@ static int i2o_block_reply(struct i2o_co
+ 		return -1;
+ 	}
+ 
+-	req = i2o_cntxt_list_get(c, readl(&msg->tcntxt));
++	req = i2o_cntxt_list_get(c, readl(&msg->u.s.tcntxt));
+ 	if(unlikely(!req)) {
+ 		printk(KERN_ERR "block-osm: NULL reply received!\n");
+ 		return -1;
+diff -puN drivers/message/i2o/config-osm.c~i2o-build_99-gcc295-fixes drivers/message/i2o/config-osm.c
+--- 25/drivers/message/i2o/config-osm.c~i2o-build_99-gcc295-fixes	2004-07-31 22:50:54.000000000 -0700
++++ 25-akpm/drivers/message/i2o/config-osm.c	2004-07-31 23:29:17.095109072 -0700
+@@ -474,10 +474,10 @@ static int i2o_cfg_swdl(unsigned long ar
+ 
+ 	__copy_from_user(buffer.virt, kxfer.buf, fragsize);
+ 
+-	writel(NINE_WORD_MSG_SIZE | SGL_OFFSET_7, &msg->head[0]);
+-	writel(I2O_CMD_SW_DOWNLOAD<<24|HOST_TID<<12|ADAPTER_TID, &msg->head[1]);
+-	writel(i2o_config_driver.context, &msg->head[2]);
+-	writel(0, &msg->head[3]);
++	writel(NINE_WORD_MSG_SIZE | SGL_OFFSET_7, &msg->u.head[0]);
++	writel(I2O_CMD_SW_DOWNLOAD<<24|HOST_TID<<12|ADAPTER_TID, &msg->u.head[1]);
++	writel(i2o_config_driver.context, &msg->u.head[2]);
++	writel(0, &msg->u.head[3]);
+ 	writel((((u32)kxfer.flags)<<24) | (((u32)kxfer.sw_type)<<16) |
+ 		(((u32)maxfrag)<<8) | (((u32)curfrag)), &msg->body[0]);
+ 	writel(swlen, &msg->body[1]);
+@@ -542,10 +542,10 @@ static int i2o_cfg_swul(unsigned long ar
+ 		return -ENOMEM;
+ 	}
+ 
+-	writel(NINE_WORD_MSG_SIZE | SGL_OFFSET_7, &msg->head[0]);
+-	writel(I2O_CMD_SW_UPLOAD<<24|HOST_TID<<12|ADAPTER_TID, &msg->head[1]);
+-	writel(i2o_config_driver.context, &msg->head[2]);
+-	writel(0, &msg->head[3]);
++	writel(NINE_WORD_MSG_SIZE | SGL_OFFSET_7, &msg->u.head[0]);
++	writel(I2O_CMD_SW_UPLOAD<<24|HOST_TID<<12|ADAPTER_TID, &msg->u.head[1]);
++	writel(i2o_config_driver.context, &msg->u.head[2]);
++	writel(0, &msg->u.head[3]);
+ 	writel((u32)kxfer.flags<<24|(u32)kxfer.sw_type<<16|(u32)maxfrag<<8|(u32)curfrag, &msg->body[0]);
+ 	writel(swlen, &msg->body[1]);
+ 	writel(kxfer.sw_id, &msg->body[2]);
+@@ -593,10 +593,10 @@ static int i2o_cfg_swdel(unsigned long a
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -EBUSY;
+ 
+-	writel(SEVEN_WORD_MSG_SIZE | SGL_OFFSET_0, &msg->head[0]);
+-	writel(I2O_CMD_SW_REMOVE<<24|HOST_TID<<12|ADAPTER_TID, &msg->head[1]);
+-	writel(i2o_config_driver.context, &msg->head[2]);
+-	writel(0, &msg->head[3]);
++	writel(SEVEN_WORD_MSG_SIZE | SGL_OFFSET_0, &msg->u.head[0]);
++	writel(I2O_CMD_SW_REMOVE<<24|HOST_TID<<12|ADAPTER_TID, &msg->u.head[1]);
++	writel(i2o_config_driver.context, &msg->u.head[2]);
++	writel(0, &msg->u.head[3]);
+ 	writel((u32)kxfer.flags<<24 | (u32)kxfer.sw_type<<16, &msg->body[0]);
+ 	writel(swlen, &msg->body[1]);
+ 	writel(kxfer.sw_id, &msg->body[2]);
+@@ -627,10 +627,10 @@ static int i2o_cfg_validate(unsigned lon
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -EBUSY;
+ 
+-	writel(FOUR_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
+-	writel(I2O_CMD_CONFIG_VALIDATE<<24|HOST_TID<<12|iop, &msg->head[1]);
+-	writel(i2o_config_driver.context, &msg->head[2]);
+-	writel(0, &msg->head[3]);
++	writel(FOUR_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
++	writel(I2O_CMD_CONFIG_VALIDATE<<24|HOST_TID<<12|iop, &msg->u.head[1]);
++	writel(i2o_config_driver.context, &msg->u.head[2]);
++	writel(0, &msg->u.head[3]);
+ 
+ 	token = i2o_msg_post_wait(c, m, 10);
+ 
+@@ -669,11 +669,11 @@ static int i2o_cfg_evt_reg(unsigned long
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -EBUSY;
+ 
+-	writel(FOUR_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
++	writel(FOUR_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
+ 	writel(I2O_CMD_UTIL_EVT_REGISTER<<24|HOST_TID<<12|kdesc.tid,
+-	       &msg->head[1]);
+-	writel(i2o_config_driver.context, &msg->head[2]);
+-	writel(i2o_cntxt_list_add(c, fp->private_data), &msg->head[3]);
++	       &msg->u.head[1]);
++	writel(i2o_config_driver.context, &msg->u.head[2]);
++	writel(i2o_cntxt_list_add(c, fp->private_data), &msg->u.head[3]);
+ 	writel(kdesc.evt_mask, &msg->body[0]);
+ 
+ 	i2o_msg_post(c, m);
+@@ -772,10 +772,10 @@ static int i2o_cfg_passthru32(unsigned f
+ 	}
+ 	memset(reply, 0, reply_size);
+ 
+-	sg_offset = (msg->head[0]>>4)&0x0f;
++	sg_offset = (msg->u.head[0]>>4)&0x0f;
+ 
+-	writel(i2o_config_driver.context, &msg->icntxt);
+-	writel(i2o_cntxt_list_add(c, reply), &msg->tcntxt);
++	writel(i2o_config_driver.context, &msg->u.s.icntxt);
++	writel(i2o_cntxt_list_add(c, reply), &msg->u.s.tcntxt);
+ 
+ 	memset(sg_list,0, sizeof(sg_list[0])*SG_TABLESIZE);
+ 	if(sg_offset) {
+@@ -786,7 +786,7 @@ static int i2o_cfg_passthru32(unsigned f
+ 			goto cleanup;
+ 		}
+ 		// TODO 64bit fix
+-		sg = (struct sg_simple_element*) ((&msg->head[0])+sg_offset);
++		sg = (struct sg_simple_element*) ((&msg->u.head[0])+sg_offset);
+ 		sg_count = (size - sg_offset*4) / sizeof(struct sg_simple_element);
+ 		if (sg_count > SG_TABLESIZE) {
+ 			printk(KERN_DEBUG"%s:IOCTL SG List too large (%u)\n", c->name,sg_count);
+@@ -954,10 +954,10 @@ static int i2o_cfg_passthru(unsigned lon
+ 	}
+ 	memset(reply, 0, reply_size);
+ 
+-	sg_offset = (msg->head[0]>>4)&0x0f;
++	sg_offset = (msg->u.head[0]>>4)&0x0f;
+ 
+-	writel(i2o_config_driver.context, &msg->icntxt);
+-	writel(i2o_cntxt_list_add(c, reply), &msg->tcntxt);
++	writel(i2o_config_driver.context, &msg->u.s.icntxt);
++	writel(i2o_cntxt_list_add(c, reply), &msg->u.s.tcntxt);
+ 
+ 	memset(sg_list,0, sizeof(sg_list[0])*SG_TABLESIZE);
+ 	if(sg_offset) {
+@@ -968,7 +968,7 @@ static int i2o_cfg_passthru(unsigned lon
+ 			goto cleanup;
+ 		}
+ 		// TODO 64bit fix
+-		sg = (struct sg_simple_element*) ((&msg->head[0])+sg_offset);
++		sg = (struct sg_simple_element*) ((&msg->u.head[0])+sg_offset);
+ 		sg_count = (size - sg_offset*4) / sizeof(struct sg_simple_element);
+ 		if (sg_count > SG_TABLESIZE) {
+ 			printk(KERN_DEBUG"%s:IOCTL SG List too large (%u)\n", c->name,sg_count);
+diff -puN drivers/message/i2o/iop.c~i2o-build_99-gcc295-fixes drivers/message/i2o/iop.c
+--- 25/drivers/message/i2o/iop.c~i2o-build_99-gcc295-fixes	2004-07-31 22:50:54.000000000 -0700
++++ 25-akpm/drivers/message/i2o/iop.c	2004-07-31 22:50:54.000000000 -0700
+@@ -101,10 +101,10 @@ void i2o_msg_nop(struct i2o_controller *
+ {
+ 	struct i2o_message *msg = c->in_queue.virt + m;
+ 
+-	writel(THREE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
+-	writel(I2O_CMD_UTIL_NOP<<24|HOST_TID<<12|ADAPTER_TID, &msg->head[1]);
+-	writel(0, &msg->head[2]);
+-	writel(0, &msg->head[3]);
++	writel(THREE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
++	writel(I2O_CMD_UTIL_NOP<<24|HOST_TID<<12|ADAPTER_TID, &msg->u.head[1]);
++	writel(0, &msg->u.head[2]);
++	writel(0, &msg->u.head[3]);
+ 	i2o_msg_post(c, m);
+ };
+ 
+@@ -346,8 +346,8 @@ static int i2o_iop_quiesce(struct i2o_co
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -ETIMEDOUT;
+ 
+-	writel(FOUR_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
+-	writel(I2O_CMD_SYS_QUIESCE<<24|HOST_TID<<12|ADAPTER_TID, &msg->head[1]);
++	writel(FOUR_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
++	writel(I2O_CMD_SYS_QUIESCE<<24|HOST_TID<<12|ADAPTER_TID, &msg->u.head[1]);
+ 
+ 	/* Long timeout needed for quiesce if lots of devices */
+ 	if ((rc=i2o_msg_post_wait(c, m, 240)))
+@@ -386,8 +386,8 @@ static int i2o_iop_enable(struct i2o_con
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -ETIMEDOUT;
+ 
+-	writel(FOUR_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
+-	writel(I2O_CMD_SYS_ENABLE<<24|HOST_TID<<12|ADAPTER_TID, &msg->head[1]);
++	writel(FOUR_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
++	writel(I2O_CMD_SYS_ENABLE<<24|HOST_TID<<12|ADAPTER_TID, &msg->u.head[1]);
+ 
+ 	/* How long of a timeout do we need? */
+ 	if((rc = i2o_msg_post_wait(c, m, 240)))
+@@ -507,9 +507,9 @@ static int i2o_iop_clear(struct i2o_cont
+ 	/* Quiesce all IOPs first */
+ 	i2o_iop_quiesce_all();
+ 
+-	writel(FOUR_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
++	writel(FOUR_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
+ 	writel(I2O_CMD_ADAPTER_CLEAR<<24|HOST_TID<<12|ADAPTER_TID,
+-	       &msg->head[1]);
++	       &msg->u.head[1]);
+ 
+ 	if ((rc=i2o_msg_post_wait(c, m, 30)))
+ 		printk(KERN_INFO "%s: Unable to clear (status=%#x).\n",
+@@ -554,11 +554,11 @@ static int i2o_iop_reset(struct i2o_cont
+ 	/* Quiesce all IOPs first */
+ 	i2o_iop_quiesce_all();
+ 
+-	writel(EIGHT_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
++	writel(EIGHT_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
+ 	writel(I2O_CMD_ADAPTER_RESET<<24|HOST_TID<<12|ADAPTER_TID,
+-	       &msg->head[1]);
+-	writel(i2o_exec_driver.context, &msg->icntxt);
+-	writel(0, &msg->tcntxt); //FIXME: use reasonable transaction context
++	       &msg->u.head[1]);
++	writel(i2o_exec_driver.context, &msg->u.s.icntxt);
++	writel(0, &msg->u.s.tcntxt); //FIXME: use reasonable transaction context
+ 	writel(0, &msg->body[0]);
+ 	writel(0, &msg->body[1]);
+ 	writel(i2o_ptr_low((void *)c->status.phys), &msg->body[2]);
+@@ -794,8 +794,8 @@ static int i2o_iop_systab_set(struct i2o
+ 		return -ENOMEM;
+ 	}
+ 
+-	writel(I2O_MESSAGE_SIZE(12) | SGL_OFFSET_6, &msg->head[0]);
+-	writel(I2O_CMD_SYS_TAB_SET<<24|HOST_TID<<12|ADAPTER_TID, &msg->head[1]);
++	writel(I2O_MESSAGE_SIZE(12) | SGL_OFFSET_6, &msg->u.head[0]);
++	writel(I2O_CMD_SYS_TAB_SET<<24|HOST_TID<<12|ADAPTER_TID, &msg->u.head[1]);
+ 
+ 	/*
+  	 * Provide three SGL-elements:
+@@ -869,10 +869,10 @@ int i2o_status_get(struct i2o_controller
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -ETIMEDOUT;
+ 
+-	writel(NINE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
+-	writel(I2O_CMD_STATUS_GET<<24|HOST_TID<<12|ADAPTER_TID, &msg->head[1]);
+-	writel(i2o_exec_driver.context, &msg->icntxt);
+-	writel(0, &msg->tcntxt); // FIXME: use resonable transaction context
++	writel(NINE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
++	writel(I2O_CMD_STATUS_GET<<24|HOST_TID<<12|ADAPTER_TID, &msg->u.head[1]);
++	writel(i2o_exec_driver.context, &msg->u.s.icntxt);
++	writel(0, &msg->u.s.tcntxt); // FIXME: use resonable transaction context
+ 	writel(0, &msg->body[0]);
+ 	writel(0, &msg->body[1]);
+ 	writel(i2o_ptr_low((void *)c->status_block.phys), &msg->body[2]);
+@@ -927,9 +927,9 @@ int i2o_hrt_get(struct i2o_controller *c
+ 		if(m == I2O_QUEUE_EMPTY)
+ 			return -ETIMEDOUT;
+ 
+-		writel(SIX_WORD_MSG_SIZE| SGL_OFFSET_4, &msg->head[0]);
++		writel(SIX_WORD_MSG_SIZE| SGL_OFFSET_4, &msg->u.head[0]);
+ 		writel(I2O_CMD_HRT_GET<<24|HOST_TID<<12|ADAPTER_TID,
+-		       &msg->head[1]);
++		       &msg->u.head[1]);
+ 		writel(0xd0000000 | c->hrt.len, &msg->body[0]);
+ 		writel(c->hrt.phys, &msg->body[1]);
+ 
+@@ -982,11 +982,11 @@ int i2o_iop_init_outbound_queue(struct i
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -ETIMEDOUT;
+ 
+-	writel(EIGHT_WORD_MSG_SIZE| TRL_OFFSET_6, &msg->head[0]);
++	writel(EIGHT_WORD_MSG_SIZE| TRL_OFFSET_6, &msg->u.head[0]);
+ 	writel(I2O_CMD_OUTBOUND_INIT<<24|HOST_TID<<12|ADAPTER_TID,
+-	       &msg->head[1]);
+-	writel(i2o_exec_driver.context, &msg->icntxt);
+-	writel(0x0106, &msg->tcntxt);		/* FIXME: why 0x0106, maybe in
++	       &msg->u.head[1]);
++	writel(i2o_exec_driver.context, &msg->u.s.icntxt);
++	writel(0x0106, &msg->u.s.tcntxt);		/* FIXME: why 0x0106, maybe in
+ 						   Spec? */
+ 	writel(PAGE_SIZE, &msg->body[0]);
+ 	writel(MSG_FRAME_SIZE<<16|0x80, &msg->body[1]);	/* Outbound msg frame
+@@ -1166,11 +1166,11 @@ int i2o_event_register(struct i2o_device
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -ETIMEDOUT;
+ 
+-	writel(FIVE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
++	writel(FIVE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
+ 	writel(I2O_CMD_UTIL_EVT_REGISTER<<24|HOST_TID<<12|dev->lct_data.tid,
+-	       &msg->head[1]);
+-	writel(drv->context, &msg->icntxt);
+-	writel(tcntxt, &msg->tcntxt);
++	       &msg->u.head[1]);
++	writel(drv->context, &msg->u.s.icntxt);
++	writel(tcntxt, &msg->u.s.tcntxt);
+ 	writel(evt_mask, &msg->body[0]);
+ 
+ 	i2o_msg_post(c, m);
+diff -puN drivers/message/i2o/driver.c~i2o-build_99-gcc295-fixes drivers/message/i2o/driver.c
+--- 25/drivers/message/i2o/driver.c~i2o-build_99-gcc295-fixes	2004-07-31 22:50:54.000000000 -0700
++++ 25-akpm/drivers/message/i2o/driver.c	2004-07-31 22:50:54.000000000 -0700
+@@ -183,7 +183,7 @@ void i2o_driver_unregister(struct i2o_dr
+ int i2o_driver_dispatch(struct i2o_controller *c, u32 m,struct i2o_message *msg)
+ {
+ 	struct i2o_driver *drv;
+-	u32 context = readl(&msg->icntxt);
++	u32 context = readl(&msg->u.s.icntxt);
+ 
+ 	if(likely(context < i2o_max_drivers)) {
+ 		spin_lock(&i2o_drivers_lock);
+@@ -196,18 +196,18 @@ int i2o_driver_dispatch(struct i2o_contr
+ 			return -EIO;
+ 		}
+ 
+-		if((readl(&msg->head[1])>>24) == I2O_CMD_UTIL_EVT_REGISTER) {
++		if((readl(&msg->u.head[1])>>24) == I2O_CMD_UTIL_EVT_REGISTER) {
+ 			struct i2o_device *dev, *tmp;
+ 			struct i2o_event *evt;
+ 			u16 size;
+ 			u16 tid;
+ 
+-			tid = readl(&msg->head[1])&0x1fff;
++			tid = readl(&msg->u.head[1])&0x1fff;
+ 
+ 			DBG("%s: event received from device %d\n", c->name,tid);
+ 
+ 			/* cut of header from message size (in 32-bit words) */
+-			size = (readl(&msg->head[0])>>16)-5;
++			size = (readl(&msg->u.head[0])>>16)-5;
+ 
+ 			evt = kmalloc(size*4 + sizeof(*evt), GFP_ATOMIC);
+ 			if(!evt)
+@@ -215,7 +215,7 @@ int i2o_driver_dispatch(struct i2o_contr
+ 			memset(evt, 0, size*4 + sizeof(*evt));
+ 
+ 			evt->size = size;
+-			memcpy_fromio(&evt->tcntxt, &msg->tcntxt, (size+2)*4);
++			memcpy_fromio(&evt->tcntxt, &msg->u.s.tcntxt, (size+2)*4);
+ 
+ 
+ 			list_for_each_entry_safe(dev, tmp, &c->devices, list)
+@@ -237,7 +237,7 @@ int i2o_driver_dispatch(struct i2o_contr
+ 		return -EIO;
+ 	} else
+ 		printk(KERN_WARNING "i2o: Spurious reply to unknown driver "
+-				    "%d\n", readl(&msg->icntxt));
++				    "%d\n", readl(&msg->u.s.icntxt));
+ 	return -EIO;
+ }
+ 
+diff -puN drivers/message/i2o/device.c~i2o-build_99-gcc295-fixes drivers/message/i2o/device.c
+--- 25/drivers/message/i2o/device.c~i2o-build_99-gcc295-fixes	2004-07-31 22:50:54.000000000 -0700
++++ 25-akpm/drivers/message/i2o/device.c	2004-07-31 22:50:54.000000000 -0700
+@@ -90,8 +90,8 @@ static inline int i2o_device_issue_claim
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -ETIMEDOUT;
+ 
+-	writel(FIVE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->head[0]);
+-	writel(cmd<<24|HOST_TID<<12|dev->lct_data.tid, &msg->head[1]);
++	writel(FIVE_WORD_MSG_SIZE|SGL_OFFSET_0, &msg->u.head[0]);
++	writel(cmd<<24|HOST_TID<<12|dev->lct_data.tid, &msg->u.head[1]);
+ 	writel(type, &msg->body[0]);
+ 
+ 	return i2o_msg_post_wait(dev->iop, m, 60);
+@@ -494,7 +494,7 @@ int i2o_parm_issue(struct i2o_device *i2
+ 	}
+ 
+ 	i = 0;
+-	writel(cmd<<24 | HOST_TID<<12 | i2o_dev->lct_data.tid, &msg->head[1]);
++	writel(cmd<<24 | HOST_TID<<12 | i2o_dev->lct_data.tid, &msg->u.head[1]);
+ 	writel(0, &msg->body[i ++]);
+ 	writel(0x4C000000 | oplen, &msg->body[i ++]);	/* OperationList */
+ 	memcpy_toio(&msg->body[i], oplist, oplen);
+@@ -503,7 +503,7 @@ int i2o_parm_issue(struct i2o_device *i2
+ 	writel(res.phys, &msg->body[i ++]);
+ 
+ 	writel(I2O_MESSAGE_SIZE(i+sizeof(struct i2o_message)/4)| SGL_OFFSET_5,
+-	       &msg->head[0]);
++	       &msg->u.head[0]);
+ 
+ 	rc = i2o_msg_post_wait_mem(c, m, 10, &res);
+ 
+diff -puN drivers/message/i2o/scsi-osm.c~i2o-build_99-gcc295-fixes drivers/message/i2o/scsi-osm.c
+--- 25/drivers/message/i2o/scsi-osm.c~i2o-build_99-gcc295-fixes	2004-07-31 22:50:54.000000000 -0700
++++ 25-akpm/drivers/message/i2o/scsi-osm.c	2004-07-31 23:28:59.033854800 -0700
+@@ -87,7 +87,7 @@ struct i2o_scsi_host {
+ 	struct list_head list;		/* node in in i2o_scsi_hosts */
+ 	struct Scsi_Host *scsi_host;	/* pointer to the SCSI host */
+ 	struct i2o_controller *iop;	/* pointer to the I2O controller */
+-	struct i2o_device *channel[];	/* channel->i2o_dev mapping table */
++	struct i2o_device *channel[0];	/* channel->i2o_dev mapping table */
+ };
+ 
+ /*
+@@ -122,8 +122,10 @@ static struct i2o_driver i2o_scsi_driver
+ 	.name		= "scsi-osm",
+ 	.reply		= i2o_scsi_reply,
+ 	.classes	= i2o_scsi_class_id,
+-	.driver.probe	= i2o_scsi_probe,
+-	.driver.remove	= i2o_scsi_remove
++	.driver		= {
++				.probe	= i2o_scsi_probe,
++				.remove	= i2o_scsi_remove,
++			},
+ };
+ 
+ /**
+@@ -311,9 +313,9 @@ static int i2o_scsi_reply(struct i2o_con
+ 	struct device *dev;
+ 	u8 as,ds,st;
+ 
+-	cmd = i2o_cntxt_list_get(c, readl(&msg->tcntxt));
++	cmd = i2o_cntxt_list_get(c, readl(&msg->u.s.tcntxt));
+ 
+-	if(msg->head[0] & (1<<13)) {
++	if(msg->u.head[0] & (1<<13)) {
+ 		struct i2o_message *pmsg;	/* preserved message */
+ 		u32 pm;
+ 
+@@ -323,9 +325,9 @@ static int i2o_scsi_reply(struct i2o_con
+ 
+ 		printk("IOP fail.\n");
+ 		printk("From %d To %d Cmd %d.\n",
+-			(msg->head[1]>>12)&0xFFF,
+-			msg->head[1]&0xFFF,
+-			msg->head[1]>>24);
++			(msg->u.head[1]>>12)&0xFFF,
++			msg->u.head[1]&0xFFF,
++			msg->u.head[1]>>24);
+ 		printk("Failure Code %d.\n", msg->body[0]>>24);
+ 		if(msg->body[0]&(1<<16))
+ 			printk("Format error.\n");
+@@ -338,7 +340,7 @@ static int i2o_scsi_reply(struct i2o_con
+ 
+ 		printk("Failing message is %p.\n", pmsg);
+ 
+-		cmd = i2o_cntxt_list_get(c, readl(&pmsg->tcntxt));
++		cmd = i2o_cntxt_list_get(c, readl(&pmsg->u.s.tcntxt));
+ 		if(!cmd)
+ 			return 1;
+ 
+@@ -553,11 +555,11 @@ static int i2o_scsi_queuecommand(struct 
+ 			return 0;
+ 	}
+ 
+-	writel(I2O_CMD_SCSI_EXEC<<24|HOST_TID<<12|tid, &msg->head[1]);
+-	writel(i2o_scsi_driver.context, &msg->icntxt);
++	writel(I2O_CMD_SCSI_EXEC<<24|HOST_TID<<12|tid, &msg->u.head[1]);
++	writel(i2o_scsi_driver.context, &msg->u.s.icntxt);
+ 
+ 	/* We want the SCSI control block back */
+-	writel(i2o_cntxt_list_add(c, SCpnt), &msg->tcntxt);
++	writel(i2o_cntxt_list_add(c, SCpnt), &msg->u.s.tcntxt);
+ 
+ 	/* LSI_920_PCI_QUIRK
+ 	 *
+@@ -615,7 +617,7 @@ static int i2o_scsi_queuecommand(struct 
+ 			sg++;
+ 		}
+ 
+-		reqlen = mptr - &msg->head[0];
++		reqlen = mptr - &msg->u.head[0];
+ 		writel(len, lenptr);
+ 	} else {
+ 		len = SCpnt->request_bufflen;
+@@ -640,7 +642,7 @@ static int i2o_scsi_queuecommand(struct 
+ 	}
+ 
+ 	/* Stick the headers on */
+-	writel(reqlen<<16 | SGL_OFFSET_10, &msg->head[0]);
++	writel(reqlen<<16 | SGL_OFFSET_10, &msg->u.head[0]);
+ 
+ 	/* Queue the message */
+ 	i2o_msg_post(c,m);
+diff -puN drivers/message/i2o/exec-osm.c~i2o-build_99-gcc295-fixes drivers/message/i2o/exec-osm.c
+--- 25/drivers/message/i2o/exec-osm.c~i2o-build_99-gcc295-fixes	2004-07-31 22:50:54.000000000 -0700
++++ 25-akpm/drivers/message/i2o/exec-osm.c	2004-07-31 22:50:54.000000000 -0700
+@@ -89,8 +89,10 @@ struct i2o_driver i2o_exec_driver = {
+ 	.reply		= i2o_exec_reply,
+ 	.event		= i2o_exec_event,
+ 	.classes	= i2o_exec_class_id,
+-	.driver.probe	= i2o_exec_probe,
+-	.driver.remove	= i2o_exec_remove
++	.driver		= {
++				.probe	= i2o_exec_probe,
++				.remove	= i2o_exec_remove,
++			},
+ };
+ 
+ 
+@@ -138,9 +140,9 @@ int i2o_msg_post_wait_mem(struct i2o_con
+ 	 * We will only use transaction contexts >= 0x80000000 for POST WAIT,
+ 	 * so we could find a POST WAIT reply easier in the reply handler.
+ 	 */
+-	writel(i2o_exec_driver.context, &msg->icntxt);
+-	iwait->tcntxt = tcntxt ++;
+-	writel(iwait->tcntxt, &msg->tcntxt);
++	writel(i2o_exec_driver.context, &msg->u.s.icntxt);
++	iwait->tcntxt = tcntxt++;
++	writel(iwait->tcntxt, &msg->u.s.tcntxt);
+ 
+ 	/*
+ 	 * Post the message to the controller. At some point later it will
+@@ -216,7 +218,7 @@ static int i2o_msg_post_wait_complete(st
+ 	int rc = 1;
+ 	u32 context;
+ 
+-	context = readl(&msg->tcntxt);
++	context = readl(&msg->u.s.tcntxt);
+ 
+ 	/*
+ 	 * We need to search through the i2o_exec_wait_list to see if the given
+@@ -347,7 +349,7 @@ static void i2o_exec_wait_free(struct i2
+ static int i2o_exec_reply(struct i2o_controller *c, u32 m,
+ 			  struct i2o_message *msg)
+ {
+-	if (readl(&msg->head[0]) & MSG_FAIL) { // Fail bit is set
++	if (readl(&msg->u.head[0]) & MSG_FAIL) { // Fail bit is set
+ 		struct i2o_message *pmsg;	/* preserved message */
+ 		u32 pm;
+ 
+@@ -364,10 +366,10 @@ static int i2o_exec_reply(struct i2o_con
+ 		return -1;
+ 	}
+ 
+-	if(readl(&msg->tcntxt) & 0x80000000)
++	if(readl(&msg->u.s.tcntxt) & 0x80000000)
+ 		return i2o_msg_post_wait_complete(c, m, msg);
+ 
+-	if((readl(&msg->head[1])>>24) == I2O_CMD_LCT_NOTIFY) {
++	if((readl(&msg->u.head[1])>>24) == I2O_CMD_LCT_NOTIFY) {
+ 		struct work_struct *work;
+ 
+ 		DBG("%s: LCT notify received\n", c->name);
+@@ -430,9 +432,9 @@ int i2o_exec_lct_get(struct i2o_controll
+ 		if(m == I2O_QUEUE_EMPTY)
+ 			return -ETIMEDOUT;
+ 
+-		writel(EIGHT_WORD_MSG_SIZE|SGL_OFFSET_6, &msg->head[0]);
++		writel(EIGHT_WORD_MSG_SIZE|SGL_OFFSET_6, &msg->u.head[0]);
+ 		writel(I2O_CMD_LCT_NOTIFY<<24|HOST_TID<<12|ADAPTER_TID,
+-		       &msg->head[1]);
++		       &msg->u.head[1]);
+ 		writel(0xffffffff, &msg->body[0]);
+ 		writel(0x00000000, &msg->body[1]);
+ 		writel(0xd0000000|c->dlct.len, &msg->body[2]);
+@@ -476,10 +478,10 @@ int i2o_exec_lct_notify(struct i2o_contr
+ 	if(m == I2O_QUEUE_EMPTY)
+ 		return -ETIMEDOUT;
+ 
+-	writel(EIGHT_WORD_MSG_SIZE|SGL_OFFSET_6, &msg->head[0]);
+-	writel(I2O_CMD_LCT_NOTIFY<<24|HOST_TID<<12|ADAPTER_TID, &msg->head[1]);
+-	writel(i2o_exec_driver.context, &msg->icntxt);
+-	writel(0, &msg->tcntxt);			/* FIXME */
++	writel(EIGHT_WORD_MSG_SIZE|SGL_OFFSET_6, &msg->u.head[0]);
++	writel(I2O_CMD_LCT_NOTIFY<<24|HOST_TID<<12|ADAPTER_TID, &msg->u.head[1]);
++	writel(i2o_exec_driver.context, &msg->u.s.icntxt);
++	writel(0, &msg->u.s.tcntxt);			/* FIXME */
+ 	writel(0xffffffff, &msg->body[0]);
+ 	writel(change_ind, &msg->body[1]);
+ 	writel(0xd0000000|c->dlct.len, &msg->body[2]);
+_

@@ -1,0 +1,42 @@
+
+From: "Siddha, Suresh B" <suresh.b.siddha@intel.com>
+
+Andi added support for swiotlb=force for easier testing.
+
+This bootparam has exposed a bug in today's ia64 swiotlb code, because of
+which the kernel was not booting on my tiger with "swiotlb=force"
+
+In swiotlb_map/unmap_sg(), sg->dma_address is getting setup with virtual
+address instead of physical.
+
+Attached patch fixes this issue.
+
+Signed-off-by: Suresh Siddha <suresh.b.siddha@intel.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ia64/lib/swiotlb.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN arch/ia64/lib/swiotlb.c~ia64-swiotlb-fixes-fix arch/ia64/lib/swiotlb.c
+--- 25/arch/ia64/lib/swiotlb.c~ia64-swiotlb-fixes-fix	Wed Aug  4 16:35:24 2004
++++ 25-akpm/arch/ia64/lib/swiotlb.c	Wed Aug  4 16:35:24 2004
+@@ -492,7 +492,7 @@ swiotlb_map_sg (struct device *hwdev, st
+ 		addr = SG_ENT_VIRT_ADDRESS(sg);
+ 		dev_addr = virt_to_phys(addr);
+ 		if (swiotlb_force || address_needs_mapping(hwdev, dev_addr)) {
+-			sg->dma_address = (dma_addr_t) map_single(hwdev, addr, sg->length, dir);
++			sg->dma_address = (dma_addr_t) virt_to_phys(map_single(hwdev, addr, sg->length, dir));
+ 			if (!sg->dma_address) {
+ 				/* Don't panic here, we expect pci_map_sg users
+ 				   to do proper error handling. */
+@@ -522,7 +522,7 @@ swiotlb_unmap_sg (struct device *hwdev, 
+ 
+ 	for (i = 0; i < nelems; i++, sg++)
+ 		if (sg->dma_address != SG_ENT_PHYS_ADDRESS(sg))
+-			unmap_single(hwdev, (void *) sg->dma_address, sg->dma_length, dir);
++			unmap_single(hwdev, (void *) phys_to_virt(sg->dma_address), sg->dma_length, dir);
+ 		else if (dir == DMA_FROM_DEVICE)
+ 			mark_clean(SG_ENT_VIRT_ADDRESS(sg), sg->dma_length);
+ }
+_

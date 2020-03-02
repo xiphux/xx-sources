@@ -1,0 +1,1397 @@
+Index: xx-sources/arch/i386/kernel/entry.S
+===================================================================
+--- xx-sources.orig/arch/i386/kernel/entry.S	2004-08-13 03:27:04.000000000 -0400
++++ xx-sources/arch/i386/kernel/entry.S	2004-08-13 21:23:50.185465040 -0400
+@@ -929,5 +929,9 @@
+ 	.long sys_vperfctr_unlink
+ 	.long sys_vperfctr_iresume
+ 	.long sys_vperfctr_read
++#ifdef CONFIG_CFQIONICE
++	.long sys_ioprio_set
++	.long sys_ioprio_get
++#endif
+ 
+ syscall_table_size=(.-sys_call_table)
+Index: xx-sources/arch/ppc/kernel/misc.S
+===================================================================
+--- xx-sources.orig/arch/ppc/kernel/misc.S	2004-08-13 03:27:04.000000000 -0400
++++ xx-sources/arch/ppc/kernel/misc.S	2004-08-13 21:23:50.258453944 -0400
+@@ -1456,3 +1456,7 @@
+ 	.long sys_vperfctr_unlink
+ 	.long sys_vperfctr_iresume
+ 	.long sys_vperfctr_read
++#ifdef CONFIG_CFQIONICE
++	.long sys_ioprio_set
++	.long sys_ioprio_get
++#endif
+Index: xx-sources/drivers/block/cfq-iosched.c
+===================================================================
+--- xx-sources.orig/drivers/block/cfq-iosched.c	2004-08-13 03:27:04.000000000 -0400
++++ xx-sources/drivers/block/cfq-iosched.c	2004-08-13 21:23:50.263453184 -0400
+@@ -22,11 +22,24 @@
+ #include <linux/rbtree.h>
+ #include <linux/mempool.h>
+ 
++#ifdef CONFIG_CFQIONICE
++#if IOPRIO_NR > BITS_PER_LONG
++#error Cannot support this many io priority levels
++#endif
++#endif
++
+ /*
+  * tunables
+  */
+ static int cfq_quantum = 4;
++#ifdef CONFIG_CFQIONICE
++static int cfq_idle_quantum = 2;
++static int cfq_queued = 4;
++static int cfq_grace_rt = HZ / 150 ?: 1;
++static int cfq_grace_idle = HZ / 2;
++#else
+ static int cfq_queued = 8;
++#endif
+ 
+ #define CFQ_QHASH_SHIFT		6
+ #define CFQ_QHASH_ENTRIES	(1 << CFQ_QHASH_SHIFT)
+@@ -41,22 +54,78 @@
+ #define list_entry_hash(ptr)	list_entry((ptr), struct cfq_rq, hash)
+ 
+ #define list_entry_cfqq(ptr)	list_entry((ptr), struct cfq_queue, cfq_list)
++#define list_entry_prio(ptr)	list_entry((ptr), struct cfq_rq, prio_list)
+ 
+ #define RQ_DATA(rq)		((struct cfq_rq *) (rq)->elevator_private)
+ 
++#define cfq_account_io(crq)	\
++	((crq)->ioprio != IOPRIO_IDLE && (crq)->ioprio != IOPRIO_RT)
++
++/*
++ * defines how we distribute bandwidth (can be tgid, uid, etc)
++ */
++#define cfq_hash_key(current)	((current)->tgid)
++
++/*
++ * move to io_context
++ */
++#define cfq_ioprio(current)	((current)->ioprio)
++
++#define CFQ_WAIT_RT	0
++#define CFQ_WAIT_NORM	1
++
+ static kmem_cache_t *crq_pool;
+ static kmem_cache_t *cfq_pool;
+ static mempool_t *cfq_mpool;
+ 
++#if defined(CONFIG_CFQIONICE)
++struct class_io_data {
++	struct list_head rr_list;
++	int busy_queues;
++	int busy_rq;
++	struct list_head prio_list;
++	int last_queued;
++};
++#endif
++
+ struct cfq_data {
++#if !defined(CONFIG_CFQIONICE)
+ 	struct list_head rr_list;
++#endif
+ 	struct list_head *dispatch;
+ 	struct list_head *cfq_hash;
+ 
+ 	struct list_head *crq_hash;
+ 
++#if defined(CONFIG_CFQIONICE)
++	struct class_io_data cid[IOPRIO_NR];
++
++	/*
++	 * total number of busy queues and requests
++	 */
++	int busy_rq;
++	int busy_queues;
++
++	unsigned long rq_starved_mask;
++
++	/*
++	 * grace period handling
++	 */
++	struct timer_list timer;
++	unsigned long wait_end;
++	unsigned long flags;
++	struct work_struct work;
++
++	/*
++	 * tunables
++	 */
++	unsigned int cfq_idle_quantum;
++	unsigned int cfq_grace_rt;
++	unsigned int cfq_grace_idle;
++#else
+ 	unsigned int busy_queues;
+ 	unsigned int max_queued;
++#endif
+ 
+ 	mempool_t *crq_pool;
+ 
+@@ -70,29 +139,27 @@
+ };
+ 
+ struct cfq_queue {
+-	struct list_head cfq_hash;
+ 	struct list_head cfq_list;
++	struct list_head cfq_hash;
++	int hash_key;
++#if defined(CONFIG_CFQIONICE)
++	int ioprio;
++#endif
+ 	struct rb_root sort_list;
+-	int pid;
+ 	int queued[2];
+-#if 0
+-	/*
+-	 * with a simple addition like this, we can do io priorities. almost.
+-	 * does need a split request free list, too.
+-	 */
+-	int io_prio
+-#endif
+ };
+ 
+ struct cfq_rq {
++	struct cfq_queue *cfq_queue;
+ 	struct rb_node rb_node;
++	struct list_head hash;
+ 	sector_t rb_key;
+ 
+ 	struct request *request;
+-
+-	struct cfq_queue *cfq_queue;
+-
+-	struct list_head hash;
++#if defined(CONFIG_CFQIONICE)
++	struct list_head prio_list;
++	int ioprio;
++#endif
+ };
+ 
+ static void cfq_put_queue(struct cfq_data *cfqd, struct cfq_queue *cfqq);
+@@ -167,11 +234,24 @@
+ #define rb_entry_crq(node)	rb_entry((node), struct cfq_rq, rb_node)
+ #define rq_rb_key(rq)		(rq)->sector
+ 
++#if defined(CONFIG_CFQIONICE)
++static inline void cfq_del_crq_rb(struct cfq_data *cfqd, struct cfq_queue *cfqq, struct cfq_rq *crq)
++#else
+ static inline void cfq_del_crq_rb(struct cfq_queue *cfqq, struct cfq_rq *crq)
++#endif
+ {
+ 	if (ON_RB(&crq->rb_node)) {
++#ifdef CONFIG_CFQIONICE
++		if (cfq_account_io(crq)) {
++			cfqd->busy_rq--;
++			cfqd->cid[crq->ioprio].busy_rq--;
++		}
++#endif
+ 		cfqq->queued[rq_data_dir(crq->request)]--;
+ 		rb_erase(&crq->rb_node, &cfqq->sort_list);
++#ifdef CONFIG_CFQIONICE
++		RB_CLEAR(&crq->rb_node);
++#endif
+ 		crq->cfq_queue = NULL;
+ 	}
+ }
+@@ -207,6 +287,12 @@
+ 
+ 	crq->rb_key = rq_rb_key(rq);
+ 	cfqq->queued[rq_data_dir(rq)]++;
++#ifdef CONFIG_CFQIONICE
++	if (cfq_account_io(crq)) {
++		cfqd->busy_rq++;
++		cfqd->cid[crq->ioprio].busy_rq++;
++	}
++#endif
+ retry:
+ 	__alias = __cfq_add_crq_rb(cfqq, crq);
+ 	if (!__alias) {
+@@ -222,7 +308,7 @@
+ static struct request *
+ cfq_find_rq_rb(struct cfq_data *cfqd, sector_t sector)
+ {
+-	struct cfq_queue *cfqq = cfq_find_cfq_hash(cfqd, current->tgid);
++	struct cfq_queue *cfqq = cfq_find_cfq_hash(cfqd, cfq_hash_key(current));
+ 	struct rb_node *n;
+ 
+ 	if (!cfqq)
+@@ -250,13 +336,42 @@
+ 	struct cfq_rq *crq = RQ_DATA(rq);
+ 
+ 	if (crq) {
++#if !defined(CONFIG_CFQIONICE)
+ 		struct cfq_queue *cfqq = crq->cfq_queue;
++#endif
+ 
+ 		cfq_remove_merge_hints(q, crq);
++#ifdef CONFIG_CFQIONICE
++		list_del_init(&crq->prio_list);
++#endif
+ 		list_del_init(&rq->queuelist);
+ 
+-		if (cfqq) {
++#ifdef CONFIG_CFQIONICE
++		/*
++		 * set a grace period timer to allow realtime io to make real
++		 * progress, if we release an rt request. for normal request,
++		 * set timer so idle io doesn't interfere with other io
++		 */
++		if (crq->ioprio == IOPRIO_RT) {
++			set_bit(CFQ_WAIT_RT, &cfqd->flags);
++			cfqd->wait_end = jiffies + cfqd->cfq_grace_rt;
++		} else if (crq->ioprio != IOPRIO_IDLE) {
++			set_bit(CFQ_WAIT_NORM, &cfqd->flags);
++			cfqd->wait_end = jiffies + cfqd->cfq_grace_idle;
++		}
++#endif
++#if defined(CONFIG_CFQIONICE)
++		if (ON_RB(&crq->rb_node))
++#else
++		if (cfqq)
++#endif
++		{
++#if defined(CONFIG_CFQIONICE)
++			struct cfq_queue *cfqq = crq->cfq_queue;
++			cfq_del_crq_rb(cfqd, cfqq, crq);
++#else
+ 			cfq_del_crq_rb(cfqq, crq);
++#endif
+ 
+ 			if (RB_EMPTY(&cfqq->sort_list))
+ 				cfq_put_queue(cfqd, cfqq);
+@@ -314,7 +429,11 @@
+ 	if (ON_RB(&crq->rb_node) && (rq_rb_key(req) != crq->rb_key)) {
+ 		struct cfq_queue *cfqq = crq->cfq_queue;
+ 
++#if defined(CONFIG_CFQIONICE)
++		cfq_del_crq_rb(cfqd, cfqq, crq);
++#else
+ 		cfq_del_crq_rb(cfqq, crq);
++#endif
+ 		cfq_add_crq_rb(cfqd, cfqq, crq);
+ 	}
+ 
+@@ -336,7 +455,11 @@
+ 	struct list_head *head = cfqd->dispatch, *entry = head;
+ 	struct request *__rq;
+ 
++#if defined(CONFIG_CFQIONICE)
++	cfq_del_crq_rb(cfqd, cfqq, crq);
++#else
+ 	cfq_del_crq_rb(cfqq, crq);
++#endif
+ 	cfq_remove_merge_hints(cfqd->queue, crq);
+ 
+ 	if (!list_empty(head)) {
+@@ -366,42 +489,176 @@
+ 	struct cfq_rq *crq = rb_entry_crq(rb_first(&cfqq->sort_list));
+ 
+ 	cfq_dispatch_sort(cfqd, cfqq, crq);
++
++#ifdef CONFIG_CFQIONICE
++	/*
++	 * technically, for IOPRIO_RT we don't need to add it to the list.
++	 */
++	list_add_tail(&crq->prio_list, &cfqd->cid[cfqq->ioprio].prio_list);
++#endif
+ }
+ 
++#if defined(CONFIG_CFQIONICE)
++static int cfq_dispatch_requests(request_queue_t *q, int prio, int may_queue)
++#else
+ static int cfq_dispatch_requests(request_queue_t *q, struct cfq_data *cfqd)
++#endif
+ {
++#if defined(CONFIG_CFQIONICE)
++	struct cfq_data *cfqd = q->elevator.elevator_data;
++	struct list_head *plist = &cfqd->cid[prio].rr_list;
++#else
++	struct list_head *plist = &cfqd->rr_list;
++#endif
++	struct list_head *entry, *nxt;
+ 	struct cfq_queue *cfqq;
+-	struct list_head *entry, *tmp;
+ 	int ret, queued, good_queues;
+ 
++#if !defined(CONFIG_CFQIONICE)
+ 	if (list_empty(&cfqd->rr_list))
+ 		return 0;
++#endif
+ 
+ 	queued = ret = 0;
++#if !defined(CONFIG_CFQIONICE)
+ restart:
++#endif
+ 	good_queues = 0;
+-	list_for_each_safe(entry, tmp, &cfqd->rr_list) {
++	list_for_each_safe(entry, nxt, plist) {
++#if defined(CONFIG_CFQIONICE)
++		cfqq = list_entry_cfqq(entry);
++#else
+ 		cfqq = list_entry_cfqq(cfqd->rr_list.next);
++#endif
+ 
+ 		BUG_ON(RB_EMPTY(&cfqq->sort_list));
+ 
+ 		__cfq_dispatch_requests(q, cfqd, cfqq);
++#ifdef CONFIG_CFQIONICE
++		queued++;
++#endif
+ 
+ 		if (RB_EMPTY(&cfqq->sort_list))
+ 			cfq_put_queue(cfqd, cfqq);
++#if defined(CONFIG_CFQIONICE)
++		/*
++		 * if we hit the queue limit, put the string of serviced
++		 * queues at the back of the pending list
++		 */
++		if (queued == may_queue) {
++			struct list_head *prv = nxt->prev;
++
++			if (prv != plist) {
++				list_del(plist);
++				list_add(plist, prv);
++			}
++			break;
++		}
++#else
+ 		else
+ 			good_queues++;
+ 
+ 		queued++;
+ 		ret = 1;
++#endif
+ 	}
+ 
++#ifdef CONFIG_CFQIONICE
++	return queued;
++#else
+ 	if ((queued < cfqd->cfq_quantum) && good_queues)
+ 		goto restart;
+ 
+ 	return ret;
++#endif
+ }
+ 
++#ifdef CONFIG_CFQIONICE
++/*
++ * try to move some requests to the dispatch list. return 0 on success
++ */
++static int cfq_select_requests(request_queue_t *q, struct cfq_data *cfqd)
++{
++	int queued, ios, i;
++
++	/*
++	 * if there's any realtime io, only schedule that
++	 */
++	if (cfq_dispatch_requests(q, IOPRIO_RT, cfqd->cfq_quantum))
++		return 1;
++
++	/*
++	 * if RT io was last serviced and grace time hasn't expired,
++	 * arm the timer to restart queueing if no other RT io has been
++	 * submitted in the mean time
++	 */
++	if (test_bit(CFQ_WAIT_RT, &cfqd->flags)) {
++		if (time_before(jiffies, cfqd->wait_end)) {
++			mod_timer(&cfqd->timer, cfqd->wait_end);
++			return 0;
++		}
++		clear_bit(CFQ_WAIT_RT, &cfqd->flags);
++	}
++
++	/*
++	 * for each priority class, calculate number of requests we
++	 * are allowed to put into service.
++	 */
++	queued = 0;
++	ios = cfqd->busy_rq;
++	for (i = IOPRIO_RT - 1; i > IOPRIO_IDLE; i--) {
++		const int other_io = ios - cfqd->cid[i].busy_rq;
++		int may_queue = cfqd->cfq_quantum;
++		int dispatched;
++
++		/*
++		 * no need to keep iterating the list, if there are no
++		 * requests pending anymore
++		 */
++		if (!cfqd->busy_rq)
++			break;
++
++		if (other_io)
++			may_queue = other_io * (i + 1) / IOPRIO_NR;
++		if (may_queue > cfqd->cfq_quantum)
++			may_queue = cfqd->cfq_quantum;
++		/*
++		 * average with last dispatched for fairness
++		 */
++		if (cfqd->cid[i].last_queued != -1)
++			may_queue = (cfqd->cid[i].last_queued + may_queue) / 2;
++
++		dispatched = cfq_dispatch_requests(q, i, may_queue);
++
++		cfqd->cid[i].last_queued = dispatched;
++		queued += dispatched;
++	}
++
++	if (queued)
++		return 1;
++
++	/*
++	 * only allow dispatch of idle io, if the queue has been idle from
++	 * servicing RT or normal io for the grace period
++	 */
++	if (test_bit(CFQ_WAIT_NORM, &cfqd->flags)) {
++		if (time_before(jiffies, cfqd->wait_end)) {
++			mod_timer(&cfqd->timer, cfqd->wait_end);
++			return 0;
++		}
++		clear_bit(CFQ_WAIT_NORM, &cfqd->flags);
++	}
++
++	/*
++	 * if we found nothing to do, allow idle io to be serviced
++	 */
++	if (cfq_dispatch_requests(q, IOPRIO_IDLE, cfqd->cfq_idle_quantum))
++		return 1;
++
++	return 0;
++}
++#endif
++
+ static struct request *cfq_next_request(request_queue_t *q)
+ {
+ 	struct cfq_data *cfqd = q->elevator.elevator_data;
+@@ -410,23 +667,44 @@
+ 	if (!list_empty(cfqd->dispatch)) {
+ 		struct cfq_rq *crq;
+ dispatch:
++#ifdef CONFIG_CFQIONICE
++		/*
++		 * end grace period, we are servicing a request
++		 */
++		del_timer(&cfqd->timer);
++		clear_bit(CFQ_WAIT_RT, &cfqd->flags);
++		clear_bit(CFQ_WAIT_NORM, &cfqd->flags);
++
++		BUG_ON(list_empty(cfqd->dispatch));
++#endif
+ 		rq = list_entry_rq(cfqd->dispatch->next);
+ 
+ 		crq = RQ_DATA(rq);
+-		if (crq)
++		if (crq) {
+ 			cfq_remove_merge_hints(q, crq);
++#ifdef CONFIG_CFQIONICE
++			list_del_init(&crq->prio_list);
++#endif
++		}
+ 
+ 		return rq;
+ 	}
+ 
++#ifdef CONFIG_CFQIONICE
++	/*
++	 * we moved requests to dispatch list, go back end serve one
++	 */
++	if (cfq_select_requests(q, cfqd))
++#else
+ 	if (cfq_dispatch_requests(q, cfqd))
++#endif
+ 		goto dispatch;
+ 
+ 	return NULL;
+ }
+ 
+ static inline struct cfq_queue *
+-__cfq_find_cfq_hash(struct cfq_data *cfqd, int pid, const int hashval)
++__cfq_find_cfq_hash(struct cfq_data *cfqd, int hashkey, const int hashval)
+ {
+ 	struct list_head *hash_list = &cfqd->cfq_hash[hashval];
+ 	struct list_head *entry;
+@@ -434,37 +712,51 @@
+ 	list_for_each(entry, hash_list) {
+ 		struct cfq_queue *__cfqq = list_entry_qhash(entry);
+ 
+-		if (__cfqq->pid == pid)
++		if (__cfqq->hash_key == hashkey)
+ 			return __cfqq;
+ 	}
+ 
+ 	return NULL;
+ }
+ 
+-static struct cfq_queue *cfq_find_cfq_hash(struct cfq_data *cfqd, int pid)
++static struct cfq_queue *cfq_find_cfq_hash(struct cfq_data *cfqd, int hashkey)
+ {
+-	const int hashval = hash_long(current->tgid, CFQ_QHASH_SHIFT);
++#if defined(CONFIG_CFQIONICE)
++	const int hashval = hash_long(hashkey, CFQ_QHASH_SHIFT);
++#else
++	const int hashval = hash_long(cfq_hash_key(current), CFQ_QHASH_SHIFT);
++#endif
+ 
+-	return __cfq_find_cfq_hash(cfqd, pid, hashval);
++	return __cfq_find_cfq_hash(cfqd, hashkey, hashval);
+ }
+ 
+ static void cfq_put_queue(struct cfq_data *cfqd, struct cfq_queue *cfqq)
+ {
+ 	cfqd->busy_queues--;
++#ifdef CONFIG_CFQIONICE
++	WARN_ON(cfqd->busy_queues < 0);
++
++	cfqd->cid[cfqq->ioprio].busy_queues--;
++	WARN_ON(cfqd->cid[cfqq->ioprio].busy_queues < 0);
++#endif
+ 	list_del(&cfqq->cfq_list);
+ 	list_del(&cfqq->cfq_hash);
+ 	mempool_free(cfqq, cfq_mpool);
+ }
+ 
+-static struct cfq_queue *__cfq_get_queue(struct cfq_data *cfqd, int pid,
++static struct cfq_queue *__cfq_get_queue(struct cfq_data *cfqd, int hashkey,
+ 					 int gfp_mask)
+ {
+-	const int hashval = hash_long(current->tgid, CFQ_QHASH_SHIFT);
++#if defined(CONFIG_CFQIONICE)
++	const int hashval = hash_long(hashkey, CFQ_QHASH_SHIFT);
++#else
++	const int hashval = hash_long(cfq_hash_key(current), CFQ_QHASH_SHIFT);
++#endif
+ 	struct cfq_queue *cfqq, *new_cfqq = NULL;
+ 	request_queue_t *q = cfqd->queue;
+ 
+ retry:
+-	cfqq = __cfq_find_cfq_hash(cfqd, pid, hashval);
++	cfqq = __cfq_find_cfq_hash(cfqd, hashkey, hashval);
+ 
+ 	if (!cfqq) {
+ 		if (new_cfqq) {
+@@ -482,8 +774,15 @@
+ 		INIT_LIST_HEAD(&cfqq->cfq_list);
+ 		RB_CLEAR_ROOT(&cfqq->sort_list);
+ 
+-		cfqq->pid = pid;
++#ifdef CONFIG_CFQIONICE
++		cfqq->hash_key = cfq_hash_key(current);
++#else
++		cfqq->hash_key = hashkey;
++#endif
+ 		cfqq->queued[0] = cfqq->queued[1] = 0;
++#ifdef CONFIG_CFQIONICE
++		cfqq->ioprio = cfq_ioprio(current);
++#endif
+ 		list_add(&cfqq->cfq_hash, &cfqd->cfq_hash[hashval]);
+ 	}
+ 
+@@ -506,11 +805,46 @@
+ 	return cfqq;
+ }
+ 
++#if defined(CONFIG_CFQIONICE)
++static void
++__cfq_enqueue(request_queue_t *q, struct cfq_data *cfqd, struct cfq_rq *crq)
++#else
+ static void cfq_enqueue(struct cfq_data *cfqd, struct cfq_rq *crq)
++#endif
+ {
++#ifdef CONFIG_CFQIONICE
++	const int prio = crq->ioprio;
++#endif
+ 	struct cfq_queue *cfqq;
+ 
+-	cfqq = __cfq_get_queue(cfqd, current->tgid, GFP_ATOMIC);
++	cfqq = __cfq_get_queue(cfqd, cfq_hash_key(current), GFP_ATOMIC);
++
++#if defined(CONFIG_CFQIONICE)
++	if (prio > cfqq->ioprio) {
++		if (!list_empty(&cfqq->cfq_list)) {
++			cfqd->cid[cfqq->ioprio].busy_queues--;
++			WARN_ON(cfqd->cid[cfqq->ioprio].busy_queues < 0);
++			cfqd->cid[prio].busy_queues++;
++			list_move_tail(&cfqq->cfq_list,&cfqd->cid[prio].rr_list);
++		}
++		cfqq->ioprio = prio;
++	}
++
++	cfq_add_crq_rb(cfqd, cfqq, crq);
++
++	if (list_empty(&cfqq->cfq_list)) {
++		list_add_tail(&cfqq->cfq_list, &cfqd->cid[prio].rr_list);
++		cfqd->cid[prio].busy_queues++;
++		cfqd->busy_queues++;
++	}
++
++	if (rq_mergeable(crq->request)) {
++		cfq_add_crq_hash(cfqd, crq);
++
++		if (!q->last_merge)
++			q->last_merge = crq->request;
++	}
++#else
+ 	if (cfqq) {
+ 		cfq_add_crq_rb(cfqd, cfqq, crq);
+ 
+@@ -526,9 +860,50 @@
+ 		 */
+ 		list_add_tail(&crq->request->queuelist, cfqd->dispatch);
+ 	}
++#endif
++}
++
++#ifdef CONFIG_CFQIONICE
++static void cfq_reenqueue(request_queue_t *q, struct cfq_data *cfqd, int prio)
++{
++	struct list_head *prio_list = &cfqd->cid[prio].prio_list;
++	struct list_head *entry, *tmp;
++
++	list_for_each_safe(entry, tmp, prio_list) {
++		struct cfq_rq *crq = list_entry_prio(entry);
++
++		list_del_init(entry);
++		list_del_init(&crq->request->queuelist);
++		__cfq_enqueue(q, cfqd, crq);
++	}
+ }
+ 
+ static void
++cfq_enqueue(request_queue_t *q, struct cfq_data *cfqd, struct cfq_rq *crq)
++{
++	const int prio = cfq_ioprio(current);
++
++	crq->ioprio = prio;
++	__cfq_enqueue(q, cfqd, crq);
++
++	if (prio == IOPRIO_RT) {
++		int i;
++
++		/*
++		 * realtime io gets priority, move all other io back
++		 */
++		for (i = IOPRIO_IDLE; i < IOPRIO_RT; i++)
++			cfq_reenqueue(q, cfqd, i);
++	} else if (prio != IOPRIO_IDLE) {
++		/*
++		 * check if we need to move idle io back into queue
++		 */
++		cfq_reenqueue(q, cfqd, IOPRIO_IDLE);
++	}
++}
++#endif
++
++static void
+ cfq_insert_request(request_queue_t *q, struct request *rq, int where)
+ {
+ 	struct cfq_data *cfqd = q->elevator.elevator_data;
+@@ -536,8 +911,10 @@
+ 
+ 	switch (where) {
+ 		case ELEVATOR_INSERT_BACK:
++#ifndef CONFIG_CFQIONICE
+ 			while (cfq_dispatch_requests(q, cfqd))
+ 				;
++#endif
+ 			list_add_tail(&rq->queuelist, cfqd->dispatch);
+ 			break;
+ 		case ELEVATOR_INSERT_FRONT:
+@@ -545,26 +922,36 @@
+ 			break;
+ 		case ELEVATOR_INSERT_SORT:
+ 			BUG_ON(!blk_fs_request(rq));
++#ifdef CONFIG_CFQIONICE
++			cfq_enqueue(q, cfqd, crq);
++#else
+ 			cfq_enqueue(cfqd, crq);
++#endif
+ 			break;
+ 		default:
+ 			printk("%s: bad insert point %d\n", __FUNCTION__,where);
+ 			return;
+ 	}
+ 
++#ifndef CONFIG_CFQIONICE
+ 	if (rq_mergeable(rq)) {
+ 		cfq_add_crq_hash(cfqd, crq);
+ 
+ 		if (!q->last_merge)
+ 			q->last_merge = rq;
+ 	}
++#endif
+ }
+ 
+ static int cfq_queue_empty(request_queue_t *q)
+ {
+ 	struct cfq_data *cfqd = q->elevator.elevator_data;
+ 
++#if defined(CONFIG_CFQIONICE)
++	if (list_empty(cfqd->dispatch) && !cfqd->busy_queues)
++#else
+ 	if (list_empty(cfqd->dispatch) && list_empty(&cfqd->rr_list))
++#endif
+ 		return 1;
+ 
+ 	return 0;
+@@ -594,16 +981,49 @@
+ 	return NULL;
+ }
+ 
++#ifdef CONFIG_CFQIONICE
++static void cfq_queue_congested(request_queue_t *q)
++{
++	struct cfq_data *cfqd = q->elevator.elevator_data;
++
++	cfqd->rq_starved_mask |= 1 << cfq_ioprio(current);
++}
++#endif
++
+ static int cfq_may_queue(request_queue_t *q, int rw)
+ {
+ 	struct cfq_data *cfqd = q->elevator.elevator_data;
+ 	struct cfq_queue *cfqq;
++#ifdef CONFIG_CFQIONICE
++	const int prio = cfq_ioprio(current);
++	int limit;
++#endif
+ 	int ret = 1;
+ 
+ 	if (!cfqd->busy_queues)
+ 		goto out;
+ 
+-	cfqq = cfq_find_cfq_hash(cfqd, current->tgid);
++	cfqq = cfq_find_cfq_hash(cfqd, cfq_hash_key(current));
++#if defined(CONFIG_CFQIONICE)
++	if (!cfqq)
++		goto out;
++
++	/*
++	 * if higher or equal prio io is sleeping waiting for a request, don't
++	 * allow this one to allocate one. as long as ll_rw_blk does fifo
++	 * waitqueue wakeups this should work...
++	 */
++	if (cfqd->rq_starved_mask & (1 << prio))
++		goto out;
++
++	if (cfqq->queued[rw] < cfqd->cfq_queued || !cfqd->cid[prio].busy_queues)
++		goto out;
++
++	limit = q->nr_requests * (prio + 1) / IOPRIO_NR;
++	limit /= cfqd->cid[prio].busy_queues;
++	if (cfqq->queued[rw] > limit)
++		ret = 0;
++#else
+ 	if (cfqq) {
+ 		int limit = (q->nr_requests - cfqd->cfq_queued) / cfqd->busy_queues;
+ 
+@@ -615,6 +1035,7 @@
+ 		if (cfqq->queued[rw] > limit)
+ 			ret = 0;
+ 	}
++#endif
+ out:
+ 	return ret;
+ }
+@@ -661,17 +1082,28 @@
+ 	/*
+ 	 * prepare a queue up front, so cfq_enqueue() doesn't have to
+ 	 */
+-	cfqq = cfq_get_queue(cfqd, current->tgid, gfp_mask);
++	cfqq = cfq_get_queue(cfqd, cfq_hash_key(current), gfp_mask);
+ 	if (!cfqq)
+ 		return 1;
+ 
+ 	crq = mempool_alloc(cfqd->crq_pool, gfp_mask);
+ 	if (crq) {
++#ifdef CONFIG_CFQIONICE
++		/*
++		 * process now has one request
++		 */
++		cfqd->rq_starved_mask &= ~(1 << cfq_ioprio(current));
++#endif
+ 		memset(crq, 0, sizeof(*crq));
+ 		RB_CLEAR(&crq->rb_node);
+ 		crq->request = rq;
++#ifdef CONFIG_CFQIONICE
++		INIT_LIST_HEAD(&crq->hash);
++		INIT_LIST_HEAD(&crq->prio_list);
++#else
+ 		crq->cfq_queue = NULL;
+ 		INIT_LIST_HEAD(&crq->hash);
++#endif
+ 		rq->elevator_private = crq;
+ 		return 0;
+ 	}
+@@ -690,6 +1122,28 @@
+ 	kfree(cfqd);
+ }
+ 
++#ifdef CONFIG_CFQIONICE
++static void cfq_timer(unsigned long data)
++{
++	struct cfq_data *cfqd = (struct cfq_data *) data;
++
++	clear_bit(CFQ_WAIT_RT, &cfqd->flags);
++	clear_bit(CFQ_WAIT_NORM, &cfqd->flags);
++	kblockd_schedule_work(&cfqd->work);
++}
++
++static void cfq_work(void *data)
++{
++	request_queue_t *q = data;
++	unsigned long flags;
++
++	spin_lock_irqsave(q->queue_lock, flags);
++	if (cfq_next_request(q))
++		q->request_fn(q);
++	spin_unlock_irqrestore(q->queue_lock, flags);
++}
++#endif
++
+ static int cfq_init(request_queue_t *q, elevator_t *e)
+ {
+ 	struct cfq_data *cfqd;
+@@ -700,7 +1154,24 @@
+ 		return -ENOMEM;
+ 
+ 	memset(cfqd, 0, sizeof(*cfqd));
++
++#ifdef CONFIG_CFQIONICE
++	init_timer(&cfqd->timer);
++	cfqd->timer.function = cfq_timer;
++	cfqd->timer.data = (unsigned long) cfqd;
++
++	INIT_WORK(&cfqd->work, cfq_work, q);
++
++	for (i = 0; i < IOPRIO_NR; i++) {
++		struct class_io_data *cid = &cfqd->cid[i];
++
++		INIT_LIST_HEAD(&cid->rr_list);
++		INIT_LIST_HEAD(&cid->prio_list);
++		cid->last_queued = -1;
++	}
++#else
+ 	INIT_LIST_HEAD(&cfqd->rr_list);
++#endif
+ 
+ 	cfqd->crq_hash = kmalloc(sizeof(struct list_head) * CFQ_MHASH_ENTRIES, GFP_KERNEL);
+ 	if (!cfqd->crq_hash)
+@@ -719,16 +1190,28 @@
+ 	for (i = 0; i < CFQ_QHASH_ENTRIES; i++)
+ 		INIT_LIST_HEAD(&cfqd->cfq_hash[i]);
+ 
++#ifdef CONFIG_CFQIONICE
++	cfqd->cfq_queued = cfq_queued;
++	cfqd->cfq_quantum = cfq_quantum;
++	cfqd->cfq_idle_quantum = cfq_idle_quantum;
++	cfqd->cfq_grace_rt = cfq_grace_rt;
++	cfqd->cfq_grace_idle = cfq_grace_idle;
++
++	q->nr_requests <<= 2;
++#endif
++
+ 	cfqd->dispatch = &q->queue_head;
+ 	e->elevator_data = cfqd;
+ 	cfqd->queue = q;
+ 
++#ifndef CONFIG_CFQIONICE
+ 	/*
+ 	 * just set it to some high value, we want anyone to be able to queue
+ 	 * some requests. fairness is handled differently
+ 	 */
+ 	cfqd->max_queued = q->nr_requests;
+ 	q->nr_requests = 8192;
++#endif
+ 
+ 	cfqd->cfq_queued = cfq_queued;
+ 	cfqd->cfq_quantum = cfq_quantum;
+@@ -798,6 +1281,11 @@
+ }
+ SHOW_FUNCTION(cfq_quantum_show, cfqd->cfq_quantum);
+ SHOW_FUNCTION(cfq_queued_show, cfqd->cfq_queued);
++#ifdef CONFIG_CFQIONICE
++SHOW_FUNCTION(cfq_idle_quantum_show, cfqd->cfq_idle_quantum);
++SHOW_FUNCTION(cfq_grace_rt_show, cfqd->cfq_grace_rt);
++SHOW_FUNCTION(cfq_grace_idle_show, cfqd->cfq_grace_idle);
++#endif
+ #undef SHOW_FUNCTION
+ 
+ #define STORE_FUNCTION(__FUNC, __PTR, MIN, MAX)				\
+@@ -812,6 +1300,11 @@
+ }
+ STORE_FUNCTION(cfq_quantum_store, &cfqd->cfq_quantum, 1, INT_MAX);
+ STORE_FUNCTION(cfq_queued_store, &cfqd->cfq_queued, 1, INT_MAX);
++#ifdef CONFIG_CFQIONICE
++STORE_FUNCTION(cfq_idle_quantum_store, &cfqd->cfq_idle_quantum, 0, INT_MAX);
++STORE_FUNCTION(cfq_grace_rt_store, &cfqd->cfq_grace_rt, 0, INT_MAX);
++STORE_FUNCTION(cfq_grace_idle_store, &cfqd->cfq_grace_idle, 0, INT_MAX);
++#endif
+ #undef STORE_FUNCTION
+ 
+ static struct cfq_fs_entry cfq_quantum_entry = {
+@@ -819,15 +1312,41 @@
+ 	.show = cfq_quantum_show,
+ 	.store = cfq_quantum_store,
+ };
++#ifdef CONFIG_CFQIONICE
++static struct cfq_fs_entry cfq_idle_quantum_entry = {
++ 	.attr = {.name = "idle_quantum", .mode = S_IRUGO | S_IWUSR },
++	.show = cfq_idle_quantum_show,
++	.store = cfq_idle_quantum_store,
++};
++#endif
+ static struct cfq_fs_entry cfq_queued_entry = {
+ 	.attr = {.name = "queued", .mode = S_IRUGO | S_IWUSR },
+ 	.show = cfq_queued_show,
+ 	.store = cfq_queued_store,
+ };
++#ifdef CONFIG_CFQIONICE
++static struct cfq_fs_entry cfq_grace_rt_entry = {
++	.attr = {.name = "grace_rt", .mode = S_IRUGO | S_IWUSR },
++	.show = cfq_grace_rt_show,
++	.store = cfq_grace_rt_store,
++};
++static struct cfq_fs_entry cfq_grace_idle_entry = {
++	.attr = {.name = "grace_idle", .mode = S_IRUGO | S_IWUSR },
++	.show = cfq_grace_idle_show,
++	.store = cfq_grace_idle_store,
++};
++#endif
+ 
+ static struct attribute *default_attrs[] = {
+ 	&cfq_quantum_entry.attr,
++#ifdef CONFIG_CFQIONICE
++	&cfq_idle_quantum_entry.attr,
++#endif
+ 	&cfq_queued_entry.attr,
++#ifdef CONFIG_CFQIONICE
++	&cfq_grace_rt_entry.attr,
++	&cfq_grace_idle_entry.attr,
++#endif
+ 	NULL,
+ };
+ 
+@@ -883,6 +1402,9 @@
+ 	.elevator_set_req_fn =		cfq_set_request,
+ 	.elevator_put_req_fn =		cfq_put_request,
+ 	.elevator_may_queue_fn =	cfq_may_queue,
++#ifdef CONFIG_CFQIONICE
++	.elevator_set_congested_fn =	cfq_queue_congested,
++#endif
+ 	.elevator_init_fn =		cfq_init,
+ 	.elevator_exit_fn =		cfq_exit,
+ };
+Index: xx-sources/drivers/block/elevator.c
+===================================================================
+--- xx-sources.orig/drivers/block/elevator.c	2004-08-13 03:27:04.000000000 -0400
++++ xx-sources/drivers/block/elevator.c	2004-08-13 21:23:50.264453032 -0400
+@@ -339,6 +339,16 @@
+ 		e->elevator_put_req_fn(q, rq);
+ }
+ 
++#ifdef CONFIG_CFQIONICE
++void elv_set_congested(request_queue_t *q)
++{
++	elevator_t *e = &q->elevator;
++
++	if (e->elevator_set_congested_fn)
++		e->elevator_set_congested_fn(q);
++}
++#endif
++
+ int elv_may_queue(request_queue_t *q, int rw)
+ {
+ 	elevator_t *e = &q->elevator;
+@@ -346,7 +356,11 @@
+ 	if (e->elevator_may_queue_fn)
+ 		return e->elevator_may_queue_fn(q, rw);
+ 
++#ifdef CONFIG_CFQIONICE
++	return 1;
++#else
+ 	return 0;
++#endif
+ }
+ 
+ void elv_completed_request(request_queue_t *q, struct request *rq)
+Index: xx-sources/drivers/block/ll_rw_blk.c
+===================================================================
+--- xx-sources.orig/drivers/block/ll_rw_blk.c	2004-08-13 03:27:04.000000000 -0400
++++ xx-sources/drivers/block/ll_rw_blk.c	2004-08-13 21:23:50.267452576 -0400
+@@ -1428,12 +1428,12 @@
+ static int __make_request(request_queue_t *, struct bio *);
+ 
+ static elevator_t *chosen_elevator =
+-#if defined(CONFIG_IOSCHED_AS)
++#if defined(CONFIG_IOSCHED_CFQ)
++	&iosched_cfq;
++#elif defined(CONFIG_IOSCHED_AS)
+ 	&iosched_as;
+ #elif defined(CONFIG_IOSCHED_DEADLINE)
+ 	&iosched_deadline;
+-#elif defined(CONFIG_IOSCHED_CFQ)
+-	&iosched_cfq;
+ #elif defined(CONFIG_IOSCHED_NOOP)
+ 	&elevator_noop;
+ #else
+@@ -1659,6 +1659,12 @@
+ 	struct io_context *ioc = get_io_context(gfp_mask);
+ 
+ 	spin_lock_irq(q->queue_lock);
++
++#ifdef CONFIG_CFQIONICE
++	if (!elv_may_queue(q, rw))
++		goto out_lock;
++#endif
++
+ 	if (rl->count[rw]+1 >= q->nr_requests) {
+ 		/*
+ 		 * The queue will fill after this allocation, so set it as
+@@ -1672,14 +1678,24 @@
+ 		}
+ 	}
+ 
++#if defined(CONFIG_CFQIONICE)
++	if (blk_queue_full(q, rw)
++			&& !ioc_batching(ioc))
++#else
+ 	if (blk_queue_full(q, rw)
+-			&& !ioc_batching(ioc) && !elv_may_queue(q, rw)) {
++			&& !ioc_batching(ioc) && !elv_may_queue(q, rw))
++#endif
++	{
+ 		/*
+ 		 * The queue is full and the allocating process is not a
+ 		 * "batcher", and not exempted by the IO scheduler
+ 		 */
++#if defined(CONFIG_CFQIONICE)
++		goto out_lock;
++#else
+ 		spin_unlock_irq(q->queue_lock);
+ 		goto out;
++#endif
+ 	}
+ 
+ 	rl->count[rw]++;
+@@ -1698,8 +1714,12 @@
+ 		 */
+ 		spin_lock_irq(q->queue_lock);
+ 		freed_request(q, rw);
++#ifdef CONFIG_CFQIONICE
++		goto out_lock;
++#else
+ 		spin_unlock_irq(q->queue_lock);
+ 		goto out;
++#endif
+ 	}
+ 
+ 	if (ioc_batching(ioc))
+@@ -1728,7 +1748,16 @@
+ 
+ out:
+ 	put_io_context(ioc);
++#ifdef CONFIG_CFQIONICE
++	if (!rq)
++		elv_set_congested(q);
+ 	return rq;
++out_lock:
++	spin_unlock_irq(q->queue_lock);
++	goto out;
++#else
++	return rq;
++#endif
+ }
+ 
+ /*
+@@ -3306,3 +3335,22 @@
+ 		kobject_put(&disk->kobj);
+ 	}
+ }
++
++#ifdef CONFIG_CFQIONICE
++asmlinkage int sys_ioprio_set(int ioprio)
++{
++	if (ioprio < IOPRIO_IDLE || ioprio > IOPRIO_RT)
++		return -EINVAL;
++	if (ioprio == IOPRIO_RT && !capable(CAP_SYS_ADMIN))
++		return -EACCES;
++
++	printk("%s: set ioprio %d\n", current->comm, ioprio);
++	current->ioprio = ioprio;
++	return 0;
++}
++
++asmlinkage int sys_ioprio_get(void)
++{
++	return current->ioprio;
++}
++#endif
+Index: xx-sources/include/asm-i386/unistd.h
+===================================================================
+--- xx-sources.orig/include/asm-i386/unistd.h	2004-08-13 03:27:04.000000000 -0400
++++ xx-sources/include/asm-i386/unistd.h	2004-08-13 21:23:50.268452424 -0400
+@@ -295,8 +295,10 @@
+ #define __NR_vperfctr_unlink	(__NR_perfctr_info+3)
+ #define __NR_vperfctr_iresume	(__NR_perfctr_info+4)
+ #define __NR_vperfctr_read	(__NR_perfctr_info+5)
++#define __NR_ioprio_set		290
++#define __NR_ioprio_get		291
+ 
+-#define NR_syscalls 290
++#define NR_syscalls 292
+ 
+ /* user-visible error numbers are in the range -1 - -124: see <asm-i386/errno.h> */
+ 
+Index: xx-sources/include/asm-ppc/unistd.h
+===================================================================
+--- xx-sources.orig/include/asm-ppc/unistd.h	2004-08-13 03:27:04.000000000 -0400
++++ xx-sources/include/asm-ppc/unistd.h	2004-08-13 21:23:50.269452272 -0400
+@@ -279,8 +279,10 @@
+ #define __NR_vperfctr_unlink	(__NR_perfctr_info+3)
+ #define __NR_vperfctr_iresume	(__NR_perfctr_info+4)
+ #define __NR_vperfctr_read	(__NR_perfctr_info+5)
++#define __NR_ioprio_set		275
++#define __NR_ioprio_get		276
+ 
+-#define __NR_syscalls		275
++#define __NR_syscalls		277
+ 
+ #define __NR(n)	#n
+ 
+Index: xx-sources/include/asm-x86_64/unistd.h
+===================================================================
+--- xx-sources.orig/include/asm-x86_64/unistd.h	2004-08-13 03:27:04.000000000 -0400
++++ xx-sources/include/asm-x86_64/unistd.h	2004-08-13 21:23:50.270452120 -0400
+@@ -566,8 +566,12 @@
+ __SYSCALL(__NR_vperfctr_iresume, sys_vperfctr_iresume)
+ #define __NR_vperfctr_read	(__NR_perfctr_info+5)
+ __SYSCALL(__NR_vperfctr_read, sys_vperfctr_read)
++#define __NR_ioprio_set		253
++__SYSCALL(__NR_ioprio_set, sys_ioprio_set);
++#define __NR_ioprio_get		254
++__SYSCALL(__NR_ioprio_get, sys_ioprio_get);
+ 
+-#define __NR_syscall_max __NR_vperfctr_read
++#define __NR_syscall_max __ioprio_get
+ #ifndef __NO_STUBS
+ 
+ /* user-visible error numbers are in the range -1 - -4095 */
+Index: xx-sources/include/linux/elevator.h
+===================================================================
+--- xx-sources.orig/include/linux/elevator.h	2004-08-13 03:27:04.000000000 -0400
++++ xx-sources/include/linux/elevator.h	2004-08-13 21:23:50.271451968 -0400
+@@ -17,6 +17,9 @@
+ typedef struct request *(elevator_request_list_fn) (request_queue_t *, struct request *);
+ typedef void (elevator_completed_req_fn) (request_queue_t *, struct request *);
+ typedef int (elevator_may_queue_fn) (request_queue_t *, int);
++#ifdef CONFIG_CFQIONICE
++typedef void (elevator_set_congested_fn) (request_queue_t *);
++#endif
+ 
+ typedef int (elevator_set_req_fn) (request_queue_t *, struct request *, int);
+ typedef void (elevator_put_req_fn) (request_queue_t *, struct request *);
+@@ -45,6 +48,9 @@
+ 	elevator_put_req_fn *elevator_put_req_fn;
+ 
+ 	elevator_may_queue_fn *elevator_may_queue_fn;
++#ifdef CONFIG_CFQIONICE
++	elevator_set_congested_fn *elevator_set_congested_fn;
++#endif
+ 
+ 	elevator_init_fn *elevator_init_fn;
+ 	elevator_exit_fn *elevator_exit_fn;
+@@ -74,6 +80,9 @@
+ extern int elv_register_queue(request_queue_t *q);
+ extern void elv_unregister_queue(request_queue_t *q);
+ extern int elv_may_queue(request_queue_t *, int);
++#ifdef CONFIG_CFQIONICE
++extern void elv_set_congested(request_queue_t *);
++#endif
+ extern void elv_completed_request(request_queue_t *, struct request *);
+ extern int elv_set_request(request_queue_t *, struct request *, int);
+ extern void elv_put_request(request_queue_t *, struct request *);
+Index: xx-sources/include/linux/fs.h
+===================================================================
+--- xx-sources.orig/include/linux/fs.h	2004-08-13 21:23:33.836950392 -0400
++++ xx-sources/include/linux/fs.h	2004-08-13 21:23:50.273451664 -0400
+@@ -1647,6 +1647,19 @@
+ /* kernel/fork.c */
+ extern int unshare_files(void);
+ 
++#ifdef CONFIG_CFQIONICE
++/* io priorities */
++
++#define IOPRIO_NR      21
++
++#define IOPRIO_IDLE	0
++#define IOPRIO_NORM	10
++#define IOPRIO_RT	20
++
++asmlinkage int sys_ioprio_set(int ioprio);
++asmlinkage int sys_ioprio_get(void);
++#endif
++
+ #ifdef CONFIG_SECURITY
+ static inline char *alloc_secdata(void)
+ {
+Index: xx-sources/include/linux/init_task.h
+===================================================================
+--- xx-sources.orig/include/linux/init_task.h	2004-08-13 21:23:33.838950088 -0400
++++ xx-sources/include/linux/init_task.h	2004-08-13 21:23:50.274451512 -0400
+@@ -104,6 +104,12 @@
+ #define SCHED_EB_SHARES
+ #endif
+ 
++#ifdef CONFIG_CFQIONICE
++#define CFQIONICE_PRIO .ioprio = IOPRIO_NORM,
++#else
++#define CFQIONICE_PRIO
++#endif
++
+ #define INIT_TASK(tsk)	\
+ {									\
+ 	.state		= 0,						\
+@@ -157,6 +163,7 @@
+ 	INIT_TASK_PAGG(tsk)						\
+ 	.private_pages	= LIST_HEAD_INIT(tsk.private_pages),		\
+ 	.private_pages_count = 0,					\
++	CFQIONICE_PRIO							\
+ }
+ 
+ 
+Index: xx-sources/include/linux/sched.h
+===================================================================
+--- xx-sources.orig/include/linux/sched.h	2004-08-13 21:23:33.843949328 -0400
++++ xx-sources/include/linux/sched.h	2004-08-13 21:23:50.276451208 -0400
+@@ -678,6 +678,10 @@
+ 
+ 	struct list_head private_pages; /* list of pages privately reserved by process */
+ 	int private_pages_count; /* number of pages in the above list */
++
++#ifdef CONFIG_CFQIONICE
++	int ioprio;
++#endif
+ };
+ 
+ static inline pid_t process_group(struct task_struct *tsk)
+Index: xx-sources/kernel/Kconfig-extra.xx
+===================================================================
+--- xx-sources.orig/kernel/Kconfig-extra.xx	2004-08-13 21:23:43.409495144 -0400
++++ xx-sources/kernel/Kconfig-extra.xx	2004-08-13 21:23:50.276451208 -0400
+@@ -102,4 +102,39 @@
+ 
+ endmenu
+ 
++choice
++	prompt "I/O scheduling elevator frameworks"
++	default IO_NONE
++	depends on EXPERIMENTAL
++	help
++	  This will allow you to choose between various modifications to the
++	  I/O scheduler code, most of which are incompatible with each other.
++
++	  At the moment, there is only one option: CFQ with ionice support.
++
++	  Nothing is selected by default.
++
++config IO_NONE
++	bool "None"
++	help
++	  With this option, none of the extensions to the IO schedulers
++	  will be added.  Your system will have the default Anticipatory,
++	  Deadline, Noop, and CFQ elevators (if enabled).  Your CFQ
++	  elevator will be the default CFQ elevator.
++
++config CFQIONICE
++	bool "CFQ with IOnice support"
++	depends on IOSCHED_CFQ
++	help
++	  This will extend the CFQ IO scheduler to support IOnicing.
++	  Processes can be given a priority, and higher priority tasks
++	  will be favored with more disk time.
++	  (Much like the process scheduler)
++
++	  Please note that this is still experimental.  Also, enabling
++	  this will, for some reason, break the other IO schedulers.
++	  You will only be able to use this scheduler.
++
++endchoice
++
+ endmenu
+Index: xx-sources/kernel/fork.c
+===================================================================
+--- xx-sources.orig/kernel/fork.c	2004-08-13 21:23:33.844949176 -0400
++++ xx-sources/kernel/fork.c	2004-08-13 21:23:50.278450904 -0400
+@@ -1145,6 +1145,9 @@
+ 	} else
+ 		link_pid(p, p->pids + PIDTYPE_TGID, &p->group_leader->pids[PIDTYPE_TGID].pid);
+ 
++#ifdef CONFIG_CFQIONICE
++	p->ioprio = current->ioprio;
++#endif
+ 	nr_threads++;
+ 	write_unlock_irq(&tasklist_lock);
+ 	retval = 0;
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-08-13 21:21:29.850799152 -0400
++++ xx-sources/kernel/sched.c	2004-08-13 21:25:03.014393360 -0400
+@@ -44,6 +44,9 @@
+ #include <linux/seq_file.h>
+ #include <linux/times.h>
+ #include <linux/profile.h>
++#ifdef CONFIG_CFQIONICE
++#include <linux/fs.h>
++#endif
+ 
+ #include <asm/tlb.h>
+ 
+@@ -5726,6 +5729,24 @@
+ 
+ EXPORT_SYMBOL(sleep_on_timeout);
+ 
++#ifdef CONFIG_CFQIONICE
++/*
++ * Sets the initial io priority according to the policy and nice level.
++ */
++void set_sched_ioprio(task_t *p, long nice)
++{
++	int io_prio = (20 - nice) / 2;
++
++	if (io_prio <= IOPRIO_IDLE)
++		io_prio = IOPRIO_IDLE + 1;
++	if (io_prio >= IOPRIO_RT)
++		io_prio = IOPRIO_RT - 1;
++	if (rt_task(p))
++		io_prio = IOPRIO_RT;
++	p->ioprio = io_prio;
++}
++#endif
++
+ void set_user_nice(task_t *p, long nice)
+ {
+ 	unsigned long flags;
+@@ -5753,6 +5774,9 @@
+ 	 * We have to be careful, if called from sys_setpriority(),
+ 	 * the task might be in the middle of scheduling on another CPU.
+ 	 */
++#ifdef CONFIG_CFQIONICE
++	set_sched_ioprio(p, nice);
++#endif
+ #if defined(CONFIG_SPA)
+ 	rql = task_rq_lock(p, &flags);
+ #else
+@@ -6113,6 +6137,9 @@
+ 	}
+ 
+ out_unlock:
++#ifdef CONFIG_CFQIONICE
++	set_sched_ioprio(p, TASK_NICE(p));
++#endif
+ #if defined(CONFIG_SPA)
+ 	task_rq_unlock(rql, &flags);
+ #else

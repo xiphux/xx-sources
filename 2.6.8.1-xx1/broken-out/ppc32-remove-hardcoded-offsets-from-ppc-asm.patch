@@ -1,0 +1,54 @@
+
+From: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+
+This patch by Vincent Hanquez removes some hard coded offsets for accessing
+thread info fields from assembly, uses the normal offset generation
+mecanism that we already have for other things instead.
+
+Signed-off-by: Vincent Hanquez <tab@snarc.org>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc/kernel/asm-offsets.c |    7 +++++++
+ 25-akpm/include/asm-ppc/thread_info.h |   10 ----------
+ 2 files changed, 7 insertions(+), 10 deletions(-)
+
+diff -puN arch/ppc/kernel/asm-offsets.c~ppc32-remove-hardcoded-offsets-from-ppc-asm arch/ppc/kernel/asm-offsets.c
+--- 25/arch/ppc/kernel/asm-offsets.c~ppc32-remove-hardcoded-offsets-from-ppc-asm	2004-08-09 02:10:56.842680296 -0700
++++ 25-akpm/arch/ppc/kernel/asm-offsets.c	2004-08-09 02:10:56.847679536 -0700
+@@ -129,6 +129,13 @@ main(void)
+ 	DEFINE(CPU_SPEC_FEATURES, offsetof(struct cpu_spec, cpu_features));
+ 	DEFINE(CPU_SPEC_SETUP, offsetof(struct cpu_spec, cpu_setup));
+ 
++	DEFINE(TI_TASK, offsetof(struct thread_info, task));
++	DEFINE(TI_EXECDOMAIN, offsetof(struct thread_info, exec_domain));
++	DEFINE(TI_FLAGS, offsetof(struct thread_info, flags));
++	DEFINE(TI_LOCAL_FLAGS, offsetof(struct thread_info, local_flags));
++	DEFINE(TI_CPU, offsetof(struct thread_info, cpu));
++	DEFINE(TI_PREEMPT, offsetof(struct thread_info, preempt_count));
++
+ 	DEFINE(NUM_USER_SEGMENTS, TASK_SIZE>>28);
+ 	return 0;
+ }
+diff -puN include/asm-ppc/thread_info.h~ppc32-remove-hardcoded-offsets-from-ppc-asm include/asm-ppc/thread_info.h
+--- 25/include/asm-ppc/thread_info.h~ppc32-remove-hardcoded-offsets-from-ppc-asm	2004-08-09 02:10:56.844679992 -0700
++++ 25-akpm/include/asm-ppc/thread_info.h	2004-08-09 02:10:56.848679384 -0700
+@@ -65,16 +65,6 @@ static inline struct thread_info *curren
+  */
+ #define THREAD_SIZE		8192	/* 2 pages */
+ 
+-/*
+- * Offsets in thread_info structure, used in assembly code
+- */
+-#define TI_TASK		0
+-#define TI_EXECDOMAIN	4
+-#define TI_FLAGS	8
+-#define TI_LOCAL_FLAGS	12
+-#define TI_CPU		16
+-#define TI_PREEMPT	20
+-
+ #define PREEMPT_ACTIVE		0x4000000
+ 
+ /*
+_

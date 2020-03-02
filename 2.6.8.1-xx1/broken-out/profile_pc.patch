@@ -1,0 +1,376 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+The program counter calculation from pt_regs is the only portion of profile
+accounting that differs across various architectures.  This is usually
+instruction_pointer(regs), but to handle the few arches where it isn't,
+introduce profile_pc().
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Index: xx-sources/arch/ia64/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/ia64/kernel/time.c	2004-08-14 13:27:28.635969240 -0400
++++ xx-sources/arch/ia64/kernel/time.c	2004-08-14 13:27:33.670203920 -0400
+@@ -195,7 +195,7 @@
+ static inline void
+ ia64_do_profile (struct pt_regs * regs)
+ {
+-	unsigned long ip, slot;
++	unsigned long ip;
+ 
+ 	profile_hook(regs);
+ 
+@@ -205,12 +205,10 @@
+ 	if (!prof_buffer)
+ 		return;
+ 
+-	ip = instruction_pointer(regs);
+ 	/* Conserve space in histogram by encoding slot bits in address
+ 	 * bits 2 and 3 rather than bits 0 and 1.
+ 	 */
+-	slot = ip & 3;
+-	ip = (ip & ~3UL) + 4*slot;
++	ip = profile_pc(regs);
+ 
+ 	/*
+ 	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+Index: xx-sources/arch/sh/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/sh/kernel/time.c	2004-08-14 13:27:28.700959360 -0400
++++ xx-sources/arch/sh/kernel/time.c	2004-08-14 13:27:34.250115760 -0400
+@@ -262,9 +262,6 @@
+ 	if (!prof_buffer || !current->pid)
+ 		return;
+ 
+-	if (pc >= 0xa0000000UL && pc < 0xc0000000UL)
+-		pc -= 0x20000000;
+-
+ 	pc -= (unsigned long)&_stext;
+ 	pc >>= prof_shift;
+ 
+@@ -288,7 +285,7 @@
+ 	do_timer(regs);
+ 
+ 	if (!user_mode(regs))
+-		sh_do_profile(regs->pc);
++		sh_do_profile(profile_pc(regs));
+ 
+ #ifdef CONFIG_HEARTBEAT
+ 	if (sh_mv.mv_heartbeat != NULL) 
+Index: xx-sources/arch/sparc/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/sparc/kernel/time.c	2004-08-14 01:37:14.000000000 -0400
++++ xx-sources/arch/sparc/kernel/time.c	2004-08-14 13:27:34.254115152 -0400
+@@ -79,6 +79,26 @@
+ 
+ #endif
+ 
++unsigned long profile_pc(struct pt_regs *regs)
++{
++	extern int __copy_user_begin, __copy_user_end;
++	extern int __atomic_begin, __atomic_end;
++	extern int __bzero_begin, __bzero_end;
++	extern int __bitops_begin, __bitops_end;
++	unsigned long pc = regs->pc;
++
++	if ((pc >= (unsigned long) &__copy_user_begin &&
++	     pc < (unsigned long) &__copy_user_end) ||
++	    (pc >= (unsigned long) &__atomic_begin &&
++	     pc < (unsigned long) &__atomic_end) ||
++	    (pc >= (unsigned long) &__bzero_begin &&
++	     pc < (unsigned long) &__bzero_end) ||
++	    (pc >= (unsigned long) &__bitops_begin &&
++	     pc < (unsigned long) &__bitops_end))
++		pc = regs->u_regs[UREG_RETPC];
++	return pc;
++}
++
+ static spinlock_t ticker_lock = SPIN_LOCK_UNLOCKED;
+ 
+ /* 32-bit Sparc specific profiling function. */
+@@ -86,20 +106,6 @@
+ {
+ 	if(prof_buffer && current->pid) {
+ 		extern int _stext;
+-		extern int __copy_user_begin, __copy_user_end;
+-		extern int __atomic_begin, __atomic_end;
+-		extern int __bzero_begin, __bzero_end;
+-		extern int __bitops_begin, __bitops_end;
+-
+-		if ((pc >= (unsigned long) &__copy_user_begin &&
+-		     pc < (unsigned long) &__copy_user_end) ||
+-		    (pc >= (unsigned long) &__atomic_begin &&
+-		     pc < (unsigned long) &__atomic_end) ||
+-		    (pc >= (unsigned long) &__bzero_begin &&
+-		     pc < (unsigned long) &__bzero_end) ||
+-		    (pc >= (unsigned long) &__bitops_begin &&
+-		     pc < (unsigned long) &__bitops_end))
+-			pc = o7;
+ 
+ 		pc -= (unsigned long) &_stext;
+ 		pc >>= prof_shift;
+@@ -130,7 +136,7 @@
+ 
+ #ifndef CONFIG_SMP
+ 	if(!user_mode(regs))
+-		sparc_do_profile(regs->pc, regs->u_regs[UREG_RETPC]);
++		sparc_do_profile(profile_pc(regs));
+ #endif
+ 
+ 	/* Protect counter clear so that do_gettimeoffset works */
+Index: xx-sources/include/asm-alpha/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-alpha/ptrace.h	2004-08-14 01:36:32.000000000 -0400
++++ xx-sources/include/asm-alpha/ptrace.h	2004-08-14 13:27:34.254115152 -0400
+@@ -69,6 +69,7 @@
+ #ifdef __KERNEL__
+ #define user_mode(regs) (((regs)->ps & 8) != 0)
+ #define instruction_pointer(regs) ((regs)->pc)
++#define profile_pc(regs) instruction_pointer(regs)
+ extern void show_regs(struct pt_regs *);
+ 
+ #define alpha_task_regs(task) \
+Index: xx-sources/include/asm-arm/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-arm/ptrace.h	2004-08-14 01:37:14.000000000 -0400
++++ xx-sources/include/asm-arm/ptrace.h	2004-08-14 13:27:34.256114848 -0400
+@@ -130,6 +130,7 @@
+ 
+ #define instruction_pointer(regs) \
+ 	(pc_pointer((regs)->ARM_pc))
++#define profile_pc(regs) instruction_pointer(regs)
+ 
+ #ifdef __KERNEL__
+ extern void show_regs(struct pt_regs *);
+Index: xx-sources/include/asm-arm26/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-arm26/ptrace.h	2004-08-14 01:36:32.000000000 -0400
++++ xx-sources/include/asm-arm26/ptrace.h	2004-08-14 13:27:34.255115000 -0400
+@@ -30,6 +30,7 @@
+ 
+ #define pc_pointer(v) ((v) & ~PCMASK)   /* convert v to pc type address */
+ #define instruction_pointer(regs) (pc_pointer((regs)->ARM_pc)) /* get pc */
++#define profile_pc(regs) instruction_pointer(regs)
+ 
+ /* this struct defines the way the registers are stored on the
+    stack during a system call. */
+Index: xx-sources/include/asm-cris/arch-v10/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-cris/arch-v10/ptrace.h	2004-08-14 01:36:32.000000000 -0400
++++ xx-sources/include/asm-cris/arch-v10/ptrace.h	2004-08-14 13:27:34.256114848 -0400
+@@ -109,6 +109,7 @@
+ /* bit 8 is user-mode flag */
+ #define user_mode(regs) (((regs)->dccr & 0x100) != 0)
+ #define instruction_pointer(regs) ((regs)->irp)
++#define profile_pc(regs) instruction_pointer(regs)
+ extern void show_regs(struct pt_regs *);
+ 
+ #endif
+Index: xx-sources/include/asm-h8300/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-h8300/ptrace.h	2004-08-14 01:37:41.000000000 -0400
++++ xx-sources/include/asm-h8300/ptrace.h	2004-08-14 13:27:34.258114544 -0400
+@@ -57,6 +57,7 @@
+ 
+ #define user_mode(regs) (!((regs)->ccr & PS_S))
+ #define instruction_pointer(regs) ((regs)->pc)
++#define profile_pc(regs) instruction_pointer(regs)
+ extern void show_regs(struct pt_regs *);
+ #endif /* __KERNEL__ */
+ #endif /* __ASSEMBLY__ */
+Index: xx-sources/include/asm-i386/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-i386/ptrace.h	2004-08-14 01:36:14.000000000 -0400
++++ xx-sources/include/asm-i386/ptrace.h	2004-08-14 13:27:34.258114544 -0400
+@@ -57,6 +57,7 @@
+ #ifdef __KERNEL__
+ #define user_mode(regs) ((VM_MASK & (regs)->eflags) || (3 & (regs)->xcs))
+ #define instruction_pointer(regs) ((regs)->eip)
++#define profile_pc(regs) instruction_pointer(regs)
+ #endif
+ 
+ #endif
+Index: xx-sources/include/asm-ia64/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-ia64/ptrace.h	2004-08-14 01:37:25.000000000 -0400
++++ xx-sources/include/asm-ia64/ptrace.h	2004-08-14 13:27:34.260114240 -0400
+@@ -229,6 +229,15 @@
+  * the canonical representation by adding to instruction pointer.
+  */
+ # define instruction_pointer(regs) ((regs)->cr_iip + ia64_psr(regs)->ri)
++/* Conserve space in histogram by encoding slot bits in address
++ * bits 2 and 3 rather than bits 0 and 1.
++ */
++static inline unsigned long profile_pc(struct pt_regs *regs)
++{
++	unsigned long ip = instruction_pointer(regs);
++	return (ip & ~3UL) + ((ip & 3UL) << 2);
++}
++
+   /* given a pointer to a task_struct, return the user's pt_regs */
+ # define ia64_task_regs(t)		(((struct pt_regs *) ((char *) (t) + IA64_STK_OFFSET)) - 1)
+ # define ia64_psr(regs)			((struct ia64_psr *) &(regs)->cr_ipsr)
+Index: xx-sources/include/asm-m68k/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-m68k/ptrace.h	2004-08-14 01:38:10.000000000 -0400
++++ xx-sources/include/asm-m68k/ptrace.h	2004-08-14 13:27:34.261114088 -0400
+@@ -73,6 +73,7 @@
+ 
+ #define user_mode(regs) (!((regs)->sr & PS_S))
+ #define instruction_pointer(regs) ((regs)->pc)
++#define profile_pc(regs) instruction_pointer(regs)
+ extern void show_regs(struct pt_regs *);
+ #endif /* __KERNEL__ */
+ #endif /* __ASSEMBLY__ */
+Index: xx-sources/include/asm-m68knommu/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-m68knommu/ptrace.h	2004-08-14 01:36:16.000000000 -0400
++++ xx-sources/include/asm-m68knommu/ptrace.h	2004-08-14 13:27:34.260114240 -0400
+@@ -84,6 +84,7 @@
+ 
+ #define user_mode(regs) (!((regs)->sr & PS_S))
+ #define instruction_pointer(regs) ((regs)->pc)
++#define profile_pc(regs) instruction_pointer(regs)
+ extern void show_regs(struct pt_regs *);
+ #endif /* __KERNEL__ */
+ #endif /* __ASSEMBLY__ */
+Index: xx-sources/include/asm-mips/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-mips/ptrace.h	2004-08-14 01:37:14.000000000 -0400
++++ xx-sources/include/asm-mips/ptrace.h	2004-08-14 13:27:34.262113936 -0400
+@@ -66,6 +66,7 @@
+ #define user_mode(regs) (((regs)->cp0_status & KU_MASK) == KU_USER)
+ 
+ #define instruction_pointer(regs) ((regs)->cp0_epc)
++#define profile_pc(regs) instruction_pointer(regs)
+ 
+ extern void show_regs(struct pt_regs *);
+ 
+Index: xx-sources/include/asm-parisc/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-parisc/ptrace.h	2004-08-14 01:36:57.000000000 -0400
++++ xx-sources/include/asm-parisc/ptrace.h	2004-08-14 13:27:34.262113936 -0400
+@@ -48,6 +48,7 @@
+ /* XXX should we use iaoq[1] or iaoq[0] ? */
+ #define user_mode(regs)			(((regs)->iaoq[0] &  3) ? 1 : 0)
+ #define instruction_pointer(regs)	((regs)->iaoq[0] & ~3)
++#define profile_pc(regs) instruction_pointer(regs)
+ extern void show_regs(struct pt_regs *);
+ #endif
+ 
+Index: xx-sources/include/asm-ppc/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-ppc/ptrace.h	2004-08-14 01:36:58.000000000 -0400
++++ xx-sources/include/asm-ppc/ptrace.h	2004-08-14 13:27:34.264113632 -0400
+@@ -47,6 +47,7 @@
+ 
+ #ifndef __ASSEMBLY__
+ #define instruction_pointer(regs) ((regs)->nip)
++#define profile_pc(regs) instruction_pointer(regs)
+ #define user_mode(regs) (((regs)->msr & MSR_PR) != 0)
+ 
+ #define force_successful_syscall_return()   \
+Index: xx-sources/include/asm-ppc64/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-ppc64/ptrace.h	2004-08-14 01:37:26.000000000 -0400
++++ xx-sources/include/asm-ppc64/ptrace.h	2004-08-14 13:27:34.263113784 -0400
+@@ -69,6 +69,7 @@
+ #define __SIGNAL_FRAMESIZE32	64
+ 
+ #define instruction_pointer(regs) ((regs)->nip)
++#define profile_pc(regs) instruction_pointer(regs)
+ #define user_mode(regs) ((((regs)->msr) >> MSR_PR_LG) & 0x1)
+ 
+ #define force_successful_syscall_return()   \
+Index: xx-sources/include/asm-s390/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-s390/ptrace.h	2004-08-14 01:37:26.000000000 -0400
++++ xx-sources/include/asm-s390/ptrace.h	2004-08-14 13:27:34.265113480 -0400
+@@ -466,6 +466,7 @@
+ #ifdef __KERNEL__
+ #define user_mode(regs) (((regs)->psw.mask & PSW_MASK_PSTATE) != 0)
+ #define instruction_pointer(regs) ((regs)->psw.addr & PSW_ADDR_INSN)
++#define profile_pc(regs) instruction_pointer(regs)
+ extern void show_regs(struct pt_regs * regs);
+ #endif
+ 
+Index: xx-sources/include/asm-sh/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-sh/ptrace.h	2004-08-14 01:37:39.000000000 -0400
++++ xx-sources/include/asm-sh/ptrace.h	2004-08-14 13:27:34.266113328 -0400
+@@ -90,6 +90,15 @@
+ #define user_mode(regs) (((regs)->sr & 0x40000000)==0)
+ #define instruction_pointer(regs) ((regs)->pc)
+ extern void show_regs(struct pt_regs *);
++
++static inline unsigned long profile_pc(struct pt_regs *regs)
++{
++	unsigned long pc = instruction_pointer(regs);
++
++	if (pc >= 0xa0000000UL && pc < 0xc0000000UL)
++		pc -= 0x20000000;
++	return pc;
++}
+ #endif
+ 
+ #endif /* __ASM_SH_PTRACE_H */
+Index: xx-sources/include/asm-sh64/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-sh64/ptrace.h	2004-08-14 01:37:26.000000000 -0400
++++ xx-sources/include/asm-sh64/ptrace.h	2004-08-14 13:27:34.265113480 -0400
+@@ -28,6 +28,7 @@
+ #ifdef __KERNEL__
+ #define user_mode(regs) (((regs)->sr & 0x40000000)==0)
+ #define instruction_pointer(regs) ((regs)->pc)
++#define profile_pc(regs) instruction_pointer(regs)
+ extern void show_regs(struct pt_regs *);
+ #endif
+ 
+Index: xx-sources/include/asm-sparc/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-sparc/ptrace.h	2004-08-14 01:37:40.000000000 -0400
++++ xx-sources/include/asm-sparc/ptrace.h	2004-08-14 13:27:34.268113024 -0400
+@@ -62,6 +62,7 @@
+ #ifdef __KERNEL__
+ #define user_mode(regs) (!((regs)->psr & PSR_PS))
+ #define instruction_pointer(regs) ((regs)->pc)
++unsigned long profile_pc(struct pt_regs *);
+ extern void show_regs(struct pt_regs *);
+ #endif
+ 
+Index: xx-sources/include/asm-sparc64/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-sparc64/ptrace.h	2004-08-14 01:37:15.000000000 -0400
++++ xx-sources/include/asm-sparc64/ptrace.h	2004-08-14 13:27:34.267113176 -0400
+@@ -98,6 +98,7 @@
+ 	set_thread_flag(TIF_SYSCALL_SUCCESS)
+ #define user_mode(regs) (!((regs)->tstate & TSTATE_PRIV))
+ #define instruction_pointer(regs) ((regs)->tpc)
++unsigned long profile_pc(struct pt_regs *);
+ extern void show_regs(struct pt_regs *);
+ #endif
+ 
+Index: xx-sources/include/asm-v850/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-v850/ptrace.h	2004-08-14 01:38:10.000000000 -0400
++++ xx-sources/include/asm-v850/ptrace.h	2004-08-14 13:27:34.268113024 -0400
+@@ -76,6 +76,7 @@
+ 
+ 
+ #define instruction_pointer(regs)	((regs)->pc)
++#define profile_pc(regs) instruction_pointer(regs)
+ #define user_mode(regs)			(!(regs)->kernel_mode)
+ 
+ /* When a struct pt_regs is used to save user state for a system call in
+Index: xx-sources/include/asm-x86_64/ptrace.h
+===================================================================
+--- xx-sources.orig/include/asm-x86_64/ptrace.h	2004-08-14 01:36:44.000000000 -0400
++++ xx-sources/include/asm-x86_64/ptrace.h	2004-08-14 13:27:34.269112872 -0400
+@@ -83,6 +83,7 @@
+ #if defined(__KERNEL__) && !defined(__ASSEMBLY__) 
+ #define user_mode(regs) (!!((regs)->cs & 3))
+ #define instruction_pointer(regs) ((regs)->rip)
++#define profile_pc(regs) instruction_pointer(regs)
+ void signal_fault(struct pt_regs *regs, void __user *frame, char *where);
+ 
+ enum {

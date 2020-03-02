@@ -1,0 +1,186 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/parisc/kernel/cache.c     |    2 +-
+ 25-akpm/arch/parisc/kernel/firmware.c  |    2 +-
+ 25-akpm/arch/parisc/kernel/irq.c       |    2 +-
+ 25-akpm/arch/parisc/kernel/processor.c |    2 +-
+ 25-akpm/arch/parisc/kernel/smp.c       |    4 ++--
+ 25-akpm/arch/parisc/kernel/traps.c     |    4 ++--
+ 25-akpm/arch/parisc/mm/init.c          |    2 +-
+ 25-akpm/drivers/parisc/dino.c          |    2 +-
+ 25-akpm/drivers/parisc/eisa.c          |    2 +-
+ 25-akpm/drivers/parisc/iosapic.c       |    2 +-
+ 25-akpm/drivers/parisc/lba_pci.c       |    2 +-
+ 25-akpm/drivers/parisc/sba_iommu.c     |    2 +-
+ 12 files changed, 14 insertions(+), 14 deletions(-)
+
+diff -puN arch/parisc/kernel/cache.c~lock-initializer-cleanup-parisc arch/parisc/kernel/cache.c
+--- 25/arch/parisc/kernel/cache.c~lock-initializer-cleanup-parisc	Wed Jan 12 16:55:00 2005
++++ 25-akpm/arch/parisc/kernel/cache.c	Wed Jan 12 16:55:00 2005
+@@ -40,7 +40,7 @@ EXPORT_SYMBOL(dcache_stride);
+  * by software.  We put a spinlock around all TLB flushes  to
+  * ensure this.
+  */
+-spinlock_t pa_tlb_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(pa_tlb_lock);
+ EXPORT_SYMBOL(pa_tlb_lock);
+ #endif
+ 
+diff -puN arch/parisc/kernel/firmware.c~lock-initializer-cleanup-parisc arch/parisc/kernel/firmware.c
+--- 25/arch/parisc/kernel/firmware.c~lock-initializer-cleanup-parisc	Wed Jan 12 16:55:00 2005
++++ 25-akpm/arch/parisc/kernel/firmware.c	Wed Jan 12 16:55:00 2005
+@@ -69,7 +69,7 @@
+ #include <asm/system.h>
+ #include <asm/processor.h>	/* for boot_cpu_data */
+ 
+-static spinlock_t pdc_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(pdc_lock);
+ static unsigned long pdc_result[32] __attribute__ ((aligned (8)));
+ static unsigned long pdc_result2[32] __attribute__ ((aligned (8)));
+ 
+diff -puN arch/parisc/kernel/irq.c~lock-initializer-cleanup-parisc arch/parisc/kernel/irq.c
+--- 25/arch/parisc/kernel/irq.c~lock-initializer-cleanup-parisc	Wed Jan 12 16:55:00 2005
++++ 25-akpm/arch/parisc/kernel/irq.c	Wed Jan 12 16:55:00 2005
+@@ -61,7 +61,7 @@ extern irqreturn_t ipi_interrupt(int, vo
+ */
+ static volatile unsigned long cpu_eiem = 0;
+ 
+-static spinlock_t irq_lock = SPIN_LOCK_UNLOCKED;  /* protect IRQ regions */
++static DEFINE_SPINLOCK(irq_lock);  /* protect IRQ regions */
+ 
+ static void cpu_set_eiem(void *info)
+ {
+diff -puN arch/parisc/kernel/processor.c~lock-initializer-cleanup-parisc arch/parisc/kernel/processor.c
+--- 25/arch/parisc/kernel/processor.c~lock-initializer-cleanup-parisc	Wed Jan 12 16:55:00 2005
++++ 25-akpm/arch/parisc/kernel/processor.c	Wed Jan 12 16:55:00 2005
+@@ -153,7 +153,7 @@ static int __init processor_probe(struct
+ 	p->cpuid = cpuid;	/* save CPU id */
+ 	p->txn_addr = txn_addr;	/* save CPU IRQ address */
+ #ifdef CONFIG_SMP
+-	p->lock = SPIN_LOCK_UNLOCKED;
++	spin_lock_init(&p->lock);
+ 
+ 	/*
+ 	** FIXME: review if any other initialization is clobbered
+diff -puN arch/parisc/kernel/smp.c~lock-initializer-cleanup-parisc arch/parisc/kernel/smp.c
+--- 25/arch/parisc/kernel/smp.c~lock-initializer-cleanup-parisc	Wed Jan 12 16:55:00 2005
++++ 25-akpm/arch/parisc/kernel/smp.c	Wed Jan 12 16:55:00 2005
+@@ -54,7 +54,7 @@
+ 
+ #define kDEBUG 0
+ 
+-spinlock_t smp_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(smp_lock);
+ 
+ volatile struct task_struct *smp_init_current_idle_task;
+ 
+@@ -332,7 +332,7 @@ smp_call_function (void (*func) (void *i
+ {
+ 	struct smp_call_struct data;
+ 	unsigned long timeout;
+-	static spinlock_t lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(lock);
+ 	int retries = 0;
+ 
+ 	if (num_online_cpus() < 2)
+diff -puN arch/parisc/kernel/traps.c~lock-initializer-cleanup-parisc arch/parisc/kernel/traps.c
+--- 25/arch/parisc/kernel/traps.c~lock-initializer-cleanup-parisc	Wed Jan 12 16:55:00 2005
++++ 25-akpm/arch/parisc/kernel/traps.c	Wed Jan 12 16:55:00 2005
+@@ -46,7 +46,7 @@
+ 			  /*  dumped to the console via printk)          */
+ 
+ #if defined(CONFIG_SMP) || defined(CONFIG_DEBUG_SPINLOCK)
+-spinlock_t pa_dbit_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(pa_dbit_lock);
+ #endif
+ 
+ int printbinary(char *buf, unsigned long x, int nbits)
+@@ -385,7 +385,7 @@ void transfer_pim_to_trap_frame(struct p
+  */
+ void parisc_terminate(char *msg, struct pt_regs *regs, int code, unsigned long offset)
+ {
+-	static spinlock_t terminate_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(terminate_lock);
+ 
+ 	oops_in_progress = 1;
+ 
+diff -puN arch/parisc/mm/init.c~lock-initializer-cleanup-parisc arch/parisc/mm/init.c
+--- 25/arch/parisc/mm/init.c~lock-initializer-cleanup-parisc	Wed Jan 12 16:55:00 2005
++++ 25-akpm/arch/parisc/mm/init.c	Wed Jan 12 16:55:00 2005
+@@ -853,7 +853,7 @@ static unsigned long space_id_index;
+ static unsigned long free_space_ids = NR_SPACE_IDS - 1;
+ static unsigned long dirty_space_ids = 0;
+ 
+-static spinlock_t sid_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(sid_lock);
+ 
+ unsigned long alloc_sid(void)
+ {
+diff -puN drivers/parisc/dino.c~lock-initializer-cleanup-parisc drivers/parisc/dino.c
+--- 25/drivers/parisc/dino.c~lock-initializer-cleanup-parisc	Wed Jan 12 16:55:00 2005
++++ 25-akpm/drivers/parisc/dino.c	Wed Jan 12 16:55:00 2005
+@@ -1005,7 +1005,7 @@ dino_driver_callback(struct parisc_devic
+ 	dino_dev->hba.dev = dev;
+ 	dino_dev->hba.base_addr = dev->hpa;  /* faster access */
+ 	dino_dev->hba.lmmio_space_offset = 0;	/* CPU addrs == bus addrs */
+-	dino_dev->dinosaur_pen = SPIN_LOCK_UNLOCKED;
++	spin_lock_init(&dino_dev->dinosaur_pen);
+ 	dino_dev->hba.iommu = ccio_get_iommu(dev);
+ 
+ 	if (is_card_dino(&dev->id)) {
+diff -puN drivers/parisc/eisa.c~lock-initializer-cleanup-parisc drivers/parisc/eisa.c
+--- 25/drivers/parisc/eisa.c~lock-initializer-cleanup-parisc	Wed Jan 12 16:55:00 2005
++++ 25-akpm/drivers/parisc/eisa.c	Wed Jan 12 16:55:00 2005
+@@ -54,7 +54,7 @@
+ #define SNAKES_EEPROM_BASE_ADDR 0xF0810400
+ #define MIRAGE_EEPROM_BASE_ADDR 0xF00C0400
+ 
+-static spinlock_t eisa_irq_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(eisa_irq_lock);
+ 
+ /* We can only have one EISA adapter in the system because neither
+  * implementation can be flexed.
+diff -puN drivers/parisc/iosapic.c~lock-initializer-cleanup-parisc drivers/parisc/iosapic.c
+--- 25/drivers/parisc/iosapic.c~lock-initializer-cleanup-parisc	Wed Jan 12 16:55:00 2005
++++ 25-akpm/drivers/parisc/iosapic.c	Wed Jan 12 16:55:00 2005
+@@ -426,7 +426,7 @@ iosapic_init(void)
+ 	unsigned long cell = 0;
+ 
+ 	/* init global data */
+-	iosapic_lock = SPIN_LOCK_UNLOCKED;
++	spin_lock_init(&iosapic_lock);
+         iosapic_list = (struct iosapic_info *) NULL;
+ 	iosapic_count = 0;
+ 
+diff -puN drivers/parisc/lba_pci.c~lock-initializer-cleanup-parisc drivers/parisc/lba_pci.c
+--- 25/drivers/parisc/lba_pci.c~lock-initializer-cleanup-parisc	Wed Jan 12 16:55:00 2005
++++ 25-akpm/drivers/parisc/lba_pci.c	Wed Jan 12 16:55:00 2005
+@@ -1565,7 +1565,7 @@ lba_common_init(struct lba_device *lba_d
+ {
+ 	pci_bios = &lba_bios_ops;
+ 	pcibios_register_hba(HBA_DATA(lba_dev));
+-	lba_dev->lba_lock = SPIN_LOCK_UNLOCKED;	
++	spin_lock_init(&lba_dev->lba_lock);
+ 
+ 	/*
+ 	** Set flags which depend on hw_rev
+diff -puN drivers/parisc/sba_iommu.c~lock-initializer-cleanup-parisc drivers/parisc/sba_iommu.c
+--- 25/drivers/parisc/sba_iommu.c~lock-initializer-cleanup-parisc	Wed Jan 12 16:55:00 2005
++++ 25-akpm/drivers/parisc/sba_iommu.c	Wed Jan 12 16:55:00 2005
+@@ -1861,7 +1861,7 @@ sba_common_init(struct sba_device *sba_d
+ 			__FUNCTION__, i, res_size, sba_dev->ioc[i].res_map);
+ 	}
+ 
+-	sba_dev->sba_lock = SPIN_LOCK_UNLOCKED;
++	spin_lock_init(&sba_dev->sba_lock);
+ 	ioc_needs_fdc = boot_cpu_data.pdc.capabilities & PDC_MODEL_IOPDIR_FDC;
+ 
+ #ifdef DEBUG_SBA_INIT
+_

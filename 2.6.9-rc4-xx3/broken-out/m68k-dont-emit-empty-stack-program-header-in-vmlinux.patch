@@ -1,0 +1,52 @@
+
+From: Geert Uytterhoeven <geert@linux-m68k.org>
+
+Recent versions of ld add an empty stack program header to the kernel image,
+which makes it incompatible with current m68k bootstrap loaders.  Modify the
+linker script to make sure we see only the program headers that are really
+needed.  (from Roman Zippel)
+
+Signed-off-by: Geert Uytterhoeven <geert@linux-m68k.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/m68k/kernel/vmlinux-std.lds |    4 ++--
+ 25-akpm/arch/m68k/kernel/vmlinux.lds.S   |    6 +++++-
+ 2 files changed, 7 insertions(+), 3 deletions(-)
+
+diff -puN arch/m68k/kernel/vmlinux.lds.S~m68k-dont-emit-empty-stack-program-header-in-vmlinux arch/m68k/kernel/vmlinux.lds.S
+--- 25/arch/m68k/kernel/vmlinux.lds.S~m68k-dont-emit-empty-stack-program-header-in-vmlinux	2004-10-02 18:40:56.112395448 -0700
++++ 25-akpm/arch/m68k/kernel/vmlinux.lds.S	2004-10-02 18:40:56.117394688 -0700
+@@ -1,5 +1,9 @@
+ #include <linux/config.h>
+-
++PHDRS
++{
++  text PT_LOAD FILEHDR PHDRS FLAGS (7);
++  data PT_LOAD FLAGS (7);
++}
+ #ifdef CONFIG_SUN3
+ #include "vmlinux-sun3.lds"
+ #else
+diff -puN arch/m68k/kernel/vmlinux-std.lds~m68k-dont-emit-empty-stack-program-header-in-vmlinux arch/m68k/kernel/vmlinux-std.lds
+--- 25/arch/m68k/kernel/vmlinux-std.lds~m68k-dont-emit-empty-stack-program-header-in-vmlinux	2004-10-02 18:40:56.113395296 -0700
++++ 25-akpm/arch/m68k/kernel/vmlinux-std.lds	2004-10-02 18:40:56.117394688 -0700
+@@ -15,7 +15,7 @@ SECTIONS
+ 	SCHED_TEXT
+ 	*(.fixup)
+ 	*(.gnu.warning)
+-	} = 0x4e75
++	} :text = 0x4e75
+ 
+   . = ALIGN(16);		/* Exception table */
+   __start___ex_table = .;
+@@ -34,7 +34,7 @@ SECTIONS
+   .bss : { *(.bss) }		/* BSS */
+ 
+   . = ALIGN(16);
+-  .data.cacheline_aligned : { *(.data.cacheline_aligned) }
++  .data.cacheline_aligned : { *(.data.cacheline_aligned) } :data
+ 
+   _edata = .;			/* End of data section */
+ 
+_

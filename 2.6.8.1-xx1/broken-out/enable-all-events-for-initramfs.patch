@@ -1,0 +1,63 @@
+
+From: Hannes Reinecke <hare@suse.de>
+
+Currently most driver events are not sent out when using initramfs as
+driver_init() (which triggers the events) is called before init_workqueues.
+
+This patch rearranges the init calls so that the hotplug event queue is
+enabled prior to calling driver_init(), hence we're getting all hotplug
+events again.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/init/main.c   |    6 +++++-
+ 25-akpm/kernel/kmod.c |    4 +---
+ 2 files changed, 6 insertions(+), 4 deletions(-)
+
+diff -puN init/main.c~enable-all-events-for-initramfs init/main.c
+--- 25/init/main.c~enable-all-events-for-initramfs	Fri Aug  6 15:19:05 2004
++++ 25-akpm/init/main.c	Fri Aug  6 15:19:05 2004
+@@ -93,6 +93,7 @@ extern void free_initmem(void);
+ extern void populate_rootfs(void);
+ extern void driver_init(void);
+ extern void prepare_namespace(void);
++extern void usermodehelper_init(void);
+ 
+ #ifdef CONFIG_TC
+ extern void tc_init(void);
+@@ -621,6 +622,10 @@ static void __init do_initcalls(void)
+  */
+ static void __init do_basic_setup(void)
+ {
++	/* drivers will send hotplug events */
++	init_workqueues();
++	usermodehelper_init();
++
+ 	driver_init();
+ 
+ #ifdef CONFIG_SYSCTL
+@@ -630,7 +635,6 @@ static void __init do_basic_setup(void)
+ 	/* Networking initialization needs a process context */ 
+ 	sock_init();
+ 
+-	init_workqueues();
+ 	do_initcalls();
+ }
+ 
+diff -puN kernel/kmod.c~enable-all-events-for-initramfs kernel/kmod.c
+--- 25/kernel/kmod.c~enable-all-events-for-initramfs	Fri Aug  6 15:19:05 2004
++++ 25-akpm/kernel/kmod.c	Fri Aug  6 15:19:05 2004
+@@ -272,10 +272,8 @@ int call_usermodehelper(char *path, char
+ }
+ EXPORT_SYMBOL(call_usermodehelper);
+ 
+-static __init int usermodehelper_init(void)
++void __init usermodehelper_init(void)
+ {
+ 	khelper_wq = create_singlethread_workqueue("khelper");
+ 	BUG_ON(!khelper_wq);
+-	return 0;
+ }
+-core_initcall(usermodehelper_init);
+_

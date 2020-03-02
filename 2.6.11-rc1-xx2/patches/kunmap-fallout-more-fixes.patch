@@ -1,0 +1,40 @@
+
+From: Mathieu Segaud <matt@minas-morgul.org>
+
+This fixes some warnings due to last changes in k[un]map API.
+
+Signed-Off-By: Mathieu Segaud <matt@minas-morgul.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/asm-i386/pgtable.h |    4 ++--
+ 25-akpm/mm/shmem.c                 |    2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff -puN include/asm-i386/pgtable.h~kunmap-fallout-more-fixes include/asm-i386/pgtable.h
+--- 25/include/asm-i386/pgtable.h~kunmap-fallout-more-fixes	2005-01-10 21:14:34.146383928 -0800
++++ 25-akpm/include/asm-i386/pgtable.h	2005-01-10 21:14:34.151383168 -0800
+@@ -364,8 +364,8 @@ extern void noexec_setup(const char *str
+ 	((pte_t *)kmap_atomic(pmd_page(*(dir)),KM_PTE0) + pte_index(address))
+ #define pte_offset_map_nested(dir, address) \
+ 	((pte_t *)kmap_atomic(pmd_page(*(dir)),KM_PTE1) + pte_index(address))
+-#define pte_unmap(pte) kunmap_atomic(pte, KM_PTE0)
+-#define pte_unmap_nested(pte) kunmap_atomic(pte, KM_PTE1)
++#define pte_unmap(pte) kunmap_atomic((char *)pte, KM_PTE0)
++#define pte_unmap_nested(pte) kunmap_atomic((char *)pte, KM_PTE1)
+ #else
+ #define pte_offset_map(dir, address) \
+ 	((pte_t *)page_address(pmd_page(*(dir))) + pte_index(address))
+diff -puN mm/shmem.c~kunmap-fallout-more-fixes mm/shmem.c
+--- 25/mm/shmem.c~kunmap-fallout-more-fixes	2005-01-10 21:14:34.148383624 -0800
++++ 25-akpm/mm/shmem.c	2005-01-10 21:14:34.153382864 -0800
+@@ -327,7 +327,7 @@ static void shmem_swp_set(struct shmem_i
+ 	entry->val = value;
+ 	info->swapped += incdec;
+ 	if ((unsigned long)(entry - info->i_direct) >= SHMEM_NR_DIRECT)
+-		kmap_atomic_to_page(entry)->nr_swapped += incdec;
++		kmap_atomic_to_page((char *)entry)->nr_swapped += incdec;
+ }
+ 
+ /*
+_

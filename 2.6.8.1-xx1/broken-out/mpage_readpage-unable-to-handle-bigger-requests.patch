@@ -1,0 +1,80 @@
+Return-Path: <pbadari@us.ibm.com>
+Received: from localhost (bix [127.0.0.1])
+	by localhost.localdomain (8.12.10/8.12.10) with ESMTP id i76LmqVF020061
+	for <akpm@localhost>; Fri, 6 Aug 2004 14:48:52 -0700
+Received: from bix [127.0.0.1]
+	by localhost with POP3 (fetchmail-6.2.0)
+	for akpm@localhost (single-drop); Fri, 06 Aug 2004 14:48:52 -0700 (PDT)
+Received: from fire-1.osdl.org (fire.osdl.org [65.172.181.4])
+	by mail.osdl.org (8.11.6/8.11.6) with ESMTP id i76Ll0100519
+	for <akpm@mail.gateway.osdl.net>; Fri, 6 Aug 2004 14:47:00 -0700
+Received: from e4.ny.us.ibm.com (e4.ny.us.ibm.com [32.97.182.104])
+	by fire-1.osdl.org (8.12.8/8.12.8) with ESMTP id i76LksSf017767
+	(version=TLSv1/SSLv3 cipher=EDH-RSA-DES-CBC3-SHA bits=168 verify=FAIL)
+	for <akpm@osdl.org>; Fri, 6 Aug 2004 14:46:59 -0700
+Received: from northrelay04.pok.ibm.com (northrelay04.pok.ibm.com [9.56.224.206])
+	by e4.ny.us.ibm.com (8.12.10/8.12.9) with ESMTP id i76LkmvL536608;
+	Fri, 6 Aug 2004 17:46:48 -0400
+Received: from DYN318077BLD.beaverton.ibm.com (d01av02.pok.ibm.com [9.56.224.216])
+	by northrelay04.pok.ibm.com (8.12.10/NCO/VER6.6) with ESMTP id i76Lloti083852;
+	Fri, 6 Aug 2004 17:47:51 -0400
+Subject: [PATCH] mpage_readpage unable to handle bigger requests
+From: Badari Pulavarty <pbadari@us.ibm.com>
+To: akpm@osdl.org
+Cc: linux-kernel@vger.kernel.org
+Content-Type: multipart/mixed; boundary="=-ItlhabnZGiZx94LakW9S"
+Organization: 
+Message-Id: <1091828941.3641.404.camel@dyn318077bld.beaverton.ibm.com>
+Mime-Version: 1.0
+X-Mailer: Ximian Evolution 1.2.2 (1.2.2-5) 
+Date: 06 Aug 2004 17:49:01 -0400
+X-MIMEDefang-Filter: osdl$Revision: 1.1.1.1 $
+X-Scanned-By: MIMEDefang 2.36
+X-Spam-Checker-Version: SpamAssassin 2.60 (1.212-2003-09-23-exp) on bix
+X-Spam-Level: 
+X-Spam-Status: No, hits=-4.9 required=1.0 tests=BAYES_00 autolearn=ham 
+	version=2.60
+
+
+--=-ItlhabnZGiZx94LakW9S
+Content-Type: text/plain
+Content-Transfer-Encoding: 7bit
+
+Hi Andrew,
+
+I remember fixing this long time ago when we are playing we large
+readhead testing. But I don't see the fix making into the tree.
+
+The problem is, if we increase our readhead size arbitrarily 
+(say 2M), we call mpage_readpages() with 2M and when it tries 
+allocated bio enough to fit 2M it fails, then we kick it back
+to "confused" code - which does 4K at a time.
+
+Fix is to, ask for the maxium driver can handle.
+
+Please include this patch.
+
+
+Thanks,
+Badari 
+
+
+
+--=-ItlhabnZGiZx94LakW9S
+Content-Disposition: attachment; filename=mpage_bio.patch
+Content-Type: text/plain; name=mpage_bio.patch; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+--- linux.org/fs/mpage.c	2004-08-07 02:15:12.962350304 -0700
++++ linux/fs/mpage.c	2004-08-07 02:17:55.765600448 -0700
+@@ -290,7 +290,7 @@ do_mpage_readpage(struct bio *bio, struc
+ alloc_new:
+ 	if (bio == NULL) {
+ 		bio = mpage_alloc(bdev, blocks[0] << (blkbits - 9),
+-					nr_pages, GFP_KERNEL);
++			  min(nr_pages, bio_get_nr_vecs(bdev)), GFP_KERNEL);
+ 		if (bio == NULL)
+ 			goto confused;
+ 	}
+
+--=-ItlhabnZGiZx94LakW9S--

@@ -1,0 +1,490 @@
+
+From: Peter Osterlund <petero2@telia.com>
+
+This patch adds support for using DVD+RW drives as writable block devices.
+
+The patch is based on work from:
+
+        Andy Polyakov <appro@fy.chalmers.se> - Wrote the 2.4 patch
+        Nigel Kukard <nkukard@lbsd.net> - Initial porting to 2.6.x
+
+It works for me using an Iomega Super DVD 8x USB drive.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+packet-writing: add credits
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+Nigel pointed out that the earlier patches contained attributions that
+are not present in this patch. The 2.4 patch contains:
+
+  Nov 5 2001, Aug 8 2002. Modified by Andy Polyakov
+  <appro@fy.chalmers.se> to support MMC-3 complaint DVD+RW units.
+
+and Nigel changed it to this in his 2.6 patch:
+
+  Modified by Nigel Kukard <nkukard@lbsd.net> - support DVD+RW
+  2.4.x patch by Andy Polyakov <appro@fy.chalmers.se>
+
+The patch I sent you deleted most of the earlier work and moved the
+rest to cdrom.c, but the comments were not moved over, since the
+earlier authors didn't modify cdrom.c.
+DESC
+CDRW packet writing support
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+This patch implements CDRW packet writing as a kernel block device.  Usage
+instructions are in the packet-writing.txt file.
+
+A hint: If you don't want to wait for a complete disc format, you can
+format just a part of the disc.  For example:
+
+        cdrwtool -d /dev/hdc -m 10240
+
+This will format 10240 blocks, ie 20MB.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+packet: remove #warning
+EDESC
+
+sparc64 uses -Werror, so this warning kills the build.
+DESC
+packet writing: door unlocking fix
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+The control-pktcdvd-with-an-auxiliary-character-device patch introduced a
+door locking bug.
+
+    pktsetup, mount, umount -> door remains locked.
+
+The problem is that pktsetup opens the cdrom device in non-blocking mode,
+which doesn't lock the door.  mount then opens the cdrom device again in
+blocking mode, which does lock the door.  umount closes the blocking mode
+open, but the door remains locked, because cdrom.c:cdrom_release() only
+unlocks the door on the last release, it doesn't care that the only
+remaining open is non-blocking.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+pkt_lock_door() warning fix
+EDESC
+
+drivers/block/pktcdvd.c: In function `pkt_generic_packet':
+drivers/block/pktcdvd.c:307: warning: implicit declaration of function `pkt_lock_door'
+DESC
+Fix race in pktcdvd kernel thread handling
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+Running "pktsetup -d" immediately after running "pktsetup" can deadlock,
+because if the kcdrwd thread hasn't flushed the pending signals before
+pkt_remove_dev() calls kill_proc(), kcdrwd() will not be woken up.
+
+This patch fixes it by making sure the kcdrwd() thread has finished its
+initialization before the thread creator returns from pkt_new_dev().
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+Fix open/close races in pktcdvd
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+The handling of the pd->refcnt variable is racy in a number of places.  For
+example, running:
+
+while true ; do usleep 10 ; pktsetup /dev/pktcdvd0 /dev/hdc ; done &
+while true ; do pktsetup -d /dev/pktcdvd0 ; done
+
+makes a pktsetup process get stuck in D state after a while.
+
+This patch fixes it by introducing a mutex to protect the refcnt variable
+and critical sections in the open/release/setup/tear-down functions.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+packet writing: review fixups
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+Various cleanups in the pktcdvd driver suggested by Christoph Hellwig.
+
+- Removed obsolete comment.
+- Don't redefine SCSI_IOCTL_SEND_COMMAND locally, use the proper
+  #include instead.
+- Removed the disks[] gendisk* array and added a gendisk pointer to
+  struct pktcdvd_device instead.
+- No need to set current->comm in kcdrwd, since daemonize does that by
+  itself.
+- No need to call fsync_bdev() in pkt_release_dev(), because it is
+  handled by fs/block_dev.c.
+- After a successful fget(), file->f_dentry->d_inode can't be NULL, so
+  kill the useless check.
+- The BLKROSET, BLKROGET, BLKSSZGET and BLKFLSBUF ioctls aren't
+  handled by drivers any more in 2.6.
+- Removed no longer needed function pkt_get_minor().
+- Use the kernel/kthread.c infrastructure in the pktcdvd driver.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+Remove pkt_dev from struct pktcdvd_device
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+Remove pkt_dev from struct pktcdvd_device in the pktcdvd driver and
+remove unnecessary calls to bdget(). Suggested by Christoph Hellwig.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+packet writing: convert to seq_file
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+Convert the /proc code in the pktcdvd driver to use the seq_file interface.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+Packet writing support for DVD-RW and DVD+RW discs.
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+This patch implements packet writing for DVD-RW and DVD+RW discs, ie it makes
+it possible to use DVD+/-RW discs as writable block devices.  DVD-RW discs
+must be in restricted overwrite mode.  The setup procedure is the same as for
+CD-RW discs:
+
+     # pktsetup /dev/pktcdvd0 /dev/hdc
+     # mount /dev/pktcdvd0 /cdrom -t udf -o rw,noatime
+
+The patch works by asking the drive for the current mmc3 profile, and if the
+drive reports DVD+RW (0x1a) or DVD-RW (0x13) media, some steps in the
+initialization code that are specific to CD-RW discs are skipped.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+Get blockdev size right in pktcdvd after switching discs
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+If you do "pktsetup 0 /dev/hdd", insert a CD and write some data to it,
+remove the CD and insert a DVD, the /dev/hdd block device will not have the
+correct size.  This leads to bogus "attempt to access beyond end of device"
+errors.
+
+This patch fixes it.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+packet writing documentation
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+Added information about packet writing for DVD+RW and DVD-RW media.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+Trivial CDRW packet writing doc update
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+Document that pktcdvd block devices have a 2KB block size.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+Control pktcdvd with an auxiliary character device
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+Get rid of the ioctl interface and use an auxiliary character device
+instead to control device bindings.
+
+The driver creates a misc character device and bind/unbind of the block
+devices are controlled by ioctl commands on the char device.
+
+This patch needs corresponding changes in the pktsetup user space program. 
+I'll post a patch for pktsetup as a separate message.
+
+The driver no longer uses reserved device numbers.  Instead, pktsetup reads
+/proc/misc to find the pktcdvd char device.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+Subject: Re: 2.6.8-rc2-mm2
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+Andrew Morton <akpm@osdl.org> writes:
+
+> ftp://ftp.kernel.org/pub/linux/kernel/people/akpm/patches/2.6/2.6.8-rc2/2.6.8-rc2-mm2/
+> 
+> Changes since 2.6.8-rc2-mm1:
+> 
+> +packet-door-unlock.patch
+> +pkt_lock_door-warning-fix.patch
+
+The door-unlock patch got mis-merged, which caused the need for the
+warning fix patch.  pkt_lock_door should be called from
+pkt_release_dev, not from pkt_generic_packet.  This patch fixes it.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+
+DESC
+control-pktcdvd-with-an-auxiliary-character-device-fix
+EDESC
+DESC
+Simplified request size handling in CDRW packet writing
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+Simplified the code in the pktcdvd driver that ensures that write requests
+are not larger than the packet size.  This also limits the read request
+size, but that doesn't seem cause any measurable overhead, so it's better
+to keep the code simple.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+Fix setting of maximum read speed in CDRW packet writing
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+pkt_iosched_process_queue() failed to enable maximum read speed on the
+Iomega Super DVD 8x USB drive.  It's better to use 0xffff to set maximum
+speed, because it is what the driver does at other places, and 0xffff seems
+to be understood by more drive models than using some other large but
+non-standard speed.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+Packet writing reporting fixes
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+That shouldn't cause any real problems, but since it's quite confusing,
+here is a patch to fix it.  With this change, both DVD+RW and DVD-RW media
+is correctly identified in the kernel log, and DVD speeds are printed in
+kB/s.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+Speed up the cdrw packet writing driver
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+This patch replaces the pd->bio_queue linked list with an rbtree.  The list
+can get very long (>200000 entries on a 1GB machine), so keeping it sorted
+with a naive algorithm is far too expensive.
+
+This patch also improves write performance when writing lots of data,
+because the old code gave up on sorting if the queue became longer than
+10000 entries.  This caused unnecessary seeks.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+packet writing: avoid BIO hackery
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+Christoph Hellwig <hch@infradead.org> writes:
+>
+> It's still messing with the elevator setting directly which is a no-go.
+> That's not the packet-writing drivers fault but needs solving first.
+
+That can actually be avoided by letting the packet driver itself keep
+track of how many unfinished bios there are in the CD request queue.
+This is straightforward to implement.  The only small complication is
+that incoming read requests need to be cloned so that the packet
+driver can use a private bi_end_io function.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+cdrom: buffer sizing fix
+EDESC
+From: Peter Osterlund <petero2@telia.com>
+
+The problem is that some drives fail the "GET CONFIGURATION" command when
+asked to only return 8 bytes.  This happens for example on my drive, which
+is identified as:
+
+        hdc: HL-DT-ST DVD+RW GCA-4040N, ATAPI CD/DVD-ROM drive
+
+Since the cdrom_mmc3_profile() function already allocates 32 bytes for the
+reply buffer, this patch is enough to make the command succeed on my drive.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/cdrom/cdrom.c |   80 ++++++++++++++++++++++++++++++++++++++++++
+ 25-akpm/drivers/ide/ide-cd.c  |    2 +
+ 25-akpm/drivers/scsi/sr.c     |    1 
+ 25-akpm/include/linux/cdrom.h |    2 +
+ 4 files changed, 85 insertions(+)
+
+diff -puN drivers/cdrom/cdrom.c~dvdrw-support-for-267-bk13 drivers/cdrom/cdrom.c
+--- 25/drivers/cdrom/cdrom.c~dvdrw-support-for-267-bk13	2004-10-05 01:47:27.009394784 -0700
++++ 25-akpm/drivers/cdrom/cdrom.c	2004-10-05 01:47:27.021392960 -0700
+@@ -832,6 +832,41 @@ static int cdrom_ram_open_write(struct c
+ 	return ret;
+ }
+ 
++static void cdrom_mmc3_profile(struct cdrom_device_info *cdi)
++{
++	struct packet_command cgc;
++	char buffer[32];
++	int ret, mmc3_profile;
++
++	init_cdrom_command(&cgc, buffer, sizeof(buffer), CGC_DATA_READ);
++
++	cgc.cmd[0] = GPCMD_GET_CONFIGURATION;
++	cgc.cmd[1] = 0;
++	cgc.cmd[2] = cgc.cmd[3] = 0;		/* Starting Feature Number */
++	cgc.cmd[7] = 0; cgc.cmd [8] = 8;	/* Allocation Length */
++	cgc.quiet = 1;
++
++	if ((ret = cdi->ops->generic_packet(cdi, &cgc))) {
++		mmc3_profile = 0xffff;
++	} else {
++		mmc3_profile = (buffer[6] << 8) | buffer[7];
++		printk(KERN_INFO "cdrom: %s: mmc-3 profile capable, current profile: %Xh\n",
++		       cdi->name, mmc3_profile);
++	}
++	cdi->mmc3_profile = mmc3_profile;
++}
++
++static int cdrom_is_dvd_rw(struct cdrom_device_info *cdi)
++{
++	switch (cdi->mmc3_profile) {
++	case 0x12:	/* DVD-RAM	*/
++	case 0x1A:	/* DVD+RW	*/
++		return 0;
++	default:
++		return 1;
++	}
++}
++
+ /*
+  * returns 0 for ok to open write, non-0 to disallow
+  */
+@@ -873,10 +908,50 @@ static int cdrom_open_write(struct cdrom
+  		ret = cdrom_ram_open_write(cdi);
+ 	else if (CDROM_CAN(CDC_MO_DRIVE))
+ 		ret = mo_open_write(cdi);
++	else if (!cdrom_is_dvd_rw(cdi))
++		ret = 0;
+ 
+ 	return ret;
+ }
+ 
++static void cdrom_dvd_rw_close_write(struct cdrom_device_info *cdi)
++{
++	struct packet_command cgc;
++
++	if (cdi->mmc3_profile != 0x1a) {
++		cdinfo(CD_CLOSE, "%s: No DVD+RW\n", cdi->name);
++		return;
++	}
++
++	if (!cdi->media_written) {
++		cdinfo(CD_CLOSE, "%s: DVD+RW media clean\n", cdi->name);
++		return;
++	}
++
++	printk(KERN_INFO "cdrom: %s: dirty DVD+RW media, \"finalizing\"\n",
++	       cdi->name);
++
++	init_cdrom_command(&cgc, NULL, 0, CGC_DATA_NONE);
++	cgc.cmd[0] = GPCMD_FLUSH_CACHE;
++	cgc.timeout = 30*HZ;
++	cdi->ops->generic_packet(cdi, &cgc);
++
++	init_cdrom_command(&cgc, NULL, 0, CGC_DATA_NONE);
++	cgc.cmd[0] = GPCMD_CLOSE_TRACK;
++	cgc.timeout = 3000*HZ;
++	cgc.quiet = 1;
++	cdi->ops->generic_packet(cdi, &cgc);
++
++	init_cdrom_command(&cgc, NULL, 0, CGC_DATA_NONE);
++	cgc.cmd[0] = GPCMD_CLOSE_TRACK;
++	cgc.cmd[2] = 2;	 /* Close session */
++	cgc.quiet = 1;
++	cgc.timeout = 3000*HZ;
++	cdi->ops->generic_packet(cdi, &cgc);
++
++	cdi->media_written = 0;
++}
++
+ static int cdrom_close_write(struct cdrom_device_info *cdi)
+ {
+ #if 0
+@@ -909,6 +984,7 @@ int cdrom_open(struct cdrom_device_info 
+ 		ret = open_for_data(cdi);
+ 		if (ret)
+ 			goto err;
++		cdrom_mmc3_profile(cdi);
+ 		if (fp->f_mode & FMODE_WRITE) {
+ 			ret = -EROFS;
+ 			if (cdrom_open_write(cdi))
+@@ -916,6 +992,7 @@ int cdrom_open(struct cdrom_device_info 
+ 			if (!CDROM_CAN(CDC_RAM))
+ 				goto err;
+ 			ret = 0;
++			cdi->media_written = 0;
+ 		}
+ 	}
+ 
+@@ -1107,6 +1184,8 @@ int cdrom_release(struct cdrom_device_in
+ 		cdi->use_count--;
+ 	if (cdi->use_count == 0)
+ 		cdinfo(CD_CLOSE, "Use count for \"/dev/%s\" now zero\n", cdi->name);
++	if (cdi->use_count == 0)
++		cdrom_dvd_rw_close_write(cdi);
+ 	if (cdi->use_count == 0 &&
+ 	    (cdo->capability & CDC_LOCK) && !keeplocked) {
+ 		cdinfo(CD_CLOSE, "Unlocking door!\n");
+@@ -1313,6 +1392,7 @@ int media_changed(struct cdrom_device_in
+ 	if (cdi->ops->media_changed(cdi, CDSL_CURRENT)) {
+ 		cdi->mc_flags = 0x3;    /* set bit on both queues */
+ 		ret |= 1;
++		cdi->media_written = 0;
+ 	}
+ 	cdi->mc_flags &= ~mask;         /* clear bit */
+ 	return ret;
+diff -puN drivers/ide/ide-cd.c~dvdrw-support-for-267-bk13 drivers/ide/ide-cd.c
+--- 25/drivers/ide/ide-cd.c~dvdrw-support-for-267-bk13	2004-10-05 01:47:27.010394632 -0700
++++ 25-akpm/drivers/ide/ide-cd.c	2004-10-05 01:47:27.023392656 -0700
+@@ -1932,6 +1932,8 @@ static ide_startstop_t cdrom_start_write
+ 	info->dma = drive->using_dma ? 1 : 0;
+ 	info->cmd = WRITE;
+ 
++	info->devinfo.media_written = 1;
++
+ 	/* Start sending the write request to the drive. */
+ 	return cdrom_start_packet_command(drive, 32768, cdrom_start_write_cont);
+ }
+diff -puN drivers/scsi/sr.c~dvdrw-support-for-267-bk13 drivers/scsi/sr.c
+--- 25/drivers/scsi/sr.c~dvdrw-support-for-267-bk13	2004-10-05 01:47:27.012394328 -0700
++++ 25-akpm/drivers/scsi/sr.c	2004-10-05 01:47:27.024392504 -0700
+@@ -377,6 +377,7 @@ static int sr_init_command(struct scsi_c
+ 			return 0;
+ 		SCpnt->cmnd[0] = WRITE_10;
+ 		SCpnt->sc_data_direction = DMA_TO_DEVICE;
++ 	 	cd->cdi.media_written = 1;
+ 	} else if (rq_data_dir(SCpnt->request) == READ) {
+ 		SCpnt->cmnd[0] = READ_10;
+ 		SCpnt->sc_data_direction = DMA_FROM_DEVICE;
+diff -puN include/linux/cdrom.h~dvdrw-support-for-267-bk13 include/linux/cdrom.h
+--- 25/include/linux/cdrom.h~dvdrw-support-for-267-bk13	2004-10-05 01:47:27.013394176 -0700
++++ 25-akpm/include/linux/cdrom.h	2004-10-05 01:47:27.025392352 -0700
+@@ -947,6 +947,8 @@ struct cdrom_device_info {
+         __u8 reserved		: 6;	/* not used yet */
+ 	int cdda_method;		/* see flags */
+ 	__u8 last_sense;
++	__u8 media_written;		/* dirty flag, DVD+RW bookkeeping */
++	unsigned short mmc3_profile;	/* current MMC3 profile */
+ 	int for_data;
+ 	int (*exit)(struct cdrom_device_info *);
+ 	int mrw_mode_page;
+_

@@ -1,0 +1,223 @@
+
+From: David Howells <dhowells@redhat.com>
+
+The attached patch fixes some discrepancies between the latest version of
+the kernel and CacheFS; namely: BIO_RW_BARRIER may now cause an error if
+the underlying blockdev doesn't support it and i_op->write_inode() now
+returns an error.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/cachefs/cachefs-int.h |    8 ++-
+ 25-akpm/fs/cachefs/inode.c       |    3 -
+ 25-akpm/fs/cachefs/journal.c     |   83 +++++++++++++++++++++++++++++++++++++--
+ 25-akpm/fs/cachefs/super.c       |    9 +++-
+ 4 files changed, 94 insertions(+), 9 deletions(-)
+
+diff -puN fs/cachefs/cachefs-int.h~fix-cachefs-barrier-handling-and-other-kernel-discrepancies fs/cachefs/cachefs-int.h
+--- 25/fs/cachefs/cachefs-int.h~fix-cachefs-barrier-handling-and-other-kernel-discrepancies	Thu Sep 23 14:33:00 2004
++++ 25-akpm/fs/cachefs/cachefs-int.h	Thu Sep 23 14:33:00 2004
+@@ -73,6 +73,8 @@ struct cachefs_super
+ #define CACHEFS_SUPER_WITHDRAWN		4		/* T if cache has been withdrawn */
+ #define CACHEFS_SUPER_REPLAYING_UJNL	5		/* T if replaying u-journal */
+ 
++	int				bio_wr_barrier;	/* command to submit a write barrier BIO */
++
+ 	/* index management */
+ 	struct list_head		ino_list;	/* list of data/index inodes */
+ 	spinlock_t			ino_list_lock;
+@@ -154,8 +156,6 @@ struct cachefs_super
+ 	wait_queue_head_t		batch_timer_wq;	/* batch timer wait queue */
+ 	wait_queue_head_t		batch_sync_wq;	/* batch sync wait queue */
+ 
+-	struct list_head		jnld_link;	/* journalling daemon list */
+-
+ 	/* validity journal tracking */
+ 	unsigned long			*vjnl_map;	/* bitmap of free entries (1 page) */
+ 	unsigned			vjnl_count;	/* number of free entries */
+@@ -200,6 +200,8 @@ extern void cachefs_recycle_transfer_sta
+ extern void cachefs_recycle_reclaim(struct cachefs_super *super);
+ extern void cachefs_recycle_unallocate_data_block(struct cachefs_super *super);
+ 
++extern int cachefs_ujnl_check_barrier_cap(struct cachefs_super *super);
++
+ /*****************************************************************************/
+ /*
+  * block management record
+@@ -384,7 +386,7 @@ extern struct file_operations cachefs_st
+ 
+ extern struct cachefs_inode *cachefs_iget(struct cachefs_super *super,
+ 					  ino_t ino);
+-extern void cachefs_write_inode(struct inode *_inode, int sync);
++extern int cachefs_write_inode(struct inode *_inode, int sync);
+ extern void cachefs_clear_inode(struct inode *vfs_inode);
+ 
+ static inline struct cachefs_inode *cachefs_igrab(struct cachefs_inode *iinode)
+diff -puN fs/cachefs/inode.c~fix-cachefs-barrier-handling-and-other-kernel-discrepancies fs/cachefs/inode.c
+--- 25/fs/cachefs/inode.c~fix-cachefs-barrier-handling-and-other-kernel-discrepancies	Thu Sep 23 14:33:00 2004
++++ 25-akpm/fs/cachefs/inode.c	Thu Sep 23 14:33:00 2004
+@@ -366,9 +366,10 @@ struct cachefs_inode *cachefs_iget(struc
+  * - don't use generic_file_write() to write out the meta-data file's meta-data
+  *   as it updates the mtime & ctime and marks the inode dirty again
+  */
+-void cachefs_write_inode(struct inode *vfs_inode, int sync)
++int cachefs_write_inode(struct inode *vfs_inode, int sync)
+ {
+ 	_enter("{sb=%p ino=%lu},%d", vfs_inode->i_sb, vfs_inode->i_ino, sync);
++	return 0;
+ 
+ } /* end cachefs_write_inode() */
+ 
+diff -puN fs/cachefs/journal.c~fix-cachefs-barrier-handling-and-other-kernel-discrepancies fs/cachefs/journal.c
+--- 25/fs/cachefs/journal.c~fix-cachefs-barrier-handling-and-other-kernel-discrepancies	Thu Sep 23 14:33:00 2004
++++ 25-akpm/fs/cachefs/journal.c	Thu Sep 23 14:33:00 2004
+@@ -1040,7 +1040,7 @@ static void cachefs_trans_batch_write_uj
+ 		/* submit for write (with barrier on last chunk) */
+ 		rw = WRITE;
+ 		if (super->ujnl_tail == jstop)
+-			rw |= 1 << BIO_RW_BARRIER;
++			rw = super->bio_wr_barrier;
+ 		submit_bio(rw, bio);
+ 
+ 	} while (super->ujnl_tail != jstop);
+@@ -1237,7 +1237,7 @@ static void cachefs_trans_batch_write_ma
+ 
+ 	/* and send to disc */
+ 	//dump_bio(bio,1);
+-	submit_bio(WRITE | (1 << BIO_RW_BARRIER), bio);
++	submit_bio(super->bio_wr_barrier, bio);
+ 
+ 	cachefs_block_put(jblock);
+ 	_leave("");
+@@ -1317,7 +1317,7 @@ static void cachefs_trans_batch_write_ac
+ 
+ 	/* and send to disc */
+ 	//dump_bio(bio,1);
+-	submit_bio(WRITE | (1 << BIO_RW_BARRIER), bio);
++	submit_bio(super->bio_wr_barrier, bio);
+ 
+ 	/* wait for I/O completion */
+ 	set_current_state(TASK_UNINTERRUPTIBLE);
+@@ -1669,3 +1669,80 @@ void cachefs_trans_sync(struct cachefs_s
+ 	_leave("");
+ 
+ } /* end cachefs_trans_sync() */
++
++/*****************************************************************************/
++/*
++ * barrier capabability check complete
++ */
++static int cachefs_ujnl_barrier_cap_checked(struct bio *bio,
++					    unsigned int bytes_done,
++					    int error)
++{
++	kenter("%p{%lx},%u,%d", bio, bio->bi_flags, bytes_done, error);
++
++	/* we're only interested in completion */
++	if (bio->bi_size > 0) {
++		kleave(" = 1");
++		return 1;
++	}
++
++	*(int*) bio->bi_private = error;
++	end_page_writeback(bio->bi_io_vec[0].bv_page);
++
++	bio_put(bio);
++	kleave(" = 0");
++	return 0;
++
++} /* end cachefs_trans_ack_written() */
++
++/*****************************************************************************/
++/*
++ * determine whether the block device supports barriers
++ * - need barriers to be able to journal properly
++ */
++int cachefs_ujnl_check_barrier_cap(struct cachefs_super *super)
++{
++	struct page *superpage;
++	struct bio *bio;
++	int ret;
++
++	super->bio_wr_barrier = WRITE | (1 << BIO_RW_BARRIER);
++
++	/* attempt a barriered write on the superblock */
++	superpage = virt_to_page(super->layout);
++	wait_on_page_writeback(superpage);
++	SetPageWriteback(superpage);
++
++	ret = -ENOMEM;
++	bio = bio_alloc(GFP_KERNEL, 1);
++	if (!bio)
++		goto error;
++
++	bio->bi_bdev	= super->sb->s_bdev;
++	bio->bi_private	= &ret;
++	bio->bi_end_io	= cachefs_ujnl_barrier_cap_checked;
++	bio->bi_sector	= 0;
++
++	if (!bio_add_page(bio, superpage, PAGE_SIZE, 0))
++		BUG();
++
++	/* and send to disc */
++	//dump_bio(bio,1);
++	ret = 0;
++	submit_bio(super->bio_wr_barrier, bio);
++	wait_on_page_writeback(superpage);
++
++	if (ret < 0) {
++		if (ret == -EOPNOTSUPP) {
++			/* it appears barriers are not supported */
++			printk("CacheFS:"
++			       " The blockdev does not support barriers,"
++			       " so the journal may not be reliable\n");
++			super->bio_wr_barrier = WRITE;
++			ret = 0;
++		}
++	}
++
++ error:
++	return ret;
++} /* end cachefs_ujnl_check_barrier_cap() */
+diff -puN fs/cachefs/super.c~fix-cachefs-barrier-handling-and-other-kernel-discrepancies fs/cachefs/super.c
+--- 25/fs/cachefs/super.c~fix-cachefs-barrier-handling-and-other-kernel-discrepancies	Thu Sep 23 14:33:00 2004
++++ 25-akpm/fs/cachefs/super.c	Thu Sep 23 14:33:00 2004
+@@ -297,7 +297,6 @@ static int cachefs_fill_super(struct sup
+ 	INIT_LIST_HEAD(&super->ujnl_replayq);
+ 
+ 	spin_lock_init(&super->njalt_lock);
+-	INIT_LIST_HEAD(&super->jnld_link);
+ 
+ 	init_MUTEX(&super->batch_sem);
+ 	init_MUTEX(&super->batch_uj_sem);
+@@ -396,12 +395,19 @@ static int cachefs_fill_super(struct sup
+ 	ret = -EROFS;
+ 	if (bdev_read_only(sb->s_bdev)) {
+ 		printk("CacheFS: blockdev read-only\n");
++		goto error;
+ 	}
+ 
+ 	if (sb->s_flags & MS_RDONLY) {
+ 		printk("CacheFS: filesystem mounted read-only\n");
++		goto error;
+ 	}
+ 
++	/* check for barrier capability on the blockdev */
++	ret = cachefs_ujnl_check_barrier_cap(super);
++	if (ret < 0)
++		goto error;
++
+ 	/* replay the journal if the cache was initialised */
+ 	super->ujnl_jsof = super->layout->bix_ujournal;
+ 	super->ujnl_jsof <<= (PAGE_SHIFT - super->sb->s_blocksize_bits);
+@@ -794,7 +800,6 @@ static void cachefs_put_super(struct sup
+ 
+ 	DECLARE_WAITQUEUE(myself, current);
+ 
+-	printk("\n\n");
+ 	_enter("{%p}", super);
+ 
+ 	BUG_ON(!super);
+_

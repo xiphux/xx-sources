@@ -1,0 +1,32 @@
+
+From: Dmitry Torokhov <dtor_core@ameritech.net>
+
+  Input: synaptics - do not try to process packets from slave device
+         as if they were coming form the touchpad itself if pass-through
+         port is disconnected
+  
+Signed-off-by: Dmitry Torokhov <dtor@mail.ru>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/input/mouse/synaptics.c |    7 ++++---
+ 1 files changed, 4 insertions(+), 3 deletions(-)
+
+diff -puN drivers/input/mouse/synaptics.c~input-synaptics-passthrough-handling drivers/input/mouse/synaptics.c
+--- 25/drivers/input/mouse/synaptics.c~input-synaptics-passthrough-handling	2004-06-27 22:51:09.424762280 -0700
++++ 25-akpm/drivers/input/mouse/synaptics.c	2004-06-27 22:51:09.428761672 -0700
+@@ -472,9 +472,10 @@ static psmouse_ret_t synaptics_process_b
+ 		if (unlikely(priv->pkt_type == SYN_NEWABS))
+ 			priv->pkt_type = synaptics_detect_pkt_type(psmouse);
+ 
+-		if (psmouse->serio->child && psmouse->serio->child->drv && synaptics_is_pt_packet(psmouse->packet))
+-			synaptics_pass_pt_packet(psmouse->serio->child, psmouse->packet);
+-		else
++		if (SYN_CAP_PASS_THROUGH(priv->capabilities) && synaptics_is_pt_packet(psmouse->packet)) {
++			if (psmouse->serio->child && psmouse->serio->child->drv)
++				synaptics_pass_pt_packet(psmouse->serio->child, psmouse->packet);
++		} else
+ 			synaptics_process_packet(psmouse);
+ 
+ 		return PSMOUSE_FULL_PACKET;
+_

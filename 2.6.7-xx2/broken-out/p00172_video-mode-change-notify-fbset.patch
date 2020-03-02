@@ -1,0 +1,127 @@
+
+From: "Antonino A. Daplas" <adaplas@hotpop.com>
+
+This patch allows fbset to change the video mode and the console window
+size via the notifier call chain.  It will only notify fbcon of mode
+changes from user space.  Changes coming from upstream will be ignored.
+
+The code will only update the current console.
+
+Signed-off-by: Antonino Daplas <adaplas@pol.net>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/video/console/fbcon.c |   53 ++++++++++++++++++++++++++++++++++
+ 25-akpm/drivers/video/fbmem.c         |    8 ++++-
+ 25-akpm/include/linux/fb.h            |    2 +
+ 3 files changed, 62 insertions(+), 1 deletion(-)
+
+diff -puN drivers/video/console/fbcon.c~video-mode-change-notify-fbset drivers/video/console/fbcon.c
+--- 25/drivers/video/console/fbcon.c~video-mode-change-notify-fbset	2004-06-21 23:21:14.590666208 -0700
++++ 25-akpm/drivers/video/console/fbcon.c	2004-06-21 23:21:14.601664536 -0700
+@@ -2358,6 +2358,56 @@ static void fbcon_resumed(struct fb_info
+ 	update_screen(vc->vc_num);
+ }
+ 
++static void fbcon_modechanged(struct fb_info *info)
++{
++	struct vc_data *vc = vc_cons[info->currcon].d;
++	struct display *p;
++	int rows, cols;
++
++	if (info->currcon < 0 || vt_cons[info->currcon]->vc_mode !=
++	    KD_TEXT)
++		return;
++	p = &fb_display[vc->vc_num];
++
++	info->var.xoffset = info->var.yoffset = p->yscroll = 0;
++	vc->vc_can_do_color = info->var.bits_per_pixel != 1;
++	vc->vc_complement_mask = vc->vc_can_do_color ? 0x7700 : 0x0800;
++
++	if (CON_IS_VISIBLE(vc)) {
++		cols = info->var.xres / vc->vc_font.width;
++		rows = info->var.yres / vc->vc_font.height;
++		vc_resize(vc->vc_num, cols, rows);
++		switch (p->scrollmode) {
++		case SCROLL_WRAP:
++			scrollback_phys_max = p->vrows - vc->vc_rows;
++			break;
++		case SCROLL_PAN:
++			scrollback_phys_max = p->vrows - 2 * vc->vc_rows;
++			if (scrollback_phys_max < 0)
++				scrollback_phys_max = 0;
++			break;
++		default:
++			scrollback_phys_max = 0;
++			break;
++		}
++		scrollback_max = 0;
++		scrollback_current = 0;
++		update_var(vc->vc_num, info);
++		fbcon_set_palette(vc, color_table);
++		update_screen(vc->vc_num);
++		if (softback_buf) {
++			int l = fbcon_softback_size / vc->vc_size_row;
++			if (l > 5)
++				softback_end = softback_buf + l * vc->vc_size_row;
++			else {
++				/* Smaller scrollback makes no sense, and 0
++				   would screw the operation totally */
++				softback_top = 0;
++			}
++		}
++	}
++}
++
+ static int fbcon_event_notify(struct notifier_block *self, 
+ 			      unsigned long action, void *data)
+ {
+@@ -2370,6 +2420,9 @@ static int fbcon_event_notify(struct not
+ 	case FB_EVENT_RESUME:
+ 		fbcon_resumed(info);
+ 		break;
++	case FB_EVENT_MODE_CHANGE:
++		fbcon_modechanged(info);
++		break;
+ 	}
+ 
+ 	return 0;
+diff -puN drivers/video/fbmem.c~video-mode-change-notify-fbset drivers/video/fbmem.c
+--- 25/drivers/video/fbmem.c~video-mode-change-notify-fbset	2004-06-21 23:21:14.593665752 -0700
++++ 25-akpm/drivers/video/fbmem.c	2004-06-21 23:21:14.604664080 -0700
+@@ -1005,7 +1005,11 @@ fb_set_var(struct fb_info *info, struct 
+ 
+ 			fb_set_cmap(&info->cmap, 1, info);
+ 
+-			notifier_call_chain(&fb_notifier_list, FB_EVENT_MODE_CHANGE, info);
++			if (info->flags & FBINFO_MISC_MODECHANGEUSER) {
++				notifier_call_chain(&fb_notifier_list,
++						    FB_EVENT_MODE_CHANGE, info);
++				info->flags &= ~FBINFO_MISC_MODECHANGEUSER;
++			}
+ 		}
+ 	}
+ 	return 0;
+@@ -1056,7 +1060,9 @@ fb_ioctl(struct inode *inode, struct fil
+ 		if (copy_from_user(&var, (void *) arg, sizeof(var)))
+ 			return -EFAULT;
+ 		acquire_console_sem();
++		info->flags |= FBINFO_MISC_MODECHANGEUSER;
+ 		i = fb_set_var(info, &var);
++		info->flags &= ~FBINFO_MISC_MODECHANGEUSER;
+ 		release_console_sem();
+ 		if (i) return i;
+ 		if (copy_to_user((void *) arg, &var, sizeof(var)))
+diff -puN include/linux/fb.h~video-mode-change-notify-fbset include/linux/fb.h
+--- 25/include/linux/fb.h~video-mode-change-notify-fbset	2004-06-21 23:21:14.595665448 -0700
++++ 25-akpm/include/linux/fb.h	2004-06-21 23:21:14.605663928 -0700
+@@ -530,6 +530,8 @@ struct fb_ops {
+ #define FBINFO_HWACCEL_YPAN		0x2000 /* optional */
+ #define FBINFO_HWACCEL_YWRAP		0x4000 /* optional */
+ 
++#define FBINFO_MISC_MODECHANGEUSER     0x10000 /* mode change request
++						  from userspace */
+ 
+ struct fb_info {
+ 	int node;
+_

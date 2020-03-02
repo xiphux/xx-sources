@@ -1,0 +1,34 @@
+
+From: Mike Miller <mike.miller@hp.com>
+
+This patch fixes our usage of copy_to_user.  We were passing in the size of
+the address rather than the size of the struct.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/cciss.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN drivers/block/cciss.c~cciss-update-fixes-to-32-64-bit-conversions drivers/block/cciss.c
+--- 25/drivers/block/cciss.c~cciss-update-fixes-to-32-64-bit-conversions	Thu Aug  5 15:34:41 2004
++++ 25-akpm/drivers/block/cciss.c	Thu Aug  5 15:38:26 2004
+@@ -578,7 +578,7 @@ int cciss_ioctl32_passthru(unsigned int 
+ 	err = sys_ioctl(fd, CCISS_PASSTHRU, (unsigned long) p);
+ 	if (err)
+ 		return err;
+-	err |= copy_in_user(&arg32->error_info, &p->error_info, sizeof(&arg32->error_info));
++	err |= copy_in_user(&arg32->error_info, &p->error_info, sizeof(arg32->error_info));
+ 	if (err)
+ 		return -EFAULT;
+ 	return err;
+@@ -610,7 +610,7 @@ int cciss_ioctl32_big_passthru(unsigned 
+ 	err = sys_ioctl(fd, CCISS_BIG_PASSTHRU, (unsigned long) p);
+ 	if (err)
+ 		return err;
+-	err |= copy_in_user(&arg32->error_info, &p->error_info, sizeof(&arg32->error_info));
++	err |= copy_in_user(&arg32->error_info, &p->error_info, sizeof(arg32->error_info));
+ 	if (err)
+ 		return -EFAULT;
+ 	return err;
+_

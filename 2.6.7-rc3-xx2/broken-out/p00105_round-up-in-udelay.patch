@@ -1,0 +1,46 @@
+Round up in __udelay(): 2**32 / 100000 is 4294.97, so it's more intuitive
+to round up, and it causes more predictable results:
+n usec delay on a 1500000 BogoMIPS system: 
+  n 	   before	  -mull		after
+  1	 1000 ticks	 1499 ticks	 1500 ticks
+ 10	14000 ticks	14999 ticks	15000 ticks
+
+n usec delay on a 100000 BogoMIPS system: 
+ n 	   before	  -mull		after
+  1	    0 ticks	   99 ticks	  100 ticks
+ 10	    0 ticks	  999 ticks	 1000 ticks
+100	 9000 ticks	 9999 ticks	10000 ticks
+
+While it can be argued that some time is also spent in the delay 
+functions, it's better to spend _at least_ the specified time sleeping, 
+in my humble opinion. And the overhead of a specific ->delay() implementation
+should be substracted in the specific ->delay() implementation.
+
+
+Signed-off-by: Dominik Brodowski <linux@brodo.de>
+
+
+diff -ruN linux-original/arch/i386/lib/delay.c linux/arch/i386/lib/delay.c
+--- linux-original/arch/i386/lib/delay.c	2004-06-07 22:10:42.053950984 +0200
++++ linux/arch/i386/lib/delay.c	2004-06-07 22:12:58.789164072 +0200
+@@ -39,7 +39,7 @@
+ 
+ void __udelay(unsigned long usecs)
+ {
+-	__const_udelay(usecs * 0x000010c6);  /* 2**32 / 1000000 */
++	__const_udelay(usecs * 0x000010c7);  /* 2**32 / 1000000 (rounded up) */
+ }
+ 
+ void __ndelay(unsigned long nsecs)
+diff -ruN linux-original/include/asm-i386/delay.h linux/include/asm-i386/delay.h
+--- linux-original/include/asm-i386/delay.h	2004-06-07 22:01:48.901002552 +0200
++++ linux/include/asm-i386/delay.h	2004-06-07 22:14:00.393798744 +0200
+@@ -16,7 +16,7 @@
+ extern void __delay(unsigned long loops);
+ 
+ #define udelay(n) (__builtin_constant_p(n) ? \
+-	((n) > 20000 ? __bad_udelay() : __const_udelay((n) * 0x10c6ul)) : \
++	((n) > 20000 ? __bad_udelay() : __const_udelay((n) * 0x10c7ul)) : \
+ 	__udelay(n))
+ 	
+ #define ndelay(n) (__builtin_constant_p(n) ? \

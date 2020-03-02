@@ -1,0 +1,85 @@
+
+From: Zwane Mwaikambo <zwane@linuxpower.ca>
+
+This is a small cleanup requested by Urban, use the rcls/err in smb_request
+as opposed to smb_sb_info.
+
+Signed-off-by: Zwane Mwaikambo <zwane@linuxpower.ca>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/smbfs/proc.c           |   12 ++++++------
+ 25-akpm/include/linux/smb_fs_sb.h |    3 ---
+ 2 files changed, 6 insertions(+), 9 deletions(-)
+
+diff -puN fs/smbfs/proc.c~remove-smbfs-server-rcls-err fs/smbfs/proc.c
+--- 25/fs/smbfs/proc.c~remove-smbfs-server-rcls-err	2004-06-20 16:25:21.115967464 -0700
++++ 25-akpm/fs/smbfs/proc.c	2004-06-20 16:25:21.123966248 -0700
+@@ -2374,7 +2374,7 @@ smb_proc_readdir_long(struct file *filp,
+ 		if (req->rq_rcls != 0) {
+ 			result = smb_errno(req);
+ 			PARANOIA("name=%s, result=%d, rcls=%d, err=%d\n",
+-				 mask, result, server->rcls, server->err);
++				 mask, result, req->rq_rcls, req->rq_err);
+ 			break;
+ 		}
+ 
+@@ -2530,7 +2530,7 @@ smb_proc_getattr_ff(struct smb_sb_info *
+ 	result = smb_add_request(req);
+ 	if (result < 0)
+ 		goto out_free;
+-	if (server->rcls != 0) {
++	if (req->rq_rcls != 0) {
+ 		result = smb_errno(req);
+ #ifdef SMBFS_PARANOIA
+ 		if (result != -ENOENT)
+@@ -2643,7 +2643,7 @@ smb_proc_getattr_trans2(struct smb_sb_in
+ 	result = smb_add_request(req);
+ 	if (result < 0)
+ 		goto out;
+-	if (server->rcls != 0) {
++	if (req->rq_rcls != 0) {
+ 		VERBOSE("for %s: result=%d, rcls=%d, err=%d\n",
+ 			&param[6], result, req->rq_rcls, req->rq_err);
+ 		result = smb_errno(req);
+@@ -3257,7 +3257,7 @@ smb_proc_read_link(struct smb_sb_info *s
+ 	if (result < 0)
+ 		goto out_free;
+ 	DEBUG1("for %s: result=%d, rcls=%d, err=%d\n",
+-		&param[6], result, server->rcls, server->err);
++		&param[6], result, req->rq_rcls, req->rq_err);
+ 
+ 	/* copy data up to the \0 or buffer length */
+ 	result = len;
+@@ -3307,7 +3307,7 @@ smb_proc_symlink(struct smb_sb_info *ser
+ 		goto out_free;
+ 
+ 	DEBUG1("for %s: result=%d, rcls=%d, err=%d\n",
+-		&param[6], result, server->rcls, server->err);
++		&param[6], result, req->rq_rcls, req->rq_err);
+ 	result = 0;
+ 
+ out_free:
+@@ -3354,7 +3354,7 @@ smb_proc_link(struct smb_sb_info *server
+ 		goto out_free;
+ 
+ 	DEBUG1("for %s: result=%d, rcls=%d, err=%d\n",
+-	       &param[6], result, server->rcls, server->err);
++	       &param[6], result, req->rq_rcls, req->rq_err);
+ 	result = 0;
+ 
+ out_free:
+diff -puN include/linux/smb_fs_sb.h~remove-smbfs-server-rcls-err include/linux/smb_fs_sb.h
+--- 25/include/linux/smb_fs_sb.h~remove-smbfs-server-rcls-err	2004-06-20 16:25:21.116967312 -0700
++++ 25-akpm/include/linux/smb_fs_sb.h	2004-06-20 16:25:21.121966552 -0700
+@@ -61,9 +61,6 @@ struct smb_sb_info {
+ 	int conn_complete;
+ 	struct semaphore sem;
+ 
+-        unsigned short     rcls; /* The error codes we received */
+-        unsigned short     err;
+-
+ 	unsigned char      header[SMB_HEADER_LEN + 20*2 + 2];
+ 	u32                header_len;
+ 	u32                smb_len;
+_

@@ -1,0 +1,124 @@
+# 2.6.3-WOLK1.1
+#
+# Patch from: http://ck.kolivas.org/patches/2.6/2.6.4/experimental/
+
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-08-27 01:24:32.292728888 -0400
++++ xx-sources/kernel/sched.c	2004-08-27 01:25:42.259092384 -0400
+@@ -46,10 +46,27 @@
+ #include <linux/seq_file.h>
+ #include <linux/times.h>
+ #include <linux/locallock.h>
++#include <linux/fs.h>
+ #include <asm/tlb.h>
+ 
+ #include <asm/unistd.h>
+ 
++/*
++ * Sets the initial io priority according to the policy and nice level.
++ */
++void set_sched_ioprio(task_t *p, long nice)
++{
++	int io_prio = (20 - nice) / 2;
++	
++	if (io_prio <= IOPRIO_IDLE)
++		io_prio = IOPRIO_IDLE + 1;
++	if (io_prio >= IOPRIO_RT)
++		io_prio = IOPRIO_RT - 1;
++	if (rt_task(p))
++		io_prio = IOPRIO_RT;
++	p->ioprio = io_prio;
++}
++
+ /* Include different schedulers */
+ #if defined(CONFIG_XSCHED)
+ #include "sched/xsched.h"
+Index: xx-sources/kernel/sched/default.h
+===================================================================
+--- xx-sources.orig/kernel/sched/default.h	2004-08-27 01:24:14.868377792 -0400
++++ xx-sources/kernel/sched/default.h	2004-08-27 01:25:08.459230744 -0400
+@@ -3001,6 +3001,9 @@
+ 	 * it wont have any effect on scheduling until the task is
+ 	 * not SCHED_NORMAL:
+ 	 */
++	 
++	set_sched_ioprio(p, nice);
++	
+ 	if (rt_task(p)) {
+ 		p->static_prio = NICE_TO_PRIO(nice);
+ 		goto out_unlock;
+@@ -3227,6 +3230,7 @@
+ 	}
+ 
+ out_unlock:
++	set_sched_ioprio(p, TASK_NICE(p));
+ 	task_rq_unlock(rq, &flags);
+ out_unlock_tasklist:
+ 	read_unlock_irq(&tasklist_lock);
+Index: xx-sources/kernel/sched/nicksched.h
+===================================================================
+--- xx-sources.orig/kernel/sched/nicksched.h	2004-08-27 01:24:14.872377184 -0400
++++ xx-sources/kernel/sched/nicksched.h	2004-08-27 01:25:08.463230136 -0400
+@@ -2813,6 +2813,9 @@
+ 	 * it wont have any effect on scheduling until the task is
+ 	 * not SCHED_NORMAL:
+ 	 */
++	 
++	set_sched_ioprio(p, nice);
++	
+ 	if (rt_task(p)) {
+ 		p->static_prio = NICE_TO_PRIO(nice);
+ 		goto out_unlock;
+@@ -3039,6 +3042,7 @@
+ 	}
+ 
+ out_unlock:
++	set_sched_ioprio(p, TASK_NICE(p));
+ 	task_rq_unlock(rq, &flags);
+ out_unlock_tasklist:
+ 	read_unlock_irq(&tasklist_lock);
+Index: xx-sources/kernel/sched/staircase.h
+===================================================================
+--- xx-sources.orig/kernel/sched/staircase.h	2004-08-27 01:24:14.877376424 -0400
++++ xx-sources/kernel/sched/staircase.h	2004-08-27 01:25:08.467229528 -0400
+@@ -2663,6 +2663,9 @@
+ 	 * it wont have any effect on scheduling until the task is
+ 	 * not SCHED_NORMAL:
+ 	 */
++	 
++	set_sched_ioprio(p, nice);
++	
+ 	if (rt_task(p)) {
+ 		p->static_prio = NICE_TO_PRIO(nice);
+ 		goto out_unlock;
+@@ -2886,6 +2889,7 @@
+ 	}
+ 
+ out_unlock:
++	set_sched_ioprio(p, TASK_NICE(p));
+ 	task_rq_unlock(rq, &flags);
+ out_unlock_tasklist:
+ 	read_unlock_irq(&tasklist_lock);
+Index: xx-sources/kernel/sched/xsched.h
+===================================================================
+--- xx-sources.orig/kernel/sched/xsched.h	2004-08-27 01:24:14.881375816 -0400
++++ xx-sources/kernel/sched/xsched.h	2004-08-27 01:25:08.472228768 -0400
+@@ -2930,6 +2930,9 @@
+ 	 * it wont have any effect on scheduling until the task is
+ 	 * not SCHED_NORMAL:
+ 	 */
++	 
++	set_sched_ioprio(p, nice);
++	
+ 	if (rt_task(p)) {
+ 		p->static_prio = NICE_TO_PRIO(nice);
+ 		goto out_unlock;
+@@ -3160,6 +3163,7 @@
+ 	}
+ 
+ out_unlock:
++	set_sched_ioprio(p, TASK_NICE(p));
+ 	task_rq_unlock(rq, &flags);
+ out_unlock_tasklist:
+ 	read_unlock_irq(&tasklist_lock);

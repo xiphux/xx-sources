@@ -1,0 +1,353 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/acpi/executer/exconvrt.c |   96 ++++++++++++-------------------
+ 25-akpm/drivers/acpi/executer/exstorob.c |   19 ++----
+ 25-akpm/drivers/acpi/tables/tbconvrt.c   |    4 -
+ 25-akpm/include/acpi/acconfig.h          |    4 -
+ 25-akpm/include/acpi/acdisasm.h          |    6 -
+ 25-akpm/include/acpi/aclocal.h           |    2 
+ 25-akpm/include/acpi/actbl2.h            |    2 
+ 25-akpm/include/acpi/amlresrc.h          |   26 --------
+ 8 files changed, 56 insertions(+), 103 deletions(-)
+
+diff -puN drivers/acpi/executer/exconvrt.c~bk-acpi-revert-20041210 drivers/acpi/executer/exconvrt.c
+--- 25/drivers/acpi/executer/exconvrt.c~bk-acpi-revert-20041210	2005-01-05 22:35:44.297990792 -0800
++++ 25-akpm/drivers/acpi/executer/exconvrt.c	2005-01-05 22:35:52.375762784 -0800
+@@ -399,9 +399,9 @@ acpi_ex_convert_to_string (
+ {
+ 	union acpi_operand_object       *return_desc;
+ 	u8                              *new_buf;
+-	u32                             i;
+ 	u32                             string_length = 0;
+ 	u16                             base = 16;
++	u32                             i;
+ 	u8                              separator = ',';
+ 
+ 
+@@ -461,8 +461,6 @@ acpi_ex_convert_to_string (
+ 
+ 	case ACPI_TYPE_BUFFER:
+ 
+-		/* Setup string length, base, and separator */
+-
+ 		switch (type) {
+ 		case ACPI_EXPLICIT_CONVERT_DECIMAL: /* Used by to_decimal_string operator */
+ 			/*
+@@ -470,23 +468,9 @@ acpi_ex_convert_to_string (
+ 			 * decimal values separated by commas."
+ 			 */
+ 			base = 10;
++			string_length = obj_desc->buffer.length; /* 4 chars for each decimal */
+ 
+-			/*
+-			 * Calculate the final string length.  Individual string values
+-			 * are variable length (include separator for each)
+-			 */
+-			for (i = 0; i < obj_desc->buffer.length; i++) {
+-				if (obj_desc->buffer.pointer[i] >= 100) {
+-					string_length += 4;
+-				}
+-				else if (obj_desc->buffer.pointer[i] >= 10) {
+-					string_length += 3;
+-				}
+-				else {
+-					string_length += 2;
+-				}
+-			}
+-			break;
++			/*lint -fallthrough */
+ 
+ 		case ACPI_IMPLICIT_CONVERT_HEX:
+ 			/*
+@@ -494,56 +478,56 @@ acpi_ex_convert_to_string (
+ 			 *"The entire contents of the buffer are converted to a string of
+ 			 * two-character hexadecimal numbers, each separated by a space."
+ 			 */
+-			separator = ' ';
+-			string_length = (obj_desc->buffer.length * 3);
+-			break;
++			if (type == ACPI_IMPLICIT_CONVERT_HEX) {
++				separator = ' ';
++			}
++
++			/*lint -fallthrough */
+ 
+ 		case ACPI_EXPLICIT_CONVERT_HEX:     /* Used by to_hex_string operator */
+ 			/*
+ 			 * From ACPI: "If Data is a buffer, it is converted to a string of
+ 			 * hexadecimal values separated by commas."
+ 			 */
+-			string_length = (obj_desc->buffer.length * 3);
+-			break;
++			string_length += (obj_desc->buffer.length * 3);
++			if (string_length > ACPI_MAX_STRING_CONVERSION) /* ACPI limit */ {
++				return_ACPI_STATUS (AE_AML_STRING_LIMIT);
++			}
+ 
+-		default:
+-			return_ACPI_STATUS (AE_BAD_PARAMETER);
+-		}
++			/* Create a new string object and string buffer */
+ 
+-		/*
+-		 * Perform the conversion.
+-		 * (-1 because of extra separator included in string_length from above)
+-		 */
+-		string_length--;
+-		if (string_length > ACPI_MAX_STRING_CONVERSION) /* ACPI limit */ {
+-			return_ACPI_STATUS (AE_AML_STRING_LIMIT);
+-		}
++			return_desc = acpi_ut_create_string_object ((acpi_size) string_length -1);
++			if (!return_desc) {
++				return_ACPI_STATUS (AE_NO_MEMORY);
++			}
+ 
+-		/*
+-		 * Create a new string object and string buffer
+-		 */
+-		return_desc = acpi_ut_create_string_object ((acpi_size) string_length);
+-		if (!return_desc) {
+-			return_ACPI_STATUS (AE_NO_MEMORY);
+-		}
++			new_buf = return_desc->buffer.pointer;
+ 
+-		new_buf = return_desc->buffer.pointer;
++			/*
++			 * Convert buffer bytes to hex or decimal values
++			 * (separated by commas)
++			 */
++			for (i = 0; i < obj_desc->buffer.length; i++) {
++				new_buf += acpi_ex_convert_to_ascii (
++						 (acpi_integer) obj_desc->buffer.pointer[i], base,
++						 new_buf, 1);
++				*new_buf++ = separator; /* each separated by a comma or space */
++			}
+ 
+-		/*
+-		 * Convert buffer bytes to hex or decimal values
+-		 * (separated by commas or spaces)
+-		 */
+-		for (i = 0; i < obj_desc->buffer.length; i++) {
+-			new_buf += acpi_ex_convert_to_ascii (
+-					 (acpi_integer) obj_desc->buffer.pointer[i], base,
+-					 new_buf, 1);
+-			*new_buf++ = separator; /* each separated by a comma or space */
+-		}
++			/* Null terminate the string (overwrites final comma from above) */
++
++			new_buf--;
++			*new_buf = 0;
+ 
+-		/* Null terminate the string (overwrites final comma/space from above) */
++			/* Recalculate length */
+ 
+-		new_buf--;
+-		*new_buf = 0;
++			return_desc->string.length = (u32)
++				ACPI_STRLEN (return_desc->string.pointer);
++			break;
++
++		default:
++			return_ACPI_STATUS (AE_BAD_PARAMETER);
++		}
+ 		break;
+ 
+ 	default:
+diff -puN drivers/acpi/executer/exstorob.c~bk-acpi-revert-20041210 drivers/acpi/executer/exstorob.c
+--- 25/drivers/acpi/executer/exstorob.c~bk-acpi-revert-20041210	2005-01-05 22:35:44.320987296 -0800
++++ 25-akpm/drivers/acpi/executer/exstorob.c	2005-01-05 22:35:52.375762784 -0800
+@@ -93,35 +93,34 @@ acpi_ex_store_buffer_to_buffer (
+ 			return_ACPI_STATUS (AE_NO_MEMORY);
+ 		}
+ 
++		target_desc->common.flags &= ~AOPOBJ_STATIC_POINTER;
+ 		target_desc->buffer.length = length;
+ 	}
+ 
+-	/* Copy source buffer to target buffer */
+-
++	/*
++	 * Buffer is a static allocation,
++	 * only place what will fit in the buffer.
++	 */
+ 	if (length <= target_desc->buffer.length) {
+ 		/* Clear existing buffer and copy in the new one */
+ 
+ 		ACPI_MEMSET (target_desc->buffer.pointer, 0, target_desc->buffer.length);
+ 		ACPI_MEMCPY (target_desc->buffer.pointer, buffer, length);
+-
+-		/* Set the new length of the target */
+-
+-		target_desc->buffer.length = length;
+ 	}
+ 	else {
+-		/* Truncate the source, copy only what will fit */
+-
++		/*
++		 * Truncate the source, copy only what will fit
++		 */
+ 		ACPI_MEMCPY (target_desc->buffer.pointer, buffer, target_desc->buffer.length);
+ 
+ 		ACPI_DEBUG_PRINT ((ACPI_DB_INFO,
+-			"Truncating source buffer from %X to %X\n",
++			"Truncating src buffer from %X to %X\n",
+ 			length, target_desc->buffer.length));
+ 	}
+ 
+ 	/* Copy flags */
+ 
+ 	target_desc->buffer.flags = source_desc->buffer.flags;
+-	target_desc->common.flags &= ~AOPOBJ_STATIC_POINTER;
+ 	return_ACPI_STATUS (AE_OK);
+ }
+ 
+diff -puN drivers/acpi/tables/tbconvrt.c~bk-acpi-revert-20041210 drivers/acpi/tables/tbconvrt.c
+--- 25/drivers/acpi/tables/tbconvrt.c~bk-acpi-revert-20041210	2005-01-05 22:35:44.355981976 -0800
++++ 25-akpm/drivers/acpi/tables/tbconvrt.c	2005-01-05 22:35:52.377762480 -0800
+@@ -190,7 +190,7 @@ acpi_tb_init_generic_address (
+ 	new_gas_struct->address_space_id = ACPI_ADR_SPACE_SYSTEM_IO;
+ 	new_gas_struct->register_bit_width = register_bit_width;
+ 	new_gas_struct->register_bit_offset = 0;
+-	new_gas_struct->access_width    = 0;
++	new_gas_struct->reserved        = 0;
+ }
+ 
+ 
+@@ -510,7 +510,7 @@ acpi_tb_convert_table_fadt (void)
+  *
+  * FUNCTION:    acpi_tb_convert_table_facs
+  *
+- * PARAMETERS:  table_info      - Info for currently installed FACS
++ * PARAMETERS:  table_info      - Info for currently installad FACS
+  *
+  * RETURN:      Status
+  *
+diff -puN include/acpi/acconfig.h~bk-acpi-revert-20041210 include/acpi/acconfig.h
+--- 25/include/acpi/acconfig.h~bk-acpi-revert-20041210	2005-01-05 22:35:44.379978328 -0800
++++ 25-akpm/include/acpi/acconfig.h	2005-01-05 22:35:52.377762480 -0800
+@@ -64,7 +64,7 @@
+ 
+ /* Version string */
+ 
+-#define ACPI_CA_VERSION                 0x20041210
++#define ACPI_CA_VERSION                 0x20041203
+ 
+ /*
+  * OS name, used for the _OS object.  The _OS object is essentially obsolete,
+@@ -99,7 +99,7 @@
+ 
+ /* Version of ACPI supported */
+ 
+-#define ACPI_CA_SUPPORT_LEVEL           3
++#define ACPI_CA_SUPPORT_LEVEL           2
+ 
+ /* String size constants */
+ 
+diff -puN include/acpi/acdisasm.h~bk-acpi-revert-20041210 include/acpi/acdisasm.h
+--- 25/include/acpi/acdisasm.h~bk-acpi-revert-20041210	2005-01-05 22:35:44.396975744 -0800
++++ 25-akpm/include/acpi/acdisasm.h	2005-01-05 22:35:52.378762328 -0800
+@@ -317,12 +317,6 @@ acpi_dm_dword_descriptor (
+ 	u32                             level);
+ 
+ void
+-acpi_dm_extended_descriptor (
+-	struct asl_extended_address_desc   *resource,
+-	u32                             length,
+-	u32                             level);
+-
+-void
+ acpi_dm_qword_descriptor (
+ 	struct asl_qword_address_desc   *resource,
+ 	u32                             length,
+diff -puN include/acpi/aclocal.h~bk-acpi-revert-20041210 include/acpi/aclocal.h
+--- 25/include/acpi/aclocal.h~bk-acpi-revert-20041210	2005-01-05 22:35:44.413973160 -0800
++++ 25-akpm/include/acpi/aclocal.h	2005-01-05 22:35:52.379762176 -0800
+@@ -862,6 +862,7 @@ struct acpi_bit_register_info
+ /*
+  * Large resource descriptor types
+  */
++
+ #define ACPI_RDESC_TYPE_MEMORY_24               0x81
+ #define ACPI_RDESC_TYPE_GENERAL_REGISTER        0x82
+ #define ACPI_RDESC_TYPE_LARGE_VENDOR            0x84
+@@ -871,7 +872,6 @@ struct acpi_bit_register_info
+ #define ACPI_RDESC_TYPE_WORD_ADDRESS_SPACE      0x88
+ #define ACPI_RDESC_TYPE_EXTENDED_XRUPT          0x89
+ #define ACPI_RDESC_TYPE_QWORD_ADDRESS_SPACE     0x8A
+-#define ACPI_RDESC_TYPE_EXTENDED_ADDRESS_SPACE  0x8B
+ 
+ 
+ /*****************************************************************************
+diff -puN include/acpi/actbl2.h~bk-acpi-revert-20041210 include/acpi/actbl2.h
+--- 25/include/acpi/actbl2.h~bk-acpi-revert-20041210	2005-01-05 22:35:44.430970576 -0800
++++ 25-akpm/include/acpi/actbl2.h	2005-01-05 22:35:52.379762176 -0800
+@@ -115,7 +115,7 @@ struct acpi_generic_address
+ 	u8                              address_space_id;       /* Address space where struct or register exists. */
+ 	u8                              register_bit_width;     /* Size in bits of given register */
+ 	u8                              register_bit_offset;    /* Bit offset within the register */
+-	u8                              access_width;           /* Minimum Access size (ACPI 3.0) */
++	u8                              reserved;               /* Must be 0 */
+ 	u64                             address;                /* 64-bit address of struct or register */
+ };
+ 
+diff -puN include/acpi/amlresrc.h~bk-acpi-revert-20041210 include/acpi/amlresrc.h
+--- 25/include/acpi/amlresrc.h~bk-acpi-revert-20041210	2005-01-05 22:35:44.451967384 -0800
++++ 25-akpm/include/acpi/amlresrc.h	2005-01-05 22:35:52.380762024 -0800
+@@ -50,8 +50,6 @@
+ #define ASL_RESNAME_ADDRESS                     "_ADR"
+ #define ASL_RESNAME_ALIGNMENT                   "_ALN"
+ #define ASL_RESNAME_ADDRESSSPACE                "_ASI"
+-#define ASL_RESNAME_ACCESSSIZE                  "_ASZ"
+-#define ASL_RESNAME_TYPESPECIFICATTRIBUTES      "_ATT"
+ #define ASL_RESNAME_BASEADDRESS                 "_BAS"
+ #define ASL_RESNAME_BUSMASTER                   "_BM_"  /* Master(1), Slave(0) */
+ #define ASL_RESNAME_DECODE                      "_DEC"
+@@ -225,27 +223,6 @@ struct asl_fixed_memory_32_desc
+ };
+ 
+ 
+-struct asl_extended_address_desc
+-{
+-	u8                                  descriptor_type;
+-	u16                                 length;
+-	u8                                  resource_type;
+-	u8                                  flags;
+-	u8                                  specific_flags;
+-	u8                                  revision_iD;
+-	u8                                  reserved;
+-	u64                                 granularity;
+-	u64                                 address_min;
+-	u64                                 address_max;
+-	u64                                 translation_offset;
+-	u64                                 address_length;
+-	u64                                 type_specific_attributes;
+-	u8                                  optional_fields[2]; /* Used for length calculation only */
+-};
+-
+-#define ASL_EXTENDED_ADDRESS_DESC_REVISION          1       /* ACPI 3.0 */
+-
+-
+ struct asl_qword_address_desc
+ {
+ 	u8                                  descriptor_type;
+@@ -312,7 +289,7 @@ struct asl_general_register_desc
+ 	u8                                  address_space_id;
+ 	u8                                  bit_width;
+ 	u8                                  bit_offset;
+-	u8                                  access_size; /* ACPI 3.0, was Reserved */
++	u8                                  reserved;
+ 	u64                                 address;
+ };
+ 
+@@ -340,7 +317,6 @@ union asl_resource_desc
+ 	struct asl_qword_address_desc       qas;
+ 	struct asl_dword_address_desc       das;
+ 	struct asl_word_address_desc        was;
+-	struct asl_extended_address_desc    eas;
+ 	struct asl_extended_xrupt_desc      exx;
+ 	struct asl_general_register_desc    grg;
+ 	u32                                 u32_item;
+_

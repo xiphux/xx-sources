@@ -1,0 +1,138 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ia64/kernel/iosapic.c        |    2 +-
+ 25-akpm/arch/ia64/kernel/mca.c            |    4 ++--
+ 25-akpm/arch/ia64/kernel/mca_drv.c        |    2 +-
+ 25-akpm/arch/ia64/kernel/sal.c            |    2 +-
+ 25-akpm/arch/ia64/kernel/smp.c            |    2 +-
+ 25-akpm/arch/ia64/kernel/smpboot.c        |    2 +-
+ 25-akpm/arch/ia64/lib/swiotlb.c           |    2 +-
+ 25-akpm/arch/ia64/mm/tlb.c                |    2 +-
+ 25-akpm/arch/ia64/sn/kernel/sn2/sn2_smp.c |    2 +-
+ 9 files changed, 10 insertions(+), 10 deletions(-)
+
+diff -puN arch/ia64/kernel/iosapic.c~lock-initializer-cleanup-ia64 arch/ia64/kernel/iosapic.c
+--- 25/arch/ia64/kernel/iosapic.c~lock-initializer-cleanup-ia64	Wed Jan 12 16:54:57 2005
++++ 25-akpm/arch/ia64/kernel/iosapic.c	Wed Jan 12 16:54:57 2005
+@@ -99,7 +99,7 @@
+ #define DBG(fmt...)
+ #endif
+ 
+-static spinlock_t iosapic_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(iosapic_lock);
+ 
+ /* These tables map IA-64 vectors to the IOSAPIC pin that generates this vector. */
+ 
+diff -puN arch/ia64/kernel/mca.c~lock-initializer-cleanup-ia64 arch/ia64/kernel/mca.c
+--- 25/arch/ia64/kernel/mca.c~lock-initializer-cleanup-ia64	Wed Jan 12 16:54:57 2005
++++ 25-akpm/arch/ia64/kernel/mca.c	Wed Jan 12 16:54:57 2005
+@@ -276,7 +276,7 @@ ia64_mca_cpe_int_handler (int cpe_irq, v
+ {
+ 	static unsigned long	cpe_history[CPE_HISTORY_LENGTH];
+ 	static int		index;
+-	static spinlock_t	cpe_history_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(cpe_history_lock);
+ 
+ 	IA64_MCA_DEBUG("%s: received interrupt vector = %#x on CPU %d\n",
+ 		       __FUNCTION__, cpe_irq, smp_processor_id());
+@@ -920,7 +920,7 @@ ia64_mca_cmc_int_handler(int cmc_irq, vo
+ {
+ 	static unsigned long	cmc_history[CMC_HISTORY_LENGTH];
+ 	static int		index;
+-	static spinlock_t	cmc_history_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(cmc_history_lock);
+ 
+ 	IA64_MCA_DEBUG("%s: received interrupt vector = %#x on CPU %d\n",
+ 		       __FUNCTION__, cmc_irq, smp_processor_id());
+diff -puN arch/ia64/kernel/mca_drv.c~lock-initializer-cleanup-ia64 arch/ia64/kernel/mca_drv.c
+--- 25/arch/ia64/kernel/mca_drv.c~lock-initializer-cleanup-ia64	Wed Jan 12 16:54:57 2005
++++ 25-akpm/arch/ia64/kernel/mca_drv.c	Wed Jan 12 16:54:57 2005
+@@ -45,7 +45,7 @@ static ia64_mca_os_to_sal_state_t *os_to
+ /* from mca_drv_asm.S */
+ extern void *mca_handler_bhhook(void);
+ 
+-static spinlock_t mca_bh_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(mca_bh_lock);
+ 
+ typedef enum {
+ 	MCA_IS_LOCAL  = 0,
+diff -puN arch/ia64/kernel/sal.c~lock-initializer-cleanup-ia64 arch/ia64/kernel/sal.c
+--- 25/arch/ia64/kernel/sal.c~lock-initializer-cleanup-ia64	Wed Jan 12 16:54:57 2005
++++ 25-akpm/arch/ia64/kernel/sal.c	Wed Jan 12 16:54:57 2005
+@@ -18,7 +18,7 @@
+ #include <asm/sal.h>
+ #include <asm/pal.h>
+ 
+-spinlock_t sal_lock __cacheline_aligned = SPIN_LOCK_UNLOCKED;
++ __cacheline_aligned DEFINE_SPINLOCK(sal_lock);
+ unsigned long sal_platform_features;
+ 
+ unsigned short sal_revision;
+diff -puN arch/ia64/kernel/smpboot.c~lock-initializer-cleanup-ia64 arch/ia64/kernel/smpboot.c
+--- 25/arch/ia64/kernel/smpboot.c~lock-initializer-cleanup-ia64	Wed Jan 12 16:54:57 2005
++++ 25-akpm/arch/ia64/kernel/smpboot.c	Wed Jan 12 16:54:57 2005
+@@ -68,7 +68,7 @@
+ #define NUM_ROUNDS	64	/* magic value */
+ #define NUM_ITERS	5	/* likewise */
+ 
+-static spinlock_t itc_sync_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(itc_sync_lock);
+ static volatile unsigned long go[SLAVE + 1];
+ 
+ #define DEBUG_ITC_SYNC	0
+diff -puN arch/ia64/kernel/smp.c~lock-initializer-cleanup-ia64 arch/ia64/kernel/smp.c
+--- 25/arch/ia64/kernel/smp.c~lock-initializer-cleanup-ia64	Wed Jan 12 16:54:57 2005
++++ 25-akpm/arch/ia64/kernel/smp.c	Wed Jan 12 16:54:57 2005
+@@ -52,7 +52,7 @@
+  * Structure and data for smp_call_function(). This is designed to minimise static memory
+  * requirements. It also looks cleaner.
+  */
+-static spinlock_t call_lock __cacheline_aligned = SPIN_LOCK_UNLOCKED;
++static  __cacheline_aligned DEFINE_SPINLOCK(call_lock);
+ 
+ struct call_data_struct {
+ 	void (*func) (void *info);
+diff -puN arch/ia64/lib/swiotlb.c~lock-initializer-cleanup-ia64 arch/ia64/lib/swiotlb.c
+--- 25/arch/ia64/lib/swiotlb.c~lock-initializer-cleanup-ia64	Wed Jan 12 16:54:57 2005
++++ 25-akpm/arch/ia64/lib/swiotlb.c	Wed Jan 12 16:54:57 2005
+@@ -87,7 +87,7 @@ static unsigned char **io_tlb_orig_addr;
+ /*
+  * Protect the above data structures in the map and unmap calls
+  */
+-static spinlock_t io_tlb_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(io_tlb_lock);
+ 
+ static int __init
+ setup_io_tlb_npages(char *str)
+diff -puN arch/ia64/mm/tlb.c~lock-initializer-cleanup-ia64 arch/ia64/mm/tlb.c
+--- 25/arch/ia64/mm/tlb.c~lock-initializer-cleanup-ia64	Wed Jan 12 16:54:57 2005
++++ 25-akpm/arch/ia64/mm/tlb.c	Wed Jan 12 16:54:57 2005
+@@ -88,7 +88,7 @@ wrap_mmu_context (struct mm_struct *mm)
+ void
+ ia64_global_tlb_purge (unsigned long start, unsigned long end, unsigned long nbits)
+ {
+-	static spinlock_t ptcg_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(ptcg_lock);
+ 
+ 	/* HW requires global serialization of ptc.ga.  */
+ 	spin_lock(&ptcg_lock);
+diff -puN arch/ia64/sn/kernel/sn2/sn2_smp.c~lock-initializer-cleanup-ia64 arch/ia64/sn/kernel/sn2/sn2_smp.c
+--- 25/arch/ia64/sn/kernel/sn2/sn2_smp.c~lock-initializer-cleanup-ia64	Wed Jan 12 16:54:57 2005
++++ 25-akpm/arch/ia64/sn/kernel/sn2/sn2_smp.c	Wed Jan 12 16:54:57 2005
+@@ -41,7 +41,7 @@
+ 
+ void sn2_ptc_deadlock_recovery(unsigned long data0, unsigned long data1);
+ 
+-static spinlock_t sn2_global_ptc_lock __cacheline_aligned = SPIN_LOCK_UNLOCKED;
++static  __cacheline_aligned DEFINE_SPINLOCK(sn2_global_ptc_lock);
+ 
+ static unsigned long sn2_ptc_deadlock_count;
+ 
+_

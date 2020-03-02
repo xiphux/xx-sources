@@ -1,0 +1,45 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Don't balance on clone by default.
+
+Balance on clone has a number of trivial performance failure cases, but it was
+needed to get decent OpenMP performance on NUMA (Opteron) systems.  Not doing
+child-runs-first for new threads also solves this problem in a nicer way
+(implemented in a previous patch).
+
+Signed-off-by: Nick Piggin <nickpiggin@yahoo.com.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/sched.h |    3 ---
+ 1 files changed, 3 deletions(-)
+
+diff -puN include/linux/sched.h~sched-no-balance-clone include/linux/sched.h
+--- 25/include/linux/sched.h~sched-no-balance-clone	2004-07-28 22:08:41.077786216 -0700
++++ 25-akpm/include/linux/sched.h	2004-07-28 22:08:41.082785456 -0700
+@@ -622,7 +622,6 @@ struct sched_domain {
+ 	.per_cpu_gain		= 15,			\
+ 	.flags			= SD_BALANCE_NEWIDLE	\
+ 				| SD_BALANCE_EXEC	\
+-				| SD_BALANCE_CLONE	\
+ 				| SD_WAKE_AFFINE	\
+ 				| SD_WAKE_IDLE		\
+ 				| SD_SHARE_CPUPOWER,	\
+@@ -645,7 +644,6 @@ struct sched_domain {
+ 	.per_cpu_gain		= 100,			\
+ 	.flags			= SD_BALANCE_NEWIDLE	\
+ 				| SD_BALANCE_EXEC	\
+-				| SD_BALANCE_CLONE	\
+ 				| SD_WAKE_AFFINE	\
+ 				| SD_WAKE_BALANCE,	\
+ 	.last_balance		= jiffies,		\
+@@ -667,7 +665,6 @@ struct sched_domain {
+ 	.cache_nice_tries	= 1,			\
+ 	.per_cpu_gain		= 100,			\
+ 	.flags			= SD_BALANCE_EXEC	\
+-				| SD_BALANCE_CLONE	\
+ 				| SD_WAKE_BALANCE,	\
+ 	.last_balance		= jiffies,		\
+ 	.balance_interval	= 1,			\
+_

@@ -1,0 +1,74 @@
+
+From: Hans Reiser <reiser@namesys.com>
+
+This patch makes symbols needed for drop_inode to be EXPORT_SYMBOL-ed.
+
+inodes_stat
+generic_forget_inode
+destroy_inode
+wake_up_inode
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/inode.c         |    7 +++++--
+ 25-akpm/include/linux/fs.h |    1 +
+ 2 files changed, 6 insertions(+), 2 deletions(-)
+
+diff -puN fs/inode.c~reiser4-allow-drop_inode-implementation fs/inode.c
+--- 25/fs/inode.c~reiser4-allow-drop_inode-implementation	2005-01-10 21:15:18.112700032 -0800
++++ 25-akpm/fs/inode.c	2005-01-10 21:15:18.118699120 -0800
+@@ -96,6 +96,7 @@ DECLARE_MUTEX(iprune_sem);
+  * Statistics gathering..
+  */
+ struct inodes_stat_t inodes_stat;
++EXPORT_SYMBOL(inodes_stat);
+ 
+ static kmem_cache_t * inode_cachep;
+ 
+@@ -183,7 +184,7 @@ void destroy_inode(struct inode *inode) 
+ 	else
+ 		kmem_cache_free(inode_cachep, (inode));
+ }
+-
++EXPORT_SYMBOL(destroy_inode);
+ 
+ /*
+  * These are initializations that only need to be done
+@@ -1035,7 +1036,7 @@ void generic_delete_inode(struct inode *
+ 
+ EXPORT_SYMBOL(generic_delete_inode);
+ 
+-static void generic_forget_inode(struct inode *inode)
++void generic_forget_inode(struct inode *inode)
+ {
+ 	struct super_block *sb = inode->i_sb;
+ 
+@@ -1061,6 +1062,7 @@ static void generic_forget_inode(struct 
+ 	clear_inode(inode);
+ 	destroy_inode(inode);
+ }
++EXPORT_SYMBOL(generic_forget_inode);
+ 
+ /*
+  * Normal UNIX filesystem behaviour: delete the
+@@ -1295,6 +1297,7 @@ void wake_up_inode(struct inode *inode)
+ 	smp_mb();
+ 	wake_up_bit(&inode->i_state, __I_LOCK);
+ }
++EXPORT_SYMBOL(wake_up_inode);
+ 
+ static __initdata unsigned long ihash_entries;
+ static int __init set_ihash_entries(char *str)
+diff -puN include/linux/fs.h~reiser4-allow-drop_inode-implementation include/linux/fs.h
+--- 25/include/linux/fs.h~reiser4-allow-drop_inode-implementation	2005-01-10 21:15:18.114699728 -0800
++++ 25-akpm/include/linux/fs.h	2005-01-10 21:15:18.119698968 -0800
+@@ -1416,6 +1416,7 @@ extern struct inode * igrab(struct inode
+ extern ino_t iunique(struct super_block *, ino_t);
+ extern int inode_needs_sync(struct inode *inode);
+ extern void generic_delete_inode(struct inode *inode);
++extern void generic_forget_inode(struct inode *inode);
+ 
+ extern struct inode *ilookup5(struct super_block *sb, unsigned long hashval,
+ 		int (*test)(struct inode *, void *), void *data);
+_

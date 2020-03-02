@@ -1,0 +1,109 @@
+
+
+Convert x86's kmap_atomic() and kunmap_atomic() to take and return char*
+instead of void*.  So we now generate a warning if someone passes a page* into
+kunmap_atomic(), as people often do.
+
+Other architectures still use void*'s, but that's OK - no warnings will be
+generated.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/mm/highmem.c     |    8 ++++----
+ 25-akpm/include/asm-i386/highmem.h |    4 ++--
+ 25-akpm/include/linux/highmem.h    |   14 +++++++-------
+ 3 files changed, 13 insertions(+), 13 deletions(-)
+
+diff -puN arch/i386/mm/highmem.c~kmap_atomic-takes-char arch/i386/mm/highmem.c
+--- 25/arch/i386/mm/highmem.c~kmap_atomic-takes-char	2004-11-30 01:23:06.068844504 -0800
++++ 25-akpm/arch/i386/mm/highmem.c	2004-11-30 01:23:06.075843440 -0800
+@@ -25,7 +25,7 @@ void kunmap(struct page *page)
+  * However when holding an atomic kmap is is not legal to sleep, so atomic
+  * kmaps are appropriate for short, tight code paths only.
+  */
+-void *kmap_atomic(struct page *page, enum km_type type)
++char *kmap_atomic(struct page *page, enum km_type type)
+ {
+ 	enum fixed_addresses idx;
+ 	unsigned long vaddr;
+@@ -44,13 +44,13 @@ void *kmap_atomic(struct page *page, enu
+ 	set_pte(kmap_pte-idx, mk_pte(page, kmap_prot));
+ 	__flush_tlb_one(vaddr);
+ 
+-	return (void*) vaddr;
++	return (char *)vaddr;
+ }
+ 
+-void kunmap_atomic(void *kvaddr, enum km_type type)
++void kunmap_atomic(char *kaddr, enum km_type type)
+ {
+ #ifdef CONFIG_DEBUG_HIGHMEM
+-	unsigned long vaddr = (unsigned long) kvaddr & PAGE_MASK;
++	unsigned long vaddr = (unsigned long)kaddr & PAGE_MASK;
+ 	enum fixed_addresses idx = type + KM_TYPE_NR*smp_processor_id();
+ 
+ 	if (vaddr < FIXADDR_START) { // FIXME
+diff -puN include/linux/highmem.h~kmap_atomic-takes-char include/linux/highmem.h
+--- 25/include/linux/highmem.h~kmap_atomic-takes-char	2004-11-30 01:23:06.069844352 -0800
++++ 25-akpm/include/linux/highmem.h	2004-11-30 01:23:06.075843440 -0800
+@@ -26,16 +26,16 @@ static inline void *kmap(struct page *pa
+ 
+ #define kunmap(page) do { (void) (page); } while (0)
+ 
+-#define kmap_atomic(page, idx)		page_address(page)
+-#define kunmap_atomic(addr, idx)	do { } while (0)
+-#define kmap_atomic_to_page(ptr)	virt_to_page(ptr)
++#define kmap_atomic(page, idx)	 ((char *)page_address(page))
++#define kunmap_atomic(addr, idx) do { char *p = addr; (void)p; } while (0)
++#define kmap_atomic_to_page(ptr) virt_to_page(ptr)
+ 
+ #endif /* CONFIG_HIGHMEM */
+ 
+ /* when CONFIG_HIGHMEM is not set these will be plain clear/copy_page */
+ static inline void clear_user_highpage(struct page *page, unsigned long vaddr)
+ {
+-	void *addr = kmap_atomic(page, KM_USER0);
++	char *addr = kmap_atomic(page, KM_USER0);
+ 	clear_user_page(addr, vaddr, page);
+ 	kunmap_atomic(addr, KM_USER0);
+ 	/* Make sure this page is cleared on other CPU's too before using it */
+@@ -44,7 +44,7 @@ static inline void clear_user_highpage(s
+ 
+ static inline void clear_highpage(struct page *page)
+ {
+-	void *kaddr = kmap_atomic(page, KM_USER0);
++	char *kaddr = kmap_atomic(page, KM_USER0);
+ 	clear_page(kaddr);
+ 	kunmap_atomic(kaddr, KM_USER0);
+ }
+@@ -54,12 +54,12 @@ static inline void clear_highpage(struct
+  */
+ static inline void memclear_highpage_flush(struct page *page, unsigned int offset, unsigned int size)
+ {
+-	void *kaddr;
++	char *kaddr;
+ 
+ 	BUG_ON(offset + size > PAGE_SIZE);
+ 
+ 	kaddr = kmap_atomic(page, KM_USER0);
+-	memset((char *)kaddr + offset, 0, size);
++	memset(kaddr + offset, 0, size);
+ 	flush_dcache_page(page);
+ 	kunmap_atomic(kaddr, KM_USER0);
+ }
+diff -puN include/asm-i386/highmem.h~kmap_atomic-takes-char include/asm-i386/highmem.h
+--- 25/include/asm-i386/highmem.h~kmap_atomic-takes-char	2004-11-30 01:23:06.071844048 -0800
++++ 25-akpm/include/asm-i386/highmem.h	2004-11-30 01:23:06.076843288 -0800
+@@ -70,8 +70,8 @@ extern void FASTCALL(kunmap_high(struct 
+ 
+ void *kmap(struct page *page);
+ void kunmap(struct page *page);
+-void *kmap_atomic(struct page *page, enum km_type type);
+-void kunmap_atomic(void *kvaddr, enum km_type type);
++char *kmap_atomic(struct page *page, enum km_type type);
++void kunmap_atomic(char *kvaddr, enum km_type type);
+ struct page *kmap_atomic_to_page(void *ptr);
+ 
+ #define flush_cache_kmaps()	do { } while (0)
+_

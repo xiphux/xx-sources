@@ -1,0 +1,485 @@
+
+From: Christoph Hellwig <hch@lst.de>
+
+Currently we every filesystem with Posix ACLs has it's own reimplemtation
+of the generic permission checking code with additonal ACL support.  This
+patch
+
+- adds an optional callback to vfs_permission that filesystems can use
+  for ACL support (and renames it to generic_permission because the old
+  name was wrong - it wasn't like the other vfs_* functions at all)
+
+- uses it in ext2, ext3 and jfs.  XFS will follow a little later as it's
+  permission checking is burried under several layers of abstraction.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/cifs/CHANGES         |    4 -
+ 25-akpm/fs/cifs/cifsfs.c        |    2 
+ 25-akpm/fs/exec.c               |    2 
+ 25-akpm/fs/ext2/acl.c           |   64 ++++++-------------------------
+ 25-akpm/fs/ext3/acl.c           |   64 ++++++-------------------------
+ 25-akpm/fs/hfs/inode.c          |    2 
+ 25-akpm/fs/hfsplus/inode.c      |    2 
+ 25-akpm/fs/hostfs/hostfs_kern.c |    2 
+ 25-akpm/fs/jfs/acl.c            |   81 ++++------------------------------------
+ 25-akpm/fs/namei.c              |   33 +++++++++++-----
+ 25-akpm/fs/nfs/dir.c            |    2 
+ 25-akpm/fs/proc/base.c          |    2 
+ 25-akpm/include/linux/fs.h      |    4 +
+ 13 files changed, 73 insertions(+), 191 deletions(-)
+
+diff -puN fs/cifs/CHANGES~generic-acl-support-for-permission fs/cifs/CHANGES
+--- 25/fs/cifs/CHANGES~generic-acl-support-for-permission	2004-10-05 01:48:03.350870040 -0700
++++ 25-akpm/fs/cifs/CHANGES	2004-10-05 01:48:03.370867000 -0700
+@@ -7,8 +7,8 @@ or out of order NULL pointer checks in l
+ 
+ Version 1.21
+ ------------
+-Add new mount parm to control whether mode check (vfs_permission) is done on
+-the client.  If Unix extensions are enabled and the uids on the client
++Add new mount parm to control whether mode check (generic_permission) is done
++on the client.  If Unix extensions are enabled and the uids on the client
+ and server do not match, client permission checks are meaningless on
+ server uids that do not exist on the client (this does not affect the
+ normal ACL check which occurs on the server).  Fix default uid
+diff -puN fs/cifs/cifsfs.c~generic-acl-support-for-permission fs/cifs/cifsfs.c
+--- 25/fs/cifs/cifsfs.c~generic-acl-support-for-permission	2004-10-05 01:48:03.351869888 -0700
++++ 25-akpm/fs/cifs/cifsfs.c	2004-10-05 01:48:03.371866848 -0700
+@@ -200,7 +200,7 @@ static int cifs_permission(struct inode 
+ 		on the client (above and beyond ACL on servers) for  
+ 		servers which do not support setting and viewing mode bits,
+ 		so allowing client to check permissions is useful */ 
+-		return vfs_permission(inode, mask);
++		return generic_permission(inode, mask, NULL);
+ }
+ 
+ static kmem_cache_t *cifs_inode_cachep;
+diff -puN fs/exec.c~generic-acl-support-for-permission fs/exec.c
+--- 25/fs/exec.c~generic-acl-support-for-permission	2004-10-05 01:48:03.352869736 -0700
++++ 25-akpm/fs/exec.c	2004-10-05 01:48:03.372866696 -0700
+@@ -887,7 +887,7 @@ int prepare_binprm(struct linux_binprm *
+ 	mode = inode->i_mode;
+ 	/*
+ 	 * Check execute perms again - if the caller has CAP_DAC_OVERRIDE,
+-	 * vfs_permission lets a non-executable through
++	 * generic_permission lets a non-executable through
+ 	 */
+ 	if (!(mode & 0111))	/* with at least _one_ execute bit set */
+ 		return -EACCES;
+diff -puN fs/ext2/acl.c~generic-acl-support-for-permission fs/ext2/acl.c
+--- 25/fs/ext2/acl.c~generic-acl-support-for-permission	2004-10-05 01:48:03.354869432 -0700
++++ 25-akpm/fs/ext2/acl.c	2004-10-05 01:48:03.373866544 -0700
+@@ -280,60 +280,24 @@ ext2_set_acl(struct inode *inode, int ty
+ 	return error;
+ }
+ 
+-/*
+- * Inode operation permission().
+- *
+- * inode->i_sem: don't care
+- */
+-int
+-ext2_permission(struct inode *inode, int mask, struct nameidata *nd)
++static int
++ext2_check_acl(struct inode *inode, int mask)
+ {
+-	int mode = inode->i_mode;
++	struct posix_acl *acl = ext2_get_acl(inode, ACL_TYPE_ACCESS);
+ 
+-	/* Nobody gets write access to a read-only fs */
+-	if ((mask & MAY_WRITE) && IS_RDONLY(inode) &&
+-	    (S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode)))
+-		return -EROFS;
+-	/* Nobody gets write access to an immutable file */
+-	if ((mask & MAY_WRITE) && IS_IMMUTABLE(inode))
+-	    return -EACCES;
+-	if (current->fsuid == inode->i_uid) {
+-		mode >>= 6;
+-	} else if (test_opt(inode->i_sb, POSIX_ACL)) {
+-		struct posix_acl *acl;
+-
+-		/* The access ACL cannot grant access if the group class
+-		   permission bits don't contain all requested permissions. */
+-		if (((mode >> 3) & mask & S_IRWXO) != mask)
+-			goto check_groups;
+-		acl = ext2_get_acl(inode, ACL_TYPE_ACCESS);
+-		if (acl) {
+-			int error = posix_acl_permission(inode, acl, mask);
+-			posix_acl_release(acl);
+-			if (error == -EACCES)
+-				goto check_capabilities;
+-			return error;
+-		} else
+-			goto check_groups;
+-	} else {
+-check_groups:
+-		if (in_group_p(inode->i_gid))
+-			mode >>= 3;
++	if (acl) {
++		int error = posix_acl_permission(inode, acl, mask);
++		posix_acl_release(acl);
++		return error;
+ 	}
+-	if ((mode & mask & S_IRWXO) == mask)
+-		return 0;
+ 
+-check_capabilities:
+-	/* Allowed to override Discretionary Access Control? */
+-	if (!(mask & MAY_EXEC) ||
+-	    (inode->i_mode & S_IXUGO) || S_ISDIR(inode->i_mode))
+-		if (capable(CAP_DAC_OVERRIDE))
+-			return 0;
+-	/* Read and search granted if capable(CAP_DAC_READ_SEARCH) */
+-	if (capable(CAP_DAC_READ_SEARCH) && ((mask == MAY_READ) ||
+-	    (S_ISDIR(inode->i_mode) && !(mask & MAY_WRITE))))
+-		return 0;
+-	return -EACCES;
++	return -EAGAIN;
++}
++
++int
++ext2_permission(struct inode *inode, int mask, struct nameidata *nd)
++{
++	return generic_permission(inode, mask, ext2_check_acl);
+ }
+ 
+ /*
+diff -puN fs/ext3/acl.c~generic-acl-support-for-permission fs/ext3/acl.c
+--- 25/fs/ext3/acl.c~generic-acl-support-for-permission	2004-10-05 01:48:03.355869280 -0700
++++ 25-akpm/fs/ext3/acl.c	2004-10-05 01:48:03.374866392 -0700
+@@ -285,60 +285,24 @@ ext3_set_acl(handle_t *handle, struct in
+ 	return error;
+ }
+ 
+-/*
+- * Inode operation permission().
+- *
+- * inode->i_sem: don't care
+- */
+-int
+-ext3_permission(struct inode *inode, int mask, struct nameidata *nd)
++static int
++ext3_check_acl(struct inode *inode, int mask)
+ {
+-	int mode = inode->i_mode;
++	struct posix_acl *acl = ext3_get_acl(inode, ACL_TYPE_ACCESS);
+ 
+-	/* Nobody gets write access to a read-only fs */
+-	if ((mask & MAY_WRITE) && IS_RDONLY(inode) &&
+-	    (S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode)))
+-		return -EROFS;
+-	/* Nobody gets write access to an immutable file */
+-	if ((mask & MAY_WRITE) && IS_IMMUTABLE(inode))
+-	    return -EACCES;
+-	if (current->fsuid == inode->i_uid) {
+-		mode >>= 6;
+-	} else if (test_opt(inode->i_sb, POSIX_ACL)) {
+-		struct posix_acl *acl;
+-
+-		/* The access ACL cannot grant access if the group class
+-		   permission bits don't contain all requested permissions. */
+-		if (((mode >> 3) & mask & S_IRWXO) != mask)
+-			goto check_groups;
+-		acl = ext3_get_acl(inode, ACL_TYPE_ACCESS);
+-		if (acl) {
+-			int error = posix_acl_permission(inode, acl, mask);
+-			posix_acl_release(acl);
+-			if (error == -EACCES)
+-				goto check_capabilities;
+-			return error;
+-		} else
+-			goto check_groups;
+-	} else {
+-check_groups:
+-		if (in_group_p(inode->i_gid))
+-			mode >>= 3;
++	if (acl) {
++		int error = posix_acl_permission(inode, acl, mask);
++		posix_acl_release(acl);
++		return error;
+ 	}
+-	if ((mode & mask & S_IRWXO) == mask)
+-		return 0;
+ 
+-check_capabilities:
+-	/* Allowed to override Discretionary Access Control? */
+-	if (!(mask & MAY_EXEC) ||
+-	    (inode->i_mode & S_IXUGO) || S_ISDIR(inode->i_mode))
+-		if (capable(CAP_DAC_OVERRIDE))
+-			return 0;
+-	/* Read and search granted if capable(CAP_DAC_READ_SEARCH) */
+-	if (capable(CAP_DAC_READ_SEARCH) && ((mask == MAY_READ) ||
+-	    (S_ISDIR(inode->i_mode) && !(mask & MAY_WRITE))))
+-		return 0;
+-	return -EACCES;
++	return -EAGAIN;
++}
++
++int
++ext3_permission(struct inode *inode, int mask, struct nameidata *nd)
++{
++	return generic_permission(inode, mask, ext3_check_acl);
+ }
+ 
+ /*
+diff -puN fs/hfs/inode.c~generic-acl-support-for-permission fs/hfs/inode.c
+--- 25/fs/hfs/inode.c~generic-acl-support-for-permission	2004-10-05 01:48:03.356869128 -0700
++++ 25-akpm/fs/hfs/inode.c	2004-10-05 01:48:03.375866240 -0700
+@@ -517,7 +517,7 @@ static int hfs_permission(struct inode *
+ {
+ 	if (S_ISREG(inode->i_mode) && mask & MAY_EXEC)
+ 		return 0;
+-	return vfs_permission(inode, mask);
++	return generic_permission(inode, mask, NULL);
+ }
+ 
+ static int hfs_file_open(struct inode *inode, struct file *file)
+diff -puN fs/hfsplus/inode.c~generic-acl-support-for-permission fs/hfsplus/inode.c
+--- 25/fs/hfsplus/inode.c~generic-acl-support-for-permission	2004-10-05 01:48:03.358868824 -0700
++++ 25-akpm/fs/hfsplus/inode.c	2004-10-05 01:48:03.375866240 -0700
+@@ -260,7 +260,7 @@ static int hfsplus_permission(struct ino
+ 	 */
+ 	if (S_ISREG(inode->i_mode) && mask & MAY_EXEC && !(inode->i_mode & 0111))
+ 		return 0;
+-	return vfs_permission(inode, mask);
++	return generic_permission(inode, mask, NULL);
+ }
+ 
+ 
+diff -puN fs/hostfs/hostfs_kern.c~generic-acl-support-for-permission fs/hostfs/hostfs_kern.c
+--- 25/fs/hostfs/hostfs_kern.c~generic-acl-support-for-permission	2004-10-05 01:48:03.359868672 -0700
++++ 25-akpm/fs/hostfs/hostfs_kern.c	2004-10-05 01:48:03.376866088 -0700
+@@ -802,7 +802,7 @@ int hostfs_permission(struct inode *ino,
+ 	if(name == NULL) return(-ENOMEM);
+ 	err = access_file(name, r, w, x);
+ 	kfree(name);
+-	if(!err) err = vfs_permission(ino, desired);
++	if(!err) err = generic_permission(ino, desired, NULL);
+ 	return(err);
+ }
+ 
+diff -puN fs/jfs/acl.c~generic-acl-support-for-permission fs/jfs/acl.c
+--- 25/fs/jfs/acl.c~generic-acl-support-for-permission	2004-10-05 01:48:03.360868520 -0700
++++ 25-akpm/fs/jfs/acl.c	2004-10-05 01:48:03.377865936 -0700
+@@ -123,88 +123,25 @@ out:
+ 	return rc;
+ }
+ 
+-/*
+- *	jfs_permission()
+- *
+- * modified vfs_permission to check posix acl
+- */
+-int jfs_permission(struct inode * inode, int mask, struct nameidata *nd)
++static int jfs_check_acl(struct inode *inode, int mask)
+ {
+-	umode_t mode = inode->i_mode;
+ 	struct jfs_inode_info *ji = JFS_IP(inode);
+ 
+-	if (mask & MAY_WRITE) {
+-		/*
+-		 * Nobody gets write access to a read-only fs.
+-		 */
+-		if (IS_RDONLY(inode) &&
+-		    (S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode)))
+-			return -EROFS;
+-
+-		/*
+-		 * Nobody gets write access to an immutable file.
+-		 */
+-		if (IS_IMMUTABLE(inode))
+-			return -EACCES;
+-	}
+-
+-	if (current->fsuid == inode->i_uid) {
+-		mode >>= 6;
+-		goto check_mode;
+-	}
+-	/*
+-	 * ACL can't contain additional permissions if the ACL_MASK entry
+-	 * is zero.
+-	 */
+-	if (!(mode & S_IRWXG))
+-		goto check_groups;
+-
+ 	if (ji->i_acl == JFS_ACL_NOT_CACHED) {
+-		struct posix_acl *acl;
+-
+-		acl = jfs_get_acl(inode, ACL_TYPE_ACCESS);
+-
++		struct posix_acl *acl = jfs_get_acl(inode, ACL_TYPE_ACCESS);
+ 		if (IS_ERR(acl))
+ 			return PTR_ERR(acl);
+ 		posix_acl_release(acl);
+ 	}
+ 
+-	if (ji->i_acl) {
+-		int rc = posix_acl_permission(inode, ji->i_acl, mask);
+-		if (rc == -EACCES)
+-			goto check_capabilities;
+-		return rc;
+-	}
+-
+-check_groups:
+-	if (in_group_p(inode->i_gid))
+-		mode >>= 3;
+-
+-check_mode:
+-	/*
+-	 * If the DACs are ok we don't need any capability check.
+-	 */
+-	if (((mode & mask & (MAY_READ|MAY_WRITE|MAY_EXEC)) == mask))
+-		return 0;
+-
+-check_capabilities:
+-	/*
+-	 * Read/write DACs are always overridable.
+-	 * Executable DACs are overridable if at least one exec bit is set.
+-	 */
+-	if (!(mask & MAY_EXEC) ||
+-	    (inode->i_mode & S_IXUGO) || S_ISDIR(inode->i_mode))
+-		if (capable(CAP_DAC_OVERRIDE))
+-			return 0;
+-
+-	/*
+-	 * Searching includes executable on directories, else just read.
+-	 */
+-	if (mask == MAY_READ || (S_ISDIR(inode->i_mode) && !(mask & MAY_WRITE)))
+-		if (capable(CAP_DAC_READ_SEARCH))
+-			return 0;
++	if (ji->i_acl)
++		return posix_acl_permission(inode, ji->i_acl, mask);
++	return -EAGAIN;
++}
+ 
+-	return -EACCES;
++int jfs_permission(struct inode *inode, int mask, struct nameidata *nd)
++{
++	return generic_permission(inode, mask, jfs_check_acl);
+ }
+ 
+ int jfs_init_acl(struct inode *inode, struct inode *dir)
+diff -puN fs/namei.c~generic-acl-support-for-permission fs/namei.c
+--- 25/fs/namei.c~generic-acl-support-for-permission	2004-10-05 01:48:03.362868216 -0700
++++ 25-akpm/fs/namei.c	2004-10-05 01:48:03.379865632 -0700
+@@ -152,15 +152,19 @@ char * getname(const char __user * filen
+ 	return result;
+ }
+ 
+-/*
+- *	vfs_permission()
++/**
++ * generic_permission  -  check for access rights on a Posix-like filesystem
++ * @inode:	inode to check access rights for
++ * @mask:	right to check for (%MAY_READ, %MAY_WRITE, %MAY_EXEC)
++ * @check_acl:	optional callback to check for Posix ACLs
+  *
+- * is used to check for read/write/execute permissions on a file.
++ * Used to check for read/write/execute permissions on a file.
+  * We use "fsuid" for this, letting us set arbitrary permissions
+  * for filesystem access without changing the "normal" uids which
+  * are used for other things..
+  */
+-int vfs_permission(struct inode * inode, int mask)
++int generic_permission(struct inode *inode, int mask,
++		int (*check_acl)(struct inode *inode, int mask))
+ {
+ 	umode_t			mode = inode->i_mode;
+ 
+@@ -181,8 +185,18 @@ int vfs_permission(struct inode * inode,
+ 
+ 	if (current->fsuid == inode->i_uid)
+ 		mode >>= 6;
+-	else if (in_group_p(inode->i_gid))
+-		mode >>= 3;
++	else {
++		if (IS_POSIXACL(inode) && (mode & S_IRWXG) && check_acl) {
++			int error = check_acl(inode, mask);
++			if (error == -EACCES)
++				goto check_capabilities;
++			else if (error != -EAGAIN)
++				return error;
++		}
++
++		if (in_group_p(inode->i_gid))
++			mode >>= 3;
++	}
+ 
+ 	/*
+ 	 * If the DACs are ok we don't need any capability check.
+@@ -190,6 +204,7 @@ int vfs_permission(struct inode * inode,
+ 	if (((mode & mask & (MAY_READ|MAY_WRITE|MAY_EXEC)) == mask))
+ 		return 0;
+ 
++ check_capabilities:
+ 	/*
+ 	 * Read/write DACs are always overridable.
+ 	 * Executable DACs are overridable if at least one exec bit is set.
+@@ -220,7 +235,7 @@ int permission(struct inode * inode,int 
+ 	if (inode->i_op && inode->i_op->permission)
+ 		retval = inode->i_op->permission(inode, submask, nd);
+ 	else
+-		retval = vfs_permission(inode, submask);
++		retval = generic_permission(inode, submask, NULL);
+ 	if (retval)
+ 		return retval;
+ 
+@@ -315,7 +330,7 @@ static struct dentry * cached_lookup(str
+ /*
+  * Short-cut version of permission(), for calling by
+  * path_walk(), when dcache lock is held.  Combines parts
+- * of permission() and vfs_permission(), and tests ONLY for
++ * of permission() and generic_permission(), and tests ONLY for
+  * MAY_EXEC permission.
+  *
+  * If appropriate, check DAC only.  If not appropriate, or
+@@ -2404,7 +2419,7 @@ EXPORT_SYMBOL(vfs_follow_link);
+ EXPORT_SYMBOL(vfs_link);
+ EXPORT_SYMBOL(vfs_mkdir);
+ EXPORT_SYMBOL(vfs_mknod);
+-EXPORT_SYMBOL(vfs_permission);
++EXPORT_SYMBOL(generic_permission);
+ EXPORT_SYMBOL(vfs_readlink);
+ EXPORT_SYMBOL(vfs_rename);
+ EXPORT_SYMBOL(vfs_rmdir);
+diff -puN fs/nfs/dir.c~generic-acl-support-for-permission fs/nfs/dir.c
+--- 25/fs/nfs/dir.c~generic-acl-support-for-permission	2004-10-05 01:48:03.364867912 -0700
++++ 25-akpm/fs/nfs/dir.c	2004-10-05 01:48:03.380865480 -0700
+@@ -1600,7 +1600,7 @@ int nfs_permission(struct inode *inode, 
+ 	return res;
+ out_notsup:
+ 	nfs_revalidate_inode(NFS_SERVER(inode), inode);
+-	res = vfs_permission(inode, mask);
++	res = generic_permission(inode, mask, NULL);
+ 	unlock_kernel();
+ 	return res;
+ }
+diff -puN fs/proc/base.c~generic-acl-support-for-permission fs/proc/base.c
+--- 25/fs/proc/base.c~generic-acl-support-for-permission	2004-10-05 01:48:03.365867760 -0700
++++ 25-akpm/fs/proc/base.c	2004-10-05 01:48:03.382865176 -0700
+@@ -486,7 +486,7 @@ out:
+ 
+ static int proc_permission(struct inode *inode, int mask, struct nameidata *nd)
+ {
+-	if (vfs_permission(inode, mask) != 0)
++	if (generic_permission(inode, mask, NULL) != 0)
+ 		return -EACCES;
+ 	return proc_check_root(inode);
+ }
+diff -puN include/linux/fs.h~generic-acl-support-for-permission include/linux/fs.h
+--- 25/include/linux/fs.h~generic-acl-support-for-permission	2004-10-05 01:48:03.367867456 -0700
++++ 25-akpm/include/linux/fs.h	2004-10-05 01:48:03.383865024 -0700
+@@ -1414,7 +1414,9 @@ extern sector_t bmap(struct inode *, sec
+ extern int setattr_mask(unsigned int);
+ extern int notify_change(struct dentry *, struct iattr *);
+ extern int permission(struct inode *, int, struct nameidata *);
+-extern int vfs_permission(struct inode *, int);
++extern int generic_permission(struct inode *, int,
++		int (*check_acl)(struct inode *, int));
++
+ extern int get_write_access(struct inode *);
+ extern int deny_write_access(struct file *);
+ static inline void put_write_access(struct inode * inode)
+_

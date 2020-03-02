@@ -1,0 +1,57 @@
+Add a scheduler name and the beginnings of bootparam checking to change
+scheduler at boot time.
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+
+Index: linux-2.6.10-rc1-mm5/include/linux/scheduler.h
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/include/linux/scheduler.h	2004-11-11 21:50:20.337923920 +1100
++++ linux-2.6.10-rc1-mm5/include/linux/scheduler.h	2004-11-11 21:51:49.054251869 +1100
+@@ -1,8 +1,11 @@
+ #ifndef _LINUX_SCHEDULER_H
+ #define _LINUX_SCHEDULER_H
+ 
++#define SCHED_NAME_MAX	(16)
++
+ struct sched_drv
+ {
++	char cpusched_name[SCHED_NAME_MAX];
+ 	int (*rt_task)(const task_t *);
+ 	void (*wait_for_completion)(struct completion *);
+ 	void (*io_schedule)(void);
+Index: linux-2.6.10-rc1-mm5/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/kernel/sched.c	2004-11-11 21:50:20.340923458 +1100
++++ linux-2.6.10-rc1-mm5/kernel/sched.c	2004-11-11 21:51:42.376281031 +1100
+@@ -4184,6 +4184,7 @@ void normalize_rt_tasks(void)
+ #endif /* CONFIG_MAGIC_SYSRQ */
+ 
+ struct sched_drv ingo_sched_drv = {
++	.cpusched_name		= "ingosched",
+ 	.rt_task		= ingo_rt_task,
+ 	.wait_for_completion	= ingo_wait_for_completion,
+ 	.io_schedule		= ingo_io_schedule,
+Index: linux-2.6.10-rc1-mm5/kernel/scheduler.c
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/kernel/scheduler.c	2004-11-11 21:48:11.976704471 +1100
++++ linux-2.6.10-rc1-mm5/kernel/scheduler.c	2004-11-11 21:51:42.377280877 +1100
+@@ -878,7 +878,17 @@ void fastcall complete_all(struct comple
+ EXPORT_SYMBOL(complete_all);
+ 
+ extern struct sched_drv ingo_sched_drv;
+-static const struct sched_drv *scheduler = &ingo_sched_drv;
++
++static struct sched_drv *scheduler = &ingo_sched_drv;
++
++static int __init scheduler_setup(char *str)
++{
++	if (!strcmp(str, "ingosched"))
++		scheduler = &ingo_sched_drv;
++	return 1;
++}
++
++__setup ("cpusched=", scheduler_setup);
+ 
+ void fastcall __sched wait_for_completion(struct completion *x)
+ {

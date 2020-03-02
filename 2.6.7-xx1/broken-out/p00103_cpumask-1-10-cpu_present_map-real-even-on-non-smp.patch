@@ -1,0 +1,113 @@
+
+From: Paul Jackson <pj@sgi.com>
+
+This patch makes cpu_present_map a real map for all configurations, instead of
+a constant for non-SMP.  It also moves the definition of cpu_present_map out
+of kernel/cpu.c into kernel/sched.c, because cpu.c isn't compiled into non-SMP
+kernels.
+
+The pattern is that each of the possible, present and online cpu maps are
+actual kernel global cpumask_t variables, for all configurations.  They are
+documented in include/linux/cpumask.h.  Some of the UP (NR_CPUS=1) code
+cheats, and hardcodes the assumption that the single bit position of these
+maps is always set, as an optimization.
+
+Signed-off-by: Paul Jackson <pj@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/cpumask.h |   13 +++++--------
+ 25-akpm/kernel/cpu.c            |    8 --------
+ 25-akpm/kernel/sched.c          |   10 ++++++++++
+ 3 files changed, 15 insertions(+), 16 deletions(-)
+
+diff -puN include/linux/cpumask.h~cpumask-1-10-cpu_present_map-real-even-on-non-smp include/linux/cpumask.h
+--- 25/include/linux/cpumask.h~cpumask-1-10-cpu_present_map-real-even-on-non-smp	Fri Jun 11 16:06:45 2004
++++ 25-akpm/include/linux/cpumask.h	Fri Jun 11 16:08:19 2004
+@@ -10,15 +10,12 @@
+ 
+ extern cpumask_t cpu_online_map;
+ extern cpumask_t cpu_possible_map;
+-extern cpumask_t cpu_present_map;
+ 
+ #define num_online_cpus()		cpus_weight(cpu_online_map)
+ #define num_possible_cpus()		cpus_weight(cpu_possible_map)
+-#define num_present_cpus()		cpus_weight(cpu_present_map)
+ 
+ #define cpu_online(cpu)			cpu_isset(cpu, cpu_online_map)
+ #define cpu_possible(cpu)		cpu_isset(cpu, cpu_possible_map)
+-#define cpu_present(cpu)		cpu_isset(cpu, cpu_present_map)
+ 
+ #define for_each_cpu_mask(cpu, mask)					\
+ 	for (cpu = first_cpu_const(mk_cpumask_const(mask));		\
+@@ -27,26 +24,26 @@ extern cpumask_t cpu_present_map;
+ 
+ #define for_each_cpu(cpu) for_each_cpu_mask(cpu, cpu_possible_map)
+ #define for_each_online_cpu(cpu) for_each_cpu_mask(cpu, cpu_online_map)
+-#define for_each_present_cpu(cpu) for_each_cpu_mask(cpu, cpu_present_map)
+ #else
+ #define	cpu_online_map			cpumask_of_cpu(0)
+ #define	cpu_possible_map		cpumask_of_cpu(0)
+-#define	cpu_present_map			cpumask_of_cpu(0)
+ 
+ #define num_online_cpus()		1
+ #define num_possible_cpus()		1
+-#define num_present_cpus()		1
+ 
+ #define cpu_online(cpu)			({ BUG_ON((cpu) != 0); 1; })
+ #define cpu_possible(cpu)		({ BUG_ON((cpu) != 0); 1; })
+-#define cpu_present(cpu)		({ BUG_ON((cpu) != 0); 1; })
+ 
+ #define for_each_cpu_mask(cpu, mask) for (cpu = 0; cpu < 1; cpu++)
+ #define for_each_cpu(cpu) for (cpu = 0; cpu < 1; cpu++)
+ #define for_each_online_cpu(cpu) for (cpu = 0; cpu < 1; cpu++)
+-#define for_each_present_cpu(cpu) for (cpu = 0; cpu < 1; cpu++)
+ #endif
+ 
++extern cpumask_t cpu_present_map;
++#define num_present_cpus()		cpus_weight(cpu_present_map)
++#define cpu_present(cpu)		cpu_isset(cpu, cpu_present_map)
++#define for_each_present_cpu(cpu)	for_each_cpu_mask(cpu, cpu_present_map)
++
+ #define cpumask_scnprintf(buf, buflen, map)				\
+ 	bitmap_scnprintf(buf, buflen, cpus_addr(map), NR_CPUS)
+ 
+diff -puN kernel/cpu.c~cpumask-1-10-cpu_present_map-real-even-on-non-smp kernel/cpu.c
+--- 25/kernel/cpu.c~cpumask-1-10-cpu_present_map-real-even-on-non-smp	Fri Jun 11 16:06:45 2004
++++ 25-akpm/kernel/cpu.c	Fri Jun 11 16:06:45 2004
+@@ -20,14 +20,6 @@
+ DECLARE_MUTEX(cpucontrol);
+ 
+ static struct notifier_block *cpu_chain;
+-/*
+- * Represents all cpu's present in the system
+- * In systems capable of hotplug, this map could dynamically grow
+- * as new cpu's are detected in the system via any platform specific
+- * method, such as ACPI for e.g.
+- */
+-cpumask_t	cpu_present_map;
+-EXPORT_SYMBOL(cpu_present_map);
+ 
+ /* Need to know about CPUs going up/down? */
+ int register_cpu_notifier(struct notifier_block *nb)
+diff -puN kernel/sched.c~cpumask-1-10-cpu_present_map-real-even-on-non-smp kernel/sched.c
+--- 25/kernel/sched.c~cpumask-1-10-cpu_present_map-real-even-on-non-smp	Fri Jun 11 16:06:45 2004
++++ 25-akpm/kernel/sched.c	Fri Jun 11 16:06:45 2004
+@@ -3116,6 +3116,16 @@ out_unlock:
+ 	return retval;
+ }
+ 
++/*
++ * Represents all cpu's present in the system
++ * In systems capable of hotplug, this map could dynamically grow
++ * as new cpu's are detected in the system via any platform specific
++ * method, such as ACPI for e.g.
++ */
++
++cpumask_t cpu_present_map;
++EXPORT_SYMBOL(cpu_present_map);
++
+ /**
+  * sys_sched_getaffinity - get the cpu affinity of a process
+  * @pid: pid of the process
+_

@@ -1,0 +1,33 @@
+
+From: Jeffrey Mahoney <jeffm@novell.com>
+
+This patch fixes several missing reiserfs_write_unlock() calls on error
+paths not introduced by reiserfs-io-error-handling.diff
+
+Signed-off-by: Jeff Mahoney <jeffm@novell.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/reiserfs/namei.c |    2 ++
+ 1 files changed, 2 insertions(+)
+
+diff -puN fs/reiserfs/namei.c~reiserfs-fix-several-missing-reiserfs_write_unlock-calls fs/reiserfs/namei.c
+--- 25/fs/reiserfs/namei.c~reiserfs-fix-several-missing-reiserfs_write_unlock-calls	2004-10-05 11:11:46.424025304 -0700
++++ 25-akpm/fs/reiserfs/namei.c	2004-10-05 11:11:46.427024848 -0700
+@@ -341,6 +341,7 @@ static struct dentry * reiserfs_lookup (
+             REISERFS_SB(dir->i_sb)->priv_root &&
+             REISERFS_SB(dir->i_sb)->priv_root->d_inode &&
+ 	    de.de_objectid == le32_to_cpu (INODE_PKEY(REISERFS_SB(dir->i_sb)->priv_root->d_inode)->k_objectid)) {
++	  reiserfs_write_unlock (dir->i_sb);
+ 	  return ERR_PTR (-EACCES);
+ 	}
+ 
+@@ -1091,6 +1092,7 @@ static int reiserfs_link (struct dentry 
+ 	return -EMLINK;
+     }
+     if (inode->i_nlink == 0) {
++        reiserfs_write_unlock(dir->i_sb);
+         return -ENOENT;
+     }
+ 
+_

@@ -1,0 +1,26 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+The attached patch fixes long scheduling latencies in get_user_pages().
+
+Has been tested as part of the -VP patchset.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/memory.c |    1 +
+ 1 files changed, 1 insertion(+)
+
+diff -puN mm/memory.c~sched-mm-fix-scheduling-latencies-in-get_user_pages mm/memory.c
+--- 25/mm/memory.c~sched-mm-fix-scheduling-latencies-in-get_user_pages	Tue Sep 14 17:40:20 2004
++++ 25-akpm/mm/memory.c	Tue Sep 14 17:40:46 2004
+@@ -791,6 +791,7 @@ int get_user_pages(struct task_struct *t
+ 			 */
+ 			if (vm_io)
+ 				goto no_follow;
++			cond_resched_lock(&mm->page_table_lock);
+ 			while (!(map = follow_page(mm, start, lookup_write))) {
+ 				/*
+ 				 * Shortcut for anonymous pages. We don't want
+_

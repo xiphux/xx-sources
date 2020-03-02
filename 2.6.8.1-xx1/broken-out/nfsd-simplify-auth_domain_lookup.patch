@@ -1,0 +1,111 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+The interface between the auth_domain and the cache code is messy; the
+auth_domain code is the only real user of the full 11-argument
+DefineCacheLookup, and does weird stuff with it (like passing in through one
+of the arguments a bit of code with a conditional return).
+
+We could further parametrize DefineCacheLookup, but I think it's already too
+complicated.
+
+My solution is to just ignore DefineCacheLookup and write the
+auth_domain_lookup function from scratch.  It's actually a pretty short
+function (much simpler than DefineCacheLookup itself), and it's much easier to
+read this short function than it is to read some special-cased
+DefineCacheLookup to verify that it does what it says it does....
+
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/sunrpc/cache.h |    4 ++
+ 25-akpm/net/sunrpc/svcauth.c         |   60 +++++++++++++++++++++++------------
+ 2 files changed, 45 insertions(+), 19 deletions(-)
+
+diff -puN include/linux/sunrpc/cache.h~nfsd-simplify-auth_domain_lookup include/linux/sunrpc/cache.h
+--- 25/include/linux/sunrpc/cache.h~nfsd-simplify-auth_domain_lookup	2004-08-01 21:09:52.555017256 -0700
++++ 25-akpm/include/linux/sunrpc/cache.h	2004-08-01 21:09:52.561016344 -0700
+@@ -161,6 +161,10 @@ struct cache_deferred_req {
+  * INIT copies key information from "item" to "new"
+  * UPDATE copies content information from "item" to "tmp"
+  * INPLACE is true if updates can happen inplace rather than allocating a new structure
++ *
++ * WARNING: any substantial changes to this must be reflected in
++ *   net/sunrpc/svcauth.c(auth_domain_lookup)
++ *  which is a similar routine that is open-coded.
+  */
+ #define DefineCacheLookup(RTN,MEMBER,FNAME,ARGS,SETUP,DETAIL,HASHFN,TEST,INIT,UPDATE,INPLACE)	\
+ RTN *FNAME ARGS										\
+diff -puN net/sunrpc/svcauth.c~nfsd-simplify-auth_domain_lookup net/sunrpc/svcauth.c
+--- 25/net/sunrpc/svcauth.c~nfsd-simplify-auth_domain_lookup	2004-08-01 21:09:52.556017104 -0700
++++ 25-akpm/net/sunrpc/svcauth.c	2004-08-01 21:09:52.562016192 -0700
+@@ -156,25 +156,47 @@ static inline int auth_domain_match(stru
+ {
+ 	return strcmp(tmp->name, item->name) == 0;
+ }
+-DefineCacheLookup(struct auth_domain,
+-		  h,
+-		  auth_domain_lookup,
+-		  (struct auth_domain *item, int set),
+-		  /* no setup */,
+-		  &auth_domain_cache,
+-		  auth_domain_hash(item),
+-		  auth_domain_match(tmp, item),
+-		  kfree(new); if(!set) {
+-			if (new)
+-				write_unlock(&auth_domain_cache.hash_lock);
+-			else
+-				read_unlock(&auth_domain_cache.hash_lock);
+-			return NULL;
+-		  }
+-		  new=item; atomic_inc(&new->h.refcnt),
+-		  /* no update */,
+-		  0 /* no inplace updates */
+-		  )
++
++struct auth_domain *
++auth_domain_lookup(struct auth_domain *item, int set)
++{
++	struct auth_domain *tmp = NULL;
++	struct cache_head **hp, **head;
++	head = &auth_domain_cache.hash_table[auth_domain_hash(item)];
++
++	if (set)
++		write_lock(&auth_domain_cache.hash_lock);
++	else
++		read_lock(&auth_domain_cache.hash_lock);
++	for (hp=head; *hp != NULL; hp = &tmp->h.next) {
++		tmp = container_of(*hp, struct auth_domain, h);
++		if (!auth_domain_match(tmp, item))
++			continue;
++		cache_get(&tmp->h);
++		if (!set)
++			goto out_noset;
++		*hp = tmp->h.next;
++		tmp->h.next = NULL;
++		clear_bit(CACHE_HASHED, &tmp->h.flags);
++		auth_domain_drop(&tmp->h, &auth_domain_cache);
++		goto out_set;
++	}
++	/* Didn't find anything */
++	if (!set)
++		goto out_noset;
++	auth_domain_cache.entries++;
++out_set:
++	set_bit(CACHE_HASHED, &item->h.flags);
++	item->h.next = *head;
++	*head = &item->h;
++	write_unlock(&auth_domain_cache.hash_lock);
++	cache_fresh(&auth_domain_cache, &item->h, item->h.expiry_time);
++	cache_get(&item->h);
++	return item;
++out_noset:
++	read_unlock(&auth_domain_cache.hash_lock);
++	return tmp;
++}
+ 
+ struct auth_domain *auth_domain_find(char *name)
+ {
+_

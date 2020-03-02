@@ -1,0 +1,299 @@
+
+From: Hariprasad Nellitheertha <hari@in.ibm.com>
+
+This patch contains the code for stopping the other cpus and snapshotting
+their register values before doing the kexec reboot.
+
+Signed off by Hariprasad Nellitheertha <hari@in.ibm.com>
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/Makefile                   |    1 
+ 25-akpm/arch/i386/kernel/crash_dump.c               |  105 ++++++++++++++++++++
+ 25-akpm/arch/i386/kernel/machine_kexec.c            |    4 
+ 25-akpm/arch/i386/kernel/smp.c                      |   13 ++
+ 25-akpm/include/asm-i386/crash_dump.h               |   44 ++++++++
+ 25-akpm/include/asm-i386/mach-default/irq_vectors.h |    1 
+ 25-akpm/include/asm-i386/smp.h                      |    1 
+ 7 files changed, 167 insertions(+), 2 deletions(-)
+
+diff -puN /dev/null arch/i386/kernel/crash_dump.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/i386/kernel/crash_dump.c	2004-11-18 23:48:15.384210576 -0800
+@@ -0,0 +1,105 @@
++/*
++ * Architecture specific (i386) functions for kexec based crash dumps.
++ *
++ * Created by: Hariprasad Nellitheertha (hari@in.ibm.com)
++ *
++ * Copyright (C) IBM Corporation, 2004. All rights reserved.
++ *
++ */
++
++#include <linux/init.h>
++#include <linux/types.h>
++#include <linux/kernel.h>
++#include <linux/smp.h>
++#include <linux/irq.h>
++
++#include <asm/crash_dump.h>
++#include <asm/processor.h>
++#include <asm/hardirq.h>
++#include <asm/nmi.h>
++#include <asm/hw_irq.h>
++
++struct pt_regs crash_smp_regs[NR_CPUS];
++long crash_smp_current_task[NR_CPUS];
++
++#ifdef CONFIG_SMP
++static atomic_t waiting_for_dump_ipi;
++static int crash_dump_expect_ipi[NR_CPUS];
++extern void crash_dump_send_ipi(void);
++extern void stop_this_cpu(void *);
++
++static int crash_dump_nmi_callback(struct pt_regs *regs, int cpu)
++{
++	if (!crash_dump_expect_ipi[cpu])
++		return 0;
++
++	crash_dump_expect_ipi[cpu] = 0;
++	crash_dump_save_this_cpu(regs, cpu);
++	atomic_dec(&waiting_for_dump_ipi);
++
++	stop_this_cpu(NULL);
++
++	return 1;
++}
++
++void __crash_dump_stop_cpus(void)
++{
++	int i, cpu, other_cpus;
++
++	preempt_disable();
++	cpu = smp_processor_id();
++	other_cpus = num_online_cpus()-1;
++
++	if (other_cpus > 0) {
++		atomic_set(&waiting_for_dump_ipi, other_cpus);
++
++		for (i = 0; i < NR_CPUS; i++)
++			crash_dump_expect_ipi[i] = (i != cpu && cpu_online(i));
++
++		set_nmi_callback(crash_dump_nmi_callback);
++		/* Ensure the new callback function is set before sending
++		 * out the IPI
++		 */
++		wmb();
++
++		crash_dump_send_ipi();
++		while (atomic_read(&waiting_for_dump_ipi) > 0)
++			cpu_relax();
++
++		unset_nmi_callback();
++	} else {
++		local_irq_disable();
++		disable_local_APIC();
++		local_irq_enable();
++	}
++	preempt_enable();
++}
++#else
++void __crash_dump_stop_cpus(void) {}
++#endif
++
++void crash_get_current_regs(struct pt_regs *regs)
++{
++	__asm__ __volatile__("movl %%ebx,%0" : "=m"(regs->ebx));
++	__asm__ __volatile__("movl %%ecx,%0" : "=m"(regs->ecx));
++	__asm__ __volatile__("movl %%edx,%0" : "=m"(regs->edx));
++	__asm__ __volatile__("movl %%esi,%0" : "=m"(regs->esi));
++	__asm__ __volatile__("movl %%edi,%0" : "=m"(regs->edi));
++	__asm__ __volatile__("movl %%ebp,%0" : "=m"(regs->ebp));
++	__asm__ __volatile__("movl %%eax,%0" : "=m"(regs->eax));
++	__asm__ __volatile__("movl %%esp,%0" : "=m"(regs->esp));
++	__asm__ __volatile__("movw %%ss, %%ax;" :"=a"(regs->xss));
++	__asm__ __volatile__("movw %%cs, %%ax;" :"=a"(regs->xcs));
++	__asm__ __volatile__("movw %%ds, %%ax;" :"=a"(regs->xds));
++	__asm__ __volatile__("movw %%es, %%ax;" :"=a"(regs->xes));
++	__asm__ __volatile__("pushfl; popl %0" :"=m"(regs->eflags));
++
++	regs->eip = (unsigned long)current_text_addr();
++}
++
++void crash_dump_save_this_cpu(struct pt_regs *regs, int cpu)
++{
++	crash_smp_current_task[cpu] = (long)current;
++	crash_smp_regs[cpu] = *regs;
++}
++
+diff -puN arch/i386/kernel/machine_kexec.c~crashdump-register-snapshotting-before-kexec-boot arch/i386/kernel/machine_kexec.c
+--- 25/arch/i386/kernel/machine_kexec.c~crashdump-register-snapshotting-before-kexec-boot	2004-11-18 23:48:15.373212248 -0800
++++ 25-akpm/arch/i386/kernel/machine_kexec.c	2004-11-18 23:48:15.385210424 -0800
+@@ -16,6 +16,7 @@
+ #include <asm/io.h>
+ #include <asm/apic.h>
+ #include <asm/cpufeature.h>
++#include <asm/crash_dump.h>
+ 
+ static inline unsigned long read_cr3(void)
+ {
+@@ -194,6 +195,9 @@ void machine_kexec(struct kimage *image)
+ 	unsigned long reboot_code_buffer;
+ 	relocate_new_kernel_t rnk;
+ 
++	crash_dump_stop_cpus();
++	crash_dump_save_registers();
++
+ 	/* Interrupts aren't acceptable while we reboot */
+ 	local_irq_disable();
+ 
+diff -puN arch/i386/kernel/Makefile~crashdump-register-snapshotting-before-kexec-boot arch/i386/kernel/Makefile
+--- 25/arch/i386/kernel/Makefile~crashdump-register-snapshotting-before-kexec-boot	2004-11-18 23:48:15.375211944 -0800
++++ 25-akpm/arch/i386/kernel/Makefile	2004-11-18 23:48:15.385210424 -0800
+@@ -25,6 +25,7 @@ obj-$(CONFIG_X86_MPPARSE)	+= mpparse.o
+ obj-$(CONFIG_X86_LOCAL_APIC)	+= apic.o nmi.o
+ obj-$(CONFIG_X86_IO_APIC)	+= io_apic.o
+ obj-$(CONFIG_KEXEC)		+= machine_kexec.o relocate_kernel.o
++obj-$(CONFIG_CRASH_DUMP)	+= crash_dump.o
+ obj-$(CONFIG_X86_NUMAQ)		+= numaq.o
+ obj-$(CONFIG_X86_SUMMIT_NUMA)	+= summit.o
+ obj-$(CONFIG_KPROBES)		+= kprobes.o
+diff -puN arch/i386/kernel/smp.c~crashdump-register-snapshotting-before-kexec-boot arch/i386/kernel/smp.c
+--- 25/arch/i386/kernel/smp.c~crashdump-register-snapshotting-before-kexec-boot	2004-11-18 23:48:15.376211792 -0800
++++ 25-akpm/arch/i386/kernel/smp.c	2004-11-18 23:48:15.386210272 -0800
+@@ -143,6 +143,9 @@ void __send_IPI_shortcut(unsigned int sh
+ 	 */
+ 	cfg = __prepare_ICR(shortcut, vector);
+ 
++	if (vector == CRASH_DUMP_VECTOR)
++		cfg = (cfg&~APIC_VECTOR_MASK)|APIC_DM_NMI;
++
+ 	/*
+ 	 * Send the IPI. The write to APIC_ICR fires this off.
+ 	 */
+@@ -221,6 +224,9 @@ inline void send_IPI_mask_sequence(cpuma
+ 			 */
+ 			cfg = __prepare_ICR(0, vector);
+ 			
++			if (vector == CRASH_DUMP_VECTOR)
++				cfg = (cfg&~APIC_VECTOR_MASK)|APIC_DM_NMI;
++
+ 			/*
+ 			 * Send the IPI. The write to APIC_ICR fires this off.
+ 			 */
+@@ -489,6 +495,11 @@ void smp_send_reschedule(int cpu)
+ 	send_IPI_mask(cpumask_of_cpu(cpu), RESCHEDULE_VECTOR);
+ }
+ 
++void crash_dump_send_ipi(void)
++{
++	send_IPI_allbutself(CRASH_DUMP_VECTOR);
++}
++
+ /*
+  * Structure and data for smp_call_function(). This is designed to minimise
+  * static memory requirements. It also looks cleaner.
+@@ -565,7 +576,7 @@ int smp_call_function (void (*func) (voi
+ 	return 0;
+ }
+ 
+-static void stop_this_cpu (void * dummy)
++void stop_this_cpu (void * dummy)
+ {
+ 	/*
+ 	 * Remove this CPU:
+diff -puN include/asm-i386/crash_dump.h~crashdump-register-snapshotting-before-kexec-boot include/asm-i386/crash_dump.h
+--- 25/include/asm-i386/crash_dump.h~crashdump-register-snapshotting-before-kexec-boot	2004-11-18 23:48:15.377211640 -0800
++++ 25-akpm/include/asm-i386/crash_dump.h	2004-11-18 23:48:15.387210120 -0800
+@@ -1,5 +1,7 @@
+ /* asm-i386/crash_dump.h */
+ #include <linux/bootmem.h>
++#include <linux/irq.h>
++#include <asm/apic.h>
+ 
+ #ifdef CONFIG_CRASH_DUMP
+ extern unsigned int dump_enabled;
+@@ -9,6 +11,12 @@ extern void __crash_relocate_mem(unsigne
+ extern unsigned long __init find_max_low_pfn(void);
+ extern void __init find_max_pfn(void);
+ 
++extern struct pt_regs crash_smp_regs[NR_CPUS];
++extern long crash_smp_current_task[NR_CPUS];
++extern void crash_dump_save_this_cpu(struct pt_regs *, int);
++extern void __crash_dump_stop_cpus(void);
++extern void crash_get_current_regs(struct pt_regs *regs);
++
+ #define CRASH_BACKUP_BASE ((unsigned long)CONFIG_BACKUP_BASE * 0x100000)
+ #define CRASH_BACKUP_SIZE ((unsigned long)CONFIG_BACKUP_SIZE * 0x100000)
+ #define CRASH_RELOCATE_SIZE 0xa0000
+@@ -30,11 +38,45 @@ static inline void crash_reserve_bootmem
+ {
+ 	if (!dump_enabled) {
+ 		reserve_bootmem(CRASH_BACKUP_BASE,
+-			CRASH_BACKUP_SIZE + CRASH_RELOCATE_SIZE);
++			CRASH_BACKUP_SIZE + CRASH_RELOCATE_SIZE + PAGE_SIZE);
+ 	}
+ }
++
++static inline void crash_dump_stop_cpus(void)
++{
++	int cpu;
++
++	if (!crashed)
++		return;
++
++	cpu = smp_processor_id();
++
++	crash_smp_current_task[cpu] = (long)current;
++	crash_get_current_regs(&crash_smp_regs[cpu]);
++
++	/* This also captures the register states of the other cpus */
++	__crash_dump_stop_cpus();
++#if defined(CONFIG_X86_IO_APIC)
++	disable_IO_APIC();
++#endif
++#if defined(CONFIG_X86_LOCAL_APIC)
++	disconnect_bsp_APIC();
++#endif
++}
++
++static inline void crash_dump_save_registers(void)
++{
++	void *addr;
++
++	addr = __va(CRASH_BACKUP_BASE + CRASH_BACKUP_SIZE + CRASH_RELOCATE_SIZE);
++	memcpy(addr, crash_smp_regs, (sizeof(struct pt_regs)*NR_CPUS));
++	addr += sizeof(struct pt_regs)*NR_CPUS;
++	memcpy(addr, crash_smp_current_task, (sizeof(long)*NR_CPUS));
++}
+ #else
+ #define crash_relocate_mem() do { } while(0)
+ #define set_saved_max_pfn() do { } while(0)
+ #define crash_reserve_bootmem() do { } while(0)
++#define crash_dump_stop_cpus() do { } while(0)
++#define crash_dump_save_registers() do { } while(0)
+ #endif
+diff -puN include/asm-i386/mach-default/irq_vectors.h~crashdump-register-snapshotting-before-kexec-boot include/asm-i386/mach-default/irq_vectors.h
+--- 25/include/asm-i386/mach-default/irq_vectors.h~crashdump-register-snapshotting-before-kexec-boot	2004-11-18 23:48:15.379211336 -0800
++++ 25-akpm/include/asm-i386/mach-default/irq_vectors.h	2004-11-18 23:48:15.387210120 -0800
+@@ -48,6 +48,7 @@
+ #define INVALIDATE_TLB_VECTOR	0xfd
+ #define RESCHEDULE_VECTOR	0xfc
+ #define CALL_FUNCTION_VECTOR	0xfb
++#define CRASH_DUMP_VECTOR	0xfa
+ 
+ #define THERMAL_APIC_VECTOR	0xf0
+ /*
+diff -puN include/asm-i386/smp.h~crashdump-register-snapshotting-before-kexec-boot include/asm-i386/smp.h
+--- 25/include/asm-i386/smp.h~crashdump-register-snapshotting-before-kexec-boot	2004-11-18 23:48:15.380211184 -0800
++++ 25-akpm/include/asm-i386/smp.h	2004-11-18 23:48:15.387210120 -0800
+@@ -41,6 +41,7 @@ extern void smp_message_irq(int cpl, voi
+ extern void smp_invalidate_rcv(void);		/* Process an NMI */
+ extern void (*mtrr_hook) (void);
+ extern void zap_low_mappings (void);
++extern void stop_this_cpu(void *);
+ 
+ #define MAX_APICID 256
+ extern u8 x86_cpu_to_apicid[];
+_

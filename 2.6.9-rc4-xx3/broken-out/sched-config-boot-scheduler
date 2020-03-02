@@ -1,0 +1,56 @@
+Index: xx-sources/kernel/Kconfig-extra.xx
+===================================================================
+--- xx-sources.orig/kernel/Kconfig-extra.xx	2004-10-08 12:00:53.213179448 -0400
++++ xx-sources/kernel/Kconfig-extra.xx	2004-10-08 12:01:50.546463464 -0400
+@@ -127,6 +127,29 @@
+ 	  bonus algorithms from Nicksched by Nick Piggin.  It's still
+ 	  extremely experimental.
+ 
++choice
++	prompt "Boot scheduler"
++	help
++	  This will select the default scheduler used to boot the machine.
++
++config BOOT_SCHED_NONE
++	bool "Default"
++	depends on SCHED_NONE
++
++config BOOT_NICKSCHED
++	bool "Nicksched"
++	depends on NICKSCHED
++
++config BOOT_STAIRCASE
++	bool "Staircase"
++	depends on STAIRCASE
++
++config BOOT_XSCHED
++	bool "Xsched"
++	depends on XSCHED
++
++endchoice
++
+ endmenu
+ 
+ endmenu
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-10-08 12:00:53.214179296 -0400
++++ xx-sources/kernel/sched.c	2004-10-08 12:01:03.494616432 -0400
+@@ -52,13 +52,13 @@
+ #include <asm/unistd.h>
+ 
+ scheduler_t *current_scheduler =
+-#if defined(CONFIG_NICKSCHED)
++#if defined(CONFIG_BOOT_NICKSCHED)
+ 	&sched_nicksched;
+-#elif defined(CONFIG_STAIRCASE)
++#elif defined(CONFIG_BOOT_STAIRCASE)
+ 	&sched_staircase;
+-#elif defined(CONFIG_XSCHED)
++#elif defined(CONFIG_BOOT_XSCHED)
+ 	&sched_xsched;
+-#elif defined(CONFIG_SCHED_NONE)
++#elif defined(CONFIG_BOOT_SCHED_NONE)
+ 	&sched_default;
+ #else
+ 	NULL;

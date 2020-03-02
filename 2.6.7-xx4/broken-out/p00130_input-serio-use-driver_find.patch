@@ -1,0 +1,75 @@
+Return-Path: <dtor_core@ameritech.net>
+Received: from localhost (bix [127.0.0.1])
+	by localhost.localdomain (8.12.10/8.12.10) with ESMTP id i5S5RiGk011509
+	for <akpm@localhost>; Sun, 27 Jun 2004 22:27:45 -0700
+Received: from bix [127.0.0.1]
+	by localhost with POP3 (fetchmail-6.2.0)
+	for akpm@localhost (single-drop); Sun, 27 Jun 2004 22:27:45 -0700 (PDT)
+Received: from fire-2.osdl.org (air1.pdx.osdl.net [172.20.0.5])
+	by mail.osdl.org (8.11.6/8.11.6) with ESMTP id i5S5RIZ18992
+	for <akpm@mail.gateway.osdl.net>; Sun, 27 Jun 2004 22:27:18 -0700
+Received: from smtp810.mail.sc5.yahoo.com (smtp810.mail.sc5.yahoo.com [66.163.170.80])
+	by fire-2.osdl.org (8.12.8/8.12.8) with SMTP id i5S5RHwr022545
+	for <akpm@osdl.org>; Sun, 27 Jun 2004 22:27:17 -0700
+Received: from unknown (HELO core-wl.prvt.inr.net) (dtor?core@ameritech.net@68.72.45.79 with plain)
+  by smtp810.mail.sc5.yahoo.com with SMTP; 28 Jun 2004 05:27:17 -0000
+From: Dmitry Torokhov <dtor_core@ameritech.net>
+To: Vojtech Pavlik <vojtech@suse.cz>
+Subject: [PATCH 19/19] serio use driver_find
+Date: Mon, 28 Jun 2004 00:27:15 -0500
+User-Agent: KMail/1.6.2
+Cc: Andrew Morton <akpm@osdl.org>, linux-kernel@vger.kernel.org
+References: <200406280008.21465.dtor_core@ameritech.net> <200406280025.54154.dtor_core@ameritech.net> <200406280026.35503.dtor_core@ameritech.net>
+In-Reply-To: <200406280026.35503.dtor_core@ameritech.net>
+MIME-Version: 1.0
+Content-Disposition: inline
+Content-Type: text/plain;
+  charset="us-ascii"
+Content-Transfer-Encoding: 7bit
+Message-Id: <200406280027.16696.dtor_core@ameritech.net>
+X-MIMEDefang-Filter: osdl$Revision: 1.70 $
+X-Scanned-By: MIMEDefang 2.36
+X-Spam-Checker-Version: SpamAssassin 2.60 (1.212-2003-09-23-exp) on bix
+X-Spam-Status: No, hits=-4.9 required=1.0 tests=BAYES_00 autolearn=ham 
+	version=2.60
+X-Spam-Level: 
+
+
+===================================================================
+
+
+ChangeSet@1.1793, 2004-06-27 21:09:35-05:00, dtor_core@ameritech.net
+  Input: serio - make use of driver_find instead of re-implementing it
+  
+  Signed-off-by: Dmitry Torokhov <dtor@mail.ru>
+
+
+ serio.c |    4 +---
+ 1 files changed, 1 insertion(+), 3 deletions(-)
+
+
+===================================================================
+
+
+
+diff -Nru a/drivers/input/serio/serio.c b/drivers/input/serio/serio.c
+--- a/drivers/input/serio/serio.c	2004-06-27 21:24:26 -05:00
++++ b/drivers/input/serio/serio.c	2004-06-27 21:24:26 -05:00
+@@ -261,7 +261,6 @@
+ {
+ 	struct serio *serio = to_serio_port(dev);
+ 	struct device_driver *drv;
+-	struct kobject *k;
+ 	int retval;
+ 
+ 	retval = down_interruptible(&serio_sem);
+@@ -276,8 +275,7 @@
+ 	} else if (!strncmp(buf, "rescan", count)) {
+ 		serio_disconnect_port(serio);
+ 		serio_connect_port(serio, NULL);
+-	} else if ((k = kset_find_obj(&serio_bus.drivers, buf)) != NULL) {
+-		drv = container_of(k, struct device_driver, kobj);
++	} else if ((drv = driver_find(buf, &serio_bus)) != NULL) {
+ 		serio_disconnect_port(serio);
+ 		serio_connect_port(serio, to_serio_driver(drv));
+ 	} else {

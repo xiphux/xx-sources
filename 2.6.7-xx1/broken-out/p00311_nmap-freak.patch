@@ -1,0 +1,139 @@
+---
+
+ linux-2.6.7-rc2-xx1-xiphux/include/linux/sysctl.h     |    2 +
+ linux-2.6.7-rc2-xx1-xiphux/net/ipv4/Kconfig           |   14 ++++++++++
+ linux-2.6.7-rc2-xx1-xiphux/net/ipv4/icmp.c            |    9 ++++++-
+ linux-2.6.7-rc2-xx1-xiphux/net/ipv4/sysctl_net_ipv4.c |   23 ++++++++++++++++++
+ linux-2.6.7-rc2-xx1-xiphux/net/ipv4/tcp_ipv4.c        |    9 +++++++
+ 5 files changed, 56 insertions(+), 1 deletion(-)
+
+diff -puN net/ipv4/Kconfig~nmap-freak net/ipv4/Kconfig
+--- linux-2.6.7-rc2-xx1/net/ipv4/Kconfig~nmap-freak	2004-06-03 01:33:59.480916072 -0400
++++ linux-2.6.7-rc2-xx1-xiphux/net/ipv4/Kconfig	2004-06-03 01:33:59.493914096 -0400
+@@ -337,6 +337,20 @@ config SYN_COOKIES
+ 
+ 	  If unsure, say N.
+ 
++config IP_NMAP_FREAK
++	bool "IP: NMAP freak"
++	depends on INET
++	---help---
++	  This is a patch to prevent stealth,fin,rst scans and slows down the
++	  tcp connect scan, also it does not show the Operating System.
++
++	  You can turn this on and off using /proc
++
++	    echo 1 > /proc/sys/net/ipv4/tcp_restrict
++	    echo 1 > /proc/sys/net/ipv4/icmp_restrict
++
++	  If unsure, say N.
++
+ config INET_AH
+ 	tristate "IP: AH transformation"
+ 	select XFRM
+diff -puN net/ipv4/icmp.c~nmap-freak net/ipv4/icmp.c
+--- linux-2.6.7-rc2-xx1/net/ipv4/icmp.c~nmap-freak	2004-06-03 01:33:59.482915768 -0400
++++ linux-2.6.7-rc2-xx1-xiphux/net/ipv4/icmp.c	2004-06-03 01:33:59.495913792 -0400
+@@ -197,6 +197,10 @@ struct icmp_err icmp_err_convert[] = {
+ int sysctl_icmp_echo_ignore_all;
+ int sysctl_icmp_echo_ignore_broadcasts;
+ 
++#ifdef CONFIG_IP_NMAP_FREAK
++int sysctl_icmp_restrict = 0;
++#endif
++
+ /* Control parameter - ignore bogus broadcast responses? */
+ int sysctl_icmp_ignore_bogus_error_responses;
+ 
+@@ -792,7 +796,10 @@ static void icmp_echo(struct sk_buff *sk
+ 		icmp_param.offset	   = 0;
+ 		icmp_param.data_len	   = skb->len;
+ 		icmp_param.head_len	   = sizeof(struct icmphdr);
+-		icmp_reply(&icmp_param, skb);
++#ifdef CONFIG_IP_NMAP_FREAK
++		if (!sysctl_icmp_restrict)
++		  icmp_reply(&icmp_param, skb);
++#endif
+ 	}
+ }
+ 
+diff -puN net/ipv4/sysctl_net_ipv4.c~nmap-freak net/ipv4/sysctl_net_ipv4.c
+--- linux-2.6.7-rc2-xx1/net/ipv4/sysctl_net_ipv4.c~nmap-freak	2004-06-03 01:33:59.484915464 -0400
++++ linux-2.6.7-rc2-xx1-xiphux/net/ipv4/sysctl_net_ipv4.c	2004-06-03 01:33:59.498913336 -0400
+@@ -37,6 +37,11 @@ extern int sysctl_ip_dynaddr;
+ extern int sysctl_icmp_ratelimit;
+ extern int sysctl_icmp_ratemask;
+ 
++#ifdef CONFIG_IP_NMAP_FREAK
++extern int sysctl_icmp_restrict;
++extern int sysctl_tcp_restrict;
++#endif
++
+ /* From igmp.c */
+ extern int sysctl_igmp_max_memberships;
+ extern int sysctl_igmp_max_msf;
+@@ -320,6 +325,24 @@ ctl_table ipv4_table[] = {
+ 		.proc_handler	= &proc_dointvec
+ 	},
+ #endif
++#ifdef CONFIG_IP_NMAP_FREAK
++	{
++		.ctl_name	= NET_IPV4_ICMP_RESTRICT,
++		.procname	= "icmp_restrict",
++		.data		= &sysctl_icmp_restrict,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec
++	},
++	{
++		.ctl_name	= NET_IPV4_TCP_RESTRICT,
++		.procname	= "tcp_restrict",
++		.data		= &sysctl_tcp_restrict,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec
++	},
++#endif
+ 	{
+ 		.ctl_name	= NET_TCP_TW_RECYCLE,
+ 		.procname	= "tcp_tw_recycle",
+diff -puN net/ipv4/tcp_ipv4.c~nmap-freak net/ipv4/tcp_ipv4.c
+--- linux-2.6.7-rc2-xx1/net/ipv4/tcp_ipv4.c~nmap-freak	2004-06-03 01:33:59.487915008 -0400
++++ linux-2.6.7-rc2-xx1-xiphux/net/ipv4/tcp_ipv4.c	2004-06-03 01:33:59.505912272 -0400
+@@ -75,6 +75,10 @@
+ #include <linux/proc_fs.h>
+ #include <linux/seq_file.h>
+ 
++#ifdef CONFIG_IP_NMAP_FREAK
++int sysctl_tcp_restrict = 0;
++#endif
++
+ extern int sysctl_ip_dynaddr;
+ int sysctl_tcp_tw_reuse;
+ int sysctl_tcp_low_latency;
+@@ -1173,6 +1177,11 @@ static void tcp_v4_send_reset(struct sk_
+ 	struct tcphdr rth;
+ 	struct ip_reply_arg arg;
+ 
++#ifdef CONFIG_IP_NMAP_FREAK
++	if(sysctl_tcp_restrict)
++		return;
++#endif
++
+ 	/* Never send a reset in response to a reset. */
+ 	if (th->rst)
+ 		return;
+diff -puN include/linux/sysctl.h~nmap-freak include/linux/sysctl.h
+--- linux-2.6.7-rc2-xx1/include/linux/sysctl.h~nmap-freak	2004-06-03 01:33:59.490914552 -0400
++++ linux-2.6.7-rc2-xx1-xiphux/include/linux/sysctl.h	2004-06-03 01:34:36.583275656 -0400
+@@ -342,6 +342,8 @@ enum
+ 	NET_TCP_BIC_LOW_WINDOW=104,
+ 	NET_TCP_DEFAULT_WIN_SCALE=105,
+ 	NET_TCP_MODERATE_RCVBUF=106,
++	NET_IPV4_ICMP_RESTRICT=107,
++	NET_IPV4_TCP_RESTRICT=108,
+ };
+ 
+ enum {
+
+_

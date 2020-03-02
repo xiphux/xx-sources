@@ -1,0 +1,56 @@
+# 2.6.4-WOLK2.2
+#
+# Patch from: Dominik Rothert 
+
+--- old/kernel/sys.c	2004-03-20 15:53:20.000000000 +0100
++++ new/kernel/sys.c	2004-03-20 16:20:46.000000000 +0100
+@@ -79,6 +79,17 @@ int C_A_D = 1;
+ int cad_pid = 1;
+ 
+ /*
++ * Small function to print uptime
++ */
++int get_uptime(void)
++{
++	int uptime = jiffies / HZ;
++	printk(KERN_EMERG "\nUptime: %dh %dm %ds\n",
++		(uptime/60)/60, (uptime/60)%60, uptime%60);
++	return uptime;
++}
++
++/*
+  *	Notifier list for kernel code which wants to be called
+  *	at shutdown. This is used to stop any idling DMA operations
+  *	and the like. 
+@@ -460,6 +470,7 @@ asmlinkage long sys_reboot(int magic1, i
+ 		system_running = 0;
+ 		device_shutdown();
+ 		printk(KERN_EMERG "Restarting system.\n");
++		get_uptime();
+ 		machine_restart(NULL);
+ 		break;
+ 
+@@ -476,6 +487,7 @@ asmlinkage long sys_reboot(int magic1, i
+ 		system_running = 0;
+ 		device_shutdown();
+ 		printk(KERN_EMERG "System halted.\n");
++		get_uptime();
+ 		machine_halt();
+ 		unlock_kernel();
+ 		do_exit(0);
+@@ -486,6 +498,7 @@ asmlinkage long sys_reboot(int magic1, i
+ 		system_running = 0;
+ 		device_shutdown();
+ 		printk(KERN_EMERG "Power down.\n");
++		get_uptime();
+ 		machine_power_off();
+ 		unlock_kernel();
+ 		do_exit(0);
+@@ -502,6 +515,7 @@ asmlinkage long sys_reboot(int magic1, i
+ 		system_running = 0;
+ 		device_shutdown();
+ 		printk(KERN_EMERG "Restarting system with command '%s'.\n", buffer);
++		get_uptime();
+ 		machine_restart(buffer);
+ 		break;
+ 

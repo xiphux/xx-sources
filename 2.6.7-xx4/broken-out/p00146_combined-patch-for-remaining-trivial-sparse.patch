@@ -1,0 +1,255 @@
+
+From: Mika Kukkonen <mika@osdl.org>
+
+Well, one of these (fs/block_dev.c) is little non-trivial, but i felt
+throwing that away would be a shame (and I did add comments ;-).
+
+Also almost all of these have been submitted earlier through other
+channels, but have not been picked up (the only controversial is again the
+fs/block_dev.c patch, where Linus felt a better job would be done with
+__ffs(), but I could not convince myself that is does the same thing as
+original code).
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/lib/usercopy.c  |   16 ++++++++--------
+ 25-akpm/drivers/block/elevator.c  |    2 +-
+ 25-akpm/drivers/block/ll_rw_blk.c |    2 +-
+ 25-akpm/fs/block_dev.c            |   29 ++++++++++++++---------------
+ 25-akpm/fs/namei.c                |    5 ++---
+ 25-akpm/include/linux/blkdev.h    |    2 +-
+ 25-akpm/lib/kobject.c             |    2 +-
+ 25-akpm/lib/rbtree.c              |    2 +-
+ 25-akpm/mm/filemap.c              |    2 +-
+ 25-akpm/mm/vmalloc.c              |    4 ++--
+ 10 files changed, 32 insertions(+), 34 deletions(-)
+
+diff -puN arch/i386/lib/usercopy.c~combined-patch-for-remaining-trivial-sparse arch/i386/lib/usercopy.c
+--- 25/arch/i386/lib/usercopy.c~combined-patch-for-remaining-trivial-sparse	2004-06-28 17:37:08.030600552 -0700
++++ 25-akpm/arch/i386/lib/usercopy.c	2004-06-28 17:37:08.050597512 -0700
+@@ -219,7 +219,7 @@ long strnlen_user(const char __user *s, 
+ 
+ #ifdef CONFIG_X86_INTEL_USERCOPY
+ static unsigned long
+-__copy_user_intel(void *to, const void *from,unsigned long size)
++__copy_user_intel(void __user *to, const void *from, unsigned long size)
+ {
+ 	int d0, d1;
+ 	__asm__ __volatile__(
+@@ -326,7 +326,7 @@ __copy_user_intel(void *to, const void *
+ }
+ 
+ static unsigned long
+-__copy_user_zeroing_intel(void *to, const void *from, unsigned long size)
++__copy_user_zeroing_intel(void *to, const void __user *from, unsigned long size)
+ {
+ 	int d0, d1;
+ 	__asm__ __volatile__(
+@@ -425,9 +425,9 @@ __copy_user_zeroing_intel(void *to, cons
+  * them
+  */
+ unsigned long
+-__copy_user_zeroing_intel(void *to, const void *from, unsigned long size);
++__copy_user_zeroing_intel(void *to, const void __user *from, unsigned long size);
+ unsigned long
+-__copy_user_intel(void *to, const void *from,unsigned long size);
++__copy_user_intel(void __user *to, const void *from, unsigned long size);
+ #endif /* CONFIG_X86_INTEL_USERCOPY */
+ 
+ /* Generic arbitrary sized copy.  */
+@@ -562,9 +562,9 @@ survive:
+ 	}
+ #endif
+ 	if (movsl_is_ok(to, from, n))
+-		__copy_user((void *)to, from, n);
++		__copy_user(to, from, n);
+ 	else
+-		n = __copy_user_intel((void *)to, from, n);
++		n = __copy_user_intel(to, from, n);
+ 	return n;
+ }
+ 
+@@ -572,9 +572,9 @@ unsigned long
+ __copy_from_user_ll(void *to, const void __user *from, unsigned long n)
+ {
+ 	if (movsl_is_ok(to, from, n))
+-		__copy_user_zeroing(to, (const void *) from, n);
++		__copy_user_zeroing(to, from, n);
+ 	else
+-		n = __copy_user_zeroing_intel(to, (const void *) from, n);
++		n = __copy_user_zeroing_intel(to, from, n);
+ 	return n;
+ }
+ 
+diff -puN drivers/block/elevator.c~combined-patch-for-remaining-trivial-sparse drivers/block/elevator.c
+--- 25/drivers/block/elevator.c~combined-patch-for-remaining-trivial-sparse	2004-06-28 17:37:08.031600400 -0700
++++ 25-akpm/drivers/block/elevator.c	2004-06-28 17:37:08.052597208 -0700
+@@ -211,7 +211,7 @@ struct request *elv_next_request(request
+ 	struct request *rq;
+ 	int ret;
+ 
+-	while ((rq = __elv_next_request(q))) {
++	while ((rq = __elv_next_request(q)) != NULL) {
+ 		/*
+ 		 * just mark as started even if we don't start it, a request
+ 		 * that has been delayed should not be passed by new incoming
+diff -puN drivers/block/ll_rw_blk.c~combined-patch-for-remaining-trivial-sparse drivers/block/ll_rw_blk.c
+--- 25/drivers/block/ll_rw_blk.c~combined-patch-for-remaining-trivial-sparse	2004-06-28 17:37:08.034599944 -0700
++++ 25-akpm/drivers/block/ll_rw_blk.c	2004-06-28 17:37:08.059596144 -0700
+@@ -1215,7 +1215,7 @@ EXPORT_SYMBOL(blk_remove_plug);
+ /*
+  * remove the plug and let it rip..
+  */
+-inline void __generic_unplug_device(request_queue_t *q)
++void __generic_unplug_device(request_queue_t *q)
+ {
+ 	if (test_bit(QUEUE_FLAG_STOPPED, &q->queue_flags))
+ 		return;
+diff -puN fs/block_dev.c~combined-patch-for-remaining-trivial-sparse fs/block_dev.c
+--- 25/fs/block_dev.c~combined-patch-for-remaining-trivial-sparse	2004-06-28 17:37:08.036599640 -0700
++++ 25-akpm/fs/block_dev.c	2004-06-28 17:37:08.062595688 -0700
+@@ -64,8 +64,6 @@ static void kill_bdev(struct block_devic
+ 
+ int set_blocksize(struct block_device *bdev, int size)
+ {
+-	int oldsize;
+-
+ 	/* Size must be a power of two, and between 512 and PAGE_SIZE */
+ 	if (size > PAGE_SIZE || size < 512 || (size & (size-1)))
+ 		return -EINVAL;
+@@ -74,15 +72,13 @@ int set_blocksize(struct block_device *b
+ 	if (size < bdev_hardsect_size(bdev))
+ 		return -EINVAL;
+ 
+-	oldsize = bdev->bd_block_size;
+-	if (oldsize == size)
+-		return 0;
+-
+-	/* Ok, we're actually changing the blocksize.. */
+-	sync_blockdev(bdev);
+-	bdev->bd_block_size = size;
+-	bdev->bd_inode->i_blkbits = blksize_bits(size);
+-	kill_bdev(bdev);
++	/* Don't change the size if it is same as current */
++	if (bdev->bd_block_size != size) {
++		sync_blockdev(bdev);
++		bdev->bd_block_size = size;
++		bdev->bd_inode->i_blkbits = blksize_bits(size);
++		kill_bdev(bdev);
++	}
+ 	return 0;
+ }
+ 
+@@ -90,12 +86,15 @@ EXPORT_SYMBOL(set_blocksize);
+ 
+ int sb_set_blocksize(struct super_block *sb, int size)
+ {
+-	int bits;
+-	if (set_blocksize(sb->s_bdev, size) < 0)
++	int bits = 9; /* 2^9 = 512 */
++
++	if (set_blocksize(sb->s_bdev, size))
+ 		return 0;
++	/* If we get here, we know size is power of two
++	 * and it's value is between 512 and PAGE_SIZE */
+ 	sb->s_blocksize = size;
+-	for (bits = 9, size >>= 9; size >>= 1; bits++)
+-		;
++	for (size >>= 10; size; size >>= 1)
++		++bits;
+ 	sb->s_blocksize_bits = bits;
+ 	return sb->s_blocksize;
+ }
+diff -puN fs/namei.c~combined-patch-for-remaining-trivial-sparse fs/namei.c
+--- 25/fs/namei.c~combined-patch-for-remaining-trivial-sparse	2004-06-28 17:37:08.038599336 -0700
++++ 25-akpm/fs/namei.c	2004-06-28 17:37:08.061595840 -0700
+@@ -398,7 +398,7 @@ static struct dentry * real_lookup(struc
+ 	return result;
+ }
+ 
+-static inline int __vfs_follow_link(struct nameidata *, const char *);
++static int __vfs_follow_link(struct nameidata *, const char *);
+ 
+ /*
+  * This limits recursive symlink follows to 8, while
+@@ -2211,8 +2211,7 @@ int generic_readlink(struct dentry *dent
+ 	return res;
+ }
+ 
+-static inline int
+-__vfs_follow_link(struct nameidata *nd, const char *link)
++static int __vfs_follow_link(struct nameidata *nd, const char *link)
+ {
+ 	int res = 0;
+ 	char *name;
+diff -puN include/linux/blkdev.h~combined-patch-for-remaining-trivial-sparse include/linux/blkdev.h
+--- 25/include/linux/blkdev.h~combined-patch-for-remaining-trivial-sparse	2004-06-28 17:37:08.039599184 -0700
++++ 25-akpm/include/linux/blkdev.h	2004-06-28 17:37:08.053597056 -0700
+@@ -614,7 +614,7 @@ extern int blkdev_scsi_issue_flush_fn(re
+ extern int blk_rq_map_sg(request_queue_t *, struct request *, struct scatterlist *);
+ extern void blk_dump_rq_flags(struct request *, char *);
+ extern void generic_unplug_device(request_queue_t *);
+-extern inline void __generic_unplug_device(request_queue_t *);
++extern void __generic_unplug_device(request_queue_t *);
+ extern long nr_blockdev_pages(void);
+ 
+ int blk_get_queue(request_queue_t *);
+diff -puN lib/kobject.c~combined-patch-for-remaining-trivial-sparse lib/kobject.c
+--- 25/lib/kobject.c~combined-patch-for-remaining-trivial-sparse	2004-06-28 17:37:08.041598880 -0700
++++ 25-akpm/lib/kobject.c	2004-06-28 17:37:08.051597360 -0700
+@@ -37,7 +37,7 @@ static int populate_dir(struct kobject *
+ 	int i;
+ 	
+ 	if (t && t->default_attrs) {
+-		for (i = 0; (attr = t->default_attrs[i]); i++) {
++		for (i = 0; (attr = t->default_attrs[i]) != NULL; i++) {
+ 			if ((error = sysfs_create_file(kobj,attr)))
+ 				break;
+ 		}
+diff -puN lib/rbtree.c~combined-patch-for-remaining-trivial-sparse lib/rbtree.c
+--- 25/lib/rbtree.c~combined-patch-for-remaining-trivial-sparse	2004-06-28 17:37:08.042598728 -0700
++++ 25-akpm/lib/rbtree.c	2004-06-28 17:37:08.050597512 -0700
+@@ -235,7 +235,7 @@ void rb_erase(struct rb_node *node, stru
+ 		struct rb_node *old = node, *left;
+ 
+ 		node = node->rb_right;
+-		while ((left = node->rb_left))
++		while ((left = node->rb_left) != NULL)
+ 			node = left;
+ 		child = node->rb_right;
+ 		parent = node->rb_parent;
+diff -puN mm/filemap.c~combined-patch-for-remaining-trivial-sparse mm/filemap.c
+--- 25/mm/filemap.c~combined-patch-for-remaining-trivial-sparse	2004-06-28 17:37:08.044598424 -0700
++++ 25-akpm/mm/filemap.c	2004-06-28 17:37:08.065595232 -0700
+@@ -200,7 +200,7 @@ static int wait_on_page_writeback_range(
+ 	index = start;
+ 	while ((nr_pages = pagevec_lookup_tag(&pvec, mapping, &index,
+ 			PAGECACHE_TAG_WRITEBACK,
+-			min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1))) {
++			min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1)) != 0) {
+ 		unsigned i;
+ 
+ 		for (i = 0; i < nr_pages; i++) {
+diff -puN mm/vmalloc.c~combined-patch-for-remaining-trivial-sparse mm/vmalloc.c
+--- 25/mm/vmalloc.c~combined-patch-for-remaining-trivial-sparse	2004-06-28 17:37:08.046598120 -0700
++++ 25-akpm/mm/vmalloc.c	2004-06-28 17:37:08.063595536 -0700
+@@ -199,7 +199,7 @@ struct vm_struct *__get_vm_area(unsigned
+ 	}
+ 
+ 	write_lock(&vmlist_lock);
+-	for (p = &vmlist; (tmp = *p) ;p = &tmp->next) {
++	for (p = &vmlist; (tmp = *p) != NULL ;p = &tmp->next) {
+ 		if ((unsigned long)tmp->addr < addr)
+ 			continue;
+ 		if ((size + addr) < addr)
+@@ -260,7 +260,7 @@ struct vm_struct *remove_vm_area(void *a
+ 	struct vm_struct **p, *tmp;
+ 
+ 	write_lock(&vmlist_lock);
+-	for (p = &vmlist ; (tmp = *p) ;p = &tmp->next) {
++	for (p = &vmlist ; (tmp = *p) != NULL ;p = &tmp->next) {
+ 		 if (tmp->addr == addr)
+ 			 goto found;
+ 	}
+_

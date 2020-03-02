@@ -1,0 +1,724 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/adfs/dir.c                |    2 +-
+ 25-akpm/fs/adfs/map.c                |    2 +-
+ 25-akpm/fs/afs/cell.c                |    2 +-
+ 25-akpm/fs/afs/cmservice.c           |    4 ++--
+ 25-akpm/fs/afs/kafsasyncd.c          |    2 +-
+ 25-akpm/fs/afs/kafstimod.c           |    2 +-
+ 25-akpm/fs/afs/main.c                |    2 +-
+ 25-akpm/fs/afs/server.c              |    2 +-
+ 25-akpm/fs/afs/vlocation.c           |    2 +-
+ 25-akpm/fs/aio.c                     |    2 +-
+ 25-akpm/fs/binfmt_misc.c             |    2 +-
+ 25-akpm/fs/bio.c                     |    2 +-
+ 25-akpm/fs/block_dev.c               |    2 +-
+ 25-akpm/fs/buffer.c                  |    4 ++--
+ 25-akpm/fs/char_dev.c                |    4 ++--
+ 25-akpm/fs/dcache.c                  |    2 +-
+ 25-akpm/fs/devfs/base.c              |    8 ++++----
+ 25-akpm/fs/dquot.c                   |    4 ++--
+ 25-akpm/fs/exec.c                    |    2 +-
+ 25-akpm/fs/fcntl.c                   |    2 +-
+ 25-akpm/fs/file_table.c              |    4 ++--
+ 25-akpm/fs/filesystems.c             |    2 +-
+ 25-akpm/fs/hugetlbfs/inode.c         |    2 +-
+ 25-akpm/fs/inode.c                   |    2 +-
+ 25-akpm/fs/jfs/jfs_logmgr.c          |    4 ++--
+ 25-akpm/fs/jfs/jfs_metapage.c        |    2 +-
+ 25-akpm/fs/jfs/jfs_txnmgr.c          |    2 +-
+ 25-akpm/fs/libfs.c                   |    4 ++--
+ 25-akpm/fs/mbcache.c                 |    2 +-
+ 25-akpm/fs/minix/itree_common.c      |    2 +-
+ 25-akpm/fs/namespace.c               |    2 +-
+ 25-akpm/fs/nfs/nfs4state.c           |    2 +-
+ 25-akpm/fs/nfsd/nfscache.c           |    2 +-
+ 25-akpm/fs/nfsd/nfssvc.c             |    2 +-
+ 25-akpm/fs/nfsd/vfs.c                |    2 +-
+ 25-akpm/fs/nls/nls_base.c            |    2 +-
+ 25-akpm/fs/ntfs/aops.c               |    2 +-
+ 25-akpm/fs/ntfs/compress.c           |    2 +-
+ 25-akpm/fs/ntfs/debug.c              |    2 +-
+ 25-akpm/fs/proc/generic.c            |    2 +-
+ 25-akpm/fs/proc/kcore.c              |    2 +-
+ 25-akpm/fs/reiserfs/xattr.c          |    2 +-
+ 25-akpm/fs/smbfs/smbiod.c            |    2 +-
+ 25-akpm/fs/super.c                   |    4 ++--
+ 25-akpm/fs/sysv/itree.c              |    2 +-
+ 25-akpm/fs/xfs/linux-2.6/xfs_buf.c   |    4 ++--
+ 25-akpm/fs/xfs/linux-2.6/xfs_vnode.c |    2 +-
+ 25-akpm/fs/xfs/support/debug.c       |    2 +-
+ 48 files changed, 60 insertions(+), 60 deletions(-)
+
+diff -puN fs/adfs/dir.c~lock-initializer-cleanup-filesystems fs/adfs/dir.c
+--- 25/fs/adfs/dir.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/adfs/dir.c	Wed Jan 12 16:54:55 2005
+@@ -24,7 +24,7 @@
+ /*
+  * For future.  This should probably be per-directory.
+  */
+-static rwlock_t adfs_dir_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(adfs_dir_lock);
+ 
+ static int
+ adfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
+diff -puN fs/adfs/map.c~lock-initializer-cleanup-filesystems fs/adfs/map.c
+--- 25/fs/adfs/map.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/adfs/map.c	Wed Jan 12 16:54:55 2005
+@@ -53,7 +53,7 @@
+ /*
+  * For the future...
+  */
+-static rwlock_t adfs_map_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(adfs_map_lock);
+ 
+ /*
+  * This is fun.  We need to load up to 19 bits from the map at an
+diff -puN fs/afs/cell.c~lock-initializer-cleanup-filesystems fs/afs/cell.c
+--- 25/fs/afs/cell.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/afs/cell.c	Wed Jan 12 16:54:55 2005
+@@ -27,7 +27,7 @@ DECLARE_RWSEM(afs_proc_cells_sem);
+ LIST_HEAD(afs_proc_cells);
+ 
+ static struct list_head afs_cells = LIST_HEAD_INIT(afs_cells);
+-static rwlock_t afs_cells_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(afs_cells_lock);
+ static DECLARE_RWSEM(afs_cells_sem); /* add/remove serialisation */
+ static struct afs_cell *afs_cell_root;
+ 
+diff -puN fs/afs/cmservice.c~lock-initializer-cleanup-filesystems fs/afs/cmservice.c
+--- 25/fs/afs/cmservice.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/afs/cmservice.c	Wed Jan 12 16:54:55 2005
+@@ -102,8 +102,8 @@ static DECLARE_COMPLETION(kafscmd_dead);
+ static DECLARE_WAIT_QUEUE_HEAD(kafscmd_sleepq);
+ static LIST_HEAD(kafscmd_attention_list);
+ static LIST_HEAD(afscm_calls);
+-static spinlock_t afscm_calls_lock = SPIN_LOCK_UNLOCKED;
+-static spinlock_t kafscmd_attention_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(afscm_calls_lock);
++static DEFINE_SPINLOCK(kafscmd_attention_lock);
+ static int kafscmd_die;
+ 
+ /*****************************************************************************/
+diff -puN fs/afs/kafsasyncd.c~lock-initializer-cleanup-filesystems fs/afs/kafsasyncd.c
+--- 25/fs/afs/kafsasyncd.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/afs/kafsasyncd.c	Wed Jan 12 16:54:55 2005
+@@ -39,7 +39,7 @@ static int kafsasyncd(void *arg);
+ 
+ static LIST_HEAD(kafsasyncd_async_attnq);
+ static LIST_HEAD(kafsasyncd_async_busyq);
+-static spinlock_t kafsasyncd_async_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(kafsasyncd_async_lock);
+ 
+ static void kafsasyncd_null_call_attn_func(struct rxrpc_call *call)
+ {
+diff -puN fs/afs/kafstimod.c~lock-initializer-cleanup-filesystems fs/afs/kafstimod.c
+--- 25/fs/afs/kafstimod.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/afs/kafstimod.c	Wed Jan 12 16:54:55 2005
+@@ -25,7 +25,7 @@ static DECLARE_WAIT_QUEUE_HEAD(kafstimod
+ static int kafstimod_die;
+ 
+ static LIST_HEAD(kafstimod_list);
+-static spinlock_t kafstimod_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(kafstimod_lock);
+ 
+ static int kafstimod(void *arg);
+ 
+diff -puN fs/afs/main.c~lock-initializer-cleanup-filesystems fs/afs/main.c
+--- 25/fs/afs/main.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/afs/main.c	Wed Jan 12 16:54:55 2005
+@@ -58,7 +58,7 @@ static struct rxrpc_peer_ops afs_peer_op
+ };
+ 
+ struct list_head afs_cb_hash_tbl[AFS_CB_HASH_COUNT];
+-spinlock_t afs_cb_hash_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(afs_cb_hash_lock);
+ 
+ #ifdef AFS_CACHING_SUPPORT
+ static struct cachefs_netfs_operations afs_cache_ops = {
+diff -puN fs/afs/server.c~lock-initializer-cleanup-filesystems fs/afs/server.c
+--- 25/fs/afs/server.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/afs/server.c	Wed Jan 12 16:54:55 2005
+@@ -21,7 +21,7 @@
+ #include "kafstimod.h"
+ #include "internal.h"
+ 
+-spinlock_t afs_server_peer_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(afs_server_peer_lock);
+ 
+ #define FS_SERVICE_ID		1	/* AFS Volume Location Service ID */
+ #define VL_SERVICE_ID		52	/* AFS Volume Location Service ID */
+diff -puN fs/afs/vlocation.c~lock-initializer-cleanup-filesystems fs/afs/vlocation.c
+--- 25/fs/afs/vlocation.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/afs/vlocation.c	Wed Jan 12 16:54:55 2005
+@@ -57,7 +57,7 @@ static const struct afs_async_op_ops afs
+ 
+ static LIST_HEAD(afs_vlocation_update_pendq);	/* queue of VLs awaiting update */
+ static struct afs_vlocation *afs_vlocation_update;	/* VL currently being updated */
+-static spinlock_t afs_vlocation_update_lock = SPIN_LOCK_UNLOCKED; /* lock guarding update queue */
++static DEFINE_SPINLOCK(afs_vlocation_update_lock); /* lock guarding update queue */
+ 
+ #ifdef AFS_CACHING_SUPPORT
+ static cachefs_match_val_t afs_vlocation_cache_match(void *target,
+diff -puN fs/aio.c~lock-initializer-cleanup-filesystems fs/aio.c
+--- 25/fs/aio.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/aio.c	Wed Jan 12 16:54:55 2005
+@@ -57,7 +57,7 @@ static struct workqueue_struct *aio_wq;
+ static void aio_fput_routine(void *);
+ static DECLARE_WORK(fput_work, aio_fput_routine, NULL);
+ 
+-static spinlock_t	fput_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(fput_lock);
+ LIST_HEAD(fput_head);
+ 
+ static void aio_kick_handler(void *);
+diff -puN fs/binfmt_misc.c~lock-initializer-cleanup-filesystems fs/binfmt_misc.c
+--- 25/fs/binfmt_misc.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/binfmt_misc.c	Wed Jan 12 16:54:55 2005
+@@ -54,7 +54,7 @@ typedef struct {
+ 	struct dentry *dentry;
+ } Node;
+ 
+-static rwlock_t entries_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(entries_lock);
+ static struct vfsmount *bm_mnt;
+ static int entry_count;
+ 
+diff -puN fs/bio.c~lock-initializer-cleanup-filesystems fs/bio.c
+--- 25/fs/bio.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/bio.c	Wed Jan 12 16:54:55 2005
+@@ -743,7 +743,7 @@ static void bio_release_pages(struct bio
+ static void bio_dirty_fn(void *data);
+ 
+ static DECLARE_WORK(bio_dirty_work, bio_dirty_fn, NULL);
+-static spinlock_t bio_dirty_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(bio_dirty_lock);
+ static struct bio *bio_dirty_list;
+ 
+ /*
+diff -puN fs/block_dev.c~lock-initializer-cleanup-filesystems fs/block_dev.c
+--- 25/fs/block_dev.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/block_dev.c	Wed Jan 12 16:54:55 2005
+@@ -237,7 +237,7 @@ static int block_fsync(struct file *filp
+  * pseudo-fs
+  */
+ 
+-static spinlock_t bdev_lock __cacheline_aligned_in_smp = SPIN_LOCK_UNLOCKED;
++static  __cacheline_aligned_in_smp DEFINE_SPINLOCK(bdev_lock);
+ static kmem_cache_t * bdev_cachep;
+ 
+ static struct inode *bdev_alloc_inode(struct super_block *sb)
+diff -puN fs/buffer.c~lock-initializer-cleanup-filesystems fs/buffer.c
+--- 25/fs/buffer.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/buffer.c	Wed Jan 12 16:54:55 2005
+@@ -537,7 +537,7 @@ static void free_more_memory(void)
+  */
+ static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
+ {
+-	static spinlock_t page_uptodate_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(page_uptodate_lock);
+ 	unsigned long flags;
+ 	struct buffer_head *tmp;
+ 	struct page *page;
+@@ -595,7 +595,7 @@ still_busy:
+ void end_buffer_async_write(struct buffer_head *bh, int uptodate)
+ {
+ 	char b[BDEVNAME_SIZE];
+-	static spinlock_t page_uptodate_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(page_uptodate_lock);
+ 	unsigned long flags;
+ 	struct buffer_head *tmp;
+ 	struct page *page;
+diff -puN fs/char_dev.c~lock-initializer-cleanup-filesystems fs/char_dev.c
+--- 25/fs/char_dev.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/char_dev.c	Wed Jan 12 16:54:55 2005
+@@ -28,7 +28,7 @@ static struct kobj_map *cdev_map;
+ 
+ #define MAX_PROBE_HASH 255	/* random */
+ 
+-static rwlock_t chrdevs_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(chrdevs_lock);
+ 
+ static struct char_device_struct {
+ 	struct char_device_struct *next;
+@@ -248,7 +248,7 @@ int unregister_chrdev(unsigned int major
+ 	return 0;
+ }
+ 
+-static spinlock_t cdev_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(cdev_lock);
+ 
+ static struct kobject *cdev_get(struct cdev *p)
+ {
+diff -puN fs/dcache.c~lock-initializer-cleanup-filesystems fs/dcache.c
+--- 25/fs/dcache.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/dcache.c	Wed Jan 12 16:54:55 2005
+@@ -37,7 +37,7 @@
+ 
+ int sysctl_vfs_cache_pressure = 100;
+ 
+-spinlock_t dcache_lock __cacheline_aligned_in_smp = SPIN_LOCK_UNLOCKED;
++ __cacheline_aligned_in_smp DEFINE_SPINLOCK(dcache_lock);
+ seqlock_t rename_lock __cacheline_aligned_in_smp = SEQLOCK_UNLOCKED;
+ 
+ EXPORT_SYMBOL(dcache_lock);
+diff -puN fs/devfs/base.c~lock-initializer-cleanup-filesystems fs/devfs/base.c
+--- 25/fs/devfs/base.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/devfs/base.c	Wed Jan 12 16:54:55 2005
+@@ -831,7 +831,7 @@ static kmem_cache_t *devfsd_buf_cache;
+ #ifdef CONFIG_DEVFS_DEBUG
+ static unsigned int devfs_debug_init __initdata = DEBUG_NONE;
+ static unsigned int devfs_debug = DEBUG_NONE;
+-static spinlock_t stat_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(stat_lock);
+ static unsigned int stat_num_entries;
+ static unsigned int stat_num_bytes;
+ #endif
+@@ -966,7 +966,7 @@ static struct devfs_entry *_devfs_alloc_
+ {
+ 	struct devfs_entry *new;
+ 	static unsigned long inode_counter = FIRST_INODE;
+-	static spinlock_t counter_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(counter_lock);
+ 
+ 	if (name && (namelen < 1))
+ 		namelen = strlen(name);
+@@ -1063,7 +1063,7 @@ static int _devfs_append_entry(devfs_han
+ static struct devfs_entry *_devfs_get_root_entry(void)
+ {
+ 	struct devfs_entry *new;
+-	static spinlock_t root_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(root_lock);
+ 
+ 	if (root_entry)
+ 		return root_entry;
+@@ -2683,7 +2683,7 @@ static int devfsd_ioctl(struct inode *in
+ 		   work even if the global kernel lock were to be removed, because it
+ 		   doesn't matter who gets in first, as long as only one gets it  */
+ 		if (fs_info->devfsd_task == NULL) {
+-			static spinlock_t lock = SPIN_LOCK_UNLOCKED;
++			static DEFINE_SPINLOCK(lock);
+ 
+ 			if (!spin_trylock(&lock))
+ 				return -EBUSY;
+diff -puN fs/dquot.c~lock-initializer-cleanup-filesystems fs/dquot.c
+--- 25/fs/dquot.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/dquot.c	Wed Jan 12 16:54:55 2005
+@@ -121,8 +121,8 @@
+  * i_sem on quota files is special (it's below dqio_sem)
+  */
+ 
+-static spinlock_t dq_list_lock = SPIN_LOCK_UNLOCKED;
+-spinlock_t dq_data_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(dq_list_lock);
++DEFINE_SPINLOCK(dq_data_lock);
+ 
+ static char *quotatypes[] = INITQFNAMES;
+ static struct quota_format_type *quota_formats;	/* List of registered formats */
+diff -puN fs/exec.c~lock-initializer-cleanup-filesystems fs/exec.c
+--- 25/fs/exec.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/exec.c	Wed Jan 12 16:54:55 2005
+@@ -61,7 +61,7 @@ char core_pattern[65] = "core";
+ /* The maximal length of core_pattern is also specified in sysctl.c */
+ 
+ static struct linux_binfmt *formats;
+-static rwlock_t binfmt_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(binfmt_lock);
+ 
+ int register_binfmt(struct linux_binfmt * fmt)
+ {
+diff -puN fs/fcntl.c~lock-initializer-cleanup-filesystems fs/fcntl.c
+--- 25/fs/fcntl.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/fcntl.c	Wed Jan 12 16:54:55 2005
+@@ -507,7 +507,7 @@ int send_sigurg(struct fown_struct *fown
+ 	return ret;
+ }
+ 
+-static rwlock_t fasync_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(fasync_lock);
+ static kmem_cache_t *fasync_cache;
+ 
+ /*
+diff -puN fs/filesystems.c~lock-initializer-cleanup-filesystems fs/filesystems.c
+--- 25/fs/filesystems.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/filesystems.c	Wed Jan 12 16:54:55 2005
+@@ -28,7 +28,7 @@
+  */
+ 
+ static struct file_system_type *file_systems;
+-static rwlock_t file_systems_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(file_systems_lock);
+ 
+ /* WARNING: This can be used only if we _already_ own a reference */
+ void get_filesystem(struct file_system_type *fs)
+diff -puN fs/file_table.c~lock-initializer-cleanup-filesystems fs/file_table.c
+--- 25/fs/file_table.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/file_table.c	Wed Jan 12 16:54:55 2005
+@@ -25,9 +25,9 @@ struct files_stat_struct files_stat = {
+ EXPORT_SYMBOL(files_stat); /* Needed by unix.o */
+ 
+ /* public. Not pretty! */
+-spinlock_t __cacheline_aligned_in_smp files_lock = SPIN_LOCK_UNLOCKED;
++ __cacheline_aligned_in_smp DEFINE_SPINLOCK(files_lock);
+ 
+-static spinlock_t filp_count_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(filp_count_lock);
+ 
+ /* slab constructors and destructors are called from arbitrary
+  * context and must be fully threaded - use a local spinlock
+diff -puN fs/hugetlbfs/inode.c~lock-initializer-cleanup-filesystems fs/hugetlbfs/inode.c
+--- 25/fs/hugetlbfs/inode.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/hugetlbfs/inode.c	Wed Jan 12 16:54:55 2005
+@@ -737,7 +737,7 @@ static struct vfsmount *hugetlbfs_vfsmou
+  */
+ static unsigned long hugetlbfs_counter(void)
+ {
+-	static spinlock_t lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(lock);
+ 	static unsigned long counter;
+ 	unsigned long ret;
+ 
+diff -puN fs/inode.c~lock-initializer-cleanup-filesystems fs/inode.c
+--- 25/fs/inode.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/inode.c	Wed Jan 12 16:54:55 2005
+@@ -80,7 +80,7 @@ static struct hlist_head *inode_hashtabl
+  * NOTE! You also have to own the lock if you change
+  * the i_state of an inode while it is in use..
+  */
+-spinlock_t inode_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(inode_lock);
+ 
+ /*
+  * iprune_sem provides exclusion between the kswapd or try_to_free_pages
+diff -puN fs/jfs/jfs_logmgr.c~lock-initializer-cleanup-filesystems fs/jfs/jfs_logmgr.c
+--- 25/fs/jfs/jfs_logmgr.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/jfs/jfs_logmgr.c	Wed Jan 12 16:54:55 2005
+@@ -78,7 +78,7 @@
+  * lbuf's ready to be redriven.  Protected by log_redrive_lock (jfsIO thread)
+  */
+ static struct lbuf *log_redrive_list;
+-static spinlock_t log_redrive_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(log_redrive_lock);
+ DECLARE_WAIT_QUEUE_HEAD(jfs_IO_thread_wait);
+ 
+ 
+@@ -113,7 +113,7 @@ DECLARE_WAIT_QUEUE_HEAD(jfs_IO_thread_wa
+ /*
+  *	log buffer cache synchronization
+  */
+-static spinlock_t jfsLCacheLock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(jfsLCacheLock);
+ 
+ #define	LCACHE_LOCK(flags)	spin_lock_irqsave(&jfsLCacheLock, flags)
+ #define	LCACHE_UNLOCK(flags)	spin_unlock_irqrestore(&jfsLCacheLock, flags)
+diff -puN fs/jfs/jfs_metapage.c~lock-initializer-cleanup-filesystems fs/jfs/jfs_metapage.c
+--- 25/fs/jfs/jfs_metapage.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/jfs/jfs_metapage.c	Wed Jan 12 16:54:55 2005
+@@ -28,7 +28,7 @@
+ #include "jfs_txnmgr.h"
+ #include "jfs_debug.h"
+ 
+-static spinlock_t meta_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(meta_lock);
+ 
+ #ifdef CONFIG_JFS_STATISTICS
+ static struct {
+diff -puN fs/jfs/jfs_txnmgr.c~lock-initializer-cleanup-filesystems fs/jfs/jfs_txnmgr.c
+--- 25/fs/jfs/jfs_txnmgr.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/jfs/jfs_txnmgr.c	Wed Jan 12 16:54:55 2005
+@@ -113,7 +113,7 @@ struct tlock *TxLock;           /* trans
+ /*
+  *      transaction management lock
+  */
+-static spinlock_t jfsTxnLock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(jfsTxnLock);
+ 
+ #define TXN_LOCK()              spin_lock(&jfsTxnLock)
+ #define TXN_UNLOCK()            spin_unlock(&jfsTxnLock)
+diff -puN fs/libfs.c~lock-initializer-cleanup-filesystems fs/libfs.c
+--- 25/fs/libfs.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/libfs.c	Wed Jan 12 16:54:55 2005
+@@ -418,7 +418,7 @@ out:
+ 	return -ENOMEM;
+ }
+ 
+-static spinlock_t pin_fs_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(pin_fs_lock);
+ 
+ int simple_pin_fs(char *name, struct vfsmount **mount, int *count)
+ {
+@@ -476,7 +476,7 @@ ssize_t simple_read_from_buffer(void __u
+ char *simple_transaction_get(struct file *file, const char __user *buf, size_t size)
+ {
+ 	struct simple_transaction_argresp *ar;
+-	static spinlock_t simple_transaction_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(simple_transaction_lock);
+ 
+ 	if (size > SIMPLE_TRANSACTION_LIMIT - 1)
+ 		return ERR_PTR(-EFBIG);
+diff -puN fs/mbcache.c~lock-initializer-cleanup-filesystems fs/mbcache.c
+--- 25/fs/mbcache.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/mbcache.c	Wed Jan 12 16:54:55 2005
+@@ -81,7 +81,7 @@ EXPORT_SYMBOL(mb_cache_entry_find_next);
+ 
+ static LIST_HEAD(mb_cache_list);
+ static LIST_HEAD(mb_cache_lru_list);
+-static spinlock_t mb_cache_spinlock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(mb_cache_spinlock);
+ static struct shrinker *mb_shrinker;
+ 
+ static inline int
+diff -puN fs/minix/itree_common.c~lock-initializer-cleanup-filesystems fs/minix/itree_common.c
+--- 25/fs/minix/itree_common.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/minix/itree_common.c	Wed Jan 12 16:54:55 2005
+@@ -6,7 +6,7 @@ typedef struct {
+ 	struct buffer_head *bh;
+ } Indirect;
+ 
+-static rwlock_t pointers_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(pointers_lock);
+ 
+ static inline void add_chain(Indirect *p, struct buffer_head *bh, block_t *v)
+ {
+diff -puN fs/namespace.c~lock-initializer-cleanup-filesystems fs/namespace.c
+--- 25/fs/namespace.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/namespace.c	Wed Jan 12 16:54:55 2005
+@@ -37,7 +37,7 @@ static inline int sysfs_init(void)
+ #endif
+ 
+ /* spinlock for vfsmount related operations, inplace of dcache_lock */
+-spinlock_t vfsmount_lock __cacheline_aligned_in_smp = SPIN_LOCK_UNLOCKED;
++ __cacheline_aligned_in_smp DEFINE_SPINLOCK(vfsmount_lock);
+ 
+ static struct list_head *mount_hashtable;
+ static int hash_mask, hash_bits;
+diff -puN fs/nfsd/nfscache.c~lock-initializer-cleanup-filesystems fs/nfsd/nfscache.c
+--- 25/fs/nfsd/nfscache.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/nfsd/nfscache.c	Wed Jan 12 16:54:55 2005
+@@ -48,7 +48,7 @@ static int	nfsd_cache_append(struct svc_
+  * A cache entry is "single use" if c_state == RC_INPROG
+  * Otherwise, it when accessing _prev or _next, the lock must be held.
+  */
+-static spinlock_t cache_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(cache_lock);
+ 
+ void
+ nfsd_cache_init(void)
+diff -puN fs/nfsd/nfssvc.c~lock-initializer-cleanup-filesystems fs/nfsd/nfssvc.c
+--- 25/fs/nfsd/nfssvc.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/nfsd/nfssvc.c	Wed Jan 12 16:54:55 2005
+@@ -54,7 +54,7 @@ struct timeval			nfssvc_boot;
+ static struct svc_serv 		*nfsd_serv;
+ static atomic_t			nfsd_busy;
+ static unsigned long		nfsd_last_call;
+-static spinlock_t		nfsd_call_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(nfsd_call_lock);
+ 
+ struct nfsd_list {
+ 	struct list_head 	list;
+diff -puN fs/nfsd/vfs.c~lock-initializer-cleanup-filesystems fs/nfsd/vfs.c
+--- 25/fs/nfsd/vfs.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/nfsd/vfs.c	Wed Jan 12 16:54:55 2005
+@@ -737,7 +737,7 @@ nfsd_sync_dir(struct dentry *dp)
+  * Obtain the readahead parameters for the file
+  * specified by (dev, ino).
+  */
+-static spinlock_t ra_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(ra_lock);
+ 
+ static inline struct raparms *
+ nfsd_get_raparms(dev_t dev, ino_t ino)
+diff -puN fs/nfs/nfs4state.c~lock-initializer-cleanup-filesystems fs/nfs/nfs4state.c
+--- 25/fs/nfs/nfs4state.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/nfs/nfs4state.c	Wed Jan 12 16:54:55 2005
+@@ -51,7 +51,7 @@
+ 
+ #define OPENOWNER_POOL_SIZE	8
+ 
+-static spinlock_t		state_spinlock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(state_spinlock);
+ 
+ nfs4_stateid zero_stateid;
+ 
+diff -puN fs/nls/nls_base.c~lock-initializer-cleanup-filesystems fs/nls/nls_base.c
+--- 25/fs/nls/nls_base.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/nls/nls_base.c	Wed Jan 12 16:54:55 2005
+@@ -21,7 +21,7 @@
+ 
+ static struct nls_table default_table;
+ static struct nls_table *tables = &default_table;
+-static spinlock_t nls_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(nls_lock);
+ 
+ /*
+  * Sample implementation from Unicode home page.
+diff -puN fs/ntfs/aops.c~lock-initializer-cleanup-filesystems fs/ntfs/aops.c
+--- 25/fs/ntfs/aops.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/ntfs/aops.c	Wed Jan 12 16:54:55 2005
+@@ -55,7 +55,7 @@
+  */
+ static void ntfs_end_buffer_async_read(struct buffer_head *bh, int uptodate)
+ {
+-	static spinlock_t page_uptodate_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(page_uptodate_lock);
+ 	unsigned long flags;
+ 	struct buffer_head *tmp;
+ 	struct page *page;
+diff -puN fs/ntfs/compress.c~lock-initializer-cleanup-filesystems fs/ntfs/compress.c
+--- 25/fs/ntfs/compress.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/ntfs/compress.c	Wed Jan 12 16:54:55 2005
+@@ -62,7 +62,7 @@ static u8 *ntfs_compression_buffer = NUL
+ /**
+  * ntfs_cb_lock - spinlock which protects ntfs_compression_buffer
+  */
+-static spinlock_t ntfs_cb_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(ntfs_cb_lock);
+ 
+ /**
+  * allocate_compression_buffers - allocate the decompression buffers
+diff -puN fs/ntfs/debug.c~lock-initializer-cleanup-filesystems fs/ntfs/debug.c
+--- 25/fs/ntfs/debug.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/ntfs/debug.c	Wed Jan 12 16:54:55 2005
+@@ -26,7 +26,7 @@
+  * to protect concurrent accesses to it.
+  */
+ static char err_buf[1024];
+-static spinlock_t err_buf_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(err_buf_lock);
+ 
+ /**
+  * __ntfs_warning - output a warning to the syslog
+diff -puN fs/proc/generic.c~lock-initializer-cleanup-filesystems fs/proc/generic.c
+--- 25/fs/proc/generic.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/proc/generic.c	Wed Jan 12 16:54:55 2005
+@@ -286,7 +286,7 @@ static int xlate_proc_name(const char *n
+ }
+ 
+ static DEFINE_IDR(proc_inum_idr);
+-static spinlock_t proc_inum_lock = SPIN_LOCK_UNLOCKED; /* protects the above */
++static DEFINE_SPINLOCK(proc_inum_lock); /* protects the above */
+ 
+ #define PROC_DYNAMIC_FIRST 0xF0000000UL
+ 
+diff -puN fs/proc/kcore.c~lock-initializer-cleanup-filesystems fs/proc/kcore.c
+--- 25/fs/proc/kcore.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/proc/kcore.c	Wed Jan 12 16:54:55 2005
+@@ -54,7 +54,7 @@ struct memelfnote
+ };
+ 
+ static struct kcore_list *kclist;
+-static rwlock_t kclist_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(kclist_lock);
+ 
+ void
+ kclist_add(struct kcore_list *new, void *addr, size_t size)
+diff -puN fs/reiserfs/xattr.c~lock-initializer-cleanup-filesystems fs/reiserfs/xattr.c
+--- 25/fs/reiserfs/xattr.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/reiserfs/xattr.c	Wed Jan 12 16:54:55 2005
+@@ -1152,7 +1152,7 @@ out:
+ 
+ /* This is the implementation for the xattr plugin infrastructure */
+ static struct list_head xattr_handlers = LIST_HEAD_INIT (xattr_handlers);
+-static rwlock_t handler_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(handler_lock);
+ 
+ static struct reiserfs_xattr_handler *
+ find_xattr_handler_prefix (const char *prefix)
+diff -puN fs/smbfs/smbiod.c~lock-initializer-cleanup-filesystems fs/smbfs/smbiod.c
+--- 25/fs/smbfs/smbiod.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/smbfs/smbiod.c	Wed Jan 12 16:54:55 2005
+@@ -43,7 +43,7 @@ static enum smbiod_state smbiod_state = 
+ static pid_t smbiod_pid;
+ static DECLARE_WAIT_QUEUE_HEAD(smbiod_wait);
+ static LIST_HEAD(smb_servers);
+-static spinlock_t servers_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(servers_lock);
+ 
+ #define SMBIOD_DATA_READY	(1<<0)
+ static long smbiod_flags;
+diff -puN fs/super.c~lock-initializer-cleanup-filesystems fs/super.c
+--- 25/fs/super.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/super.c	Wed Jan 12 16:54:55 2005
+@@ -45,7 +45,7 @@ void put_filesystem(struct file_system_t
+ struct file_system_type *get_fs_type(const char *name);
+ 
+ LIST_HEAD(super_blocks);
+-spinlock_t sb_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(sb_lock);
+ 
+ /**
+  *	alloc_super	-	create new superblock
+@@ -590,7 +590,7 @@ void emergency_remount(void)
+  */
+ 
+ static struct idr unnamed_dev_idr;
+-static spinlock_t unnamed_dev_lock = SPIN_LOCK_UNLOCKED;/* protects the above */
++static DEFINE_SPINLOCK(unnamed_dev_lock);/* protects the above */
+ 
+ int set_anon_super(struct super_block *s, void *data)
+ {
+diff -puN fs/sysv/itree.c~lock-initializer-cleanup-filesystems fs/sysv/itree.c
+--- 25/fs/sysv/itree.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/sysv/itree.c	Wed Jan 12 16:54:55 2005
+@@ -61,7 +61,7 @@ typedef struct {
+ 	struct buffer_head *bh;
+ } Indirect;
+ 
+-static rwlock_t pointers_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(pointers_lock);
+ 
+ static inline void add_chain(Indirect *p, struct buffer_head *bh, sysv_zone_t *v)
+ {
+diff -puN fs/xfs/linux-2.6/xfs_buf.c~lock-initializer-cleanup-filesystems fs/xfs/linux-2.6/xfs_buf.c
+--- 25/fs/xfs/linux-2.6/xfs_buf.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/xfs/linux-2.6/xfs_buf.c	Wed Jan 12 16:54:55 2005
+@@ -206,7 +206,7 @@ typedef struct a_list {
+ 
+ STATIC a_list_t		*as_free_head;
+ STATIC int		as_list_len;
+-STATIC spinlock_t	as_lock = SPIN_LOCK_UNLOCKED;
++STATIC DEFINE_SPINLOCK(as_lock);
+ 
+ /*
+  * Try to batch vunmaps because they are costly.
+@@ -1688,7 +1688,7 @@ error:
+  */
+ 
+ STATIC LIST_HEAD(pbd_delwrite_queue);
+-STATIC spinlock_t pbd_delwrite_lock = SPIN_LOCK_UNLOCKED;
++STATIC DEFINE_SPINLOCK(pbd_delwrite_lock);
+ 
+ STATIC void
+ pagebuf_delwri_queue(
+diff -puN fs/xfs/linux-2.6/xfs_vnode.c~lock-initializer-cleanup-filesystems fs/xfs/linux-2.6/xfs_vnode.c
+--- 25/fs/xfs/linux-2.6/xfs_vnode.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/xfs/linux-2.6/xfs_vnode.c	Wed Jan 12 16:54:55 2005
+@@ -34,7 +34,7 @@
+ 
+ 
+ uint64_t vn_generation;		/* vnode generation number */
+-spinlock_t vnumber_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(vnumber_lock);
+ 
+ /*
+  * Dedicated vnode inactive/reclaim sync semaphores.
+diff -puN fs/xfs/support/debug.c~lock-initializer-cleanup-filesystems fs/xfs/support/debug.c
+--- 25/fs/xfs/support/debug.c~lock-initializer-cleanup-filesystems	Wed Jan 12 16:54:55 2005
++++ 25-akpm/fs/xfs/support/debug.c	Wed Jan 12 16:54:55 2005
+@@ -38,7 +38,7 @@
+ 
+ int			doass = 1;
+ static char		message[256];	/* keep it off the stack */
+-static spinlock_t	xfs_err_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(xfs_err_lock);
+ 
+ /* Translate from CE_FOO to KERN_FOO, err_level(CE_FOO) == KERN_FOO */
+ #define XFS_MAX_ERR_LEVEL	7
+_

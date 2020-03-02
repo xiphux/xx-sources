@@ -1,0 +1,45 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+On Mon, Aug 09, 2004 at 01:20:37AM -0700, Rick Lindsley wrote:
+> Got complaints from arch/i386/mm/discontig.c:
+[...]
+> arch/i386/mm/discontig.c:430: warning: passing arg 3 of `free_area_init_node' from incompatible pointer type
+> arch/i386/mm/discontig.c:430: warning: passing arg 4 of `free_area_init_node' makes integer from pointer without a cast
+> arch/i386/mm/discontig.c:430: warning: passing arg 5 of `free_area_init_node' makes pointer from integer without a cast
+> arch/i386/mm/discontig.c:430: too many arguments to function `free_area_init_node'
+> Looks like I can't get by with just deleting the third argument in the
+> second case.
+
+Initializing NODE_DATA(nid)->node_mem_map prior to calling it should do.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/mm/discontig.c |    8 ++++----
+ 1 files changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN arch/i386/mm/discontig.c~dont-pass-mem_map-into-init-functions-x86-fix arch/i386/mm/discontig.c
+--- 25/arch/i386/mm/discontig.c~dont-pass-mem_map-into-init-functions-x86-fix	2004-08-09 01:39:23.334537288 -0700
++++ 25-akpm/arch/i386/mm/discontig.c	2004-08-09 01:39:23.338536680 -0700
+@@ -418,15 +418,15 @@ void __init zone_sizes_init(void)
+ 		 * remapped KVA area - mbligh
+ 		 */
+ 		if (!nid)
+-			free_area_init_node(nid, NODE_DATA(nid), 0, 
+-				zones_size, start, zholes_size);
++			free_area_init_node(nid, NODE_DATA(nid),
++					zones_size, start, zholes_size);
+ 		else {
+ 			unsigned long lmem_map;
+ 			lmem_map = (unsigned long)node_remap_start_vaddr[nid];
+ 			lmem_map += sizeof(pg_data_t) + PAGE_SIZE - 1;
+ 			lmem_map &= PAGE_MASK;
+-			free_area_init_node(nid, NODE_DATA(nid), 
+-				(struct page *)lmem_map, zones_size, 
++			NODE_DATA(nid)->node_mem_map = (struct page *)lmem_map;
++			free_area_init_node(nid, NODE_DATA(nid), zones_size,
+ 				start, zholes_size);
+ 		}
+ 	}
+_

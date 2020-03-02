@@ -1,0 +1,30 @@
+
+From: Dinakar Guniguntala <dino@in.ibm.com>
+
+/proc shows the wrong PID as parent in the following case
+
+Process A creates Threads 1 & 2 (using pthread_create) Thread 2 then forks
+and execs process B getppid() for Process B shows Process A (rightly) as
+parent, however /proc/B/status shows Thread 3 as PPid (incorrect).
+
+Signed-off-by: Dinakar Guniguntala <dino@in.ibm.com>
+Acked-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/proc/array.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN fs/proc/array.c~ps-shows-wrong-ppid fs/proc/array.c
+--- 25/fs/proc/array.c~ps-shows-wrong-ppid	Fri Oct  8 13:31:32 2004
++++ 25-akpm/fs/proc/array.c	Fri Oct  8 13:31:32 2004
+@@ -171,7 +171,7 @@ static inline char * task_state(struct t
+ 		get_task_state(p),
+ 		(p->sleep_avg/1024)*100/(1020000000/1024),
+ 	       	p->tgid,
+-		p->pid, p->pid ? p->real_parent->pid : 0,
++		p->pid, p->pid ? p->group_leader->real_parent->tgid : 0,
+ 		p->pid && p->ptrace ? p->parent->pid : 0,
+ 		p->uid, p->euid, p->suid, p->fsuid,
+ 		p->gid, p->egid, p->sgid, p->fsgid);
+_

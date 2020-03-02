@@ -1,0 +1,199 @@
+
+From: Adam Kropelin <akropel1@rochester.rr.com>
+
+Adds a kernel boot parameter "lpj=NNN" which allows the operator to specify
+the loops-per-jiffy value.  This shaves up to a quarter of a second off
+boot times, which are critical for embedded appliances.
+
+It's a bit thin, but the code is in __init.
+
+Signed-off-by: Adam Kropelin <akropel1@rochester.rr.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/kernel-parameters.txt |   14 +++
+ 25-akpm/init/main.c                         |  111 +++++++++++++++++-----------
+ 2 files changed, 85 insertions(+), 40 deletions(-)
+
+diff -puN Documentation/kernel-parameters.txt~preset-loops_per_jiffy-for-faster-booting Documentation/kernel-parameters.txt
+--- 25/Documentation/kernel-parameters.txt~preset-loops_per_jiffy-for-faster-booting	2004-07-11 21:49:04.115252032 -0700
++++ 25-akpm/Documentation/kernel-parameters.txt	2004-07-11 21:49:04.121251120 -0700
+@@ -574,6 +574,20 @@ running once the system is up.
+ 				so, the driver will manage that printer.
+ 				See also header of drivers/char/lp.c.
+ 
++	lpj=n		[KNL]
++			Sets loops_per_jiffy to given constant, thus avoiding
++			time-consuming boot-time autodetection (up to 250 ms per
++			CPU). 0 enables autodetection (default). To determine
++			the correct value for your kernel, boot with normal
++			autodetection and see what value is printed. Note that
++			on SMP systems the preset will be applied to all CPUs,
++			which is likely to cause problems if your CPUs need
++			significantly divergent settings. An incorrect value
++			will cause delays in the kernel to be wrong, leading to
++			unpredictable I/O errors and other breakage. Although
++			unlikely, in the extreme case this might damage your
++			hardware.
++
+ 	ltpc=		[NET]
+ 			Format: <io>,<irq>,<dma>
+ 
+diff -puN init/main.c~preset-loops_per_jiffy-for-faster-booting init/main.c
+--- 25/init/main.c~preset-loops_per_jiffy-for-faster-booting	2004-07-11 21:49:04.117251728 -0700
++++ 25-akpm/init/main.c	2004-07-11 21:49:04.123250816 -0700
+@@ -178,15 +178,28 @@ static int __init obsolete_checksetup(ch
+ 	return 0;
+ }
+ 
+-/* this should be approx 2 Bo*oMips to start (note initial shift), and will
+-   still work even if initially too large, it will just take slightly longer */
++static unsigned long preset_lpj;
++static int __init lpj_setup(char *str)
++{
++	preset_lpj = simple_strtoul(str,NULL,0);
++	return 1;
++}
++
++__setup("lpj=", lpj_setup);
++
++/*
++ * This should be approx 2 Bo*oMips to start (note initial shift), and will
++ * still work even if initially too large, it will just take slightly longer
++ */
+ unsigned long loops_per_jiffy = (1<<12);
+ 
+ EXPORT_SYMBOL(loops_per_jiffy);
+ 
+-/* This is the number of bits of precision for the loops_per_jiffy.  Each
+-   bit takes on average 1.5/HZ seconds.  This (like the original) is a little
+-   better than 1% */
++/*
++ * This is the number of bits of precision for the loops_per_jiffy.  Each
++ * bit takes on average 1.5/HZ seconds.  This (like the original) is a little
++ * better than 1%
++ */
+ #define LPS_PREC 8
+ 
+ void __devinit calibrate_delay(void)
+@@ -194,40 +207,53 @@ void __devinit calibrate_delay(void)
+ 	unsigned long ticks, loopbit;
+ 	int lps_precision = LPS_PREC;
+ 
+-	loops_per_jiffy = (1<<12);
++	if (preset_lpj) {
++		loops_per_jiffy = preset_lpj;
++		printk("Calibrating delay loop (skipped)... "
++			"%lu.%02lu BogoMIPS preset\n",
++			loops_per_jiffy/(500000/HZ),
++			(loops_per_jiffy/(5000/HZ)) % 100);
++	} else {
++		loops_per_jiffy = (1<<12);
+ 
+-	printk("Calibrating delay loop... ");
+-	while ((loops_per_jiffy <<= 1) != 0) {
+-		/* wait for "start of" clock tick */
+-		ticks = jiffies;
+-		while (ticks == jiffies)
+-			/* nothing */;
+-		/* Go .. */
+-		ticks = jiffies;
+-		__delay(loops_per_jiffy);
+-		ticks = jiffies - ticks;
+-		if (ticks)
+-			break;
+-	}
++		printk("Calibrating delay loop... ");
++		while ((loops_per_jiffy <<= 1) != 0) {
++			/* wait for "start of" clock tick */
++			ticks = jiffies;
++			while (ticks == jiffies)
++				/* nothing */;
++			/* Go .. */
++			ticks = jiffies;
++			__delay(loops_per_jiffy);
++			ticks = jiffies - ticks;
++			if (ticks)
++				break;
++		}
++
++		/*
++		 * Do a binary approximation to get loops_per_jiffy set to
++		 * equal one clock (up to lps_precision bits)
++		 */
++		loops_per_jiffy >>= 1;
++		loopbit = loops_per_jiffy;
++		while (lps_precision-- && (loopbit >>= 1)) {
++			loops_per_jiffy |= loopbit;
++			ticks = jiffies;
++			while (ticks == jiffies)
++				/* nothing */;
++			ticks = jiffies;
++			__delay(loops_per_jiffy);
++			if (jiffies != ticks)	/* longer than 1 tick */
++				loops_per_jiffy &= ~loopbit;
++		}
+ 
+-/* Do a binary approximation to get loops_per_jiffy set to equal one clock
+-   (up to lps_precision bits) */
+-	loops_per_jiffy >>= 1;
+-	loopbit = loops_per_jiffy;
+-	while ( lps_precision-- && (loopbit >>= 1) ) {
+-		loops_per_jiffy |= loopbit;
+-		ticks = jiffies;
+-		while (ticks == jiffies);
+-		ticks = jiffies;
+-		__delay(loops_per_jiffy);
+-		if (jiffies != ticks)	/* longer than 1 tick */
+-			loops_per_jiffy &= ~loopbit;
++		/* Round the value and print it */
++		printk("%lu.%02lu BogoMIPS (lpj=%lu)\n",
++			loops_per_jiffy/(500000/HZ),
++			(loops_per_jiffy/(5000/HZ)) % 100,
++			loops_per_jiffy);
+ 	}
+ 
+-/* Round the value and print it */	
+-	printk("%lu.%02lu BogoMIPS\n",
+-		loops_per_jiffy/(500000/HZ),
+-		(loops_per_jiffy/(5000/HZ)) % 100);
+ }
+ 
+ static int __init debug_kernel(char *str)
+@@ -249,8 +275,10 @@ static int __init quiet_kernel(char *str
+ __setup("debug", debug_kernel);
+ __setup("quiet", quiet_kernel);
+ 
+-/* Unknown boot options get handed to init, unless they look like
+-   failed parameters */
++/*
++ * Unknown boot options get handed to init, unless they look like
++ * failed parameters
++ */
+ static int __init unknown_bootoption(char *param, char *val)
+ {
+ 	/* Change NUL term back to "=", to make "param" the whole string. */
+@@ -261,8 +289,10 @@ static int __init unknown_bootoption(cha
+ 	if (obsolete_checksetup(param))
+ 		return 0;
+ 
+-	/* Preemptive maintenance for "why didn't my mispelled command
+-           line work?" */
++	/*
++	 * Preemptive maintenance for "why didn't my mispelled command
++	 * line work?"
++	 */
+ 	if (strchr(param, '.') && (!val || strchr(param, '.') < val)) {
+ 		printk(KERN_ERR "Unknown boot option `%s': ignoring\n", param);
+ 		return 0;
+@@ -302,7 +332,8 @@ static int __init init_setup(char *str)
+ 	unsigned int i;
+ 
+ 	execute_command = str;
+-	/* In case LILO is going to boot us with default command line,
++	/*
++	 * In case LILO is going to boot us with default command line,
+ 	 * it prepends "auto" before the whole cmdline which makes
+ 	 * the shell think it should execute a script with such name.
+ 	 * So we ignore all arguments entered _before_ init=... [MJ]
+_

@@ -1,0 +1,52 @@
+
+From: Bjorn Helgaas <bjorn.helgaas@hp.com>
+
+Add pci_enable_device()/pci_disable_device().  In the past, drivers often
+worked without this, but it is now required in order to route PCI interrupts
+correctly.
+
+Signed-off-by: Bjorn Helgaas <bjorn.helgaas@hp.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/ioc3-eth.c |   12 ++++++++++--
+ 1 files changed, 10 insertions(+), 2 deletions(-)
+
+diff -puN drivers/net/ioc3-eth.c~ioc3-ethc-add-missing-pci_enable_device drivers/net/ioc3-eth.c
+--- 25/drivers/net/ioc3-eth.c~ioc3-ethc-add-missing-pci_enable_device	Wed Aug  4 16:33:51 2004
++++ 25-akpm/drivers/net/ioc3-eth.c	Wed Aug  4 16:33:51 2004
+@@ -1172,9 +1172,14 @@ static int __devinit ioc3_probe(struct p
+ 	u32 vendor, model, rev;
+ 	int err;
+ 
++	if (pci_enable_device(pdev))
++		return -ENODEV;
++
+ 	dev = alloc_etherdev(sizeof(struct ioc3_private));
+-	if (!dev)
+-		return -ENOMEM;
++	if (!dev) {
++		err = -ENOMEM;
++		goto out_disable;
++	}
+ 
+ 	err = pci_request_regions(pdev, "ioc3");
+ 	if (err)
+@@ -1269,6 +1274,8 @@ out_res:
+ 	pci_release_regions(pdev);
+ out_free:
+ 	free_netdev(dev);
++out_disable:
++	pci_disable_device(pdev);
+ 	return err;
+ }
+ 
+@@ -1282,6 +1289,7 @@ static void __devexit ioc3_remove_one (s
+ 	iounmap(ioc3);
+ 	pci_release_regions(pdev);
+ 	free_netdev(dev);
++	pci_disable_device(pdev);
+ }
+ 
+ static struct pci_device_id ioc3_pci_tbl[] = {
+_

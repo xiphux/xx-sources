@@ -1,0 +1,37 @@
+
+
+drivers/atm/firestream.c: In function `aligned_kmalloc':
+drivers/atm/firestream.c:1383: warning: cast from pointer to integer of different size
+drivers/atm/firestream.c: In function `top_off_fp':
+drivers/atm/firestream.c:1499: warning: cast to pointer from integer of different size
+
+(The cast of a readl result to a kernel pointer in top_off_fp() is worrisome)
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/atm/firestream.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN drivers/atm/firestream.c~firestream-warnings drivers/atm/firestream.c
+--- 25/drivers/atm/firestream.c~firestream-warnings	2004-07-26 23:21:44.945929936 -0700
++++ 25-akpm/drivers/atm/firestream.c	2004-07-26 23:21:44.950929176 -0700
+@@ -576,7 +576,7 @@ static inline void write_fs (struct fs_d
+ }
+ 
+ 
+-static inline u32  read_fs (struct fs_dev *dev, int offset)
++static inline u32 read_fs (struct fs_dev *dev, int offset)
+ {
+ 	return readl (dev->base + offset);
+ }
+@@ -1496,7 +1496,7 @@ static void top_off_fp (struct fs_dev *d
+ 		ne->skb = skb;
+ 		ne->fp = fp;
+ 
+-		qe = (struct FS_BPENTRY *) (read_fs (dev, FP_EA(fp->offset)));
++		qe = (struct FS_BPENTRY *)(long)(read_fs (dev, FP_EA(fp->offset)));
+ 		fs_dprintk (FS_DEBUG_QUEUE, "link at %p\n", qe);
+ 		if (qe) {
+ 			qe = bus_to_virt ((long) qe);
+_

@@ -1,0 +1,35 @@
+
+From: Hans Reiser <reiser@namesys.com>
+
+This disables reiser4 pseudo files for a while.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/reiser4/plugin/pseudo/pseudo.c |    1 +
+ 25-akpm/fs/reiser4/super.c                |    1 +
+ 2 files changed, 2 insertions(+)
+
+diff -puN fs/reiser4/plugin/pseudo/pseudo.c~reiser4-disable-pseudo fs/reiser4/plugin/pseudo/pseudo.c
+--- 25/fs/reiser4/plugin/pseudo/pseudo.c~reiser4-disable-pseudo	Thu Sep 30 17:41:19 2004
++++ 25-akpm/fs/reiser4/plugin/pseudo/pseudo.c	Thu Sep 30 17:41:19 2004
+@@ -264,6 +264,7 @@ lookup_pseudo_file(struct inode *parent,
+ 	assert("nikita-2999", parent != NULL);
+ 	assert("nikita-3000", dentry != NULL);
+ 
++	return RETERR(-ENOENT);
+ 	/* if pseudo files are disabled for this file system bail out */
+ 	if (reiser4_is_set(parent->i_sb, REISER4_NO_PSEUDO))
+ 		return RETERR(-ENOENT);
+diff -puN fs/reiser4/super.c~reiser4-disable-pseudo fs/reiser4/super.c
+--- 25/fs/reiser4/super.c~reiser4-disable-pseudo	Thu Sep 30 17:41:19 2004
++++ 25-akpm/fs/reiser4/super.c	Thu Sep 30 17:41:19 2004
+@@ -433,6 +433,7 @@ build_object_ops(struct super_block *sup
+ 	/*ops->super.clear_inode = NULL;*/
+ 
+ 	ops->regular = iops;
++	ops->regular.lookup = NULL;
+ 	ops->dir     = iops;
+ 
+ 	ops->file    = reiser4_file_operations;
+_

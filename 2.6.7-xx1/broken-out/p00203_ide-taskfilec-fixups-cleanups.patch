@@ -1,0 +1,72 @@
+
+From: Bartlomiej Zolnierkiewicz <B.Zolnierkiewicz@elka.pw.edu.pl>
+
+Remove checks for hwgroup->handler == NULL from task_[in,mulin,out]_intr()
+(CONFIG_IDE_TASKFILE_IO=n versions).  These functions can be called only from
+ide_intr() or ide_timer_expiry() and both set hwgroup->handler to NULL first.
+
+Signed-off-by: Bartlomiej Zolnierkiewicz <bzolnier@elka.pw.edu.pl>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/ide/ide-taskfile.c |   19 +++++--------------
+ 1 files changed, 5 insertions(+), 14 deletions(-)
+
+diff -puN drivers/ide/ide-taskfile.c~ide-taskfilec-fixups-cleanups drivers/ide/ide-taskfile.c
+--- 25/drivers/ide/ide-taskfile.c~ide-taskfilec-fixups-cleanups	2004-06-20 13:57:20.196072504 -0700
++++ 25-akpm/drivers/ide/ide-taskfile.c	2004-06-20 13:57:20.206070984 -0700
+@@ -317,8 +317,7 @@ ide_startstop_t task_in_intr (ide_drive_
+ 		}
+ 		if (!(stat & BUSY_STAT)) {
+ 			DTF("task_in_intr to Soon wait for next interrupt\n");
+-			if (HWGROUP(drive)->handler == NULL)
+-				ide_set_handler(drive, &task_in_intr, WAIT_WORSTCASE, NULL);
++			ide_set_handler(drive, &task_in_intr, WAIT_WORSTCASE, NULL);
+ 			return ide_started;  
+ 		}
+ 	}
+@@ -332,12 +331,7 @@ ide_startstop_t task_in_intr (ide_drive_
+ 	if (--rq->current_nr_sectors <= 0)
+ 		if (!DRIVER(drive)->end_request(drive, 1, 0))
+ 			return ide_stopped;
+-	/*
+-	 * ERM, it is techincally legal to leave/exit here but it makes
+-	 * a mess of the code ...
+-	 */
+-	if (HWGROUP(drive)->handler == NULL)
+-		ide_set_handler(drive, &task_in_intr, WAIT_WORSTCASE, NULL);
++	ide_set_handler(drive, &task_in_intr, WAIT_WORSTCASE, NULL);
+ 	return ide_started;
+ }
+ 
+@@ -360,8 +354,7 @@ ide_startstop_t task_mulin_intr (ide_dri
+ 			return DRIVER(drive)->error(drive, "task_mulin_intr", stat);
+ 		}
+ 		/* no data yet, so wait for another interrupt */
+-		if (HWGROUP(drive)->handler == NULL)
+-			ide_set_handler(drive, &task_mulin_intr, WAIT_WORSTCASE, NULL);
++		ide_set_handler(drive, &task_mulin_intr, WAIT_WORSTCASE, NULL);
+ 		return ide_started;
+ 	}
+ 
+@@ -384,8 +377,7 @@ ide_startstop_t task_mulin_intr (ide_dri
+ 				return ide_stopped;
+ 		}
+ 	} while (msect);
+-	if (HWGROUP(drive)->handler == NULL)
+-		ide_set_handler(drive, &task_mulin_intr, WAIT_WORSTCASE, NULL);
++	ide_set_handler(drive, &task_mulin_intr, WAIT_WORSTCASE, NULL);
+ 	return ide_started;
+ }
+ 
+@@ -445,8 +437,7 @@ ide_startstop_t task_out_intr (ide_drive
+ 		rq->errors = 0;
+ 		rq->current_nr_sectors--;
+ 	}
+-	if (HWGROUP(drive)->handler == NULL)
+-		ide_set_handler(drive, &task_out_intr, WAIT_WORSTCASE, NULL);
++	ide_set_handler(drive, &task_out_intr, WAIT_WORSTCASE, NULL);
+ 	return ide_started;
+ }
+ 
+_

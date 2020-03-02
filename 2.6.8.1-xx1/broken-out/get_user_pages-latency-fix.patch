@@ -1,0 +1,33 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/memory.c |    7 +++++++
+ 1 files changed, 7 insertions(+)
+
+diff -puN mm/memory.c~get_user_pages-latency-fix mm/memory.c
+--- 25/mm/memory.c~get_user_pages-latency-fix	2004-07-13 15:49:55.657522560 -0700
++++ 25-akpm/mm/memory.c	2004-07-13 15:51:47.694490352 -0700
+@@ -710,6 +710,7 @@ int get_user_pages(struct task_struct *t
+ 	int i;
+ 	int vm_io;
+ 	unsigned int flags;
++	int nr_pages = 0;
+ 
+ 	/* 
+ 	 * Require read or write permissions.
+@@ -773,6 +774,12 @@ int get_user_pages(struct task_struct *t
+ 			struct page *map = NULL;
+ 			int lookup_write = write;
+ 
++			if ((++nr_pages & 63) == 0) {
++				spin_unlock(&mm->page_table_lock);
++				cpu_relax();
++				spin_lock(&mm->page_table_lock);
++			}
++
+ 			/*
+ 			 * We don't follow pagetables for VM_IO regions - they
+ 			 * may have no pageframes.
+_

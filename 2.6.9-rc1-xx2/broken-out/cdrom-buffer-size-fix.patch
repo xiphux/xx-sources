@@ -1,0 +1,32 @@
+
+From: Peter Osterlund <petero2@telia.com>
+
+The problem is that some drives fail the "GET CONFIGURATION" command when
+asked to only return 8 bytes.  This happens for example on my drive, which
+is identified as:
+
+        hdc: HL-DT-ST DVD+RW GCA-4040N, ATAPI CD/DVD-ROM drive
+
+Since the cdrom_mmc3_profile() function already allocates 32 bytes for the
+reply buffer, this patch is enough to make the command succeed on my drive.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/cdrom/cdrom.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN drivers/cdrom/cdrom.c~cdrom-buffer-size-fix drivers/cdrom/cdrom.c
+--- 25/drivers/cdrom/cdrom.c~cdrom-buffer-size-fix	2004-08-24 22:07:06.986470736 -0700
++++ 25-akpm/drivers/cdrom/cdrom.c	2004-08-24 22:07:06.992469824 -0700
+@@ -835,7 +835,7 @@ static void cdrom_mmc3_profile(struct cd
+ 	cgc.cmd[0] = GPCMD_GET_CONFIGURATION;
+ 	cgc.cmd[1] = 0;
+ 	cgc.cmd[2] = cgc.cmd[3] = 0;		/* Starting Feature Number */
+-	cgc.cmd[7] = 0; cgc.cmd [8] = 8;	/* Allocation Length */
++	cgc.cmd[8] = sizeof(buffer);		/* Allocation Length */
+ 	cgc.quiet = 1;
+ 
+ 	if ((ret = cdi->ops->generic_packet(cdi, &cgc))) {
+_

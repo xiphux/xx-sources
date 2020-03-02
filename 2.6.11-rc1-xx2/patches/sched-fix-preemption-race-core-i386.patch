@@ -1,0 +1,99 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+The idle-thread-preemption-fix.patch introduced a race, which is not
+critical, but might give us an extra turn through the scheduler.  When
+interrupts are reenabled in entry.c and an interrupt occures before we
+reach the add_preempt_schedule() in preempt_schedule we get rescheduled
+again in the return from interrupt path.
+
+The patch prevents this by leaving interrupts disabled and calling a a
+seperate function preempt_schedule_irq().
+
+This split adds different plausibility checks for irq context calls and
+kernel calls.
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/entry.S |    6 +----
+ 25-akpm/kernel/sched.c           |   42 +++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 44 insertions(+), 4 deletions(-)
+
+diff -puN arch/i386/kernel/entry.S~sched-fix-preemption-race-core-i386 arch/i386/kernel/entry.S
+--- 25/arch/i386/kernel/entry.S~sched-fix-preemption-race-core-i386	Wed Jan 12 16:03:37 2005
++++ 25-akpm/arch/i386/kernel/entry.S	Wed Jan 12 16:03:37 2005
+@@ -189,6 +189,7 @@ ENTRY(resume_userspace)
+ 
+ #ifdef CONFIG_PREEMPT
+ ENTRY(resume_kernel)
++	cli
+ 	cmpl $0,TI_preempt_count(%ebp)	# non-zero preempt_count ?
+ 	jnz restore_all
+ need_resched:
+@@ -197,10 +198,7 @@ need_resched:
+ 	jz restore_all
+ 	testl $IF_MASK,EFLAGS(%esp)     # interrupts off (exception path) ?
+ 	jz restore_all
+-	sti
+-	call preempt_schedule
+-	cli
+-	movl $0,TI_preempt_count(%ebp)
++	call preempt_schedule_irq
+ 	jmp need_resched
+ #endif
+ 
+diff -puN kernel/sched.c~sched-fix-preemption-race-core-i386 kernel/sched.c
+--- 25/kernel/sched.c~sched-fix-preemption-race-core-i386	Wed Jan 12 16:03:37 2005
++++ 25-akpm/kernel/sched.c	Wed Jan 12 16:03:37 2005
+@@ -2864,6 +2864,48 @@ need_resched:
+ }
+ 
+ EXPORT_SYMBOL(preempt_schedule);
++
++/*
++ * this is is the entry point to schedule() from kernel preemption
++ * off of irq context.
++ * Note, that this is called and return with irqs disabled. This will
++ * protect us against recursive calling from irq.
++ */
++asmlinkage void __sched preempt_schedule_irq(void)
++{
++	struct thread_info *ti = current_thread_info();
++#ifdef CONFIG_PREEMPT_BKL
++	struct task_struct *task = current;
++	int saved_lock_depth;
++#endif
++	/* Catch callers which need to be fixed*/
++	BUG_ON(ti->preempt_count || !irqs_disabled());
++
++need_resched:
++	add_preempt_count(PREEMPT_ACTIVE);
++	/*
++	 * We keep the big kernel semaphore locked, but we
++	 * clear ->lock_depth so that schedule() doesnt
++	 * auto-release the semaphore:
++	 */
++#ifdef CONFIG_PREEMPT_BKL
++	saved_lock_depth = task->lock_depth;
++	task->lock_depth = -1;
++#endif
++	local_irq_enable();
++	schedule();
++	local_irq_disable();
++#ifdef CONFIG_PREEMPT_BKL
++	task->lock_depth = saved_lock_depth;
++#endif
++	sub_preempt_count(PREEMPT_ACTIVE);
++
++	/* we could miss a preemption opportunity between schedule and now */
++	barrier();
++	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
++		goto need_resched;
++}
++
+ #endif /* CONFIG_PREEMPT */
+ 
+ int default_wake_function(wait_queue_t *curr, unsigned mode, int sync, void *key)
+_

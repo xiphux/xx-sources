@@ -1,0 +1,32 @@
+
+From: Christoph Hellwig <hch@lst.de>
+
+plus this fix for JFS
+
+From: Dave Kleikamp <shaggy@austin.ibm.com>
+
+jfs doesn't currently set MS_POSIXACL (it doesn't require the acl mount
+option), so this test would fail here.  The patch below will set it.
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/jfs/super.c |    4 ++++
+ 1 files changed, 4 insertions(+)
+
+diff -puN fs/jfs/super.c~generic-acl-support-for-permission-fix fs/jfs/super.c
+--- 25/fs/jfs/super.c~generic-acl-support-for-permission-fix	Wed Sep  8 14:40:38 2004
++++ 25-akpm/fs/jfs/super.c	Wed Sep  8 14:40:38 2004
+@@ -403,6 +403,10 @@ static int jfs_fill_super(struct super_b
+ 	}
+ 	sbi->flag = flag;
+ 
++#ifdef CONFIG_JFS_POSIX_ACL
++	sb->s_flags |= MS_POSIXACL;
++#endif
++
+ 	if (newLVSize) {
+ 		printk(KERN_ERR "resize option for remount only\n");
+ 		return -EINVAL;
+_

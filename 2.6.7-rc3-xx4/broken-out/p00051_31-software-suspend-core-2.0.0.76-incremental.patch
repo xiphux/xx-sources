@@ -1,0 +1,130 @@
+---
+
+ linux-2.6.6-xx2-xiphux/include/linux/suspend-debug.h |    2 -
+ linux-2.6.6-xx2-xiphux/include/linux/suspend.h       |    3 --
+ linux-2.6.6-xx2-xiphux/kernel/power/swapwriter.c     |   23 -------------------
+ 3 files changed, 1 insertion(+), 27 deletions(-)
+
+diff -puN include/linux/suspend-debug.h~31-software-suspend-core-2.0.0.76-incremental include/linux/suspend-debug.h
+--- linux-2.6.6-xx2/include/linux/suspend-debug.h~31-software-suspend-core-2.0.0.76-incremental	2004-05-28 04:31:27.375333712 -0400
++++ linux-2.6.6-xx2-xiphux/include/linux/suspend-debug.h	2004-05-28 04:31:27.383332496 -0400
+@@ -5,7 +5,7 @@
+ /* Solely for comparison with the version specific patch revision */
+ #define SWSUSP_CORE_REVISION 0x201
+ 
+-#define SWSUSP_CORE_VERSION "2.0.0.75"
++#define SWSUSP_CORE_VERSION "2.0.0.76"
+ #define name_suspend "Software Suspend " SWSUSP_CORE_VERSION ": "
+ 
+ /* Same length to ensure one overwrites the other */
+diff -puN include/linux/suspend.h~31-software-suspend-core-2.0.0.76-incremental include/linux/suspend.h
+--- linux-2.6.6-xx2/include/linux/suspend.h~31-software-suspend-core-2.0.0.76-incremental	2004-05-28 04:31:27.377333408 -0400
++++ linux-2.6.6-xx2-xiphux/include/linux/suspend.h	2004-05-28 04:31:27.384332344 -0400
+@@ -112,9 +112,6 @@ extern atomic_t suspend_num_doing_io;
+   } \
+ } while(0)
+ 
+-#ifdef CONFIG_SOFTWARE_SUSPEND_SWAPWRITER
+-extern struct page * last_suspend_cache_page;
+-#endif
+ extern unsigned int suspend_task;
+ 
+ #define TASK_FROZEN(p) ((p->flags & PF_FROZEN) || \
+diff -puN kernel/power/swapwriter.c~31-software-suspend-core-2.0.0.76-incremental kernel/power/swapwriter.c
+--- linux-2.6.6-xx2/kernel/power/swapwriter.c~31-software-suspend-core-2.0.0.76-incremental	2004-05-28 04:31:27.380332952 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/swapwriter.c	2004-05-28 04:31:27.387331888 -0400
+@@ -162,7 +162,6 @@ struct {
+ struct io_info {
+ 	SYS_IO_STRUCT * sys_struct;
+ 	SYS_ZONE_TYPE blocks[PAGE_SIZE/512];
+-	struct page * cache_page;
+ 	struct page * buffer_page;
+ 	struct page * data_page;
+ 	unsigned long flags;
+@@ -444,9 +443,6 @@ static unsigned long currentblockoffset 
+ static int currentblockchain = 0;
+ static int currentblocksperpage = 0;
+ 
+-/* Last page added to cache (shot down so image kept consistent */
+-struct page * last_suspend_cache_page;
+-
+ /* Header Page Information */
+ static int header_pageio_order = -1;
+ static int header_pages_allocated = 0;
+@@ -473,7 +469,6 @@ static DEVICE_BLOCK_TYPE resume_block_de
+  * ---------------------------------------------------------------
+  */
+ extern char swapfilename[];
+-struct page * last_suspend_cache_page = NULL;
+ 
+ extern int max_async_ios;
+ extern int expected_compression;
+@@ -948,9 +943,6 @@ static struct io_info * start_one(int rw
+  	submit(rw, io_info);
+ #endif
+ 
+-	io_info->cache_page = last_suspend_cache_page;
+-	last_suspend_cache_page = NULL;
+-
+ 	outstanding_io++;
+ 	if (outstanding_io > max_outstanding_io)
+ 		max_outstanding_io++;
+@@ -1004,12 +996,6 @@ static void cleanup_one(struct io_info *
+ 	atomic_dec(&buffer_page->count);
+ 	__free_pages(buffer_page, 0);
+ 
+-	if (io_info->cache_page) {
+-		//free_single_cache_page(io_info->cache_page, GFP_ATOMIC);
+-		printk("Should have tried to free page %p.\n", io_info->cache_page);
+-		io_info->cache_page = NULL;
+-	}
+-
+ 	outstanding_io--;
+ #if LINUX_VERSION_CODE > KERNEL_VERSION(2,4,99)
+ 	bio_put(io_info->sys_struct);
+@@ -1470,7 +1456,6 @@ static int swapwriter_write_header_init(
+ 
+ 	header_data.max_async_ios = max_async_ios;
+ 
+-	last_suspend_cache_page = NULL;
+ 	swapwriter_buffer = (char *) get_zeroed_page(GFP_ATOMIC);
+ 	header_link =
+ 		(unsigned long *) (swapwriter_buffer + BYTES_PER_HEADER_PAGE);
+@@ -1891,8 +1876,6 @@ static int swapwriter_post_load_ranges(v
+ 
+ static int swapwriter_write_init(int stream_number)
+ {
+-	last_suspend_cache_page = NULL;
+-
+ 	if (stream_number == 1) {
+ 		currentblockrange = header_data.pd1start_block_range;
+ 		currentblockoffset = header_data.pd1start_block_offset;
+@@ -2083,8 +2066,6 @@ static int swapwriter_read_init(int stre
+ 	currentblocksperpage = 1;
+ #endif
+ 
+-	last_suspend_cache_page = NULL;
+-
+ 	page_index = 1;
+ 
+ 	reset_io_stats();
+@@ -2430,8 +2411,6 @@ static int swapwriter_image_exists(void)
+ 
+ 	//PRINTFREEMEM("at start of swapwriter_image_exists.");
+ 
+-	last_suspend_cache_page = NULL;
+-
+ 	diskpage.address = get_zeroed_page(GFP_ATOMIC);
+ 
+ 	/* FIXME: Make sure bdev_page_io handles wrong parameters */
+@@ -2479,8 +2458,6 @@ static void swapwriter_mark_resume_attem
+ 		return;
+ 	}
+ 
+-	last_suspend_cache_page = NULL;
+-
+ 	diskpage.address = get_zeroed_page(GFP_ATOMIC);
+ 
+ 	/* FIXME: Make sure bdev_page_io handles wrong parameters */
+
+_

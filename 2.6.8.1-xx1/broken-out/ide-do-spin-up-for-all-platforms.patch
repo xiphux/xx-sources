@@ -1,0 +1,51 @@
+
+From: Alan Cox <alan@redhat.com>
+
+This was put in for PPC specifically and defined in the 2.4 tree to be
+paranoid about breaking stuff.  The actual wait for hwif spin up is however
+perfectly correct for all drives.  In the normal PC case the PC BIOS has
+done this but with other embedded boxes and with things like LinuxBIOS it
+may not have done.  Thus it should always be done.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/ide/ide-probe.c |    4 ----
+ 1 files changed, 4 deletions(-)
+
+diff -puN drivers/ide/ide-probe.c~ide-do-spin-up-for-all-platforms drivers/ide/ide-probe.c
+--- 25/drivers/ide/ide-probe.c~ide-do-spin-up-for-all-platforms	Mon Aug  9 14:15:19 2004
++++ 25-akpm/drivers/ide/ide-probe.c	Mon Aug  9 14:15:19 2004
+@@ -635,7 +635,6 @@ static void hwif_register (ide_hwif_t *h
+ 	device_register(&hwif->gendev);
+ }
+ 
+-#ifdef CONFIG_PPC
+ static int wait_hwif_ready(ide_hwif_t *hwif)
+ {
+ 	int rc;
+@@ -671,7 +670,6 @@ static int wait_hwif_ready(ide_hwif_t *h
+ 	
+ 	return rc;
+ }
+-#endif
+ 
+ /*
+  * This routine only knows how to look for drive units 0 and 1
+@@ -717,7 +715,6 @@ static void probe_hwif(ide_hwif_t *hwif)
+ 
+ 	local_irq_set(flags);
+ 
+-#ifdef CONFIG_PPC
+ 	/* This is needed on some PPCs and a bunch of BIOS-less embedded
+ 	 * platforms. Typical cases are:
+ 	 * 
+@@ -739,7 +736,6 @@ static void probe_hwif(ide_hwif_t *hwif)
+ 	 */
+ 	if (wait_hwif_ready(hwif))
+ 		printk(KERN_WARNING "%s: Wait for ready failed before probe !\n", hwif->name);
+-#endif /* CONFIG_PPC */
+ 
+ 	/*
+ 	 * Second drive should only exist if first drive was found,
+_

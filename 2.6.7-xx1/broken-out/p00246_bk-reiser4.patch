@@ -1,0 +1,879 @@
+Files linux-2.6.7-xx1/fs/reiser4/bufmgr/block-capture.JPG and linux/fs/reiser4/bufmgr/block-capture.JPG differ
+Files linux-2.6.7-xx1/fs/reiser4/bufmgr/block-capture.fm and linux/fs/reiser4/bufmgr/block-capture.fm differ
+Files linux-2.6.7-xx1/fs/reiser4/bufmgr/block-capture.pdf and linux/fs/reiser4/bufmgr/block-capture.pdf differ
+diff -burN linux-2.6.7-xx1/fs/reiser4/cluster.h linux/fs/reiser4/cluster.h
+--- linux-2.6.7-xx1/fs/reiser4/cluster.h	2004-06-21 22:31:57.000000000 -0400
++++ linux/fs/reiser4/cluster.h	2004-06-22 02:46:53.295281064 -0400
+@@ -150,6 +150,23 @@
+ 	return off_to_count(inode->i_size, clust->index, inode);
+ }
+ 
++static inline int
++alloc_clust_pages(reiser4_cluster_t * clust, struct inode * inode )
++{
++	assert("edward-791", clust != NULL);
++	assert("edward-792", inode != NULL);
++	clust->pages = reiser4_kmalloc(sizeof(*clust->pages) << inode_cluster_shift(inode), GFP_KERNEL);
++	if (!clust->pages)
++		return -ENOMEM;
++	return 0;
++}
++
++static inline void
++free_clust_pages(reiser4_cluster_t * clust)
++{
++	reiser4_kfree(clust->pages);
++}
++
+ #endif /* __FS_REISER4_CLUSTER_H__ */
+ 
+ 
+diff -burN linux-2.6.7-xx1/fs/reiser4/compress.c linux/fs/reiser4/compress.c
+--- linux-2.6.7-xx1/fs/reiser4/compress.c	2004-06-21 22:31:57.000000000 -0400
++++ linux/fs/reiser4/compress.c	2004-06-22 02:46:53.296280912 -0400
+@@ -10,6 +10,30 @@
+ #include <linux/vmalloc.h>
+ #include <linux/types.h>
+ 
++static void
++null_compress(void * ctx, __u8 *src_first, unsigned src_len,
++	      __u8 *dst_first, unsigned *dst_len)
++{
++	int i;
++	assert("edward-793", ctx == NULL);
++	assert("edward-794", src_first != NULL);
++	assert("edward-795", dst_first != NULL);
++	assert("edward-796", src_len != 0);
++	assert("edward-797", dst_len != NULL);
++
++	for (i=0; i < NONE_NRCOPY; i++)
++		fast_copy(src_first, dst_first, src_len);
++	*dst_len = src_len;
++	return;
++}
++
++static void
++null_decompress(void * ctx, __u8 *src_first, unsigned src_len,
++		__u8 *dst_first, unsigned *dst_len)
++{
++	impossible("edward-798", "trying to decompress uncompressed data");
++}
++
+ LOCAL void __lzrw1_compress(UBYTE *, ULONG, UBYTE *, ULONG *);
+ LOCAL void __lzrw1_decompress(UBYTE *, ULONG, UBYTE *, ULONG *);
+ 
+@@ -352,6 +376,21 @@
+ 	        .compress = NULL,
+ 	        .decompress = NULL
+ 	},
++	[NULL_COMPRESSION_ID] = {
++		.h = {
++			.type_id = REISER4_COMPRESSION_PLUGIN_TYPE,
++			.id = NULL_COMPRESSION_ID,
++			.pops = NULL,
++			.label = "null",
++			.desc = "fast copy",
++			.linkage = TYPE_SAFE_LIST_LINK_ZERO
++		},
++		.overrun = 0,
++		.alloc = NULL,
++		.free = NULL,
++	        .compress = null_compress,
++	        .decompress = null_decompress
++	},
+ 	[LZRW1_COMPRESSION_ID] = {
+ 		.h = {
+ 			.type_id = REISER4_COMPRESSION_PLUGIN_TYPE,
+diff -burN linux-2.6.7-xx1/fs/reiser4/compress.h linux/fs/reiser4/compress.h
+--- linux-2.6.7-xx1/fs/reiser4/compress.h	2004-06-21 22:31:57.000000000 -0400
++++ linux/fs/reiser4/compress.h	2004-06-22 02:46:53.297280760 -0400
+@@ -4,6 +4,8 @@
+ #include <linux/types.h>
+ #include <linux/string.h>
+ 
++#define NONE_NRCOPY 4
++
+ typedef enum {
+ 	TFM_READ,
+ 	TFM_WRITE
+diff -burN linux-2.6.7-xx1/fs/reiser4/plugin/cryptcompress.c linux/fs/reiser4/plugin/cryptcompress.c
+--- linux-2.6.7-xx1/fs/reiser4/plugin/cryptcompress.c	2004-06-21 22:31:57.000000000 -0400
++++ linux/fs/reiser4/plugin/cryptcompress.c	2004-06-22 02:46:53.664224976 -0400
+@@ -400,9 +400,14 @@
+ 	return 0;
+ }
+ 
++/* plugin->destroy_inode() */
+ reiser4_internal void
+-destroy_cryptcompress_info(struct inode * inode)
++destroy_inode_cryptcompress(struct inode * inode)
+ {
++	assert("edward-802", inode_file_plugin(inode) == file_plugin_by_id(SYMLINK_FILE_PLUGIN_ID));
++	assert("edward-803", !is_bad_inode(inode) && is_inode_loaded(inode));
++	assert("edward-804", inode_get_flag(inode, REISER4_CLUSTER_KNOWN));
++
+ 	free_crypto_tfm(inode);
+ 	if (inode_get_flag(inode, REISER4_CRYPTO_STAT_LOADED))
+ 		detach_crypto_stat(inode);
+@@ -540,6 +545,16 @@
+ 	clust->nr_pages = count_to_nrpages(clust->off + clust->count + clust->delta);
+ }
+ 
++/* cluster index should be valid */
++reiser4_internal void
++set_nrpages_by_inode(reiser4_cluster_t * clust, struct inode * inode)
++{
++	assert("edward-785", clust != NULL);
++	assert("edward-786", inode != NULL);
++
++	clust->nr_pages = count_to_nrpages(fsize_to_count(clust, inode));
++}
++
+ /* plugin->key_by_inode() */
+ /* see plugin/plugin.h for details */
+ reiser4_internal int
+@@ -1540,6 +1555,35 @@
+ 	return result;
+ }
+ 
++/* collect unlocked cluster pages */
++reiser4_internal int
++grab_cluster_pages(struct inode * inode, reiser4_cluster_t * clust)
++{
++	int i;
++	int result = 0;
++
++	assert("edward-787", clust != NULL);
++	assert("edward-788", clust->pages != NULL);
++	assert("edward-789", clust->nr_pages != 0);
++	assert("edward-790", 0 < clust->nr_pages <= inode_cluster_pages(inode));
++
++	for (i = 0; i < clust->nr_pages; i++) {
++		clust->pages[i] = grab_cache_page(inode->i_mapping, clust_to_pg(clust->index, inode) + i);
++		if (!(clust->pages[i])) {
++			result = RETERR(-ENOMEM);
++			break;
++		}
++		unlock_page(clust->pages[i]);
++	}
++	if (result) {
++		while(i) {
++			i--;
++			page_cache_release(clust->pages[i]);
++		}
++	}
++	return result;
++}
++
+ UNUSED_ARG static void
+ set_cluster_unlinked(reiser4_cluster_t * clust, struct inode * inode)
+ {
+@@ -1570,8 +1614,8 @@
+ 	}
+ }
+ 
+-/* put cluster pages and jnodes */
+-static void
++/* put cluster pages */
++reiser4_internal void
+ release_cluster_pages(reiser4_cluster_t * clust, int from)
+ {
+ 	int i;
+@@ -1872,6 +1916,7 @@
+        if (result)
+                return result;
+        assert("edward-726", clust->hint->coord.lh->owner == NULL);
++       atomic_inc(&inode->i_count);
+        balance_dirty_pages_ratelimited(inode->i_mapping);
+ 
+        return 0;
+diff -burN linux-2.6.7-xx1/fs/reiser4/plugin/cryptcompress.h linux/fs/reiser4/plugin/cryptcompress.h
+--- linux-2.6.7-xx1/fs/reiser4/plugin/cryptcompress.h	2004-06-21 22:31:57.000000000 -0400
++++ linux/fs/reiser4/plugin/cryptcompress.h	2004-06-22 02:46:53.669224216 -0400
+@@ -103,7 +103,7 @@
+ void init_inode_data_cryptcompress(struct inode *, reiser4_object_create_data *, int create);
+ int pre_delete_cryptcompress(struct inode *);
+ void hint_init_zero(hint_t *, lock_handle *);
+-void destroy_cryptcompress_info(struct inode * inode);
++void destroy_inode_cryptcompress(struct inode * inode);
+ int crc_inode_ok(struct inode * inode);
+ 
+ static inline struct crypto_tfm *
+diff -burN linux-2.6.7-xx1/fs/reiser4/plugin/file/file.c linux/fs/reiser4/plugin/file/file.c
+--- linux-2.6.7-xx1/fs/reiser4/plugin/file/file.c	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/plugin/file/file.c	2004-06-22 02:46:53.735214184 -0400
+@@ -1892,12 +1892,6 @@
+ 		drop_nonexclusive_access(uf_info);
+ }
+ 
+-reiser4_internal void balance_dirty_page_unix_file(struct inode *object)
+-{
+-	/* balance dirty pages periodically */
+-	balance_dirty_pages_ratelimited(object->i_mapping);
+-}
+-
+ reiser4_internal struct page *
+ unix_file_filemap_nopage(struct vm_area_struct *area, unsigned long address, int * unused)
+ {
+diff -burN linux-2.6.7-xx1/fs/reiser4/plugin/file/file.h linux/fs/reiser4/plugin/file/file.h
+--- linux-2.6.7-xx1/fs/reiser4/plugin/file/file.h	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/plugin/file/file.h	2004-06-22 02:46:53.740213424 -0400
+@@ -31,7 +31,6 @@
+ 
+ int sync_unix_file(struct file *file, struct dentry *dentry, int datasync);
+ 
+-void balance_dirty_page_unix_file(struct inode *object);
+ 
+ /* all the write into unix file is performed by item write method. Write method of unix file plugin only decides which
+    item plugin (extent or tail) and in which mode (one from the enum below) to call */
+diff -burN linux-2.6.7-xx1/fs/reiser4/plugin/file/tail_conversion.c linux/fs/reiser4/plugin/file/tail_conversion.c
+--- linux-2.6.7-xx1/fs/reiser4/plugin/file/tail_conversion.c	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/plugin/file/tail_conversion.c	2004-06-22 02:46:53.748212208 -0400
+@@ -7,6 +7,7 @@
+ #include "../../lib.h"
+ #include "../../safe_link.h"
+ #include "funcs.h"
++#include <linux/writeback.h>
+ 
+ /* this file contains:
+    tail2extent and extent2tail */
+@@ -395,7 +396,7 @@
+ 			if (result)
+ 				goto error;
+ 			/* throttle the conversion */
+-			balance_dirty_page_unix_file(inode);
++			balance_dirty_pages_ratelimited(inode->i_mapping);
+ 		}
+ 	}
+ 
+diff -burN linux-2.6.7-xx1/fs/reiser4/plugin/item/ctail.c linux/fs/reiser4/plugin/item/ctail.c
+--- linux-2.6.7-xx1/fs/reiser4/plugin/item/ctail.c	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/plugin/item/ctail.c	2004-06-22 02:46:53.760210384 -0400
+@@ -526,6 +526,9 @@
+ 
+ 	assert("edward-212", PageLocked(page));
+ 
++	if(PageUptodate(page))
++		goto exit;
++
+ 	inode = page->mapping->host;
+ 
+ 	if (!cluster_is_uptodate(clust)) {
+@@ -539,10 +542,7 @@
+ 		release = 1;
+ 	}
+ 	if(PageUptodate(page))
+-		/* Two possible reasons for it:
+-		   1. page was filled by the caller,
+-		   2. races with another read/write
+-		*/
++		/* races with another read/write */
+ 		goto exit;
+ 	if (clust->stat == FAKE_CLUSTER) {
+ 		/* fill page by zeroes */
+@@ -610,6 +610,41 @@
+ 	return result;
+ }
+ 
++static int
++ctail_read_page_cluster(reiser4_cluster_t * clust, struct inode * inode)
++{
++	int i;
++	int result;
++	assert("edward-779", clust != NULL);
++	assert("edward-780", inode != NULL);
++
++	set_nrpages_by_inode(clust, inode);
++
++	result = grab_cluster_pages(inode, clust);
++	if (result)
++		return result;
++	result = ctail_read_cluster(clust, inode, 0 /* read */);
++	if (result)
++		goto out;
++	/* stream is attached at this point */
++	assert("edward-781", cluster_is_uptodate(clust));
++
++	for (i=0; i < clust->nr_pages; i++) {
++		struct page * page = clust->pages[i];
++		lock_page(page);
++		do_readpage_ctail(clust, page);
++		unlock_page(page);
++	}
++	release_cluster_buf(clust);
++ out:
++	release_cluster_pages(clust, 0);
++	return result;
++}
++
++#define check_order(pages)                                                    \
++assert("edward-214", ergo(!list_empty(pages) && pages->next != pages->prev,   \
++       list_to_page(pages)->index < list_to_next_page(pages)->index))
++
+ /* plugin->s.file.writepage */
+ 
+ /* plugin->u.item.s.file.readpages
+@@ -625,24 +660,23 @@
+ 	reiser4_cluster_t clust;
+ 	struct page *page;
+ 	struct pagevec lru_pvec;
+-	struct inode * inode;
+-
+-	if (!list_empty(pages) && pages->next != pages->prev)
+-		/* more then one pages in the list - make sure its order is right */
+-		assert("edward-214", list_to_page(pages)->index < list_to_next_page(pages)->index);
++	struct inode * inode = mapping->host;
+ 
++	check_order(pages);
+ 	pagevec_init(&lru_pvec, 0);
+ 	reiser4_cluster_init(&clust);
+ 	clust.file = vp;
+ 	clust.hint = &hint;
++
++	alloc_clust_pages(&clust, inode);
+ 	init_lh(&lh);
+ 
+ 	ret = load_file_hint(clust.file, &hint, &lh);
+ 	if (ret)
+ 		return;
+-	//coord_init_invalid(&hint.coord.base_coord, 0);
+ 
+-	inode = mapping->host;
++	/* address_space-level file readahead doesn't know about
++	   reiser4 page clustering, so we work around this fact */
+ 
+ 	while (!list_empty(pages)) {
+ 		page = list_to_page(pages);
+@@ -651,28 +685,23 @@
+ 			page_cache_release(page);
+ 			continue;
+ 		}
+-
+-		/* FIXME-EDWARD: Fill all cluster's pages */
+-
+-		/* update cluster handle if it is necessary */
+-		if (!cluster_is_uptodate(&clust) || !page_of_cluster(page, &clust, inode)) {
+-			release_cluster_buf(&clust);
+-			clust.index = pg_to_clust(page->index, inode);
+-			if (fsize_to_count(&clust, inode) <= PAGE_CACHE_SIZE) {
+-				clust.pages = &page;
+-				clust.nr_pages = 1;
++		if (PageUptodate(page)) {
++			unlock_page(page);
++			continue;
+ 			}
+ 			unlock_page(page);
+-			ret = ctail_read_cluster(&clust, inode, 0 /* do not write */);
++		clust.index = pg_to_clust(page->index, inode);
++		ret = ctail_read_page_cluster(&clust, inode);
+ 			if (ret)
+ 				goto exit;
++		assert("edward-782", !cluster_is_uptodate(&clust));
++
+ 			lock_page(page);
+-		}
+ 		ret = do_readpage_ctail(&clust, page);
+ 		if (!pagevec_add(&lru_pvec, page))
+ 			__pagevec_lru_add(&lru_pvec);
+ 		if (ret) {
+-			impossible("edward-215", "do_readpage_ctail returned crap");
++			warning("edward-215", "do_readpage_ctail failed");
+ 			unlock_page(page);
+ 		exit:
+ 			while (!list_empty(pages)) {
+@@ -686,10 +715,13 @@
+ 		}
+ 		unlock_page(page);
+ 	}
++	assert("edward-783", !cluster_is_uptodate(&clust));
+ 	hint.coord.valid = 0;
+ 	save_file_hint(clust.file, &hint);
+ 
+ 	done_lh(&lh);
++	/* free array */
++	free_clust_pages(&clust);
+ 	put_cluster_data(&clust);
+ 	pagevec_lru_add(&lru_pvec);
+ 	return;
+@@ -1104,14 +1136,21 @@
+ detach_squeeze_idata(flush_squeeze_item_data_t ** idata)
+ {
+ 	ctail_squeeze_info_t * info;
++	struct inode * inode;
+ 
+ 	assert("edward-253", idata != NULL);
+ 	info = &(*idata)->u.ctail_info;
+ 
+ 	assert("edward-254", info->clust != NULL);
+ 	assert("edward-255", info->inode != NULL);
++
++	inode = info->inode;
++
++	assert("edward-784", atomic_read(&inode->i_count));
+ 	assert("edward-256", info->clust->buf != NULL);
+ 
++	atomic_dec(&inode->i_count);
++
+ 	release_cluster_buf(info->clust);
+ 	reiser4_kfree(info->clust);
+ 	reiser4_kfree(*idata);
+diff -burN linux-2.6.7-xx1/fs/reiser4/plugin/item/ctail.h linux/fs/reiser4/plugin/item/ctail.h
+--- linux-2.6.7-xx1/fs/reiser4/plugin/item/ctail.h	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/plugin/item/ctail.h	2004-06-22 02:46:53.763209928 -0400
+@@ -84,6 +84,9 @@
+ int deflate_cluster(reiser4_cluster_t *, struct inode *);
+ void truncate_cluster(struct inode * inode, pgoff_t start, long count);
+ int hint_prev_cluster(reiser4_cluster_t * clust);
++void set_nrpages_by_inode(reiser4_cluster_t * clust, struct inode * inode);
++int grab_cluster_pages(struct inode * inode, reiser4_cluster_t * clust);
++void release_cluster_pages(reiser4_cluster_t * clust, int from);
+ 
+ #endif /* __FS_REISER4_CTAIL_H__ */
+ 
+diff -burN linux-2.6.7-xx1/fs/reiser4/plugin/item/extent.c linux/fs/reiser4/plugin/item/extent.c
+--- linux-2.6.7-xx1/fs/reiser4/plugin/item/extent.c	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/plugin/item/extent.c	2004-06-22 02:46:53.790205824 -0400
+@@ -167,14 +167,6 @@
+ 				assert("vs-1663", WITH_DATA(un_extent->node, !memcmp(exts_to_add->data, extent_by_coord(un_extent), sizeof(reiser4_extent))));
+ 				assert("vs-1664", lh->node == un_extent->node);
+ 			}
+-
+-#if 0
+-			if (flags == COPI_DONT_SHIFT_LEFT) {
+-				/* set coord back to initial extent unit */
+-				*un_extent = coord_after;
+-				assert("vs-1375", znode_is_write_locked(un_extent->node));
+-			}
+-#endif
+ 		}
+ 	}
+ 	tap_done(&watch);
+diff -burN linux-2.6.7-xx1/fs/reiser4/plugin/item/tail.c linux/fs/reiser4/plugin/item/tail.c
+--- linux-2.6.7-xx1/fs/reiser4/plugin/item/tail.c	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/plugin/item/tail.c	2004-06-22 02:46:53.827200200 -0400
+@@ -482,7 +482,7 @@
+ 	if (back_to_dirty)
+ 		move_inode_out_from_sync_inodes_loop(mapping);
+ 
+-	balance_dirty_page_unix_file(inode);
++	balance_dirty_pages_ratelimited(inode->i_mapping);
+ 	return hint_validate(hint, &f->key, 0/* do not check key */, ZNODE_WRITE_LOCK);
+ }
+ 
+diff -burN linux-2.6.7-xx1/fs/reiser4/plugin/object.c linux/fs/reiser4/plugin/object.c
+--- linux-2.6.7-xx1/fs/reiser4/plugin/object.c	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/plugin/object.c	2004-06-22 02:46:53.680222544 -0400
+@@ -1315,6 +1315,7 @@
+ 		.pre_delete = pre_delete_unix_file,
+ 		.drop = drop_common,
+ 		.delete_inode = delete_inode_common,
++		.destroy_inode = NULL,
+ 		.forget_inode = forget_inode_common,
+ 		.sendfile = sendfile_unix_file,
+ 		.prepare_write = prepare_write_unix_file
+@@ -1375,6 +1376,7 @@
+ 		.pre_delete = NULL,
+ 		.drop = drop_common,
+ 		.delete_inode = delete_inode_common,
++		.destroy_inode = NULL,
+ 		.forget_inode = forget_inode_common,
+ 	},
+ 	[SYMLINK_FILE_PLUGIN_ID] = {
+@@ -1436,6 +1438,7 @@
+ 		.pre_delete = NULL,
+ 		.drop = drop_common,
+ 		.delete_inode = delete_inode_common,
++		.destroy_inode = destroy_inode_symlink,
+ 		.forget_inode = forget_inode_common,
+ 	},
+ 	[SPECIAL_FILE_PLUGIN_ID] = {
+@@ -1495,6 +1498,7 @@
+ 		.pre_delete = NULL,
+ 		.drop = drop_common,
+ 		.delete_inode = delete_inode_common,
++		.destroy_inode = NULL,
+ 		.forget_inode = forget_inode_common,
+ 	},
+ 	[PSEUDO_FILE_PLUGIN_ID] = {
+@@ -1554,6 +1558,7 @@
+ 		.pre_delete = NULL,
+ 		.drop = drop_pseudo,
+ 		.delete_inode = NULL,
++		.destroy_inode = NULL,
+ 		.forget_inode = NULL,
+ 	},
+ 	[CRC_FILE_PLUGIN_ID] = {
+@@ -1614,6 +1619,7 @@
+ 		.pre_delete = pre_delete_cryptcompress,
+ 		.drop = drop_common,
+ 		.delete_inode = delete_inode_common,
++		.destroy_inode = destroy_inode_cryptcompress,
+ 		.forget_inode = forget_inode_common,
+ 		.sendfile = sendfile_common,
+ 		.prepare_write = prepare_write_common
+diff -burN linux-2.6.7-xx1/fs/reiser4/plugin/plugin.h linux/fs/reiser4/plugin/plugin.h
+--- linux-2.6.7-xx1/fs/reiser4/plugin/plugin.h	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/plugin/plugin.h	2004-06-22 02:46:53.691220872 -0400
+@@ -282,6 +282,9 @@
+ 	/* called from ->drop() when there are no links, and object should be
+ 	 * garbage collected. */
+ 	void (*delete_inode)(struct inode *);
++
++	/* called from ->destroy_inode() */
++	void (*destroy_inode)(struct inode *);
+ 	void (*forget_inode)(struct inode *);
+ 	ssize_t (*sendfile)(struct file *, loff_t *, size_t, read_actor_t, void __user *);
+ 	/*
+@@ -661,6 +664,7 @@
+ 
+ typedef enum {
+ 	NONE_COMPRESSION_ID,
++	NULL_COMPRESSION_ID,
+ 	LZRW1_COMPRESSION_ID,
+ 	GZIP6_COMPRESSION_ID,
+ 	LAST_COMPRESSION_ID
+diff -burN linux-2.6.7-xx1/fs/reiser4/plugin/symlink.c linux/fs/reiser4/plugin/symlink.c
+--- linux-2.6.7-xx1/fs/reiser4/plugin/symlink.c	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/plugin/symlink.c	2004-06-22 02:46:53.695220264 -0400
+@@ -58,6 +58,20 @@
+ 	return result;
+ }
+ 
++/* plugin->destroy_inode() */
++reiser4_internal void
++destroy_inode_symlink(struct inode * inode)
++{
++	assert("edward-799", inode_file_plugin(inode) == file_plugin_by_id(SYMLINK_FILE_PLUGIN_ID));
++	assert("edward-800", !is_bad_inode(inode) && is_inode_loaded(inode));
++	assert("edward-801", inode_get_flag(inode, REISER4_GENERIC_PTR_USED));
++	assert("vs-839", S_ISLNK(inode->i_mode));
++
++	reiser4_kfree_in_sb(inode->u.generic_ip, inode->i_sb);
++	inode->u.generic_ip = 0;
++	inode_clr_flag(inode, REISER4_GENERIC_PTR_USED);
++}
++
+ /* Make Linus happy.
+    Local variables:
+    c-indentation-style: "K&R"
+diff -burN linux-2.6.7-xx1/fs/reiser4/plugin/symlink.h linux/fs/reiser4/plugin/symlink.h
+--- linux-2.6.7-xx1/fs/reiser4/plugin/symlink.h	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/plugin/symlink.h	2004-06-22 02:46:53.696220112 -0400
+@@ -7,6 +7,7 @@
+ #include <linux/fs.h>		/* for struct inode */
+ 
+ int create_symlink(struct inode *symlink, struct inode *dir, reiser4_object_create_data * data);
++void destroy_inode_symlink(struct inode * inode);
+ 
+ /* __REISER4_SYMLINK_H__ */
+ #endif
+diff -burN linux-2.6.7-xx1/fs/reiser4/tree.c linux/fs/reiser4/tree.c
+--- linux-2.6.7-xx1/fs/reiser4/tree.c	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/tree.c	2004-06-22 02:46:53.530245344 -0400
+@@ -1307,23 +1307,6 @@
+ 	assert("umka-328", from != NULL);
+ 	assert("vs-316", !node_is_empty(from->node));
+ 	assert("nikita-1812", coord_is_existing_unit(from) && coord_is_existing_unit(to));
+-#if 0
+-	if (coord_eq(from, to) && !coord_is_existing_unit(from)) {
+-		assert("nikita-1812", !coord_is_existing_unit(to));	/* Napoleon defeated */
+-		return 0;
+-	}
+-	/* set @from and @to to first and last units which are to be removed
+-	   (getting rid of betweenness) */
+-	if (coord_set_to_right(from) || coord_set_to_left(to)) {
+-		warning("jmacd-18128", "coord_set failed");
+-		return RETERR(-EIO);
+-	}
+-
+-	/* make sure that @from and @to are set to existing units in the
+-	   node */
+-	assert("vs-161", coord_is_existing_unit(from));
+-	assert("vs-162", coord_is_existing_unit(to));
+-#endif
+ 
+ 	init_lh(&left_child);
+ 	init_lh(&right_child);
+diff -burN linux-2.6.7-xx1/fs/reiser4/txnmgr.c linux/fs/reiser4/txnmgr.c
+--- linux-2.6.7-xx1/fs/reiser4/txnmgr.c	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/txnmgr.c	2004-06-22 02:46:53.568239568 -0400
+@@ -2863,55 +2863,6 @@
+ 
+ #endif
+ 
+-
+-#if 0
+-
+-/* Unset the dirty status for this jnode.  If the jnode is dirty, this
+-   involves locking the atom (for its capture lists), removing from the
+-   dirty_nodes list and pushing in to the clean list. */
+-reiser4_internal void
+-jnode_make_clean(jnode * node)
+-{
+-	txn_atom *atom;
+-
+-	assert("umka-205", node != NULL);
+-	assert("jmacd-1083", spin_jnode_is_not_locked(node));
+-
+-	LOCK_JNODE(node);
+-
+-	atom = jnode_get_atom(node);
+-
+-	if (jnode_is_dirty(node)) {
+-
+-		JF_CLR(node, JNODE_DIRTY);
+-
+-		assert("jmacd-9366", !jnode_is_dirty(node));
+-
+-		/*ON_TRACE (TRACE_FLUSH, "clean %sformatted node %p\n",
+-		   jnode_is_unformatted (node) ? "un" : "", node); */
+-	}
+-
+-	/* do not steal nodes from flush queue */
+-	if (!JF_ISSET(node, JNODE_FLUSH_QUEUED)) {
+-		/* Now it's possible that atom may be NULL, in case this was called
+-		   from invalidate page */
+-		if (atom != NULL) {
+-			capture_list_remove_clean(node);
+-			capture_list_push_front(ATOM_CLEAN_LIST(atom), node);
+-			/*XXXX*/ON_DEBUG(count_jnode(atom, node, NODE_LIST(node), CLEAN_LIST, 1));
+-		}
+-	}
+-
+-	if (atom)
+-		UNLOCK_ATOM(atom);
+-
+-	ON_DEBUG_MODIFY(znode_set_checksum(node, 1));
+-	UNLOCK_JNODE(node);
+-}
+-
+-#endif
+-
+-
+ /* Make node OVRWR and put it on atom->overwrite_nodes list, atom lock and jnode
+  * lock should be taken before calling this function. */
+ reiser4_internal void jnode_make_wander_nolock (jnode * node)
+diff -burN linux-2.6.7-xx1/fs/reiser4/vfs_ops.c linux/fs/reiser4/vfs_ops.c
+--- linux-2.6.7-xx1/fs/reiser4/vfs_ops.c	2004-06-21 22:31:58.000000000 -0400
++++ linux/fs/reiser4/vfs_ops.c	2004-06-22 02:46:53.591236072 -0400
+@@ -65,7 +65,6 @@
+ static void reiser4_delete_inode(struct inode *);
+ static void reiser4_write_super(struct super_block *);
+ static int reiser4_statfs(struct super_block *, struct kstatfs *);
+-static void reiser4_kill_super(struct super_block *);
+ static int reiser4_show_options(struct seq_file *m, struct vfsmount *mnt);
+ static void reiser4_sync_inodes(struct super_block *s, struct writeback_control * wbc);
+ 
+@@ -517,44 +516,10 @@
+ 	assert("vs-1428", info->anonymous_eflushed == 0);
+ 	assert("zam-1050", info->nr_jnodes == 0);
+ 
+-#if 0
+-	{
+-		/* finish with inode's jnode */
+-		jnode *j;
+-
+-		j = &info->inode_jnode;
+-		assert("vs-1243", atomic_read(&j->x_count) == 1);
+-		atomic_set(&j->x_count, 0);
+-		JF_SET(j, JNODE_RIP);
+-		check_me("vs-1242", jnode_try_drop(j) == 0);
+-	}
+-#endif
+-
+ 	if (!is_bad_inode(inode) && is_inode_loaded(inode)) {
+-
+-		if (inode_get_flag(inode, REISER4_GENERIC_PTR_USED)) {
+-			assert("vs-839", S_ISLNK(inode->i_mode));
+-			reiser4_kfree_in_sb(inode->u.generic_ip, inode->i_sb);
+-			inode->u.generic_ip = 0;
+-			inode_clr_flag(inode, REISER4_GENERIC_PTR_USED);
+-		}
+-		if (inode_get_flag(inode, REISER4_SECRET_KEY_INSTALLED)) {
+-			/* destroy secret key */
+-			crypto_plugin *cplug = inode_crypto_plugin(inode);
+-			assert("edward-35", cplug != NULL);
+-			assert("edward-37", cryptcompress_inode_data(inode)->expkey != NULL);
+-			xmemset(cryptcompress_inode_data(inode)->expkey, 0, (cplug->nr_keywords)*sizeof(__u32));
+-			reiser4_kfree_in_sb(cryptcompress_inode_data(inode)->expkey, inode->i_sb);
+-			inode_clr_flag(inode, REISER4_SECRET_KEY_INSTALLED);
+-		}
+-		if (inode_get_flag(inode, REISER4_CRYPTO_STAT_LOADED)) {
+-			assert("edward-38", info->crypt != NULL);
+-			reiser4_kfree_in_sb(info->crypt->keyid, inode->i_sb);
+-			inode_clr_flag(inode, REISER4_CRYPTO_STAT_LOADED);
+-		}
+-		if (inode_get_flag(inode, REISER4_CLUSTER_KNOWN))
+-			inode_clr_flag(inode, REISER4_CLUSTER_KNOWN);
+-
++		file_plugin * fplug = inode_file_plugin(inode);
++		if (fplug->destroy_inode != NULL)
++			fplug->destroy_inode(inode);
+ 	}
+ 	dispose_cursors(inode);
+ 	if (info->pset)
+@@ -1203,53 +1168,48 @@
+ 	unregister_tree_profregion();
+ }
+ 
+-/* umount. */
++/* ->write_super() method. Called by sync(2). */
+ static void
+-reiser4_kill_super(struct super_block *s)
++reiser4_write_super(struct super_block *s)
++{
++	int ret;
++	reiser4_context ctx;
++
++	assert("vs-1700", !rofs_super(s));
++
++	init_context(&ctx, s);
++	reiser4_stat_inc(vfs_calls.write_super);
++
++	ret = capture_super_block(s);
++	if (ret != 0)
++		warning("vs-1701",
++			"capture_super_block failed in write_super: %d", ret);
++	ret = txnmgr_force_commit_all(s, 1);
++	if (ret != 0)
++		warning("jmacd-77113",
++			"txn_force failed in write_super: %d", ret);
++
++	s->s_dirt = 0;
++
++	reiser4_exit_context(&ctx);
++}
++
++static void
++reiser4_put_super(struct super_block *s)
+ {
+ 	reiser4_super_info_data *sbinfo;
+ 	reiser4_context context;
+ 
+-	sbinfo = (reiser4_super_info_data *) s->s_fs_info;
+-	if (!sbinfo)
+-		/* mount failed */
+-		return;
++	sbinfo = get_super_private(s);
++	assert("vs-1699", sbinfo);
+ 
+ 	init_context(&context, s);
+-
+-	ON_TRACE(TRACE_VFS_OPS, "kill_super\n");
+-
+ 	stop_ktxnmgrd(&sbinfo->tmgr);
+-
+ 	reiser4_sysfs_done(s);
+ 
+-	/* FIXME-VS: the problem is that there still might be dirty pages
+-	   which became dirty via mapping. Have them to go through
+-	   reiser4_writepages */
+-	fsync_super(s);
+-
+-	/* complete removal of directories which were not deleted when they
+-	 * were supposed to be because their dentries had negative child
+-	 * dentries */
+-	shrink_dcache_parent(s->s_root);
+-	/* kill "anonymous" dentries that are created, for example, while
+-	 * decoding NFS file handles. */
+-	shrink_dcache_anon(&s->s_anon);
+-	INIT_HLIST_HEAD(&s->s_anon);
+-
+-#if REISER4_TRACE
+-	if (reiser4_is_debugged(s, REISER4_VERBOSE_UMOUNT))
+-		get_current_context()->trace_flags |= (TRACE_PCACHE |
+-						       TRACE_TXN    |
+-						       TRACE_FLUSH  |
+-						       TRACE_ZNODES |
+-						       TRACE_IO_R   |
+-						       TRACE_IO_W);
+-#endif
+-
+-	/* flushes transactions, etc. */
+-	if (get_super_private(s)->df_plug->release(s) != 0)
+-		goto out;
++	/* have disk format plugin to free its resources */
++	if (get_super_private(s)->df_plug->release)
++		get_super_private(s)->df_plug->release(s);
+ 
+ 	done_ktxnmgrd_context(&sbinfo->tmgr);
+ 	done_entd_context(s);
+@@ -1265,34 +1225,6 @@
+ 	rcu_barrier();
+ 	done_formatted_fake(s);
+ 
+-	close_log_file(&sbinfo->log_file);
+-
+-	if (reiser4_is_debugged(s, REISER4_STATS_ON_UMOUNT))
+-		reiser4_print_stats();
+-
+-	/* we don't want ->write_super to be called any more. */
+-	s->s_op->write_super = NULL;
+-	kill_block_super(s);
+-
+-#if REISER4_DEBUG
+-	{
+-		struct list_head *scan;
+-
+-		/* print jnodes that survived umount. */
+-		list_for_each(scan, &sbinfo->all_jnodes) {
+-			jnode *busy;
+-
+-			busy = list_entry(scan, jnode, jnodes);
+-			info_jnode("\nafter umount", busy);
+-		}
+-	}
+-	if (sbinfo->kmalloc_allocated > 0)
+-		warning("nikita-2622",
+-			"%i bytes still allocated", sbinfo->kmalloc_allocated);
+-#endif
+-
+-out:
+-
+ 	/* no assertions below this line */
+ 	reiser4_exit_context(&context);
+ 
+@@ -1302,25 +1234,6 @@
+ 	s->s_fs_info = NULL;
+ }
+ 
+-/* ->write_super() method. Called by sync(2). */
+-static void
+-reiser4_write_super(struct super_block *s)
+-{
+-	int ret;
+-	reiser4_context ctx;
+-
+-	init_context(&ctx, s);
+-	reiser4_stat_inc(vfs_calls.write_super);
+-	ret = txnmgr_force_commit_all(s, 1);
+-	if (ret != 0)
+-		warning("jmacd-77113",
+-			"txn_force failed in write_super: %d", ret);
+-
+-	s->s_dirt = 0;
+-
+-	reiser4_exit_context(&ctx);
+-}
+-
+ /* ->get_sb() method of file_system operations. */
+ static struct super_block *
+ reiser4_get_sb(struct file_system_type *fs_type	/* file
+@@ -1499,7 +1412,7 @@
+ 	.name = "reiser4",
+ 	.fs_flags = FS_REQUIRES_DEV,
+ 	.get_sb = reiser4_get_sb,
+-	.kill_sb = reiser4_kill_super,
++	.kill_sb = kill_block_super,/*reiser4_kill_super,*/
+ 	.next = NULL
+ };
+ 
+@@ -1512,7 +1425,7 @@
+  	.put_inode = NULL,
+ 	.drop_inode = reiser4_drop_inode,
+ 	.delete_inode = reiser4_delete_inode,
+-	.put_super = NULL,
++	.put_super = reiser4_put_super,
+ 	.write_super = reiser4_write_super,
+ 	.sync_fs = NULL,
+  	.write_super_lockfs = NULL,

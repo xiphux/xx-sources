@@ -1,0 +1,47 @@
+---
+
+ linux-2.6.5-xx21-xiphux/include/linux/locallock.h |   23 ++++++++++++++++++++++
+ 1 files changed, 23 insertions(+)
+
+diff -puN include/linux/locallock.h~reiser4-atomic_dec_and_locallock include/linux/locallock.h
+--- linux-2.6.5-xx21/include/linux/locallock.h~reiser4-atomic_dec_and_locallock	2004-05-07 15:26:28.828640688 -0400
++++ linux-2.6.5-xx21-xiphux/include/linux/locallock.h	2004-05-07 15:26:28.831640232 -0400
+@@ -168,6 +168,27 @@ static inline void local_unlock_irq(loca
+ 	local_irq_enable();
+ }
+ 
++static inline int atomic_dec_and_locallock(atomic_t *atomic, locallock_t *lock)
++{
++	int result;
++	int counter;
++
++	result = 0;
++	do {
++		counter = atomic_read(atomic);
++
++		if (counter == 1) {
++			local_lock(lock);
++			result = atomic_dec_and_test(atomic);
++			if (result == 0)
++				local_unlock(lock);
++			break;
++		}
++	} while (unlikely(cmpxchg(&atomic->counter,
++				  counter, counter - 1) != counter));
++	return result;
++}
++
+ /* USE_LOCALLOCK */
+ #else
+ 
+@@ -187,6 +208,8 @@ typedef spinlock_t locallock_t;
+ #define local_lock_irq(lock) spin_lock_irq(lock)
+ #define local_unlock_irq(lock) spin_unlock_irq(lock)
+ 
++#define atomic_dec_and_locallock(atomic, lock) atomic_dec_and_lock(atomic, lock)
++
+ /* USE_LOCALLOCK */
+ #endif
+ 
+
+_

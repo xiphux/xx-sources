@@ -1,0 +1,48 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+Zwane Mwaikambo <zwane@fsmlabs.com> wrote:
+
+  The following caused some fireworks whilst merging i386 cpu hotplug. 
+  any_online_cpu(0x2) returns 32 on i386 if we're forced to continue past the
+  only set bit due to the additional find_first_bit in the find_next_bit i386
+  implementation.  Not wanting to change current behaviour in the bitops
+  primitives and since the NR_CPUS thing is a cpumask issue, i've opted to fix
+  next_cpu() and first_cpu() instead.
+
+This might save a couple of lines of code.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/cpumask.h |    5 +++--
+ 1 files changed, 3 insertions(+), 2 deletions(-)
+
+diff -puN include/linux/cpumask.h~first-next_cpu-returns-values-nr_cpus include/linux/cpumask.h
+--- 25/include/linux/cpumask.h~first-next_cpu-returns-values-nr_cpus	2004-07-31 17:32:16.569625216 -0700
++++ 25-akpm/include/linux/cpumask.h	2004-07-31 17:33:37.404336472 -0700
+@@ -73,6 +73,7 @@
+  *    inside a macro, the way we do the other calls.
+  */
+ 
++#include <linux/kernel.h>
+ #include <linux/threads.h>
+ #include <linux/bitmap.h>
+ #include <asm/bug.h>
+@@ -207,13 +208,13 @@ static inline void __cpus_shift_left(cpu
+ #define first_cpu(src) __first_cpu(&(src), NR_CPUS)
+ static inline int __first_cpu(const cpumask_t *srcp, int nbits)
+ {
+-	return find_first_bit(srcp->bits, nbits);
++	return min(NR_CPUS, find_first_bit(srcp->bits, nbits));
+ }
+ 
+ #define next_cpu(n, src) __next_cpu((n), &(src), NR_CPUS)
+ static inline int __next_cpu(int n, const cpumask_t *srcp, int nbits)
+ {
+-	return find_next_bit(srcp->bits, nbits, n+1);
++	return min(NR_CPUS, find_next_bit(srcp->bits, nbits, n+1));
+ }
+ 
+ #define cpumask_of_cpu(cpu)						\
+_

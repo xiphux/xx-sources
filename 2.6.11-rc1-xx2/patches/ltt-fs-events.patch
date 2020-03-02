@@ -1,0 +1,236 @@
+
+From: Karim Yaghmour <karim@opersys.com>
+
+signed-off-by: Karim Yaghmour <karim@opersys.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/buffer.c        |    3 +++
+ 25-akpm/fs/exec.c          |    4 ++++
+ 25-akpm/fs/ioctl.c         |    3 +++
+ 25-akpm/fs/open.c          |    5 +++++
+ 25-akpm/fs/read_write.c    |   19 +++++++++++++++++--
+ 25-akpm/fs/relayfs/relay.c |    3 +--
+ 25-akpm/fs/select.c        |    4 ++++
+ 7 files changed, 37 insertions(+), 4 deletions(-)
+
+diff -puN fs/buffer.c~ltt-fs-events fs/buffer.c
+--- 25/fs/buffer.c~ltt-fs-events	2005-01-13 23:01:13.655121256 -0800
++++ 25-akpm/fs/buffer.c	2005-01-13 23:01:13.668119280 -0800
+@@ -39,6 +39,7 @@
+ #include <linux/notifier.h>
+ #include <linux/cpu.h>
+ #include <linux/bitops.h>
++#include <linux/ltt-events.h>
+ 
+ static int fsync_buffers_list(spinlock_t *lock, struct list_head *list);
+ static void invalidate_bh_lrus(void);
+@@ -87,7 +88,9 @@ void fastcall unlock_buffer(struct buffe
+  */
+ void __wait_on_buffer(struct buffer_head * bh)
+ {
++	ltt_ev_file_system(LTT_EV_FILE_SYSTEM_BUF_WAIT_START, 0, 0, NULL);
+ 	wait_on_bit(&bh->b_state, BH_Lock, sync_buffer, TASK_UNINTERRUPTIBLE);
++	ltt_ev_file_system(LTT_EV_FILE_SYSTEM_BUF_WAIT_END, 0, 0, NULL);
+ }
+ 
+ static void
+diff -puN fs/exec.c~ltt-fs-events fs/exec.c
+--- 25/fs/exec.c~ltt-fs-events	2005-01-13 23:01:13.656121104 -0800
++++ 25-akpm/fs/exec.c	2005-01-13 23:01:13.670118976 -0800
+@@ -48,6 +48,7 @@
+ #include <linux/syscalls.h>
+ #include <linux/rmap.h>
+ #include <linux/acct.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/mmu_context.h>
+@@ -1116,6 +1117,9 @@ int do_execve(char * filename,
+ 	if (IS_ERR(file))
+ 		goto out_kfree;
+ 
++	ltt_ev_file_system(LTT_EV_FILE_SYSTEM_EXEC, 0,
++			file->f_dentry->d_name.len, file->f_dentry->d_name.name);
++
+ 	sched_exec();
+ 
+ 	bprm->p = PAGE_SIZE*MAX_ARG_PAGES-sizeof(void *);
+diff -puN fs/ioctl.c~ltt-fs-events fs/ioctl.c
+--- 25/fs/ioctl.c~ltt-fs-events	2005-01-13 23:01:13.658120800 -0800
++++ 25-akpm/fs/ioctl.c	2005-01-13 23:01:13.670118976 -0800
+@@ -11,6 +11,7 @@
+ #include <linux/file.h>
+ #include <linux/fs.h>
+ #include <linux/security.h>
++#include <linux/ltt-events.h>
+ #include <linux/module.h>
+ 
+ #include <asm/uaccess.h>
+@@ -68,6 +69,8 @@ asmlinkage long sys_ioctl(unsigned int f
+                 goto out;
+         }
+ 
++	ltt_ev_file_system(LTT_EV_FILE_SYSTEM_IOCTL, fd, cmd, NULL);
++
+ 	lock_kernel();
+ 	switch (cmd) {
+ 		case FIOCLEX:
+diff -puN fs/open.c~ltt-fs-events fs/open.c
+--- 25/fs/open.c~ltt-fs-events	2005-01-13 23:01:13.659120648 -0800
++++ 25-akpm/fs/open.c	2005-01-13 23:01:13.671118824 -0800
+@@ -19,6 +19,8 @@
+ #include <linux/security.h>
+ #include <linux/mount.h>
+ #include <linux/vfs.h>
++#include <linux/ltt-events.h>
++
+ #include <asm/uaccess.h>
+ #include <linux/fs.h>
+ #include <linux/pagemap.h>
+@@ -947,6 +949,8 @@ asmlinkage long sys_open(const char __us
+ 			error = PTR_ERR(f);
+ 			if (IS_ERR(f))
+ 				goto out_error;
++			ltt_ev_file_system(LTT_EV_FILE_SYSTEM_OPEN, fd,
++					f->f_dentry->d_name.len, f->f_dentry->d_name.name);
+ 			fd_install(fd, f);
+ 		}
+ out:
+@@ -1022,6 +1026,7 @@ asmlinkage long sys_close(unsigned int f
+ 	filp = files->fd[fd];
+ 	if (!filp)
+ 		goto out_unlock;
++	ltt_ev_file_system(LTT_EV_FILE_SYSTEM_CLOSE, fd, 0, NULL);
+ 	files->fd[fd] = NULL;
+ 	FD_CLR(fd, files->close_on_exec);
+ 	__put_unused_fd(files, fd);
+diff -puN fs/read_write.c~ltt-fs-events fs/read_write.c
+--- 25/fs/read_write.c~ltt-fs-events	2005-01-13 23:01:13.661120344 -0800
++++ 25-akpm/fs/read_write.c	2005-01-13 23:01:13.672118672 -0800
+@@ -14,6 +14,7 @@
+ #include <linux/security.h>
+ #include <linux/module.h>
+ #include <linux/syscalls.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/unistd.h>
+@@ -142,6 +143,9 @@ asmlinkage off_t sys_lseek(unsigned int 
+ 		if (res != (loff_t)retval)
+ 			retval = -EOVERFLOW;	/* LFS: should only happen on 32 bit platforms */
+ 	}
++
++	ltt_ev_file_system(LTT_EV_FILE_SYSTEM_SEEK, fd, offset, NULL);
++
+ 	fput_light(file, fput_needed);
+ bad:
+ 	return retval;
+@@ -169,6 +173,8 @@ asmlinkage long sys_llseek(unsigned int 
+ 	offset = vfs_llseek(file, ((loff_t) offset_high << 32) | offset_low,
+ 			origin);
+ 
++	ltt_ev_file_system(LTT_EV_FILE_SYSTEM_SEEK, fd, offset, NULL);
++
+ 	retval = (int)offset;
+ 	if (offset >= 0) {
+ 		retval = -EFAULT;
+@@ -295,6 +301,7 @@ asmlinkage ssize_t sys_read(unsigned int
+ 	file = fget_light(fd, &fput_needed);
+ 	if (file) {
+ 		loff_t pos = file_pos_read(file);
++ 	 	ltt_ev_file_system(LTT_EV_FILE_SYSTEM_READ, fd, count, NULL);
+ 		ret = vfs_read(file, buf, count, &pos);
+ 		file_pos_write(file, pos);
+ 		fput_light(file, fput_needed);
+@@ -313,6 +320,7 @@ asmlinkage ssize_t sys_write(unsigned in
+ 	file = fget_light(fd, &fput_needed);
+ 	if (file) {
+ 		loff_t pos = file_pos_read(file);
++		ltt_ev_file_system(LTT_EV_FILE_SYSTEM_WRITE, fd, count, NULL);
+ 		ret = vfs_write(file, buf, count, &pos);
+ 		file_pos_write(file, pos);
+ 		fput_light(file, fput_needed);
+@@ -334,8 +342,11 @@ asmlinkage ssize_t sys_pread64(unsigned 
+ 	file = fget_light(fd, &fput_needed);
+ 	if (file) {
+ 		ret = -ESPIPE;
+-		if (file->f_mode & FMODE_PREAD)
++		if (file->f_mode & FMODE_PREAD) {
++ 	 		ltt_ev_file_system(LTT_EV_FILE_SYSTEM_READ, fd, count, NULL);
+ 			ret = vfs_read(file, buf, count, &pos);
++		}
++
+ 		fput_light(file, fput_needed);
+ 	}
+ 
+@@ -355,8 +366,10 @@ asmlinkage ssize_t sys_pwrite64(unsigned
+ 	file = fget_light(fd, &fput_needed);
+ 	if (file) {
+ 		ret = -ESPIPE;
+-		if (file->f_mode & FMODE_PWRITE)  
++ 		if (file->f_mode & FMODE_PWRITE) {
++  			ltt_ev_file_system(LTT_EV_FILE_SYSTEM_WRITE, fd, count, NULL);
+ 			ret = vfs_write(file, buf, count, &pos);
++		}
+ 		fput_light(file, fput_needed);
+ 	}
+ 
+@@ -541,6 +554,7 @@ sys_readv(unsigned long fd, const struct
+ 	file = fget_light(fd, &fput_needed);
+ 	if (file) {
+ 		loff_t pos = file_pos_read(file);
++ 		ltt_ev_file_system(LTT_EV_FILE_SYSTEM_READ, fd, vlen, NULL);
+ 		ret = vfs_readv(file, vec, vlen, &pos);
+ 		file_pos_write(file, pos);
+ 		fput_light(file, fput_needed);
+@@ -562,6 +576,7 @@ sys_writev(unsigned long fd, const struc
+ 	file = fget_light(fd, &fput_needed);
+ 	if (file) {
+ 		loff_t pos = file_pos_read(file);
++	 	ltt_ev_file_system(LTT_EV_FILE_SYSTEM_WRITE, fd, vlen, NULL);
+ 		ret = vfs_writev(file, vec, vlen, &pos);
+ 		file_pos_write(file, pos);
+ 		fput_light(file, fput_needed);
+diff -puN fs/relayfs/relay.c~ltt-fs-events fs/relayfs/relay.c
+--- 25/fs/relayfs/relay.c~ltt-fs-events	2005-01-13 23:01:13.662120192 -0800
++++ 25-akpm/fs/relayfs/relay.c	2005-01-13 23:01:13.674118368 -0800
+@@ -406,8 +406,7 @@ relay_mmap_region(struct vm_area_struct 
+ 
+ 	while (size > 0) {
+ 		page = kvirt_to_pa(pos);
+-		if (remap_pfn_range(vma, start, page >> PAGE_SHIFT,
+-					PAGE_SIZE, PAGE_SHARED))
++		if (remap_pfn_range(vma, start, page >> PAGE_SHIFT, PAGE_SIZE, PAGE_SHARED))
+ 			return -EAGAIN;
+ 		start += PAGE_SIZE;
+ 		pos += PAGE_SIZE;
+diff -puN fs/select.c~ltt-fs-events fs/select.c
+--- 25/fs/select.c~ltt-fs-events	2005-01-13 23:01:13.664119888 -0800
++++ 25-akpm/fs/select.c	2005-01-13 23:01:13.674118368 -0800
+@@ -22,6 +22,7 @@
+ #include <linux/personality.h> /* for STICKY_TIMEOUTS */
+ #include <linux/file.h>
+ #include <linux/fs.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/uaccess.h>
+ 
+@@ -223,6 +224,8 @@ int do_select(int n, fd_set_bits *fds, l
+ 				file = fget(i);
+ 				if (file) {
+ 					f_op = file->f_op;
++					ltt_ev_file_system(LTT_EV_FILE_SYSTEM_SELECT, i /*  The fd*/,
++							__timeout, NULL);
+ 					mask = DEFAULT_POLLMASK;
+ 					if (f_op && f_op->poll)
+ 						mask = (*f_op->poll)(file, retval ? NULL : wait);
+@@ -409,6 +412,7 @@ static void do_pollfd(unsigned int num, 
+ 			struct file * file = fget(fd);
+ 			mask = POLLNVAL;
+ 			if (file != NULL) {
++			        ltt_ev_file_system(LTT_EV_FILE_SYSTEM_POLL, fd, 0, NULL);
+ 				mask = DEFAULT_POLLMASK;
+ 				if (file->f_op && file->f_op->poll)
+ 					mask = file->f_op->poll(file, *pwait);
+_

@@ -1,0 +1,53 @@
+
+From: Dipankar Sarma <dipankar@in.ibm.com>
+
+There is a series of patches in my tree and these 3 are the first ones that
+should probably be merged down the road.  Descriptions are on top of the
+patches.  Please include them in -mm.
+
+A lot of RCU code will be cleaned up later in order to support
+call_rcu_bh(), the separate RCU interface that considers softirq handler
+completion a quiescent state.
+
+This patch:
+
+Minor cleanup of the hotplug code to remove #ifdef in cpu event notifier
+handler.  If CONFIG_HOTPLUG_CPU is not defined, CPU_DEAD case will be
+optimized off.
+
+Signed-off-by: Dipankar Sarma <dipankar@in.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/rcupdate.c |    8 ++++++--
+ 1 files changed, 6 insertions(+), 2 deletions(-)
+
+diff -puN kernel/rcupdate.c~rcu-cpu-offline-cleanup kernel/rcupdate.c
+--- 25/kernel/rcupdate.c~rcu-cpu-offline-cleanup	2004-07-31 17:20:32.970588528 -0700
++++ 25-akpm/kernel/rcupdate.c	2004-07-31 17:20:32.974587920 -0700
+@@ -243,6 +243,12 @@ static void rcu_offline_cpu(int cpu)
+ 	tasklet_kill_immediate(&RCU_tasklet(cpu), cpu);
+ }
+ 
++#else
++
++static void rcu_offline_cpu(int cpu)
++{
++}
++
+ #endif
+ 
+ void rcu_restart_cpu(int cpu)
+@@ -326,11 +332,9 @@ static int __devinit rcu_cpu_notify(stru
+ 	case CPU_UP_PREPARE:
+ 		rcu_online_cpu(cpu);
+ 		break;
+-#ifdef CONFIG_HOTPLUG_CPU
+ 	case CPU_DEAD:
+ 		rcu_offline_cpu(cpu);
+ 		break;
+-#endif
+ 	default:
+ 		break;
+ 	}
+_

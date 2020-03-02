@@ -1,0 +1,403 @@
+
+
+Change zone->lock and zone->lru_lock to be locallock_t rather than spinlock_t
+
+
+
+
+---
+
+ linux-2.6.7-xx1-xiphux/include/linux/mmzone.h |    6 ++--
+ linux-2.6.7-xx1-xiphux/mm/page_alloc.c        |   34 +++++++++++++-------------
+ linux-2.6.7-xx1-xiphux/mm/swap.c              |   28 ++++++++++-----------
+ linux-2.6.7-xx1-xiphux/mm/vmscan.c            |   32 ++++++++++++------------
+ 4 files changed, 50 insertions(+), 50 deletions(-)
+
+diff -puN include/linux/mmzone.h~reiser4-locallock-zone include/linux/mmzone.h
+--- linux-2.6.7-xx1/include/linux/mmzone.h~reiser4-locallock-zone	2004-06-20 22:02:39.601550856 -0400
++++ linux-2.6.7-xx1-xiphux/include/linux/mmzone.h	2004-06-20 22:03:01.458228136 -0400
+@@ -5,7 +5,7 @@
+ #ifndef __ASSEMBLY__
+ 
+ #include <linux/config.h>
+-#include <linux/spinlock.h>
++#include <linux/locallock.h>
+ #include <linux/list.h>
+ #include <linux/wait.h>
+ #include <linux/cache.h>
+@@ -96,7 +96,7 @@ struct zone {
+ 	/*
+ 	 * Commonly accessed fields:
+ 	 */
+-	spinlock_t		lock;
++	locallock_t		lock;
+ 	unsigned long		free_pages;
+ 	unsigned long		pages_min, pages_low, pages_high;
+ 	/*
+@@ -115,7 +115,7 @@ struct zone {
+ 
+ 	ZONE_PADDING(_pad1_)
+ 
+-	spinlock_t		lru_lock;	
++	locallock_t		lru_lock;
+ 	struct list_head	active_list;
+ 	struct list_head	inactive_list;
+ 	unsigned long		nr_scan_active;
+diff -puN mm/page_alloc.c~reiser4-locallock-zone mm/page_alloc.c
+--- linux-2.6.7-xx1/mm/page_alloc.c~reiser4-locallock-zone	2004-06-20 22:02:39.603550552 -0400
++++ linux-2.6.7-xx1-xiphux/mm/page_alloc.c	2004-06-20 22:02:39.621547816 -0400
+@@ -263,7 +263,7 @@ free_pages_bulk(struct zone *zone, int c
+ 	mask = (~0UL) << order;
+ 	base = zone->zone_mem_map;
+ 	area = zone->free_area + order;
+-	spin_lock_irqsave(&zone->lock, flags);
++	local_lock_irqsave(&zone->lock, flags);
+ 	zone->all_unreclaimable = 0;
+ 	zone->pages_scanned = 0;
+ 	while (!list_empty(list) && count--) {
+@@ -273,7 +273,7 @@ free_pages_bulk(struct zone *zone, int c
+ 		__free_pages_bulk(page, base, zone, area, mask, order);
+ 		ret++;
+ 	}
+-	spin_unlock_irqrestore(&zone->lock, flags);
++	local_unlock_irqrestore(&zone->lock, flags);
+ 	return ret;
+ }
+ 
+@@ -407,7 +407,7 @@ static int rmqueue_bulk(struct zone *zon
+ 	int allocated = 0;
+ 	struct page *page;
+ 	
+-	spin_lock_irqsave(&zone->lock, flags);
++	local_lock_irqsave(&zone->lock, flags);
+ 	for (i = 0; i < count; ++i) {
+ 		page = __rmqueue(zone, order);
+ 		if (page == NULL)
+@@ -415,7 +415,7 @@ static int rmqueue_bulk(struct zone *zon
+ 		allocated++;
+ 		list_add_tail(&page->lru, list);
+ 	}
+-	spin_unlock_irqrestore(&zone->lock, flags);
++	local_unlock_irqrestore(&zone->lock, flags);
+ 	return allocated;
+ }
+ 
+@@ -452,14 +452,14 @@ int is_head_of_free_region(struct page *
+ 	 * Should not matter as we need quiescent system for
+ 	 * suspend anyway, but...
+ 	 */
+-	spin_lock_irqsave(&zone->lock, flags);
++	local_lock_irqsave(&zone->lock, flags);
+ 	for (order = MAX_ORDER - 1; order >= 0; --order)
+ 		list_for_each(curr, &zone->free_area[order].free_list)
+ 			if (page == list_entry(curr, struct page, lru)) {
+-				spin_unlock_irqrestore(&zone->lock, flags);
++				local_unlock_irqrestore(&zone->lock, flags);
+ 				return 1 << order;
+ 			}
+-	spin_unlock_irqrestore(&zone->lock, flags);
++	local_unlock_irqrestore(&zone->lock, flags);
+         return 0;
+ }
+ 
+@@ -566,9 +566,9 @@ buffered_rmqueue(struct zone *zone, int 
+ 	}
+ 
+ 	if (page == NULL) {
+-		spin_lock_irqsave(&zone->lock, flags);
++		local_lock_irqsave(&zone->lock, flags);
+ 		page = __rmqueue(zone, order);
+-		spin_unlock_irqrestore(&zone->lock, flags);
++		local_unlock_irqrestore(&zone->lock, flags);
+ 	}
+ 
+ 	if (page != NULL) {
+@@ -1127,7 +1127,7 @@ void show_free_areas(void)
+ 			continue;
+ 		}
+ 
+-		spin_lock_irqsave(&zone->lock, flags);
++		local_lock_irqsave(&zone->lock, flags);
+ 		for (order = 0; order < MAX_ORDER; order++) {
+ 			nr = 0;
+ 			list_for_each(elem, &zone->free_area[order].free_list)
+@@ -1135,7 +1135,7 @@ void show_free_areas(void)
+ 			total += nr << order;
+ 			printk("%lu*%lukB ", nr, K(1UL) << order);
+ 		}
+-		spin_unlock_irqrestore(&zone->lock, flags);
++		local_unlock_irqrestore(&zone->lock, flags);
+ 		printk("= %lukB\n", K(total));
+ 	}
+ 
+@@ -1452,8 +1452,8 @@ static void __init free_area_init_core(s
+ 		zone->spanned_pages = size;
+ 		zone->present_pages = realsize;
+ 		zone->name = zone_names[j];
+-		spin_lock_init(&zone->lock);
+-		spin_lock_init(&zone->lru_lock);
++		local_lock_init(&zone->lock);
++		local_lock_init(&zone->lru_lock);
+ 		zone->zone_pgdat = pgdat;
+ 		zone->free_pages = 0;
+ 
+@@ -1643,7 +1643,7 @@ static int frag_show(struct seq_file *m,
+ 		if (!zone->present_pages)
+ 			continue;
+ 
+-		spin_lock_irqsave(&zone->lock, flags);
++		local_lock_irqsave(&zone->lock, flags);
+ 		seq_printf(m, "Node %d, zone %8s ", pgdat->node_id, zone->name);
+ 		for (order = 0; order < MAX_ORDER; ++order) {
+ 			unsigned long nr_bufs = 0;
+@@ -1653,7 +1653,7 @@ static int frag_show(struct seq_file *m,
+ 				++nr_bufs;
+ 			seq_printf(m, "%6lu ", nr_bufs);
+ 		}
+-		spin_unlock_irqrestore(&zone->lock, flags);
++		local_unlock_irqrestore(&zone->lock, flags);
+ 		seq_putc(m, '\n');
+ 	}
+ 	return 0;
+@@ -1893,7 +1893,7 @@ static void setup_per_zone_pages_min(voi
+ 	}
+ 
+ 	for_each_zone(zone) {
+-		spin_lock_irqsave(&zone->lru_lock, flags);
++		local_lock_irqsave(&zone->lru_lock, flags);
+ 		if (is_highmem(zone)) {
+ 			/*
+ 			 * Often, highmem doesn't need to reserve any pages.
+@@ -1919,7 +1919,7 @@ static void setup_per_zone_pages_min(voi
+ 
+ 		zone->pages_low = zone->pages_min * 2;
+ 		zone->pages_high = zone->pages_min * 3;
+-		spin_unlock_irqrestore(&zone->lru_lock, flags);
++		local_unlock_irqrestore(&zone->lru_lock, flags);
+ 	}
+ }
+ 
+diff -puN mm/swap.c~reiser4-locallock-zone mm/swap.c
+--- linux-2.6.7-xx1/mm/swap.c~reiser4-locallock-zone	2004-06-20 22:02:39.606550096 -0400
++++ linux-2.6.7-xx1-xiphux/mm/swap.c	2004-06-20 22:03:24.894665256 -0400
+@@ -84,7 +84,7 @@ int rotate_reclaimable_page(struct page 
+ 		return 1;
+ 
+ 	zone = page_zone(page);
+-	spin_lock_irqsave(&zone->lru_lock, flags);
++	local_lock_irqsave(&zone->lru_lock, flags);
+ 	if (PageLRU(page) && !PageActive(page)) {
+ 		list_del(&page->lru);
+ 		list_add_tail(&page->lru, &zone->inactive_list);
+@@ -92,7 +92,7 @@ int rotate_reclaimable_page(struct page 
+ 	}
+ 	if (!test_clear_page_writeback(page))
+ 		BUG();
+-	spin_unlock_irqrestore(&zone->lru_lock, flags);
++	local_unlock_irqrestore(&zone->lru_lock, flags);
+ 	return 0;
+ }
+ 
+@@ -180,12 +180,12 @@ void fastcall __page_cache_release(struc
+ 	unsigned long flags;
+ 	struct zone *zone = page_zone(page);
+ 
+-	spin_lock_irqsave(&zone->lru_lock, flags);
++	local_lock_irqsave(&zone->lru_lock, flags);
+ 	if (TestClearPageLRU(page))
+ 		del_page_from_lru(zone, page);
+ 	if (page_count(page) != 0)
+ 		page = NULL;
+-	spin_unlock_irqrestore(&zone->lru_lock, flags);
++	local_unlock_irqrestore(&zone->lru_lock, flags);
+ 	if (page)
+ 		free_hot_page(page);
+ }
+@@ -221,15 +221,15 @@ void release_pages(struct page **pages, 
+ 		pagezone = page_zone(page);
+ 		if (pagezone != zone) {
+ 			if (zone)
+-				spin_unlock_irq(&zone->lru_lock);
++				local_unlock_irq(&zone->lru_lock);
+ 			zone = pagezone;
+-			spin_lock_irq(&zone->lru_lock);
++			local_lock_irq(&zone->lru_lock);
+ 		}
+ 		if (TestClearPageLRU(page))
+ 			del_page_from_lru(zone, page);
+ 		if (page_count(page) == 0) {
+ 			if (!pagevec_add(&pages_to_free, page)) {
+-				spin_unlock_irq(&zone->lru_lock);
++				local_unlock_irq(&zone->lru_lock);
+ 				__pagevec_free(&pages_to_free);
+ 				pagevec_reinit(&pages_to_free);
+ 				zone = NULL;	/* No lock is held */
+@@ -237,7 +237,7 @@ void release_pages(struct page **pages, 
+ 		}
+ 	}
+ 	if (zone)
+-		spin_unlock_irq(&zone->lru_lock);
++		local_unlock_irq(&zone->lru_lock);
+ 
+ 	pagevec_free(&pages_to_free);
+ }
+@@ -297,16 +297,16 @@ void __pagevec_lru_add(struct pagevec *p
+ 
+ 		if (pagezone != zone) {
+ 			if (zone)
+-				spin_unlock_irq(&zone->lru_lock);
++				local_unlock_irq(&zone->lru_lock);
+ 			zone = pagezone;
+-			spin_lock_irq(&zone->lru_lock);
++			local_lock_irq(&zone->lru_lock);
+ 		}
+ 		if (TestSetPageLRU(page))
+ 			BUG();
+ 		add_page_to_inactive_list(zone, page);
+ 	}
+ 	if (zone)
+-		spin_unlock_irq(&zone->lru_lock);
++		local_unlock_irq(&zone->lru_lock);
+ 	release_pages(pvec->pages, pvec->nr, pvec->cold);
+ 	pagevec_reinit(pvec);
+ }
+@@ -324,9 +324,9 @@ void __pagevec_lru_add_active(struct pag
+ 
+ 		if (pagezone != zone) {
+ 			if (zone)
+-				spin_unlock_irq(&zone->lru_lock);
++				local_unlock_irq(&zone->lru_lock);
+ 			zone = pagezone;
+-			spin_lock_irq(&zone->lru_lock);
++			local_lock_irq(&zone->lru_lock);
+ 		}
+ 		if (TestSetPageLRU(page))
+ 			BUG();
+@@ -335,7 +335,7 @@ void __pagevec_lru_add_active(struct pag
+ 		add_page_to_active_list(zone, page);
+ 	}
+ 	if (zone)
+-		spin_unlock_irq(&zone->lru_lock);
++		local_unlock_irq(&zone->lru_lock);
+ 	release_pages(pvec->pages, pvec->nr, pvec->cold);
+ 	pagevec_reinit(pvec);
+ }
+diff -puN mm/vmscan.c~reiser4-locallock-zone mm/vmscan.c
+--- linux-2.6.7-xx1/mm/vmscan.c~reiser4-locallock-zone	2004-06-20 22:02:39.609549640 -0400
++++ linux-2.6.7-xx1-xiphux/mm/vmscan.c	2004-06-20 22:04:09.096945488 -0400
+@@ -544,7 +544,7 @@ static void shrink_cache(struct zone *zo
+ 	pagevec_init(&pvec, 1);
+ 
+ 	lru_add_drain();
+-	spin_lock_irq(&zone->lru_lock);
++	local_lock_irq(&zone->lru_lock);
+ 	while (max_scan > 0) {
+ 		struct page *page;
+ 		int nr_taken = 0;
+@@ -575,7 +575,7 @@ static void shrink_cache(struct zone *zo
+ 		}
+ 		zone->nr_inactive -= nr_taken;
+ 		zone->pages_scanned += nr_taken;
+-		spin_unlock_irq(&zone->lru_lock);
++		local_unlock_irq(&zone->lru_lock);
+ 
+ 		if (nr_taken == 0)
+ 			goto done;
+@@ -591,7 +591,7 @@ static void shrink_cache(struct zone *zo
+ 		mod_page_state_zone(zone, pgsteal, nr_freed);
+ 		sc->nr_to_reclaim -= nr_freed;
+ 
+-		spin_lock_irq(&zone->lru_lock);
++		local_lock_irq(&zone->lru_lock);
+ 		/*
+ 		 * Put back any unfreeable pages.
+ 		 */
+@@ -605,13 +605,13 @@ static void shrink_cache(struct zone *zo
+ 			else
+ 				add_page_to_inactive_list(zone, page);
+ 			if (!pagevec_add(&pvec, page)) {
+-				spin_unlock_irq(&zone->lru_lock);
++				local_unlock_irq(&zone->lru_lock);
+ 				__pagevec_release(&pvec);
+-				spin_lock_irq(&zone->lru_lock);
++				local_lock_irq(&zone->lru_lock);
+ 			}
+ 		}
+   	}
+-	spin_unlock_irq(&zone->lru_lock);
++	local_unlock_irq(&zone->lru_lock);
+ done:
+ 	pagevec_release(&pvec);
+ }
+@@ -652,7 +652,7 @@ refill_inactive_zone(struct zone *zone, 
+ 
+ 	lru_add_drain();
+ 	pgmoved = 0;
+-	spin_lock_irq(&zone->lru_lock);
++	local_lock_irq(&zone->lru_lock);
+ 	while (pgscanned < nr_pages && !list_empty(&zone->active_list)) {
+ 		page = lru_to_page(&zone->active_list);
+ 		prefetchw_prev_lru_page(page, &zone->active_list, flags);
+@@ -676,7 +676,7 @@ refill_inactive_zone(struct zone *zone, 
+ 		pgscanned++;
+ 	}
+ 	zone->nr_active -= pgmoved;
+-	spin_unlock_irq(&zone->lru_lock);
++	local_unlock_irq(&zone->lru_lock);
+ 
+ 	/*
+ 	 * `distress' is a measure of how much trouble we're having reclaiming
+@@ -738,7 +738,7 @@ refill_inactive_zone(struct zone *zone, 
+ 
+ 	pagevec_init(&pvec, 1);
+ 	pgmoved = 0;
+-	spin_lock_irq(&zone->lru_lock);
++	local_lock_irq(&zone->lru_lock);
+ 	while (!list_empty(&l_inactive)) {
+ 		page = lru_to_page(&l_inactive);
+ 		prefetchw_prev_lru_page(page, &l_inactive, flags);
+@@ -750,21 +750,21 @@ refill_inactive_zone(struct zone *zone, 
+ 		pgmoved++;
+ 		if (!pagevec_add(&pvec, page)) {
+ 			zone->nr_inactive += pgmoved;
+-			spin_unlock_irq(&zone->lru_lock);
++			local_unlock_irq(&zone->lru_lock);
+ 			pgdeactivate += pgmoved;
+ 			pgmoved = 0;
+ 			if (buffer_heads_over_limit)
+ 				pagevec_strip(&pvec);
+ 			__pagevec_release(&pvec);
+-			spin_lock_irq(&zone->lru_lock);
++			local_lock_irq(&zone->lru_lock);
+ 		}
+ 	}
+ 	zone->nr_inactive += pgmoved;
+ 	pgdeactivate += pgmoved;
+ 	if (buffer_heads_over_limit) {
+-		spin_unlock_irq(&zone->lru_lock);
++		local_unlock_irq(&zone->lru_lock);
+ 		pagevec_strip(&pvec);
+-		spin_lock_irq(&zone->lru_lock);
++		local_lock_irq(&zone->lru_lock);
+ 	}
+ 
+ 	pgmoved = 0;
+@@ -779,13 +779,13 @@ refill_inactive_zone(struct zone *zone, 
+ 		if (!pagevec_add(&pvec, page)) {
+ 			zone->nr_active += pgmoved;
+ 			pgmoved = 0;
+-			spin_unlock_irq(&zone->lru_lock);
++			local_unlock_irq(&zone->lru_lock);
+ 			__pagevec_release(&pvec);
+-			spin_lock_irq(&zone->lru_lock);
++			local_lock_irq(&zone->lru_lock);
+ 		}
+ 	}
+ 	zone->nr_active += pgmoved;
+-	spin_unlock_irq(&zone->lru_lock);
++	local_unlock_irq(&zone->lru_lock);
+ 	pagevec_release(&pvec);
+ 
+ 	mod_page_state_zone(zone, pgrefill, pgscanned);
+
+_

@@ -1,0 +1,61 @@
+
+From: Roland McGrath <roland@redhat.com>
+
+In the oddball situation where one thread is using ptrace on another thread
+sharing the same mm, and then someone sharing that mm causes a coredump,
+there is a deadlock possible if the traced thread is in TASK_TRACED state. 
+It leaves all the threads sharing that mm wedged and permanently
+unkillable.  This patch checks for that situation and brings a thread out
+of TASK_TRACED if its tracer is part of the same coredump (i.e.  shares the
+same mm).  It's not pretty, but it does the job.
+
+Signed-off-by: Roland McGrath <roland@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/exec.c |   21 +++++++++++++++++++++
+ 1 files changed, 21 insertions(+)
+
+diff -puN fs/exec.c~fix-coredump_wait-deadlock-with-ptracer-tracee-on-shared-mm fs/exec.c
+--- 25/fs/exec.c~fix-coredump_wait-deadlock-with-ptracer-tracee-on-shared-mm	Tue Jan 11 13:56:27 2005
++++ 25-akpm/fs/exec.c	Tue Jan 11 13:56:27 2005
+@@ -1338,6 +1338,7 @@ static void zap_threads (struct mm_struc
+ 	struct task_struct *g, *p;
+ 	struct task_struct *tsk = current;
+ 	struct completion *vfork_done = tsk->vfork_done;
++	int traced = 0;
+ 
+ 	/*
+ 	 * Make sure nobody is waiting for us to release the VM,
+@@ -1353,10 +1354,30 @@ static void zap_threads (struct mm_struc
+ 		if (mm == p->mm && p != tsk) {
+ 			force_sig_specific(SIGKILL, p);
+ 			mm->core_waiters++;
++			if (unlikely(p->ptrace) &&
++			    unlikely(p->parent->mm == mm))
++				traced = 1;
+ 		}
+ 	while_each_thread(g,p);
+ 
+ 	read_unlock(&tasklist_lock);
++
++	if (unlikely(traced)) {
++		/*
++		 * We are zapping a thread and the thread it ptraces.
++		 * If the tracee went into a ptrace stop for exit tracing,
++		 * we could deadlock since the tracer is waiting for this
++		 * coredump to finish.  Detach them so they can both die.
++		 */
++		write_lock_irq(&tasklist_lock);
++		do_each_thread(g,p) {
++			if (mm == p->mm && p != tsk &&
++			    p->ptrace && p->parent->mm == mm) {
++				__ptrace_unlink(p);
++			}
++		} while_each_thread(g,p);
++		write_unlock_irq(&tasklist_lock);
++	}
+ }
+ 
+ static void coredump_wait(struct mm_struct *mm)
+_

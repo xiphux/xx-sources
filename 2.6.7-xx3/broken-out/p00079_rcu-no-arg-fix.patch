@@ -1,0 +1,54 @@
+
+From: Dipankar Sarma <dipankar@in.ibm.com>
+
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/net/bridge/br_if.c |   17 ++++++++++-------
+ 1 files changed, 10 insertions(+), 7 deletions(-)
+
+diff -puN net/bridge/br_if.c~rcu-no-arg-fix net/bridge/br_if.c
+--- 25/net/bridge/br_if.c~rcu-no-arg-fix	2004-06-20 02:20:33.709624488 -0700
++++ 25-akpm/net/bridge/br_if.c	2004-06-20 02:20:33.713623880 -0700
+@@ -75,13 +75,9 @@ static int br_initial_port_cost(struct n
+ 	return 100;	/* assume old 10Mbps */
+ }
+ 
+-static void destroy_nbp(struct rcu_head *head)
++static void destroy_nbp(struct net_bridge_port *p)
+ {
+-	struct net_bridge_port *p;
+-	struct net_device *dev;
+-
+-	p = container_of(head, struct net_bridge_port, rcu);
+-	dev = p->dev;
++	struct net_device *dev = p->dev;
+ 
+ 	dev->br_port = NULL;
+ 	p->br = NULL;
+@@ -91,6 +87,13 @@ static void destroy_nbp(struct rcu_head 
+ 	br_sysfs_freeif(p);
+ }
+ 
++static void destroy_nbp_rcu(struct rcu_head *head)
++{
++	struct net_bridge_port *p =
++			container_of(head, struct net_bridge_port, rcu);
++	destroy_nbp(p);
++}
++
+ /* called with RTNL */
+ static void del_nbp(struct net_bridge_port *p)
+ {
+@@ -111,7 +114,7 @@ static void del_nbp(struct net_bridge_po
+ 	del_timer_sync(&p->forward_delay_timer);
+ 	del_timer_sync(&p->hold_timer);
+ 	
+-	call_rcu(&p->rcu, destroy_nbp);
++	call_rcu(&p->rcu, destroy_nbp_rcu);
+ }
+ 
+ /* called with RTNL */
+_

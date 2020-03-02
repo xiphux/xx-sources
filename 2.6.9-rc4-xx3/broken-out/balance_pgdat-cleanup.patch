@@ -1,0 +1,41 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/vmscan.c |   10 ++++++----
+ 1 files changed, 6 insertions(+), 4 deletions(-)
+
+diff -puN mm/vmscan.c~balance_pgdat-cleanup mm/vmscan.c
+--- 25/mm/vmscan.c~balance_pgdat-cleanup	2004-10-07 23:46:21.975987896 -0700
++++ 25-akpm/mm/vmscan.c	2004-10-07 23:46:21.979987288 -0700
+@@ -1014,7 +1014,7 @@ static int balance_pgdat(pg_data_t *pgda
+ 
+ 	for (priority = DEF_PRIORITY; priority >= 0; priority--) {
+ 		int all_zones_ok = 1;
+-		int end_zone = 0;	/* Inclusive.  0 = ZONE_DMA */
++		int end_zone = -1;	/* Inclusive.  0 = ZONE_DMA */
+ 		unsigned long lru_pages = 0;
+ 
+ 		if (nr_pages == 0) {
+@@ -1034,14 +1034,16 @@ static int balance_pgdat(pg_data_t *pgda
+ 
+ 				if (zone->free_pages <= zone->pages_high) {
+ 					end_zone = i;
+-					goto scan;
++					break;
+ 				}
+ 			}
+-			goto out;
+ 		} else {
+ 			end_zone = pgdat->nr_zones - 1;
+ 		}
+-scan:
++
++		if (end_zone == -1)	/* No zones to balance */
++			goto out;
++
+ 		for (i = 0; i <= end_zone; i++) {
+ 			struct zone *zone = pgdat->node_zones + i;
+ 
+_

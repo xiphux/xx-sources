@@ -1,0 +1,38 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Now that init_idle does not remove tasks from the runqueue, those
+architectures that use kernel_thread instead of copy_process for the idle
+task will break.  To fix, ensure that CLONE_IDLETASK tasks are not put on
+the runqueue in the first place.
+
+Signed-off-by: Nick Piggin <nickpiggin@yahoo.com.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/fork.c |   12 +++++++-----
+ 1 files changed, 7 insertions(+), 5 deletions(-)
+
+diff -puN kernel/fork.c~kernelthread-idle-fix-2 kernel/fork.c
+--- 25/kernel/fork.c~kernelthread-idle-fix-2	2004-07-28 22:08:38.756139160 -0700
++++ 25-akpm/kernel/fork.c	2004-07-28 22:08:38.760138552 -0700
+@@ -1214,11 +1214,13 @@ long do_fork(unsigned long clone_flags,
+ 			set_tsk_thread_flag(p, TIF_SIGPENDING);
+ 		}
+ 
+-		if (!(clone_flags & CLONE_STOPPED))
+-			wake_up_new_task(p, clone_flags);
+-		else
+-			p->state = TASK_STOPPED;
+-		++total_forks;
++		if (likely(!(clone_flags & CLONE_IDLETASK))) {
++			if (!(clone_flags & CLONE_STOPPED))
++				wake_up_new_task(p, clone_flags);
++			else
++				p->state = TASK_STOPPED;
++			++total_forks;
++		}
+ 
+ 		if (unlikely (trace)) {
+ 			current->ptrace_message = pid;
+_

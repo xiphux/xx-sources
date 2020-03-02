@@ -1,0 +1,150 @@
+
+From: Zwane Mwaikambo <zwane@linuxpower.ca>
+
+This patch moves the cpu_online_map cpu clearing to __cpu_disable so that
+any necessary arch changes can be made before doing the clear.  This
+simplifies a APIC timer interrupt race fix which went in.
+
+Signed-off-by: Zwane Mwaikambo <zwane@linuxpower.ca>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/smpboot.c |   21 +++++++++------------
+ 25-akpm/arch/ia64/kernel/smpboot.c |    3 ++-
+ 25-akpm/arch/ppc64/kernel/smp.c    |    4 +++-
+ 25-akpm/arch/s390/kernel/smp.c     |    4 +++-
+ 25-akpm/kernel/cpu.c               |   21 +++++----------------
+ 5 files changed, 22 insertions(+), 31 deletions(-)
+
+diff -puN arch/i386/kernel/smpboot.c~hotplug-cpu-move-cpu_online_map-clear-to-__cpu_disable arch/i386/kernel/smpboot.c
+--- 25/arch/i386/kernel/smpboot.c~hotplug-cpu-move-cpu_online_map-clear-to-__cpu_disable	2004-08-27 23:58:10.307102560 -0700
++++ 25-akpm/arch/i386/kernel/smpboot.c	2004-08-27 23:58:10.319100736 -0700
+@@ -1159,18 +1159,6 @@ static int __devinit cpu_enable(unsigned
+ 	return 0;
+ }
+ 
+-void __cpu_prep_disable(void)
+-{
+-	/* We enable the timer again on the exit path of the death loop */
+-	if (smp_processor_id() != 0) {
+-		disable_APIC_timer();
+-		/* Allow any queued timer interrupts to get serviced */
+-		local_irq_enable();
+-		mdelay(1);
+-		local_irq_disable();
+-	}
+-}
+-
+ int __cpu_disable(void)
+ {
+ 	/*
+@@ -1184,6 +1172,15 @@ int __cpu_disable(void)
+ 	if (smp_processor_id() == 0)
+ 		return -EBUSY;
+ 
++	/* We enable the timer again on the exit path of the death loop */
++	disable_APIC_timer();
++	/* Allow any queued timer interrupts to get serviced */
++	local_irq_enable();
++	mdelay(1);
++	local_irq_disable();
++
++	/* It's now safe to remove this processor from the online map */
++	cpu_clear(smp_processor_id(), cpu_online_map);
+ 	fixup_irqs();
+ 	return 0;
+ }
+diff -puN arch/ia64/kernel/smpboot.c~hotplug-cpu-move-cpu_online_map-clear-to-__cpu_disable arch/ia64/kernel/smpboot.c
+--- 25/arch/ia64/kernel/smpboot.c~hotplug-cpu-move-cpu_online_map-clear-to-__cpu_disable	2004-08-27 23:58:10.309102256 -0700
++++ 25-akpm/arch/ia64/kernel/smpboot.c	2004-08-27 23:58:10.320100584 -0700
+@@ -591,9 +591,10 @@ int __cpu_disable(void)
+ 	if (cpu == 0)
+ 		return -EBUSY;
+ 
++	cpu_clear(cpu, cpu_online_map);
+ 	fixup_irqs();
+ 	local_flush_tlb_all();
+-	printk ("Disabled cpu %u\n", smp_processor_id());
++	printk("Disabled cpu %u\n", cpu);
+ 	return 0;
+ }
+ 
+diff -puN arch/ppc64/kernel/smp.c~hotplug-cpu-move-cpu_online_map-clear-to-__cpu_disable arch/ppc64/kernel/smp.c
+--- 25/arch/ppc64/kernel/smp.c~hotplug-cpu-move-cpu_online_map-clear-to-__cpu_disable	2004-08-27 23:58:10.311101952 -0700
++++ 25-akpm/arch/ppc64/kernel/smp.c	2004-08-27 23:58:10.321100432 -0700
+@@ -254,11 +254,13 @@ int __cpu_disable(void)
+ {
+ 	/* FIXME: go put this in a header somewhere */
+ 	extern void xics_migrate_irqs_away(void);
++	int cpu = smp_processor_id();
+ 
++	cpu_clear(cpu, cpu_online_map);
+ 	systemcfg->processorCount--;
+ 
+ 	/*fix boot_cpuid here*/
+-	if (smp_processor_id() == boot_cpuid)
++	if (cpu == boot_cpuid)
+ 		boot_cpuid = any_online_cpu(cpu_online_map);
+ 
+ 	/* FIXME: abstract this to not be platform specific later on */
+diff -puN arch/s390/kernel/smp.c~hotplug-cpu-move-cpu_online_map-clear-to-__cpu_disable arch/s390/kernel/smp.c
+--- 25/arch/s390/kernel/smp.c~hotplug-cpu-move-cpu_online_map-clear-to-__cpu_disable	2004-08-27 23:58:10.313101648 -0700
++++ 25-akpm/arch/s390/kernel/smp.c	2004-08-27 23:58:10.322100280 -0700
+@@ -682,13 +682,15 @@ __cpu_disable(void)
+ {
+ 	unsigned long flags;
+ 	ec_creg_mask_parms cr_parms;
++	int cpu = smp_processor_id();
+ 
+ 	spin_lock_irqsave(&smp_reserve_lock, flags);
+-	if (smp_cpu_reserved[smp_processor_id()] != 0) {
++	if (smp_cpu_reserved[cpu] != 0) {
+ 		spin_unlock_irqrestore(&smp_reserve_lock, flags);
+ 		return -EBUSY;
+ 	}
+ 
++	cpu_clear(cpu, cpu_online_map);
+ 	/* disable all external interrupts */
+ 
+ 	cr_parms.start_ctl = 0;
+diff -puN kernel/cpu.c~hotplug-cpu-move-cpu_online_map-clear-to-__cpu_disable kernel/cpu.c
+--- 25/kernel/cpu.c~hotplug-cpu-move-cpu_online_map-clear-to-__cpu_disable	2004-08-27 23:58:10.314101496 -0700
++++ 25-akpm/kernel/cpu.c	2004-08-27 23:58:10.318100888 -0700
+@@ -84,31 +84,20 @@ static int cpu_run_sbin_hotplug(unsigned
+ 	return call_usermodehelper(argv[0], argv, envp, 0);
+ }
+ 
+-void __attribute__((weak)) __cpu_prep_disable(void)
+-{
+-}
+-
+ /* Take this CPU down. */
+ static int take_cpu_down(void *unused)
+ {
+ 	int err;
+ 
+-	/* Prepatory work before clearing the cpu off the online map */
+-	__cpu_prep_disable();
+-
+-	/* Take offline: makes arch_cpu_down somewhat easier. */
+-	cpu_clear(smp_processor_id(), cpu_online_map);
+-
+ 	/* Ensure this CPU doesn't handle any more interrupts. */
+ 	err = __cpu_disable();
+ 	if (err < 0)
+-		cpu_set(smp_processor_id(), cpu_online_map);
+-	else
+-		/* Force idle task to run as soon as we yield: it should
+-		   immediately notice cpu is offline and die quickly. */
+-		sched_idle_next();
++		return err;
+ 
+-	return err;
++	/* Force idle task to run as soon as we yield: it should
++	   immediately notice cpu is offline and die quickly. */
++	sched_idle_next();
++	return 0;
+ }
+ 
+ int cpu_down(unsigned int cpu)
+_

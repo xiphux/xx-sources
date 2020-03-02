@@ -1,0 +1,51 @@
+
+From: <janitor@sternwelten.at>
+
+Signed-off-by: Nishanth Aravamudan <nacc@us.ibm.com>
+Signed-off-by: Maximilian Attems <janitor@sternwelten.at>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/md/md.c     |    3 +--
+ 25-akpm/drivers/md/raid1.c  |    2 +-
+ 25-akpm/drivers/md/raid10.c |    2 +-
+ 3 files changed, 3 insertions(+), 4 deletions(-)
+
+diff -puN drivers/md/md.c~drivers-md-replace-schedule_timeout-with-msleep_interruptible drivers/md/md.c
+--- 25/drivers/md/md.c~drivers-md-replace-schedule_timeout-with-msleep_interruptible	Thu Sep 23 16:06:26 2004
++++ 25-akpm/drivers/md/md.c	Thu Sep 23 16:06:26 2004
+@@ -3545,8 +3545,7 @@ static void md_do_sync(mddev_t *mddev)
+ 		if (currspeed > sysctl_speed_limit_min) {
+ 			if ((currspeed > sysctl_speed_limit_max) ||
+ 					!is_mddev_idle(mddev)) {
+-				current->state = TASK_INTERRUPTIBLE;
+-				schedule_timeout(HZ/4);
++				msleep_interruptible(250);
+ 				goto repeat;
+ 			}
+ 		}
+diff -puN drivers/md/raid1.c~drivers-md-replace-schedule_timeout-with-msleep_interruptible drivers/md/raid1.c
+--- 25/drivers/md/raid1.c~drivers-md-replace-schedule_timeout-with-msleep_interruptible	Thu Sep 23 16:06:26 2004
++++ 25-akpm/drivers/md/raid1.c	Thu Sep 23 16:06:26 2004
+@@ -1015,7 +1015,7 @@ static int sync_request(mddev_t *mddev, 
+ 	 * put in a delay to throttle resync.
+ 	 */
+ 	if (!go_faster && waitqueue_active(&conf->wait_resume))
+-		schedule_timeout(HZ);
++		msleep_interruptible(1000);
+ 	device_barrier(conf, sector_nr + RESYNC_SECTORS);
+ 
+ 	/*
+diff -puN drivers/md/raid10.c~drivers-md-replace-schedule_timeout-with-msleep_interruptible drivers/md/raid10.c
+--- 25/drivers/md/raid10.c~drivers-md-replace-schedule_timeout-with-msleep_interruptible	Thu Sep 23 16:06:26 2004
++++ 25-akpm/drivers/md/raid10.c	Thu Sep 23 16:06:26 2004
+@@ -1362,7 +1362,7 @@ static int sync_request(mddev_t *mddev, 
+ 	 * put in a delay to throttle resync.
+ 	 */
+ 	if (!go_faster && waitqueue_active(&conf->wait_resume))
+-		schedule_timeout(HZ);
++		msleep_interruptible(1000);
+ 	device_barrier(conf, sector_nr + RESYNC_SECTORS);
+ 
+ 	/* Again, very different code for resync and recovery.
+_

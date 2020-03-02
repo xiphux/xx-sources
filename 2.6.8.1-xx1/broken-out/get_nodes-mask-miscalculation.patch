@@ -1,0 +1,30 @@
+
+From: Brent Casavant <bcasavan@sgi.com>
+
+It appears there is a nodemask miscalculation in the get_nodes() function
+in mm/mempolicy.c.  This bug has two effects:
+
+1. It is impossible to specify a length 1 nodemask.
+2. It is impossible to specify a nodemask containing the last node.
+
+The following patch has been confirmed to solve both problems.
+
+Signed-off-by: Brent Casavant <bcasavan@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/mempolicy.c |    1 -
+ 1 files changed, 1 deletion(-)
+
+diff -puN mm/mempolicy.c~get_nodes-mask-miscalculation mm/mempolicy.c
+--- 25/mm/mempolicy.c~get_nodes-mask-miscalculation	Mon Aug  9 15:53:08 2004
++++ 25-akpm/mm/mempolicy.c	Mon Aug  9 15:53:08 2004
+@@ -133,7 +133,6 @@ static int get_nodes(unsigned long *node
+ 	unsigned long nlongs;
+ 	unsigned long endmask;
+ 
+-	--maxnode;
+ 	bitmap_zero(nodes, MAX_NUMNODES);
+ 	if (maxnode == 0 || !nmask)
+ 		return 0;
+_

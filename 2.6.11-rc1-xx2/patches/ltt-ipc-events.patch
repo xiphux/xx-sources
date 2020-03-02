@@ -1,0 +1,71 @@
+
+From: Karim Yaghmour <karim@opersys.com>
+
+signed-off-by: Karim Yaghmour <karim@opersys.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/ipc/msg.c |    2 ++
+ 25-akpm/ipc/sem.c |    2 ++
+ 25-akpm/ipc/shm.c |    3 ++-
+ 3 files changed, 6 insertions(+), 1 deletion(-)
+
+diff -puN ipc/msg.c~ltt-ipc-events ipc/msg.c
+--- 25/ipc/msg.c~ltt-ipc-events	2005-01-13 23:01:15.644818776 -0800
++++ 25-akpm/ipc/msg.c	2005-01-13 23:01:15.651817712 -0800
+@@ -25,6 +25,7 @@
+ #include <linux/security.h>
+ #include <linux/sched.h>
+ #include <linux/syscalls.h>
++#include <linux/ltt-events.h>
+ #include <asm/current.h>
+ #include <asm/uaccess.h>
+ #include "util.h"
+@@ -229,6 +230,7 @@ asmlinkage long sys_msgget (key_t key, i
+ 		msg_unlock(msq);
+ 	}
+ 	up(&msg_ids.sem);
++	ltt_ev_ipc(LTT_EV_IPC_MSG_CREATE, ret, msgflg);
+ 	return ret;
+ }
+ 
+diff -puN ipc/sem.c~ltt-ipc-events ipc/sem.c
+--- 25/ipc/sem.c~ltt-ipc-events	2005-01-13 23:01:15.645818624 -0800
++++ 25-akpm/ipc/sem.c	2005-01-13 23:01:15.652817560 -0800
+@@ -72,6 +72,7 @@
+ #include <linux/smp_lock.h>
+ #include <linux/security.h>
+ #include <linux/syscalls.h>
++#include <linux/ltt-events.h>
+ #include <asm/uaccess.h>
+ #include "util.h"
+ 
+@@ -239,6 +240,7 @@ asmlinkage long sys_semget (key_t key, i
+ 	}
+ 
+ 	up(&sem_ids.sem);
++	ltt_ev_ipc(LTT_EV_IPC_SEM_CREATE, err, semflg);
+ 	return err;
+ }
+ 
+diff -puN ipc/shm.c~ltt-ipc-events ipc/shm.c
+--- 25/ipc/shm.c~ltt-ipc-events	2005-01-13 23:01:15.647818320 -0800
++++ 25-akpm/ipc/shm.c	2005-01-13 23:01:15.653817408 -0800
+@@ -27,6 +27,7 @@
+ #include <linux/shmem_fs.h>
+ #include <linux/security.h>
+ #include <linux/syscalls.h>
++#include <linux/ltt-events.h>
+ #include <asm/uaccess.h>
+ 
+ #include "util.h"
+@@ -277,7 +278,7 @@ asmlinkage long sys_shmget (key_t key, s
+ 		shm_unlock(shp);
+ 	}
+ 	up(&shm_ids.sem);
+-
++	ltt_ev_ipc(LTT_EV_IPC_SHM_CREATE, err, shmflg);
+ 	return err;
+ }
+ 
+_

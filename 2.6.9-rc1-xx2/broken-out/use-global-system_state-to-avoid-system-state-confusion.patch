@@ -1,0 +1,281 @@
+
+From: Pavel Machek <pavel@ucw.cz>
+
+* use system_state so that disk is not spun down during swsusp
+* introduce enums into kernel/power so that we have more descriptive
+  types than u32
+* pass 3 to device_suspend in suspend-to-RAM case. This should solve
+  EHCI problems.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/ide/ide-disk.c |    2 +-
+ 25-akpm/include/linux/kernel.h |    3 +++
+ 25-akpm/include/linux/pm.h     |   22 +++++++++++-----------
+ 25-akpm/kernel/power/disk.c    |   14 +++++++++++---
+ 25-akpm/kernel/power/main.c    |   25 ++++++++++++++++---------
+ 25-akpm/kernel/power/swsusp.c  |    2 +-
+ 6 files changed, 43 insertions(+), 25 deletions(-)
+
+diff -puN drivers/ide/ide-disk.c~use-global-system_state-to-avoid-system-state-confusion drivers/ide/ide-disk.c
+--- 25/drivers/ide/ide-disk.c~use-global-system_state-to-avoid-system-state-confusion	2004-08-23 21:51:24.744509776 -0700
++++ 25-akpm/drivers/ide/ide-disk.c	2004-08-23 21:51:24.761507192 -0700
+@@ -1406,7 +1406,7 @@ static void idedisk_complete_power_step 
+ {
+ 	switch (rq->pm->pm_step) {
+ 	case idedisk_pm_flush_cache:	/* Suspend step 1 (flush cache) complete */
+-		if (rq->pm->pm_state == 4)
++		if (system_state == SYSTEM_SNAPSHOT)
+ 			rq->pm->pm_step = ide_pm_state_completed;
+ 		else
+ 			rq->pm->pm_step = idedisk_pm_standby;
+diff -puN include/linux/kernel.h~use-global-system_state-to-avoid-system-state-confusion include/linux/kernel.h
+--- 25/include/linux/kernel.h~use-global-system_state-to-avoid-system-state-confusion	2004-08-23 21:51:24.745509624 -0700
++++ 25-akpm/include/linux/kernel.h	2004-08-23 21:51:24.768506128 -0700
+@@ -136,6 +136,9 @@ extern const char *print_tainted(void);
+ extern enum system_states {
+ 	SYSTEM_BOOTING,
+ 	SYSTEM_RUNNING,
++	SYSTEM_SNAPSHOT,
++	SYSTEM_DISK_SUSPEND,
++	SYSTEM_RAM_SUSPEND,
+ 	SYSTEM_HALT,
+ 	SYSTEM_POWER_OFF,
+ 	SYSTEM_RESTART,
+diff -puN include/linux/pm.h~use-global-system_state-to-avoid-system-state-confusion include/linux/pm.h
+--- 25/include/linux/pm.h~use-global-system_state-to-avoid-system-state-confusion	2004-08-23 21:51:24.747509320 -0700
++++ 25-akpm/include/linux/pm.h	2004-08-23 21:51:24.768506128 -0700
+@@ -180,15 +180,15 @@ static inline void pm_dev_idle(struct pm
+ extern void (*pm_idle)(void);
+ extern void (*pm_power_off)(void);
+ 
+-enum {
+-	PM_SUSPEND_ON,
+-	PM_SUSPEND_STANDBY,
+-	PM_SUSPEND_MEM,
+-	PM_SUSPEND_DISK,
++enum suspend_state {
++	PM_SUSPEND_ON = 0,
++	PM_SUSPEND_STANDBY = 1,
++	PM_SUSPEND_MEM = 2,
++	PM_SUSPEND_DISK = 3,
+ 	PM_SUSPEND_MAX,
+ };
+ 
+-enum {
++enum suspend_disk_method {
+ 	PM_DISK_FIRMWARE = 1,
+ 	PM_DISK_PLATFORM,
+ 	PM_DISK_SHUTDOWN,
+@@ -198,15 +198,15 @@ enum {
+ 
+ 
+ struct pm_ops {
+-	u32	pm_disk_mode;
+-	int (*prepare)(u32 state);
+-	int (*enter)(u32 state);
+-	int (*finish)(u32 state);
++	enum suspend_disk_method pm_disk_mode;
++	int (*prepare)(enum suspend_state state);
++	int (*enter)(enum suspend_state state);
++	int (*finish)(enum suspend_state state);
+ };
+ 
+ extern void pm_set_ops(struct pm_ops *);
+ 
+-extern int pm_suspend(u32 state);
++extern int pm_suspend(enum suspend_state state);
+ 
+ 
+ /*
+diff -puN kernel/power/disk.c~use-global-system_state-to-avoid-system-state-confusion kernel/power/disk.c
+--- 25/kernel/power/disk.c~use-global-system_state-to-avoid-system-state-confusion	2004-08-23 21:51:24.748509168 -0700
++++ 25-akpm/kernel/power/disk.c	2004-08-23 21:51:24.769505976 -0700
+@@ -15,10 +15,11 @@
+ #include <linux/device.h>
+ #include <linux/delay.h>
+ #include <linux/fs.h>
++#include <linux/device.h>
+ #include "power.h"
+ 
+ 
+-extern u32 pm_disk_mode;
++extern enum suspend_disk_method pm_disk_mode;
+ extern struct pm_ops * pm_ops;
+ 
+ extern int swsusp_suspend(void);
+@@ -41,7 +42,7 @@ char resume_file[256] = CONFIG_PM_STD_PA
+  *	there ain't no turning back.
+  */
+ 
+-static int power_down(u32 mode)
++static int power_down(enum suspend_disk_method mode)
+ {
+ 	unsigned long flags;
+ 	int error = 0;
+@@ -49,18 +50,23 @@ static int power_down(u32 mode)
+ 	local_irq_save(flags);
+ 	switch(mode) {
+ 	case PM_DISK_PLATFORM:
++		system_state = SYSTEM_DISK_SUSPEND;
+ 		device_power_down(PM_SUSPEND_DISK);
+ 		error = pm_ops->enter(PM_SUSPEND_DISK);
+ 		break;
+ 	case PM_DISK_SHUTDOWN:
++		system_state = SYSTEM_POWER_OFF;
+ 		printk("Powering off system\n");
+ 		device_shutdown();
+ 		machine_power_off();
+ 		break;
+ 	case PM_DISK_REBOOT:
++		system_state = SYSTEM_RESTART;
+ 		device_shutdown();
+ 		machine_restart(NULL);
+ 		break;
++	default:
++		BUG();
+ 	}
+ 	machine_halt();
+ 	/* Valid image is on the disk, if we continue we risk serious data corruption
+@@ -114,6 +120,7 @@ static int prepare(void)
+ {
+ 	int error;
+ 
++	system_state = SYSTEM_SNAPSHOT;
+ 	pm_prepare_console();
+ 
+ 	sys_sync();
+@@ -226,6 +233,7 @@ static int software_resume(void)
+ 
+ 	pr_debug("PM: Preparing system for restore.\n");
+ 
++	system_state = SYSTEM_SNAPSHOT;
+ 	if ((error = prepare()))
+ 		goto Free;
+ 
+@@ -292,7 +300,7 @@ static ssize_t disk_store(struct subsyst
+ 	int i;
+ 	int len;
+ 	char *p;
+-	u32 mode = 0;
++	enum suspend_disk_method mode = 0;
+ 
+ 	p = memchr(buf, '\n', n);
+ 	len = p ? p - buf : n;
+diff -puN kernel/power/main.c~use-global-system_state-to-avoid-system-state-confusion kernel/power/main.c
+--- 25/kernel/power/main.c~use-global-system_state-to-avoid-system-state-confusion	2004-08-23 21:51:24.750508864 -0700
++++ 25-akpm/kernel/power/main.c	2004-08-23 21:51:24.770505824 -0700
+@@ -22,7 +22,7 @@
+ DECLARE_MUTEX(pm_sem);
+ 
+ struct pm_ops * pm_ops = NULL;
+-u32 pm_disk_mode = PM_DISK_SHUTDOWN;
++enum suspend_disk_method pm_disk_mode = PM_DISK_SHUTDOWN;
+ 
+ /**
+  *	pm_set_ops - Set the global power method table. 
+@@ -46,7 +46,7 @@ void pm_set_ops(struct pm_ops * ops)
+  *	the platform can enter the requested state.
+  */
+ 
+-static int suspend_prepare(u32 state)
++static int suspend_prepare(enum suspend_state state)
+ {
+ 	int error = 0;
+ 
+@@ -65,7 +65,11 @@ static int suspend_prepare(u32 state)
+ 			goto Thaw;
+ 	}
+ 
+-	if ((error = device_suspend(state)))
++	/* FIXME: this is suspend confusion biting us. If we pass
++	   state, we'll pass 2 in suspend-to-RAM case; EHCI will
++	   actually break suspend, because it interprets 2 as PCI_D2
++	   state. Oops. */
++	if ((error = device_suspend(3)))
+ 		goto Finish;
+ 	return 0;
+  Finish:
+@@ -78,13 +82,14 @@ static int suspend_prepare(u32 state)
+ }
+ 
+ 
+-static int suspend_enter(u32 state)
++static int suspend_enter(enum suspend_state state)
+ {
+ 	int error = 0;
+ 	unsigned long flags;
+ 
+ 	local_irq_save(flags);
+-	if ((error = device_power_down(state)))
++	/* FIXME: see suspend_prepare */
++	if ((error = device_power_down(3)))
+ 		goto Done;
+ 	error = pm_ops->enter(state);
+ 	device_power_up();
+@@ -102,7 +107,7 @@ static int suspend_enter(u32 state)
+  *	console that we've allocated.
+  */
+ 
+-static void suspend_finish(u32 state)
++static void suspend_finish(enum suspend_state state)
+ {
+ 	device_resume();
+ 	if (pm_ops && pm_ops->finish)
+@@ -133,7 +138,7 @@ char * pm_states[] = {
+  *	we've woken up).
+  */
+ 
+-static int enter_state(u32 state)
++static int enter_state(enum suspend_state state)
+ {
+ 	int error;
+ 
+@@ -151,6 +156,7 @@ static int enter_state(u32 state)
+ 		goto Unlock;
+ 	}
+ 
++	system_state = SYSTEM_RAM_SUSPEND;
+ 	pr_debug("PM: Preparing system for suspend\n");
+ 	if ((error = suspend_prepare(state)))
+ 		goto Unlock;
+@@ -162,6 +168,7 @@ static int enter_state(u32 state)
+ 	suspend_finish(state);
+  Unlock:
+ 	up(&pm_sem);
++	system_state = SYSTEM_RUNNING;
+ 	return error;
+ }
+ 
+@@ -183,7 +190,7 @@ int software_suspend(void)
+  *	structure, and enter (above).
+  */
+ 
+-int pm_suspend(u32 state)
++int pm_suspend(enum suspend_state state)
+ {
+ 	if (state > PM_SUSPEND_ON && state < PM_SUSPEND_MAX)
+ 		return enter_state(state);
+@@ -221,7 +228,7 @@ static ssize_t state_show(struct subsyst
+ 
+ static ssize_t state_store(struct subsystem * subsys, const char * buf, size_t n)
+ {
+-	u32 state = PM_SUSPEND_STANDBY;
++	enum suspend_state state = PM_SUSPEND_STANDBY;
+ 	char ** s;
+ 	char *p;
+ 	int error;
+diff -puN kernel/power/swsusp.c~use-global-system_state-to-avoid-system-state-confusion kernel/power/swsusp.c
+--- 25/kernel/power/swsusp.c~use-global-system_state-to-avoid-system-state-confusion	2004-08-23 21:51:24.751508712 -0700
++++ 25-akpm/kernel/power/swsusp.c	2004-08-23 21:51:24.771505672 -0700
+@@ -1119,7 +1119,7 @@ static int __init check_sig(void)
+ 		 */
+ 		error = bio_write_page(0,&swsusp_header);
+ 	} else { 
+-		pr_debug(KERN_ERR "swsusp: Invalid partition type.\n");
++		pr_debug(KERN_ERR "swsusp: Suspend partition has wrong signature?\n");
+ 		return -EINVAL;
+ 	}
+ 	if (!error)
+_

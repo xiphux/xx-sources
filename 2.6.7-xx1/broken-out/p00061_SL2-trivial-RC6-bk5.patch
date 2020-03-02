@@ -1,0 +1,298 @@
+
+From: <viro@parcelfarce.linux.theplanet.co.uk>
+
+trivial cases - ones where we have no need to clean up after pathname
+traversal (link body embedded into inode, etc.).  Plugged leak in
+devfs_follow_link(), while we are at it.
+
+
+---
+
+ 25-akpm/fs/autofs/symlink.c      |   11 +++--------
+ 25-akpm/fs/autofs4/symlink.c     |   13 +++----------
+ 25-akpm/fs/bad_inode.c           |    3 ++-
+ 25-akpm/fs/devfs/base.c          |   25 ++++---------------------
+ 25-akpm/fs/freevxfs/vxfs_immed.c |   29 +++--------------------------
+ 25-akpm/fs/jfs/symlink.c         |   11 +++--------
+ 25-akpm/fs/proc/generic.c        |   13 +++----------
+ 25-akpm/fs/sysv/symlink.c        |   12 +++---------
+ 25-akpm/fs/ufs/symlink.c         |   11 +++--------
+ 9 files changed, 27 insertions(+), 101 deletions(-)
+
+diff -puN fs/autofs4/symlink.c~SL2-trivial-RC6-bk5 fs/autofs4/symlink.c
+--- 25/fs/autofs4/symlink.c~SL2-trivial-RC6-bk5	2004-05-19 20:50:19.670197192 -0700
++++ 25-akpm/fs/autofs4/symlink.c	2004-05-19 20:50:19.683195216 -0700
+@@ -12,21 +12,14 @@
+ 
+ #include "autofs_i.h"
+ 
+-static int autofs4_readlink(struct dentry *dentry, char *buffer, int buflen)
+-{
+-	struct autofs_info *ino = autofs4_dentry_ino(dentry);
+-
+-	return vfs_readlink(dentry, buffer, buflen, ino->u.symlink);
+-}
+-
+ static int autofs4_follow_link(struct dentry *dentry, struct nameidata *nd)
+ {
+ 	struct autofs_info *ino = autofs4_dentry_ino(dentry);
+-
+-	return vfs_follow_link(nd, ino->u.symlink);
++	nd_set_link(nd, (char *)ino->u.symlink);
++	return 0;
+ }
+ 
+ struct inode_operations autofs4_symlink_inode_operations = {
+-	.readlink	= autofs4_readlink,
++	.readlink	= generic_readlink,
+ 	.follow_link	= autofs4_follow_link
+ };
+diff -puN fs/autofs/symlink.c~SL2-trivial-RC6-bk5 fs/autofs/symlink.c
+--- 25/fs/autofs/symlink.c~SL2-trivial-RC6-bk5	2004-05-19 20:50:19.671197040 -0700
++++ 25-akpm/fs/autofs/symlink.c	2004-05-19 20:50:19.683195216 -0700
+@@ -12,19 +12,14 @@
+ 
+ #include "autofs_i.h"
+ 
+-static int autofs_readlink(struct dentry *dentry, char *buffer, int buflen)
+-{
+-	char *s=((struct autofs_symlink *)dentry->d_inode->u.generic_ip)->data;
+-	return vfs_readlink(dentry, buffer, buflen, s);
+-}
+-
+ static int autofs_follow_link(struct dentry *dentry, struct nameidata *nd)
+ {
+ 	char *s=((struct autofs_symlink *)dentry->d_inode->u.generic_ip)->data;
+-	return vfs_follow_link(nd, s);
++	nd_set_link(nd, s);
++	return 0;
+ }
+ 
+ struct inode_operations autofs_symlink_inode_operations = {
+-	.readlink	= autofs_readlink,
++	.readlink	= generic_readlink,
+ 	.follow_link	= autofs_follow_link
+ };
+diff -puN fs/bad_inode.c~SL2-trivial-RC6-bk5 fs/bad_inode.c
+--- 25/fs/bad_inode.c~SL2-trivial-RC6-bk5	2004-05-19 20:50:19.672196888 -0700
++++ 25-akpm/fs/bad_inode.c	2004-05-19 20:50:19.684195064 -0700
+@@ -21,7 +21,8 @@
+  */
+ static int bad_follow_link(struct dentry *dent, struct nameidata *nd)
+ {
+-	return vfs_follow_link(nd, ERR_PTR(-EIO));
++	nd_set_link(nd, ERR_PTR(-EIO));
++	return 0;
+ }
+ 
+ static int return_EIO(void)
+diff -puN fs/devfs/base.c~SL2-trivial-RC6-bk5 fs/devfs/base.c
+--- 25/fs/devfs/base.c~SL2-trivial-RC6-bk5	2004-05-19 20:50:19.674196584 -0700
++++ 25-akpm/fs/devfs/base.c	2004-05-19 20:50:19.686194760 -0700
+@@ -2490,28 +2490,11 @@ static int devfs_mknod(struct inode *dir
+ 	return 0;
+ }				/*  End Function devfs_mknod  */
+ 
+-static int devfs_readlink(struct dentry *dentry, char *buffer, int buflen)
+-{
+-	int err;
+-	struct devfs_entry *de;
+-
+-	de = get_devfs_entry_from_vfs_inode(dentry->d_inode);
+-	if (!de)
+-		return -ENODEV;
+-	err = vfs_readlink(dentry, buffer, buflen, de->u.symlink.linkname);
+-	return err;
+-}				/*  End Function devfs_readlink  */
+-
+ static int devfs_follow_link(struct dentry *dentry, struct nameidata *nd)
+ {
+-	int err;
+-	struct devfs_entry *de;
+-
+-	de = get_devfs_entry_from_vfs_inode(dentry->d_inode);
+-	if (!de)
+-		return -ENODEV;
+-	err = vfs_follow_link(nd, de->u.symlink.linkname);
+-	return err;
++	struct devfs_entry *p = get_devfs_entry_from_vfs_inode(dentry->d_inode);
++	nd_set_link(nd, p ? p->u.symlink.linkname : ERR_PTR(-ENODEV));
++	return 0;
+ }				/*  End Function devfs_follow_link  */
+ 
+ static struct inode_operations devfs_iops = {
+@@ -2529,7 +2512,7 @@ static struct inode_operations devfs_dir
+ };
+ 
+ static struct inode_operations devfs_symlink_iops = {
+-	.readlink = devfs_readlink,
++	.readlink = generic_readlink,
+ 	.follow_link = devfs_follow_link,
+ 	.setattr = devfs_notify_change,
+ };
+diff -puN fs/freevxfs/vxfs_immed.c~SL2-trivial-RC6-bk5 fs/freevxfs/vxfs_immed.c
+--- 25/fs/freevxfs/vxfs_immed.c~SL2-trivial-RC6-bk5	2004-05-19 20:50:19.675196432 -0700
++++ 25-akpm/fs/freevxfs/vxfs_immed.c	2004-05-19 20:50:19.687194608 -0700
+@@ -37,7 +37,6 @@
+ #include "vxfs_inode.h"
+ 
+ 
+-static int	vxfs_immed_readlink(struct dentry *, char __user *, int);
+ static int	vxfs_immed_follow_link(struct dentry *, struct nameidata *);
+ 
+ static int	vxfs_immed_readpage(struct file *, struct page *);
+@@ -49,7 +48,7 @@ static int	vxfs_immed_readpage(struct fi
+  * but do all work directly on the inode.
+  */
+ struct inode_operations vxfs_immed_symlink_iops = {
+-	.readlink =		vxfs_immed_readlink,
++	.readlink =		generic_readlink,
+ 	.follow_link =		vxfs_immed_follow_link,
+ };
+ 
+@@ -60,28 +59,6 @@ struct address_space_operations vxfs_imm
+ 	.readpage =		vxfs_immed_readpage,
+ };
+ 
+-
+-/**
+- * vxfs_immed_readlink - read immed symlink
+- * @dp:		dentry for the link
+- * @bp:		output buffer
+- * @buflen:	length of @bp
+- *
+- * Description:
+- *   vxfs_immed_readlink calls vfs_readlink to read the link
+- *   described by @dp into userspace.
+- *
+- * Returns:
+- *   Number of bytes successfully copied to userspace.
+- */
+-static int
+-vxfs_immed_readlink(struct dentry *dp, char __user *bp, int buflen)
+-{
+-	struct vxfs_inode_info		*vip = VXFS_INO(dp->d_inode);
+-
+-	return (vfs_readlink(dp, bp, buflen, vip->vii_immed.vi_immed));
+-}
+-
+ /**
+  * vxfs_immed_follow_link - follow immed symlink
+  * @dp:		dentry for the link
+@@ -98,8 +75,8 @@ static int
+ vxfs_immed_follow_link(struct dentry *dp, struct nameidata *np)
+ {
+ 	struct vxfs_inode_info		*vip = VXFS_INO(dp->d_inode);
+-
+-	return (vfs_follow_link(np, vip->vii_immed.vi_immed));
++	nd_set_link(np, vip->vii_immed.vi_immed);
++	return 0;
+ }
+ 
+ /**
+diff -puN fs/jfs/symlink.c~SL2-trivial-RC6-bk5 fs/jfs/symlink.c
+--- 25/fs/jfs/symlink.c~SL2-trivial-RC6-bk5	2004-05-19 20:50:19.677196128 -0700
++++ 25-akpm/fs/jfs/symlink.c	2004-05-19 20:50:19.687194608 -0700
+@@ -23,17 +23,12 @@
+ static int jfs_follow_link(struct dentry *dentry, struct nameidata *nd)
+ {
+ 	char *s = JFS_IP(dentry->d_inode)->i_inline;
+-	return vfs_follow_link(nd, s);
+-}
+-
+-static int jfs_readlink(struct dentry *dentry, char __user *buffer, int buflen)
+-{
+-	char *s = JFS_IP(dentry->d_inode)->i_inline;
+-	return vfs_readlink(dentry, buffer, buflen, s);
++	nd_set_link(nd, s);
++	return 0;
+ }
+ 
+ struct inode_operations jfs_symlink_inode_operations = {
+-	.readlink	= jfs_readlink,
++	.readlink	= generic_readlink,
+ 	.follow_link	= jfs_follow_link,
+ 	.setxattr	= jfs_setxattr,
+ 	.getxattr	= jfs_getxattr,
+diff -puN fs/proc/generic.c~SL2-trivial-RC6-bk5 fs/proc/generic.c
+--- 25/fs/proc/generic.c~SL2-trivial-RC6-bk5	2004-05-19 20:50:19.678195976 -0700
++++ 25-akpm/fs/proc/generic.c	2004-05-19 20:50:19.688194456 -0700
+@@ -321,21 +321,14 @@ static void release_inode_number(unsigne
+ 	spin_unlock(&proc_inum_lock);
+ }
+ 
+-static int
+-proc_readlink(struct dentry *dentry, char __user *buffer, int buflen)
+-{
+-	char *s = PDE(dentry->d_inode)->data;
+-	return vfs_readlink(dentry, buffer, buflen, s);
+-}
+-
+ static int proc_follow_link(struct dentry *dentry, struct nameidata *nd)
+ {
+-	char *s = PDE(dentry->d_inode)->data;
+-	return vfs_follow_link(nd, s);
++	nd_set_link(nd, PDE(dentry->d_inode)->data);
++	return 0;
+ }
+ 
+ static struct inode_operations proc_link_inode_operations = {
+-	.readlink	= proc_readlink,
++	.readlink	= generic_readlink,
+ 	.follow_link	= proc_follow_link,
+ };
+ 
+diff -puN fs/sysv/symlink.c~SL2-trivial-RC6-bk5 fs/sysv/symlink.c
+--- 25/fs/sysv/symlink.c~SL2-trivial-RC6-bk5	2004-05-19 20:50:19.679195824 -0700
++++ 25-akpm/fs/sysv/symlink.c	2004-05-19 20:50:19.688194456 -0700
+@@ -7,19 +7,13 @@
+ 
+ #include "sysv.h"
+ 
+-static int sysv_readlink(struct dentry *dentry, char *buffer, int buflen)
+-{
+-	char *s = (char *)SYSV_I(dentry->d_inode)->i_data;
+-	return vfs_readlink(dentry, buffer, buflen, s);
+-}
+-
+ static int sysv_follow_link(struct dentry *dentry, struct nameidata *nd)
+ {
+-	char *s = (char *)SYSV_I(dentry->d_inode)->i_data;
+-	return vfs_follow_link(nd, s);
++	nd_set_link(nd, (char *)SYSV_I(dentry->d_inode)->i_data);
++	return 0;
+ }
+ 
+ struct inode_operations sysv_fast_symlink_inode_operations = {
+-	.readlink	= sysv_readlink,
++	.readlink	= generic_readlink,
+ 	.follow_link	= sysv_follow_link,
+ };
+diff -puN fs/ufs/symlink.c~SL2-trivial-RC6-bk5 fs/ufs/symlink.c
+--- 25/fs/ufs/symlink.c~SL2-trivial-RC6-bk5	2004-05-19 20:50:19.680195672 -0700
++++ 25-akpm/fs/ufs/symlink.c	2004-05-19 20:50:19.688194456 -0700
+@@ -28,19 +28,14 @@
+ #include <linux/fs.h>
+ #include <linux/ufs_fs.h>
+ 
+-static int ufs_readlink(struct dentry *dentry, char *buffer, int buflen)
+-{
+-	struct ufs_inode_info *p = UFS_I(dentry->d_inode);
+-	return vfs_readlink(dentry, buffer, buflen, (char*)p->i_u1.i_symlink);
+-}
+-
+ static int ufs_follow_link(struct dentry *dentry, struct nameidata *nd)
+ {
+ 	struct ufs_inode_info *p = UFS_I(dentry->d_inode);
+-	return vfs_follow_link(nd, (char*)p->i_u1.i_symlink);
++	nd_set_link(nd, (char*)p->i_u1.i_symlink);
++	return 0;
+ }
+ 
+ struct inode_operations ufs_fast_symlink_inode_operations = {
+-	.readlink	= ufs_readlink,
++	.readlink	= generic_readlink,
+ 	.follow_link	= ufs_follow_link,
+ };
+
+_

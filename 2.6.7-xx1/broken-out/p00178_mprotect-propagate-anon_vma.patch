@@ -1,0 +1,64 @@
+
+From: Hugh Dickins <hugh@veritas.com>
+
+When mprotect shifts the boundary between vmas (merging the reprotected
+area into the vma before or the vma after), make sure that the expanding
+vma has anon_vma if the shrinking vma had, to cover anon pages imported. 
+Thanks to Andrea for alerting us to this oversight.
+
+Cc: <andrea@suse.de>
+Signed-off-by: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/mmap.c |   15 ++++++++++++++-
+ 1 files changed, 14 insertions(+), 1 deletion(-)
+
+diff -puN mm/mmap.c~mprotect-propagate-anon_vma mm/mmap.c
+--- 25/mm/mmap.c~mprotect-propagate-anon_vma	2004-06-19 14:05:08.312704448 -0700
++++ 25-akpm/mm/mmap.c	2004-06-19 14:05:08.317703688 -0700
+@@ -362,6 +362,7 @@ void vma_adjust(struct vm_area_struct *v
+ {
+ 	struct mm_struct *mm = vma->vm_mm;
+ 	struct vm_area_struct *next = vma->vm_next;
++	struct vm_area_struct *importer = NULL;
+ 	struct address_space *mapping = NULL;
+ 	struct prio_tree_root *root = NULL;
+ 	struct file *file = vma->vm_file;
+@@ -385,6 +386,7 @@ again:			remove_next = 1 + (end > next->
+ 			 */
+ 			adjust_next = (end - next->vm_start) >> PAGE_SHIFT;
+ 			anon_vma = next->anon_vma;
++			importer = vma;
+ 		} else if (end < vma->vm_end) {
+ 			/*
+ 			 * vma shrinks, and !insert tells it's not
+@@ -393,6 +395,7 @@ again:			remove_next = 1 + (end > next->
+ 			 */
+ 			adjust_next = - ((vma->vm_end - end) >> PAGE_SHIFT);
+ 			anon_vma = next->anon_vma;
++			importer = next;
+ 		}
+ 	}
+ 
+@@ -418,8 +421,18 @@ again:			remove_next = 1 + (end > next->
+ 	 */
+ 	if (vma->anon_vma)
+ 		anon_vma = vma->anon_vma;
+-	if (anon_vma)
++	if (anon_vma) {
+ 		spin_lock(&anon_vma->lock);
++		/*
++		 * Easily overlooked: when mprotect shifts the boundary,
++		 * make sure the expanding vma has anon_vma set if the
++		 * shrinking vma had, to cover any anon pages imported.
++		 */
++		if (importer && !importer->anon_vma) {
++			importer->anon_vma = anon_vma;
++			__anon_vma_link(importer);
++		}
++	}
+ 
+ 	if (root) {
+ 		flush_dcache_mmap_lock(mapping);
+_

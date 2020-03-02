@@ -1,0 +1,166 @@
+
+From: Neil Brown <neilb@cse.unsw.edu.au>
+
+Further lockd tidyups.
+  - NIPQUAD everywhere that is appropriate
+  - use XDR_QUADLEN in more places as appropriate
+  - discard QUADLEN which is a lockd-specific version of XDR_QUADLEN
+
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/lockd/host.c           |    6 +-----
+ 25-akpm/fs/lockd/mon.c            |    4 +---
+ 25-akpm/fs/lockd/svc4proc.c       |    8 ++++----
+ 25-akpm/fs/lockd/svcproc.c        |    8 ++++----
+ 25-akpm/fs/lockd/xdr.c            |   14 +++++++-------
+ 25-akpm/fs/lockd/xdr4.c           |    4 ++--
+ 25-akpm/include/linux/lockd/xdr.h |    2 --
+ 7 files changed, 19 insertions(+), 27 deletions(-)
+
+diff -puN fs/lockd/host.c~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements fs/lockd/host.c
+--- 25/fs/lockd/host.c~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements	2004-10-10 23:51:06.751972304 -0700
++++ 25-akpm/fs/lockd/host.c	2004-10-10 23:51:06.763970480 -0700
+@@ -104,11 +104,7 @@ nlm_lookup_host(int server, struct socka
+ 	memset(host, 0, sizeof(*host));
+ 
+ 	addr = sin->sin_addr.s_addr;
+-	sprintf(host->h_name, "%d.%d.%d.%d",
+-			(unsigned char) (ntohl(addr) >> 24),
+-			(unsigned char) (ntohl(addr) >> 16),
+-			(unsigned char) (ntohl(addr) >>  8),
+-			(unsigned char) (ntohl(addr) >>  0));
++	sprintf(host->h_name, "%u.%u.%u.%u", NIPQUAD(addr));
+ 
+ 	host->h_addr       = *sin;
+ 	host->h_addr.sin_port = 0;	/* ouch! */
+diff -puN fs/lockd/mon.c~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements fs/lockd/mon.c
+--- 25/fs/lockd/mon.c~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements	2004-10-10 23:51:06.752972152 -0700
++++ 25-akpm/fs/lockd/mon.c	2004-10-10 23:51:06.764970328 -0700
+@@ -140,7 +140,6 @@ static u32 *
+ xdr_encode_common(struct rpc_rqst *rqstp, u32 *p, struct nsm_args *argp)
+ {
+ 	char	buffer[20];
+-	u32	addr = ntohl(argp->addr);
+ 
+ 	/*
+ 	 * Use the dotted-quad IP address of the remote host as
+@@ -148,8 +147,7 @@ xdr_encode_common(struct rpc_rqst *rqstp
+ 	 * hostname first for whatever remote hostname it receives,
+ 	 * so this works alright.
+ 	 */
+-	sprintf(buffer, "%d.%d.%d.%d", (addr>>24) & 0xff, (addr>>16) & 0xff,
+-				 	(addr>>8) & 0xff,  (addr) & 0xff);
++	sprintf(buffer, "%u.%u.%u.%u", NIPQUAD(argp->addr));
+ 	if (!(p = xdr_encode_string(p, buffer))
+ 	 || !(p = xdr_encode_string(p, system_utsname.nodename)))
+ 		return ERR_PTR(-EIO);
+diff -puN fs/lockd/svc4proc.c~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements fs/lockd/svc4proc.c
+--- 25/fs/lockd/svc4proc.c~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements	2004-10-10 23:51:06.753972000 -0700
++++ 25-akpm/fs/lockd/svc4proc.c	2004-10-10 23:51:06.764970328 -0700
+@@ -546,10 +546,10 @@ struct nlm_void			{ int dummy; };
+    .pc_ressize	= sizeof(struct nlm_##rest),		\
+    .pc_xdrressize = respsize,				\
+  }
+-#define	Ck	(1+8)	/* cookie */
+-#define	No	(1+1024/4)	/* netobj */
+-#define	St	1	/* status */
+-#define	Rg	4	/* range (offset + length) */
++#define	Ck	(1+XDR_QUADLEN(NLM_MAXCOOKIELEN))	/* cookie */
++#define	No	(1+1024/4)				/* netobj */
++#define	St	1					/* status */
++#define	Rg	4					/* range (offset + length) */
+ struct svc_procedure		nlmsvc_procedures4[] = {
+   PROC(null,		void,		void,		void,	void, 1),
+   PROC(test,		testargs,	testres,	args,	res, Ck+St+2+No+Rg),
+diff -puN fs/lockd/svcproc.c~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements fs/lockd/svcproc.c
+--- 25/fs/lockd/svcproc.c~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements	2004-10-10 23:51:06.755971696 -0700
++++ 25-akpm/fs/lockd/svcproc.c	2004-10-10 23:51:06.765970176 -0700
+@@ -571,10 +571,10 @@ struct nlm_void			{ int dummy; };
+    .pc_xdrressize = respsize,				\
+  }
+ 
+-#define	Ck	(1+8)	/* cookie */
+-#define	St	1	/* status */
+-#define	No	(1+1024/4) /* Net Obj */
+-#define	Rg	2	/* range - offset + size */
++#define	Ck	(1+XDR_QUADLEN(NLM_MAXCOOKIELEN))	/* cookie */
++#define	St	1				/* status */
++#define	No	(1+1024/4)			/* Net Obj */
++#define	Rg	2				/* range - offset + size */
+ 
+ struct svc_procedure		nlmsvc_procedures[] = {
+   PROC(null,		void,		void,		void,	void, 1),
+diff -puN fs/lockd/xdr4.c~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements fs/lockd/xdr4.c
+--- 25/fs/lockd/xdr4.c~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements	2004-10-10 23:51:06.757971392 -0700
++++ 25-akpm/fs/lockd/xdr4.c	2004-10-10 23:51:06.766970024 -0700
+@@ -60,7 +60,7 @@ nlm4_decode_cookie(u32 *p, struct nlm_co
+ 	{
+ 		c->len=len;
+ 		memcpy(c->data, p, len);
+-		p+=(len+3)>>2;
++		p+=XDR_QUADLEN(len);
+ 	}
+ 	else 
+ 	{
+@@ -76,7 +76,7 @@ nlm4_encode_cookie(u32 *p, struct nlm_co
+ {
+ 	*p++ = htonl(c->len);
+ 	memcpy(p, c->data, c->len);
+-	p+=(c->len+3)>>2;
++	p+=XDR_QUADLEN(c->len);
+ 	return p;
+ }
+ 
+diff -puN fs/lockd/xdr.c~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements fs/lockd/xdr.c
+--- 25/fs/lockd/xdr.c~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements	2004-10-10 23:51:06.759971088 -0700
++++ 25-akpm/fs/lockd/xdr.c	2004-10-10 23:51:06.766970024 -0700
+@@ -59,7 +59,7 @@ static inline u32 *nlm_decode_cookie(u32
+ 	{
+ 		c->len=len;
+ 		memcpy(c->data, p, len);
+-		p+=(len+3)>>2;
++		p+=XDR_QUADLEN(len);
+ 	}
+ 	else 
+ 	{
+@@ -75,7 +75,7 @@ nlm_encode_cookie(u32 *p, struct nlm_coo
+ {
+ 	*p++ = htonl(c->len);
+ 	memcpy(p, c->data, c->len);
+-	p+=(c->len+3)>>2;
++	p+=XDR_QUADLEN(c->len);
+ 	return p;
+ }
+ 
+@@ -512,11 +512,11 @@ nlmclt_decode_res(struct rpc_rqst *req, 
+  * Buffer requirements for NLM
+  */
+ #define NLM_void_sz		0
+-#define NLM_cookie_sz		1+QUADLEN(NLM_MAXCOOKIELEN)
+-#define NLM_caller_sz		1+QUADLEN(sizeof(system_utsname.nodename))
+-#define NLM_netobj_sz		1+QUADLEN(XDR_MAX_NETOBJ)
+-/* #define NLM_owner_sz		1+QUADLEN(NLM_MAXOWNER) */
+-#define NLM_fhandle_sz		1+QUADLEN(NFS2_FHSIZE)
++#define NLM_cookie_sz		1+XDR_QUADLEN(NLM_MAXCOOKIELEN)
++#define NLM_caller_sz		1+XDR_QUADLEN(sizeof(system_utsname.nodename))
++#define NLM_netobj_sz		1+XDR_QUADLEN(XDR_MAX_NETOBJ)
++/* #define NLM_owner_sz		1+XDR_QUADLEN(NLM_MAXOWNER) */
++#define NLM_fhandle_sz		1+XDR_QUADLEN(NFS2_FHSIZE)
+ #define NLM_lock_sz		3+NLM_caller_sz+NLM_netobj_sz+NLM_fhandle_sz
+ #define NLM_holder_sz		4+NLM_netobj_sz
+ 
+diff -puN include/linux/lockd/xdr.h~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements include/linux/lockd/xdr.h
+--- 25/include/linux/lockd/xdr.h~lockd-remove-hardcoded-maximum-nlm-cookie-length-enhancements	2004-10-10 23:51:06.760970936 -0700
++++ 25-akpm/include/linux/lockd/xdr.h	2004-10-10 23:51:06.767969872 -0700
+@@ -16,8 +16,6 @@
+ #define NLM_MAXCOOKIELEN    	32
+ #define NLM_MAXSTRLEN		1024
+ 
+-#define QUADLEN(len)		(((len) + 3) >> 2)
+-
+ #define	nlm_granted		__constant_htonl(NLM_LCK_GRANTED)
+ #define	nlm_lck_denied		__constant_htonl(NLM_LCK_DENIED)
+ #define	nlm_lck_denied_nolocks	__constant_htonl(NLM_LCK_DENIED_NOLOCKS)
+_

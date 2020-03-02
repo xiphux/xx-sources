@@ -1,0 +1,495 @@
+
+From: Hans Reiser <reiser@namesys.com>
+
+This patch fixes some sparc64 compile warnings.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/reiser4/plugin/cryptcompress.c             |    4 +-
+ 25-akpm/fs/reiser4/plugin/dir/dir.c                   |   12 +++---
+ 25-akpm/fs/reiser4/plugin/dir/hashed_dir.c            |   11 +++---
+ 25-akpm/fs/reiser4/plugin/disk_format/disk_format40.c |   14 +++++--
+ 25-akpm/fs/reiser4/plugin/file/file.c                 |   22 +++++++-----
+ 25-akpm/fs/reiser4/plugin/file/tail_conversion.c      |    7 ++-
+ 25-akpm/fs/reiser4/plugin/item/cde.c                  |    5 ++
+ 25-akpm/fs/reiser4/plugin/item/extent_item_ops.c      |    2 -
+ 25-akpm/fs/reiser4/plugin/item/sde.c                  |    5 ++
+ 25-akpm/fs/reiser4/plugin/item/static_stat.c          |   32 ++++++++++++------
+ 25-akpm/fs/reiser4/plugin/object.c                    |    6 +--
+ 25-akpm/fs/reiser4/plugin/pseudo/pseudo.c             |    8 ++--
+ 25-akpm/fs/reiser4/plugin/space/bitmap.c              |    9 ++---
+ 13 files changed, 86 insertions(+), 51 deletions(-)
+
+diff -puN fs/reiser4/plugin/cryptcompress.c~reiser4-sparce64-warning-fix fs/reiser4/plugin/cryptcompress.c
+--- 25/fs/reiser4/plugin/cryptcompress.c~reiser4-sparce64-warning-fix	2004-09-20 11:05:54.758389992 -0700
++++ 25-akpm/fs/reiser4/plugin/cryptcompress.c	2004-09-20 11:05:54.782386344 -0700
+@@ -2312,7 +2312,7 @@ set_cluster_params(struct inode * inode,
+ 
+ 		printk("edward-176, Warning: Hole of size %llu in "
+ 		       "cryptocompressed file (inode %llu, offset %llu) \n",
+-		       hole_size, get_inode_oid(inode), file_off);
++		       hole_size, (unsigned long long)get_inode_oid(inode), file_off);
+ 
+ 		clust_by_offs(clust, inode, inode->i_size, file_off);
+ 		clust->stat = HOLE_CLUSTER;
+@@ -3007,7 +3007,7 @@ delete_cryptcompress(struct inode *inode
+ 		result = cryptcompress_truncate(inode, 0, 0);
+ 		if (result) {
+ 			warning("edward-430", "cannot truncate cryptcompress file  %lli: %i",
+-				get_inode_oid(inode), result);
++				(unsigned long long)get_inode_oid(inode), result);
+ 			return result;
+ 		}
+ 	}
+diff -puN fs/reiser4/plugin/dir/dir.c~reiser4-sparce64-warning-fix fs/reiser4/plugin/dir/dir.c
+--- 25/fs/reiser4/plugin/dir/dir.c~reiser4-sparce64-warning-fix	2004-09-20 11:05:54.760389688 -0700
++++ 25-akpm/fs/reiser4/plugin/dir/dir.c	2004-09-20 11:05:54.784386040 -0700
+@@ -298,7 +298,8 @@ unlink_common(struct inode *parent /* pa
+ 	if (unlikely(result != 0)) {
+ 		if (result != -ENOMEM)
+ 			warning("nikita-3398", "Cannot unlink %llu (%i)",
+-				get_inode_oid(object), result);
++				(unsigned long long)get_inode_oid(object),
++				result);
+ 		/* if operation failed commit pending inode modifications to
+ 		 * the stat-data */
+ 		reiser4_update_sd(object);
+@@ -418,7 +419,7 @@ create_child_common(reiser4_object_creat
+ 	result = obj_plug->set_plug_in_inode(object, parent, data);
+ 	if (result) {
+ 		warning("nikita-431", "Cannot install plugin %i on %llx",
+-			data->id, get_inode_oid(object));
++			data->id, (unsigned long long)get_inode_oid(object));
+ 		DQUOT_FREE_INODE(object);
+ 		object->i_flags |= S_NOQUOTA;
+ 		return result;
+@@ -443,7 +444,8 @@ create_child_common(reiser4_object_creat
+ 					    object->i_sb->s_root->d_inode);
+ 	if (result != 0) {
+ 		warning("nikita-432", "Cannot inherit from %llx to %llx",
+-			get_inode_oid(parent), get_inode_oid(object));
++			(unsigned long long)get_inode_oid(parent),
++			(unsigned long long)get_inode_oid(object));
+ 		DQUOT_FREE_INODE(object);
+ 		object->i_flags |= S_NOQUOTA;
+ 		return result;
+@@ -496,7 +498,7 @@ create_child_common(reiser4_object_creat
+ 		if (result != -ENAMETOOLONG && result != -ENOMEM)
+ 			warning("nikita-2219",
+ 				"Failed to create sd for %llu",
+-				get_inode_oid(object));
++				(unsigned long long)get_inode_oid(object));
+ 		DQUOT_FREE_INODE(object);
+ 		object->i_flags |= S_NOQUOTA;
+ 		return result;
+@@ -531,7 +533,7 @@ create_child_common(reiser4_object_creat
+ 			obj_plug->detach(object, parent);
+ 	} else if (result != -ENOMEM)
+ 		warning("nikita-2219", "Failed to initialize dir for %llu: %i",
+-			get_inode_oid(object), result);
++			(unsigned long long)get_inode_oid(object), result);
+ 
+ 	/*
+ 	 * update stat-data, committing all pending modifications to the inode
+diff -puN fs/reiser4/plugin/dir/hashed_dir.c~reiser4-sparce64-warning-fix fs/reiser4/plugin/dir/hashed_dir.c
+--- 25/fs/reiser4/plugin/dir/hashed_dir.c~reiser4-sparce64-warning-fix	2004-09-20 11:05:54.761389536 -0700
++++ 25-akpm/fs/reiser4/plugin/dir/hashed_dir.c	2004-09-20 11:05:54.786385736 -0700
+@@ -172,7 +172,7 @@ done_hashed(struct inode *object /* obje
+ 		             -- v6src/s2/mv.c:89
+ 		*/
+ 		warning("nikita-2252", "Cannot remove dot of %lli: %i",
+-			get_inode_oid(object), result);
++			(unsigned long long)get_inode_oid(object), result);
+ 	return 0;
+ }
+ 
+@@ -595,7 +595,7 @@ add_name(struct inode *inode	/* inode wh
+ 		result2 = reiser4_del_nlink(inode, dir, 0);
+ 		if (result2 != 0) {
+ 			warning("nikita-2327", "Cannot drop link on %lli %i. %s",
+-				get_inode_oid(inode),
++				(unsigned long long)get_inode_oid(inode),
+ 				result2, possible_leak);
+ 		}
+ 	} else
+@@ -951,7 +951,8 @@ rename_hashed(struct inode *old_dir /* d
+ 		result = fplug->detach(new_inode, new_dir);
+ 		if (result != 0)
+ 			warning("nikita-2330", "Cannot detach %lli: %i. %s",
+-				get_inode_oid(new_inode), result, possible_leak);
++				(unsigned long long)get_inode_oid(new_inode),
++				result, possible_leak);
+ 	}
+ 
+ 	if (new_inode != NULL)
+@@ -1138,7 +1139,7 @@ rem_entry_hashed(struct inode *object	/*
+ 				warning("nikita-3397",
+ 					"rem_entry: %#llx != %#llx\n",
+ 					get_key_objectid(&key),
+-					get_inode_oid(child));
++					(unsigned long long)get_inode_oid(child));
+ 				return RETERR(-EIO);
+ 			}
+ 		}
+@@ -1181,7 +1182,7 @@ rem_entry_hashed(struct inode *object	/*
+ 				INODE_DEC_FIELD(object, i_size);
+ 			else {
+ 				warning("nikita-2509", "Dir %llu is runt",
+-					get_inode_oid(object));
++					(unsigned long long)get_inode_oid(object));
+ 				result = RETERR(-EIO);
+ 			}
+ 			write_current_logf(WRITE_TREE_LOG,
+diff -puN fs/reiser4/plugin/disk_format/disk_format40.c~reiser4-sparce64-warning-fix fs/reiser4/plugin/disk_format/disk_format40.c
+--- 25/fs/reiser4/plugin/disk_format/disk_format40.c~reiser4-sparce64-warning-fix	2004-09-20 11:05:54.763389232 -0700
++++ 25-akpm/fs/reiser4/plugin/disk_format/disk_format40.c	2004-09-20 11:05:54.786385736 -0700
+@@ -521,16 +521,22 @@ check_open_format40(const struct inode *
+ 	/* Check the oid. */
+ 	oid = get_inode_oid(object);
+ 	if (oid > max) {
+-		warning("vpf-1360", "The object with the oid %llu greater then the "
+-			"max used oid %llu found.", oid, max);
++		warning("vpf-1360", "The object with the oid %llu "
++			"greater then the max used oid %llu found.",
++			(unsigned long long)oid,
++			(unsigned long long)max);
++
+ 		return RETERR(-EIO);
+ 	}
+ 
+ 	/* Check the locality. */
+ 	oid = reiser4_inode_data(object)->locality_id;
+ 	if (oid > max) {
+-		warning("vpf-1360", "The object with the locality %llu greater then the "
+-			"max used oid %llu found.", oid, max);
++		warning("vpf-1360", "The object with the locality %llu "
++			"greater then the max used oid %llu found.",
++			(unsigned long long)oid,
++			(unsigned long long)max);
++
+ 		return RETERR(-EIO);
+ 	}
+ 
+diff -puN fs/reiser4/plugin/file/file.c~reiser4-sparce64-warning-fix fs/reiser4/plugin/file/file.c
+--- 25/fs/reiser4/plugin/file/file.c~reiser4-sparce64-warning-fix	2004-09-20 11:05:54.764389080 -0700
++++ 25-akpm/fs/reiser4/plugin/file/file.c	2004-09-20 11:05:54.789385280 -0700
+@@ -1502,9 +1502,10 @@ readpage_unix_file(void *vp, struct page
+ 		/* this indicates corruption */
+ 		warning("vs-280",
+ 			"Looking for page %lu of file %llu (size %lli). "
+-			"No file items found (%d). "
+-			"File is corrupted?\n",
+-			page->index, get_inode_oid(inode), inode->i_size, result);
++			"No file items found (%d). File is corrupted?\n",
++			page->index, (unsigned long long)get_inode_oid(inode),
++			inode->i_size, result);
++
+ 		zrelse(coord->node);
+ 		done_lh(&lh);
+ 		return RETERR(-EIO);
+@@ -1619,7 +1620,8 @@ read_unix_file(struct file *file, char *
+ 
+ 	case UF_CONTAINER_EMPTY:
+ 	default:
+-		warning("vs-1297", "File (ino %llu) has unexpected state: %d\n", get_inode_oid(inode), uf_info->container);
++		warning("vs-1297", "File (ino %llu) has unexpected state: %d\n",
++			(unsigned long long)get_inode_oid(inode), uf_info->container);
+ 		drop_access(uf_info);
+ 		return RETERR(-EIO);
+ 	}
+@@ -2080,7 +2082,7 @@ write_unix_file(struct file *file, /* fi
+ 		result = sync_unix_file(inode, 0/* data and stat data */);
+ 		if (result)
+ 			warning("reiser4-7", "failed to sync file %llu",
+-				get_inode_oid(inode));
++				(unsigned long long)get_inode_oid(inode));
+ 	}
+ 	up(&inode->i_sem);
+ 	current->backing_dev_info = 0;
+@@ -2106,7 +2108,7 @@ release_unix_file(struct inode *object, 
+ 		result = extent2tail(uf_info);
+ 		if (result != 0) {
+ 			warning("nikita-3233", "Failed to convert in %s (%llu)",
+-				__FUNCTION__, get_inode_oid(object));
++				__FUNCTION__, (unsigned long long)get_inode_oid(object));
+ 			print_inode("inode", object);
+ 		}
+ 	}
+@@ -2296,15 +2298,17 @@ setattr_truncate(struct inode *inode, st
+ 	if (result == 0)
+ 		result = truncate_file_body(inode, attr->ia_size);
+ 	if (result)
+-		warning("vs-1588", "truncate_file failed: oid %lli, old size %lld, new size %lld, retval %d",
+-			get_inode_oid(inode), old_size, attr->ia_size, result);
++		warning("vs-1588", "truncate_file failed: oid %lli, "
++			"old size %lld, new size %lld, retval %d",
++			(unsigned long long)get_inode_oid(inode),
++			old_size, attr->ia_size, result);
+ 
+ 	s_result = safe_link_grab(tree, BA_CAN_COMMIT);
+ 	if (s_result == 0)
+ 		s_result = safe_link_del(inode, SAFE_TRUNCATE);
+ 	if (s_result != 0) {
+ 		warning("nikita-3417", "Cannot kill safelink %lli: %i",
+-			get_inode_oid(inode), s_result);
++			(unsigned long long)get_inode_oid(inode), s_result);
+ 	}
+ 	safe_link_release(tree);
+ 	all_grabbed2free();
+diff -puN fs/reiser4/plugin/file/tail_conversion.c~reiser4-sparce64-warning-fix fs/reiser4/plugin/file/tail_conversion.c
+--- 25/fs/reiser4/plugin/file/tail_conversion.c~reiser4-sparce64-warning-fix	2004-09-20 11:05:54.766388776 -0700
++++ 25-akpm/fs/reiser4/plugin/file/tail_conversion.c	2004-09-20 11:05:54.790385128 -0700
+@@ -243,7 +243,7 @@ complete_conversion(struct inode *inode)
+ 	}
+ 	if (result)
+ 		warning("vs-1696", "Failed to clear converting bit of %llu: %i",
+-			get_inode_oid(inode), result);
++			(unsigned long long)get_inode_oid(inode), result);
+ 	return 0;
+ }
+ 
+@@ -415,7 +415,7 @@ tail2extent(unix_file_info_t *uf_info)
+  error:
+ 		release_all_pages(pages, sizeof_array(pages));
+ 		warning("nikita-2282", "Partial conversion of %llu: %i",
+-			get_inode_oid(inode), result);
++			(unsigned long long)get_inode_oid(inode), result);
+ 		print_inode("inode", inode);
+ 	}
+ 
+@@ -651,7 +651,8 @@ extent2tail(unix_file_info_t *uf_info)
+ 		 * iteration of the loop above. */
+ 		warning("nikita-2282",
+ 			"Partial conversion of %llu: %lu of %lu: %i",
+-			get_inode_oid(inode), i, num_pages, result);
++			(unsigned long long)get_inode_oid(inode), i,
++			num_pages, result);
+ 		print_inode("inode", inode);
+ 	}
+ 	all_grabbed2free();
+diff -puN fs/reiser4/plugin/item/cde.c~reiser4-sparce64-warning-fix fs/reiser4/plugin/item/cde.c
+--- 25/fs/reiser4/plugin/item/cde.c~reiser4-sparce64-warning-fix	2004-09-20 11:05:54.768388472 -0700
++++ 25-akpm/fs/reiser4/plugin/item/cde.c	2004-09-20 11:05:54.791384976 -0700
+@@ -1035,7 +1035,10 @@ rem_entry_cde(struct inode *dir /* direc
+ 		length += name->len + 1;
+ 
+ 	if (inode_get_bytes(dir) < length) {
+-		warning("nikita-2628", "Dir is broke: %llu: %llu", get_inode_oid(dir), inode_get_bytes(dir));
++		warning("nikita-2628", "Dir is broke: %llu: %llu",
++			(unsigned long long)get_inode_oid(dir),
++			inode_get_bytes(dir));
++
+ 		return RETERR(-EIO);
+ 	}
+ 
+diff -puN fs/reiser4/plugin/item/extent_item_ops.c~reiser4-sparce64-warning-fix fs/reiser4/plugin/item/extent_item_ops.c
+--- 25/fs/reiser4/plugin/item/extent_item_ops.c~reiser4-sparce64-warning-fix	2004-09-20 11:05:54.769388320 -0700
++++ 25-akpm/fs/reiser4/plugin/item/extent_item_ops.c	2004-09-20 11:05:54.791384976 -0700
+@@ -67,7 +67,7 @@ show_extent(struct seq_file *m, coord_t 
+ {
+ 	reiser4_extent *ext;
+ 	ext = extent_by_coord(coord);
+-	seq_printf(m, "%Lu %Lu", extent_get_start(ext), extent_get_width(ext));
++	seq_printf(m, "%llu %llu", extent_get_start(ext), extent_get_width(ext));
+ }
+ 
+ 
+diff -puN fs/reiser4/plugin/item/sde.c~reiser4-sparce64-warning-fix fs/reiser4/plugin/item/sde.c
+--- 25/fs/reiser4/plugin/item/sde.c~reiser4-sparce64-warning-fix	2004-09-20 11:05:54.770388168 -0700
++++ 25-akpm/fs/reiser4/plugin/item/sde.c	2004-09-20 11:05:54.792384824 -0700
+@@ -178,7 +178,10 @@ rem_entry_de(struct inode *dir /* direct
+ 
+ 	length = item_length_by_coord(coord);
+ 	if (inode_get_bytes(dir) < length) {
+-		warning("nikita-2627", "Dir is broke: %llu: %llu", get_inode_oid(dir), inode_get_bytes(dir));
++		warning("nikita-2627", "Dir is broke: %llu: %llu",
++			(unsigned long long)get_inode_oid(dir),
++			inode_get_bytes(dir));
++
+ 		return RETERR(-EIO);
+ 	}
+ 
+diff -puN fs/reiser4/plugin/item/static_stat.c~reiser4-sparce64-warning-fix fs/reiser4/plugin/item/static_stat.c
+--- 25/fs/reiser4/plugin/item/static_stat.c~reiser4-sparce64-warning-fix	2004-09-20 11:05:54.772387864 -0700
++++ 25-akpm/fs/reiser4/plugin/item/static_stat.c	2004-09-20 11:05:54.793384672 -0700
+@@ -139,7 +139,9 @@ not_enough_space(struct inode *inode /* 
+ {
+ 	assert("nikita-618", inode != NULL);
+ 
+-	warning("nikita-619", "Not enough space in %llu while loading %s", get_inode_oid(inode), where);
++	warning("nikita-619", "Not enough space in %llu while loading %s",
++		(unsigned long long)get_inode_oid(inode), where);
++
+ 	return RETERR(-EINVAL);
+ }
+ 
+@@ -149,7 +151,9 @@ static int
+ unknown_plugin(reiser4_plugin_id id /* invalid id */ ,
+ 	       struct inode *inode /* object being processed */ )
+ {
+-	warning("nikita-620", "Unknown plugin %i in %llu", id, get_inode_oid(inode));
++	warning("nikita-620", "Unknown plugin %i in %llu",
++		id, (unsigned long long)get_inode_oid(inode));
++
+ 	return RETERR(-EINVAL);
+ }
+ 
+@@ -217,7 +221,9 @@ init_inode_static_sd(struct inode *inode
+ 
+ 			sdplug = sd_ext_plugin_by_id(bit);
+ 			if (sdplug == NULL) {
+-				warning("nikita-627", "No such extension %i in inode %llu", bit, get_inode_oid(inode));
++				warning("nikita-627", "No such extension %i in inode %llu",
++					bit, (unsigned long long)get_inode_oid(inode));
++
+ 				result = RETERR(-EINVAL);
+ 				break;
+ 			}
+@@ -239,7 +245,9 @@ init_inode_static_sd(struct inode *inode
+ 		} else if (mask & 1) {
+ 			/* next portion of bitmask */
+ 			if (len < (int) sizeof (d16)) {
+-				warning("nikita-629", "No space for bitmap in inode %llu", get_inode_oid(inode));
++				warning("nikita-629", "No space for bitmap in inode %llu",
++					(unsigned long long)get_inode_oid(inode));
++
+ 				result = RETERR(-EINVAL);
+ 				break;
+ 			}
+@@ -255,7 +263,9 @@ init_inode_static_sd(struct inode *inode
+ 					continue;
+ 				}
+ 				/* too much */
+-				warning("nikita-630", "Too many extensions in %llu", get_inode_oid(inode));
++				warning("nikita-630", "Too many extensions in %llu",
++					(unsigned long long)get_inode_oid(inode));
++
+ 				result = RETERR(-EINVAL);
+ 				break;
+ 			}
+@@ -266,10 +276,13 @@ init_inode_static_sd(struct inode *inode
+ 	state->extmask = bigmask;
+ 	/* common initialisations */
+ 	inode->i_blksize = get_super_private(inode->i_sb)->optimal_io_size;
+-	if (len - (sizeof (d16) * bit / 16) > 0)
++	if (len - (sizeof (d16) * bit / 16) > 0) {
+ 		/* alignment in save_len_static_sd() is taken into account
+ 		   -edward */
+-		warning("nikita-631", "unused space in inode %llu", get_inode_oid(inode));
++		warning("nikita-631", "unused space in inode %llu",
++			(unsigned long long)get_inode_oid(inode));
++	}
++
+ 	return result;
+ }
+ 
+@@ -763,7 +776,7 @@ present_plugin_sd(struct inode *inode /*
+ 		type = pset_member_to_type_unsafe(memb);
+ 		if (type == REISER4_PLUGIN_TYPES) {
+ 			warning("nikita-3502", "wrong pset member (%i) for %llu",
+-				memb, get_inode_oid(inode));
++				memb, (unsigned long long)get_inode_oid(inode));
+ 			return RETERR(-EINVAL);
+ 		}
+ 		plugin = plugin_by_disk_id(tree_by_inode(inode),
+@@ -776,7 +789,8 @@ present_plugin_sd(struct inode *inode /*
+ 		if (!(mask & (1 << memb))) {
+ 			mask |= (1 << memb);
+ 		} else {
+-			warning("nikita-658", "duplicate plugin for %llu", get_inode_oid(inode));
++			warning("nikita-658", "duplicate plugin for %llu",
++				(unsigned long long)get_inode_oid(inode));
+ 			print_plugin("plugin", plugin);
+ 			return RETERR(-EINVAL);
+ 		}
+diff -puN fs/reiser4/plugin/object.c~reiser4-sparce64-warning-fix fs/reiser4/plugin/object.c
+--- 25/fs/reiser4/plugin/object.c~reiser4-sparce64-warning-fix	2004-09-20 11:05:54.773387712 -0700
++++ 25-akpm/fs/reiser4/plugin/object.c	2004-09-20 11:05:54.795384368 -0700
+@@ -94,7 +94,7 @@ key_warning(const reiser4_key * key /* k
+ 
+ 	if (code != -ENOMEM) {
+ 		warning("nikita-717", "Error for inode %llu (%i)",
+-			get_key_objectid(key), code);
++			(unsigned long long)get_key_objectid(key), code);
+ 		print_key("for key", key);
+ 		print_inode("inode", inode);
+ 	}
+@@ -477,7 +477,7 @@ write_sd_by_inode_common(struct inode *i
+ 	if (result != 0 && result != -ENAMETOOLONG && result != -ENOMEM)
+ 		/* Don't issue warnings about "name is too long" */
+ 		warning("nikita-2221", "Failed to save sd for %llu: %i",
+-			get_inode_oid(inode), result);
++			(unsigned long long)get_inode_oid(inode), result);
+ 	return result;
+ }
+ 
+@@ -1005,7 +1005,7 @@ static void delete_inode_common(struct i
+ 		fplug = inode_file_plugin(object);
+ 		if (fplug->pre_delete != NULL && fplug->pre_delete(object) != 0)
+ 			warning("vs-1216", "Failed to delete file body %llu",
+-				get_inode_oid(object));
++				(unsigned long long)get_inode_oid(object));
+ 		else
+ 			assert("vs-1430",
+ 			       reiser4_inode_data(object)->anonymous_eflushed == 0 &&
+diff -puN fs/reiser4/plugin/pseudo/pseudo.c~reiser4-sparce64-warning-fix fs/reiser4/plugin/pseudo/pseudo.c
+--- 25/fs/reiser4/plugin/pseudo/pseudo.c~reiser4-sparce64-warning-fix	2004-09-20 11:05:54.775387408 -0700
++++ 25-akpm/fs/reiser4/plugin/pseudo/pseudo.c	2004-09-20 11:05:54.796384216 -0700
+@@ -504,7 +504,7 @@ static int get_gid(struct file *file, co
+  */
+ static int show_oid(struct seq_file *seq, void *cookie)
+ {
+-	seq_printf(seq, "%llu", get_inode_oid(get_seq_pseudo_host(seq)));
++	seq_printf(seq, "%llu", (unsigned long long)get_inode_oid(get_seq_pseudo_host(seq)));
+ 	return 0;
+ }
+ 
+@@ -545,7 +545,7 @@ static int show_nlink(struct seq_file *s
+ static int show_locality(struct seq_file *seq, void *cookie)
+ {
+ 	seq_printf(seq, "%llu",
+-		   reiser4_inode_data(get_seq_pseudo_host(seq))->locality_id);
++		   (unsigned long long)reiser4_inode_data(get_seq_pseudo_host(seq))->locality_id);
+ 	return 0;
+ }
+ 
+@@ -710,9 +710,9 @@ static int bmap_show(struct seq_file *m,
+ 					   lblock, &blocknr);
+ 	if (result == 0) {
+ 		if (blocknr_is_fake(&blocknr))
+-			seq_printf(m, "%#llx\n", blocknr);
++			seq_printf(m, "%#llx\n", (unsigned long long)blocknr);
+ 		else
+-			seq_printf(m, "%llu\n", blocknr);
++			seq_printf(m, "%llu\n", (unsigned long long)blocknr);
+ 	}
+ 	return result;
+ }
+diff -puN fs/reiser4/plugin/space/bitmap.c~reiser4-sparce64-warning-fix fs/reiser4/plugin/space/bitmap.c
+--- 25/fs/reiser4/plugin/space/bitmap.c~reiser4-sparce64-warning-fix	2004-09-20 11:05:54.776387256 -0700
++++ 25-akpm/fs/reiser4/plugin/space/bitmap.c	2004-09-20 11:05:54.798383912 -0700
+@@ -720,8 +720,9 @@ static int check_struct_bnode(struct bit
+ 
+ 	/* Check CRC */
+ 	if (check_adler32_jnode(bnode->cjnode, bmap_size(blksize))) {
+-		warning("vpf-1361", "Checksum for the bitmap block %llu "
+-			"is incorrect", bnode->cjnode->blocknr);
++		warning("vpf-1361",
++			"Checksum for the bitmap block %llu is incorrect",
++			(unsigned long long)bnode->cjnode->blocknr);
+ 
+ 		return -EINVAL;
+ 	}
+@@ -730,8 +731,8 @@ static int check_struct_bnode(struct bit
+ 
+ 	/* Check the very first bit -- it must be busy. */
+ 	if (!reiser4_test_bit(0, data)) {
+-		warning("vpf-1362", "The allocator block %llu is not marked as used.",
+-			bnode->cjnode->blocknr);
++		warning("vpf-1362", "The allocator block %llu is not marked "
++			"as used.", (unsigned long long)bnode->cjnode->blocknr);
+ 
+ 		return -EINVAL;
+ 	}
+_

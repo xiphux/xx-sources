@@ -1,0 +1,61 @@
+
+
+On Mon, Sep 13, 2004 at 07:31:14PM -0700, William Lee Irwin III wrote:
+> /proc/ breaks when PID_MAX_LIMIT is elevated on 32-bit, so this patch
+> lowers it there. Compiletested on x86-64.
+
+The pid_max sysctl doesn't enforce PID_MAX_LIMIT or sane lower bounds.
+RESERVED_PIDS + 1 is the minimum pid_max that won't break alloc_pidmap(),
+and PID_MAX_LIMIT may not be aligned to 8*PAGE_SIZE boundaries for
+unusual values of PAGE_SIZE, so this also rounds up PID_MAX_LIMIT to it.
+Compiletested on x86-64.
+
+Index: mm5-2.6.9-rc1/kernel/pid.c
+===================================================================
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/pid.c    |    5 ++++-
+ 25-akpm/kernel/sysctl.c |    6 +++++-
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+diff -puN kernel/pid.c~pidhashing-enforce-pid_max_limit-in-sysctls kernel/pid.c
+--- 25/kernel/pid.c~pidhashing-enforce-pid_max_limit-in-sysctls	2004-10-05 01:48:11.075695688 -0700
++++ 25-akpm/kernel/pid.c	2004-10-05 01:48:11.079695080 -0700
+@@ -36,7 +36,10 @@ int last_pid;
+ 
+ #define RESERVED_PIDS		300
+ 
+-#define PIDMAP_ENTRIES		(PID_MAX_LIMIT/PAGE_SIZE/8)
++int pid_max_min = RESERVED_PIDS + 1;
++int pid_max_max = PID_MAX_LIMIT;
++
++#define PIDMAP_ENTRIES		((PID_MAX_LIMIT + 8*PAGE_SIZE - 1)/PAGE_SIZE/8)
+ #define BITS_PER_PAGE		(PAGE_SIZE*8)
+ #define BITS_PER_PAGE_MASK	(BITS_PER_PAGE-1)
+ #define mk_pid(map, off)	(((map) - pidmap_array)*BITS_PER_PAGE + (off))
+diff -puN kernel/sysctl.c~pidhashing-enforce-pid_max_limit-in-sysctls kernel/sysctl.c
+--- 25/kernel/sysctl.c~pidhashing-enforce-pid_max_limit-in-sysctls	2004-10-05 01:48:11.076695536 -0700
++++ 25-akpm/kernel/sysctl.c	2004-10-05 01:48:11.081694776 -0700
+@@ -66,6 +66,7 @@ extern int sysctl_lower_zone_protection;
+ extern int min_free_kbytes;
+ extern int printk_ratelimit_jiffies;
+ extern int printk_ratelimit_burst;
++extern int pid_max_min, pid_max_max;
+ 
+ #if defined(CONFIG_X86_LOCAL_APIC) && defined(__i386__)
+ int unknown_nmi_panic;
+@@ -575,7 +576,10 @@ static ctl_table kern_table[] = {
+ 		.data		= &pid_max,
+ 		.maxlen		= sizeof (int),
+ 		.mode		= 0644,
+-		.proc_handler	= &proc_dointvec,
++		.proc_handler	= &proc_dointvec_minmax,
++		.strategy	= sysctl_intvec,
++		.extra1		= &pid_max_min,
++		.extra2		= &pid_max_max,
+ 	},
+ 	{
+ 		.ctl_name	= KERN_PANIC_ON_OOPS,
+_

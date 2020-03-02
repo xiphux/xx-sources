@@ -1,0 +1,38 @@
+
+From: Russell King <rmk+lkml@arm.linux.org.uk>
+
+The only issue with this is that, when a problem is detected, the
+reported symbols will also include the Sparc64 register symbols.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Makefile |    8 ++++++++
+ 1 files changed, 8 insertions(+)
+
+diff -puN Makefile~handle-undefined-symbols Makefile
+--- 25/Makefile~handle-undefined-symbols	2004-07-26 23:24:30.552753872 -0700
++++ 25-akpm/Makefile	2004-07-26 23:24:30.556753264 -0700
+@@ -525,6 +525,8 @@ endef
+ 
+ #	set -e makes the rule exit immediately on error
+ 
++#	Note: Ensure that there are no undefined symbols in the final
++#	linked image.  Not doing this can lead to silent link failures.
+ define rule_vmlinux__
+ 	+set -e;							\
+ 	$(if $(filter .tmp_kallsyms%,$^),,				\
+@@ -536,6 +538,12 @@ define rule_vmlinux__
+ 	$(if $($(quiet)cmd_vmlinux__),					\
+ 	  echo '  $($(quiet)cmd_vmlinux__)' &&) 			\
+ 	$(cmd_vmlinux__);						\
++	if $(OBJDUMP) --syms $@ | egrep -q '^([^R]|R[^E]|RE[^G])[^w]*\*UND\*'; then	\
++		echo 'ldchk: $@: final image has undefined symbols:';	\
++		$(NM) $@ | sed 's/^ *U \(.*\)/  \1/p;d';		\
++		$(RM) -f $@;						\
++		exit 1;							\
++	fi;								\
+ 	echo 'cmd_$@ := $(cmd_vmlinux__)' > $(@D)/.$(@F).cmd
+ endef
+ 
+_

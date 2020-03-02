@@ -1,0 +1,45 @@
+
+From: Jeremy Fitzhardinge <jeremy@goop.org>
+
+On resume, the e100 chip seems to raise an interrupt during chip reset. 
+Since there's no IRQ handler registered yet, the kernel complains that
+"nobody cared" about the interrupt.  This change disables the IRQ during
+e100_up(), while the hardware is being (re-)initialized.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/e100.c |    6 ++++++
+ 1 files changed, 6 insertions(+)
+
+diff -puN drivers/net/e100.c~fix-for-spurious-interrupts-on-e100-resume-2 drivers/net/e100.c
+--- 25/drivers/net/e100.c~fix-for-spurious-interrupts-on-e100-resume-2	2004-10-01 20:16:15.297743608 -0700
++++ 25-akpm/drivers/net/e100.c	2004-10-01 20:16:15.301743000 -0700
+@@ -1688,6 +1688,9 @@ static int e100_up(struct nic *nic)
+ 
+ 	if((err = e100_rx_alloc_list(nic)))
+ 		return err;
++
++	disable_irq(nic->pdev->irq);
++
+ 	if((err = e100_alloc_cbs(nic)))
+ 		goto err_rx_clean_list;
+ 	if((err = e100_hw_init(nic)))
+@@ -1699,6 +1702,7 @@ static int e100_up(struct nic *nic)
+ 		nic->netdev->name, nic->netdev)))
+ 		goto err_no_irq;
+ 	e100_enable_irq(nic);
++	enable_irq(nic->pdev->irq);
+ 	netif_wake_queue(nic->netdev);
+ 	return 0;
+ 
+@@ -1708,6 +1712,8 @@ err_clean_cbs:
+ 	e100_clean_cbs(nic);
+ err_rx_clean_list:
+ 	e100_rx_clean_list(nic);
++
++	enable_irq(nic->pdev->irq);
+ 	return err;
+ }
+ 
+_

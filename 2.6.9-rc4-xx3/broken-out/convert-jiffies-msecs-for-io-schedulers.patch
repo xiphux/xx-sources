@@ -1,0 +1,181 @@
+
+From: Jens Axboe <axboe@suse.de>
+
+The various io schedulers don't convert to and from jiffies and ms in their
+sysfs exported values.  This patch adds that.
+
+Signed-off-by: Jens Axboe <axboe@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/as-iosched.c       |    7 ++-
+ 25-akpm/drivers/block/cfq-iosched.c      |   58 +++++++++++++++++--------------
+ 25-akpm/drivers/block/deadline-iosched.c |   46 ++++++++++++++----------
+ 3 files changed, 64 insertions(+), 47 deletions(-)
+
+diff -puN drivers/block/as-iosched.c~convert-jiffies-msecs-for-io-schedulers drivers/block/as-iosched.c
+--- 25/drivers/block/as-iosched.c~convert-jiffies-msecs-for-io-schedulers	2004-10-05 11:13:28.787463696 -0700
++++ 25-akpm/drivers/block/as-iosched.c	2004-10-05 11:13:28.796462328 -0700
+@@ -1962,10 +1962,10 @@ static ssize_t as_est_show(struct as_dat
+ 	return pos;
+ }
+ 
+-#define SHOW_FUNCTION(__FUNC, __VAR)					\
++#define SHOW_FUNCTION(__FUNC, __VAR)				\
+ static ssize_t __FUNC(struct as_data *ad, char *page)		\
+-{									\
+-	return as_var_show(__VAR, (page));			\
++{								\
++	return as_var_show(jiffies_to_msecs((__VAR)), (page));	\
+ }
+ SHOW_FUNCTION(as_readexpire_show, ad->fifo_expire[REQ_SYNC]);
+ SHOW_FUNCTION(as_writeexpire_show, ad->fifo_expire[REQ_ASYNC]);
+@@ -1982,6 +1982,7 @@ static ssize_t __FUNC(struct as_data *ad
+ 		*(__PTR) = (MIN);					\
+ 	else if (*(__PTR) > (MAX))					\
+ 		*(__PTR) = (MAX);					\
++	*(__PTR) = msecs_to_jiffies(*(__PTR));				\
+ 	return ret;							\
+ }
+ STORE_FUNCTION(as_readexpire_store, &ad->fifo_expire[REQ_SYNC], 0, INT_MAX);
+diff -puN drivers/block/cfq-iosched.c~convert-jiffies-msecs-for-io-schedulers drivers/block/cfq-iosched.c
+--- 25/drivers/block/cfq-iosched.c~convert-jiffies-msecs-for-io-schedulers	2004-10-05 11:13:28.789463392 -0700
++++ 25-akpm/drivers/block/cfq-iosched.c	2004-10-05 11:13:28.798462024 -0700
+@@ -1732,39 +1732,47 @@ cfq_status_show(struct cfq_data *cfqd, c
+ 	return len;
+ }
+ 
+-#define SHOW_FUNCTION(__FUNC, __VAR)					\
++#define SHOW_FUNCTION(__FUNC, __VAR, __CONV)				\
+ static ssize_t __FUNC(struct cfq_data *cfqd, char *page)		\
+ {									\
+-	return cfq_var_show(__VAR, (page));				\
+-}
+-SHOW_FUNCTION(cfq_quantum_show, cfqd->cfq_quantum);
+-SHOW_FUNCTION(cfq_queued_show, cfqd->cfq_queued);
+-SHOW_FUNCTION(cfq_fifo_expire_r_show, cfqd->cfq_fifo_expire_r);
+-SHOW_FUNCTION(cfq_fifo_expire_w_show, cfqd->cfq_fifo_expire_w);
+-SHOW_FUNCTION(cfq_fifo_batch_expire_show, cfqd->cfq_fifo_batch_expire);
+-SHOW_FUNCTION(cfq_find_best_show, cfqd->find_best_crq);
+-SHOW_FUNCTION(cfq_back_max_show, cfqd->cfq_back_max);
+-SHOW_FUNCTION(cfq_back_penalty_show, cfqd->cfq_back_penalty);
++	unsigned int __data = __VAR;					\
++	if (__CONV)							\
++		__data = jiffies_to_msecs(__data);			\
++	return cfq_var_show(__data, (page));				\
++}
++SHOW_FUNCTION(cfq_quantum_show, cfqd->cfq_quantum, 0);
++SHOW_FUNCTION(cfq_queued_show, cfqd->cfq_queued, 0);
++SHOW_FUNCTION(cfq_fifo_expire_r_show, cfqd->cfq_fifo_expire_r, 1);
++SHOW_FUNCTION(cfq_fifo_expire_w_show, cfqd->cfq_fifo_expire_w, 1);
++SHOW_FUNCTION(cfq_fifo_batch_expire_show, cfqd->cfq_fifo_batch_expire, 1);
++SHOW_FUNCTION(cfq_find_best_show, cfqd->find_best_crq, 0);
++SHOW_FUNCTION(cfq_back_max_show, cfqd->cfq_back_max, 0);
++SHOW_FUNCTION(cfq_back_penalty_show, cfqd->cfq_back_penalty, 0);
+ #undef SHOW_FUNCTION
+ 
+-#define STORE_FUNCTION(__FUNC, __PTR, MIN, MAX)				\
++#define STORE_FUNCTION(__FUNC, __PTR, MIN, MAX, __CONV)			\
+ static ssize_t __FUNC(struct cfq_data *cfqd, const char *page, size_t count)	\
+ {									\
+-	int ret = cfq_var_store(__PTR, (page), count);			\
+-	if (*(__PTR) < (MIN))						\
+-		*(__PTR) = (MIN);					\
+-	else if (*(__PTR) > (MAX))					\
+-		*(__PTR) = (MAX);					\
++	unsigned int __data;						\
++	int ret = cfq_var_store(&__data, (page), count);		\
++	if (__data < (MIN))						\
++		__data = (MIN);						\
++	else if (__data > (MAX))					\
++		__data = (MAX);						\
++	if (__CONV)							\
++		*(__PTR) = msecs_to_jiffies(__data);			\
++	else								\
++		*(__PTR) = __data;					\
+ 	return ret;							\
+ }
+-STORE_FUNCTION(cfq_quantum_store, &cfqd->cfq_quantum, 1, UINT_MAX);
+-STORE_FUNCTION(cfq_queued_store, &cfqd->cfq_queued, 1, UINT_MAX);
+-STORE_FUNCTION(cfq_fifo_expire_r_store, &cfqd->cfq_fifo_expire_r, 1, UINT_MAX);
+-STORE_FUNCTION(cfq_fifo_expire_w_store, &cfqd->cfq_fifo_expire_w, 1, UINT_MAX);
+-STORE_FUNCTION(cfq_fifo_batch_expire_store, &cfqd->cfq_fifo_batch_expire, 0, UINT_MAX);
+-STORE_FUNCTION(cfq_find_best_store, &cfqd->find_best_crq, 0, 1);
+-STORE_FUNCTION(cfq_back_max_store, &cfqd->cfq_back_max, 0, UINT_MAX);
+-STORE_FUNCTION(cfq_back_penalty_store, &cfqd->cfq_back_penalty, 1, UINT_MAX);
++STORE_FUNCTION(cfq_quantum_store, &cfqd->cfq_quantum, 1, UINT_MAX, 0);
++STORE_FUNCTION(cfq_queued_store, &cfqd->cfq_queued, 1, UINT_MAX, 0);
++STORE_FUNCTION(cfq_fifo_expire_r_store, &cfqd->cfq_fifo_expire_r, 1, UINT_MAX, 1);
++STORE_FUNCTION(cfq_fifo_expire_w_store, &cfqd->cfq_fifo_expire_w, 1, UINT_MAX, 1);
++STORE_FUNCTION(cfq_fifo_batch_expire_store, &cfqd->cfq_fifo_batch_expire, 0, UINT_MAX, 1);
++STORE_FUNCTION(cfq_find_best_store, &cfqd->find_best_crq, 0, 1, 0);
++STORE_FUNCTION(cfq_back_max_store, &cfqd->cfq_back_max, 0, UINT_MAX, 0);
++STORE_FUNCTION(cfq_back_penalty_store, &cfqd->cfq_back_penalty, 1, UINT_MAX, 0);
+ #undef STORE_FUNCTION
+ 
+ static struct cfq_fs_entry cfq_quantum_entry = {
+diff -puN drivers/block/deadline-iosched.c~convert-jiffies-msecs-for-io-schedulers drivers/block/deadline-iosched.c
+--- 25/drivers/block/deadline-iosched.c~convert-jiffies-msecs-for-io-schedulers	2004-10-05 11:13:28.791463088 -0700
++++ 25-akpm/drivers/block/deadline-iosched.c	2004-10-05 11:13:28.799461872 -0700
+@@ -805,33 +805,41 @@ deadline_var_store(unsigned int *var, co
+ 	return count;
+ }
+ 
+-#define SHOW_FUNCTION(__FUNC, __VAR)					\
++#define SHOW_FUNCTION(__FUNC, __VAR, __CONV)				\
+ static ssize_t __FUNC(struct deadline_data *dd, char *page)		\
+ {									\
+-	return deadline_var_show(__VAR, (page));			\
+-}
+-SHOW_FUNCTION(deadline_readexpire_show, dd->fifo_expire[READ]);
+-SHOW_FUNCTION(deadline_writeexpire_show, dd->fifo_expire[WRITE]);
+-SHOW_FUNCTION(deadline_writesstarved_show, dd->writes_starved);
+-SHOW_FUNCTION(deadline_frontmerges_show, dd->front_merges);
+-SHOW_FUNCTION(deadline_fifobatch_show, dd->fifo_batch);
++	unsigned int __data = __VAR;					\
++	if (__CONV)							\
++		__data = jiffies_to_msecs(__data);			\
++	return deadline_var_show(__data, (page));			\
++}
++SHOW_FUNCTION(deadline_readexpire_show, dd->fifo_expire[READ], 1);
++SHOW_FUNCTION(deadline_writeexpire_show, dd->fifo_expire[WRITE], 1);
++SHOW_FUNCTION(deadline_writesstarved_show, dd->writes_starved, 0);
++SHOW_FUNCTION(deadline_frontmerges_show, dd->front_merges, 0);
++SHOW_FUNCTION(deadline_fifobatch_show, dd->fifo_batch, 0);
+ #undef SHOW_FUNCTION
+ 
+-#define STORE_FUNCTION(__FUNC, __PTR, MIN, MAX)				\
++#define STORE_FUNCTION(__FUNC, __PTR, MIN, MAX, __CONV)			\
+ static ssize_t __FUNC(struct deadline_data *dd, const char *page, size_t count)	\
+ {									\
+-	int ret = deadline_var_store(__PTR, (page), count);		\
+-	if (*(__PTR) < (MIN))						\
+-		*(__PTR) = (MIN);					\
+-	else if (*(__PTR) > (MAX))					\
+-		*(__PTR) = (MAX);					\
++	unsigned int __data;						\
++	int ret = deadline_var_store(&__data, (page), count);		\
++	if (__data < (MIN))						\
++		__data = (MIN);						\
++	else if (__data > (MAX))					\
++		__data = (MAX);						\
++	if (__CONV)							\
++		*(__PTR) = msecs_to_jiffies(__data);			\
++	else								\
++		*(__PTR) = __data;					\
+ 	return ret;							\
+ }
+-STORE_FUNCTION(deadline_readexpire_store, &dd->fifo_expire[READ], 0, INT_MAX);
+-STORE_FUNCTION(deadline_writeexpire_store, &dd->fifo_expire[WRITE], 0, INT_MAX);
+-STORE_FUNCTION(deadline_writesstarved_store, &dd->writes_starved, INT_MIN, INT_MAX);
+-STORE_FUNCTION(deadline_frontmerges_store, &dd->front_merges, 0, 1);
+-STORE_FUNCTION(deadline_fifobatch_store, &dd->fifo_batch, 0, INT_MAX);
++STORE_FUNCTION(deadline_readexpire_store, &dd->fifo_expire[READ], 0, INT_MAX, 1);
++STORE_FUNCTION(deadline_writeexpire_store, &dd->fifo_expire[WRITE], 0, INT_MAX, 1);
++STORE_FUNCTION(deadline_writesstarved_store, &dd->writes_starved, INT_MIN, INT_MAX, 0);
++STORE_FUNCTION(deadline_frontmerges_store, &dd->front_merges, 0, 1, 0);
++STORE_FUNCTION(deadline_fifobatch_store, &dd->fifo_batch, 0, INT_MAX, 0);
+ #undef STORE_FUNCTION
+ 
+ static struct deadline_fs_entry deadline_readexpire_entry = {
+_

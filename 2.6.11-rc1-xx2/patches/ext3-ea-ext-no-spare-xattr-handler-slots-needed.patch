@@ -1,0 +1,85 @@
+
+From: Andreas Gruenbacher <agruen@suse.de>
+
+The ext3_xattr_set_handle2 and ext3_xattr_delete_inode functions contain
+duplicate code to decrease the reference count of an xattr block.  Move
+this to a separate function.
+
+Also we know we have exclusive access to the inode in
+ext3_xattr_delete_inode; there is no need to grab the xattr_sem lock.
+
+Signed-off-by: Andreas Gruenbacher <agruen@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/ext2/xattr.c |    4 ++--
+ 25-akpm/fs/ext2/xattr.h |    1 -
+ 25-akpm/fs/ext3/xattr.c |    4 ++--
+ 25-akpm/fs/ext3/xattr.h |    1 -
+ 4 files changed, 4 insertions(+), 6 deletions(-)
+
+diff -puN fs/ext2/xattr.c~ext3-ea-ext-no-spare-xattr-handler-slots-needed fs/ext2/xattr.c
+--- 25/fs/ext2/xattr.c~ext3-ea-ext-no-spare-xattr-handler-slots-needed	Tue Jan 11 14:39:49 2005
++++ 25-akpm/fs/ext2/xattr.c	Tue Jan 11 14:39:49 2005
+@@ -100,7 +100,7 @@ static void ext2_xattr_rehash(struct ext
+ 
+ static struct mb_cache *ext2_xattr_cache;
+ 
+-static struct xattr_handler *ext2_xattr_handler_map[EXT2_XATTR_INDEX_MAX] = {
++static struct xattr_handler *ext2_xattr_handler_map[] = {
+ 	[EXT2_XATTR_INDEX_USER]		     = &ext2_xattr_user_handler,
+ #ifdef CONFIG_EXT2_FS_POSIX_ACL
+ 	[EXT2_XATTR_INDEX_POSIX_ACL_ACCESS]  = &ext2_xattr_acl_access_handler,
+@@ -130,7 +130,7 @@ ext2_xattr_handler(int name_index)
+ {
+ 	struct xattr_handler *handler = NULL;
+ 
+-	if (name_index > 0 && name_index <= EXT2_XATTR_INDEX_MAX)
++	if (name_index > 0 && name_index < ARRAY_SIZE(ext2_xattr_handler_map))
+ 		handler = ext2_xattr_handler_map[name_index];
+ 	return handler;
+ }
+diff -puN fs/ext2/xattr.h~ext3-ea-ext-no-spare-xattr-handler-slots-needed fs/ext2/xattr.h
+--- 25/fs/ext2/xattr.h~ext3-ea-ext-no-spare-xattr-handler-slots-needed	Tue Jan 11 14:39:49 2005
++++ 25-akpm/fs/ext2/xattr.h	Tue Jan 11 14:39:49 2005
+@@ -17,7 +17,6 @@
+ #define EXT2_XATTR_REFCOUNT_MAX		1024
+ 
+ /* Name indexes */
+-#define EXT2_XATTR_INDEX_MAX			10
+ #define EXT2_XATTR_INDEX_USER			1
+ #define EXT2_XATTR_INDEX_POSIX_ACL_ACCESS	2
+ #define EXT2_XATTR_INDEX_POSIX_ACL_DEFAULT	3
+diff -puN fs/ext3/xattr.c~ext3-ea-ext-no-spare-xattr-handler-slots-needed fs/ext3/xattr.c
+--- 25/fs/ext3/xattr.c~ext3-ea-ext-no-spare-xattr-handler-slots-needed	Tue Jan 11 14:39:49 2005
++++ 25-akpm/fs/ext3/xattr.c	Tue Jan 11 14:39:49 2005
+@@ -102,7 +102,7 @@ static void ext3_xattr_rehash(struct ext
+ 
+ static struct mb_cache *ext3_xattr_cache;
+ 
+-static struct xattr_handler *ext3_xattr_handler_map[EXT3_XATTR_INDEX_MAX] = {
++static struct xattr_handler *ext3_xattr_handler_map[] = {
+ 	[EXT3_XATTR_INDEX_USER]		     = &ext3_xattr_user_handler,
+ #ifdef CONFIG_EXT3_FS_POSIX_ACL
+ 	[EXT3_XATTR_INDEX_POSIX_ACL_ACCESS]  = &ext3_xattr_acl_access_handler,
+@@ -132,7 +132,7 @@ ext3_xattr_handler(int name_index)
+ {
+ 	struct xattr_handler *handler = NULL;
+ 
+-	if (name_index > 0 && name_index <= EXT3_XATTR_INDEX_MAX)
++	if (name_index > 0 && name_index < ARRAY_SIZE(ext3_xattr_handler_map))
+ 		handler = ext3_xattr_handler_map[name_index];
+ 	return handler;
+ }
+diff -puN fs/ext3/xattr.h~ext3-ea-ext-no-spare-xattr-handler-slots-needed fs/ext3/xattr.h
+--- 25/fs/ext3/xattr.h~ext3-ea-ext-no-spare-xattr-handler-slots-needed	Tue Jan 11 14:39:49 2005
++++ 25-akpm/fs/ext3/xattr.h	Tue Jan 11 14:39:49 2005
+@@ -16,7 +16,6 @@
+ #define EXT3_XATTR_REFCOUNT_MAX		1024
+ 
+ /* Name indexes */
+-#define EXT3_XATTR_INDEX_MAX			10
+ #define EXT3_XATTR_INDEX_USER			1
+ #define EXT3_XATTR_INDEX_POSIX_ACL_ACCESS	2
+ #define EXT3_XATTR_INDEX_POSIX_ACL_DEFAULT	3
+_

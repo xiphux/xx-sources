@@ -1,0 +1,60 @@
+
+From: Daniel Drake <dsd@gentoo.org>,
+      William Park <opengeometry@yahoo.ca>
+
+Retry up to 20 times if mounting the root device fails.  This fixes booting
+from usb-storage devices, which no longer make their partitions immediately
+available.
+
+From: William Park <opengeometry@yahoo.ca>
+Signed-off-by: Daniel Drake <dsd@gentoo.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/init/do_mounts.c |   16 +++++++++++++---
+ 1 files changed, 13 insertions(+), 3 deletions(-)
+
+diff -puN init/do_mounts.c~waiting-10s-before-mounting-root-filesystem init/do_mounts.c
+--- 25/init/do_mounts.c~waiting-10s-before-mounting-root-filesystem	Tue Jan  4 16:40:56 2005
++++ 25-akpm/init/do_mounts.c	Tue Jan  4 16:40:56 2005
+@@ -6,6 +6,7 @@
+ #include <linux/suspend.h>
+ #include <linux/root_dev.h>
+ #include <linux/security.h>
++#include <linux/delay.h>
+ 
+ #include <linux/nfs_fs.h>
+ #include <linux/nfs_fs_sb.h>
+@@ -278,9 +279,14 @@ void __init mount_block_root(char *name,
+ 	char *fs_names = __getname();
+ 	char *p;
+ 	char b[BDEVNAME_SIZE];
++	int tryagain = 20;
+ 
+ 	get_fs_names(fs_names);
+ retry:
++	if (!ROOT_DEV) {
++		ROOT_DEV = name_to_dev_t(saved_root_name);
++		create_dev(name, ROOT_DEV, root_device_name);
++	}
+ 	for (p = fs_names; *p; p += strlen(p)+1) {
+ 		int err = do_mount_root(name, p, flags, root_mount_data);
+ 		switch (err) {
+@@ -297,9 +303,13 @@ retry:
+ 		 * and bad superblock on root device.
+ 		 */
+ 		__bdevname(ROOT_DEV, b);
+-		printk("VFS: Cannot open root device \"%s\" or %s\n",
+-				root_device_name, b);
+-		printk("Please append a correct \"root=\" boot option\n");
++		if (--tryagain) {
++		    printk (KERN_WARNING "VFS: Waiting %dsec for root device...\n", tryagain);
++		    ssleep (1);
++		    goto retry;
++		}
++		printk (KERN_CRIT "VFS: Cannot open root device \"%s\" or %s\n", root_device_name, b);
++		printk (KERN_CRIT "Please append a correct \"root=\" boot option\n");
+ 
+ 		panic("VFS: Unable to mount root fs on %s", b);
+ 	}
+_

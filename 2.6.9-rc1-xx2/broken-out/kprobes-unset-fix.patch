@@ -1,0 +1,40 @@
+
+
+Prevent it from breaking kgdb.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/traps.c |    5 +++++
+ 1 files changed, 5 insertions(+)
+
+diff -puN arch/i386/kernel/traps.c~kprobes-unset-fix arch/i386/kernel/traps.c
+--- 25/arch/i386/kernel/traps.c~kprobes-unset-fix	2004-08-25 19:18:50.648550912 -0700
++++ 25-akpm/arch/i386/kernel/traps.c	2004-08-25 19:18:50.652550304 -0700
+@@ -465,6 +465,9 @@ asmlinkage void do_##name(struct pt_regs
+ }
+ 
+ DO_VM86_ERROR_INFO( 0, SIGFPE,  "divide error", divide_error, FPE_INTDIV, regs->eip)
++#ifndef CONFIG_KPROBES
++DO_VM86_ERROR( 3, SIGTRAP, "int3", int3)
++#endif
+ DO_VM86_ERROR( 4, SIGSEGV, "overflow", overflow)
+ DO_VM86_ERROR( 5, SIGSEGV, "bounds", bounds)
+ DO_ERROR_INFO( 6, SIGILL,  "invalid operand", invalid_op, ILL_ILLOPN, regs->eip)
+@@ -629,6 +632,7 @@ void unset_nmi_callback(void)
+ 	nmi_callback = dummy_nmi_callback;
+ }
+ 
++#ifdef CONFIG_KPROBES
+ asmlinkage int do_int3(struct pt_regs *regs, long error_code)
+ {
+ 	if (notify_die(DIE_INT3, "int3", regs, error_code, 3, SIGTRAP)
+@@ -640,6 +644,7 @@ asmlinkage int do_int3(struct pt_regs *r
+ 	do_trap(3, SIGTRAP, "int3", 1, regs, error_code, NULL);
+ 	return 0;
+ }
++#endif
+ 
+ /*
+  * Our handling of the processor debug registers is non-trivial.
+_

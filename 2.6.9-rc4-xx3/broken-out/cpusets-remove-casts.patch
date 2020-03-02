@@ -1,0 +1,41 @@
+
+
+Don't typecast when assigning to or from a void* - it defeats typechecking.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/cpuset.c |    6 +++---
+ 1 files changed, 3 insertions(+), 3 deletions(-)
+
+diff -puN kernel/cpuset.c~cpusets-remove-casts kernel/cpuset.c
+--- 25/kernel/cpuset.c~cpusets-remove-casts	2004-09-16 00:46:42.330928336 -0700
++++ 25-akpm/kernel/cpuset.c	2004-09-16 00:46:56.795729352 -0700
+@@ -1124,7 +1124,7 @@ static int cpuset_tasks_open(struct inod
+ 	ctr->bufsz = pid_array_to_buf(ctr->buf, ctr->bufsz, pidarray, npids);
+ 
+ 	kfree(pidarray);
+-	file->private_data = (void *)ctr;
++	file->private_data = ctr;
+ 	return 0;
+ 
+ err2:
+@@ -1138,7 +1138,7 @@ err0:
+ static ssize_t cpuset_tasks_read(struct file *file, char __user *buf,
+ 						size_t nbytes, loff_t *ppos)
+ {
+-	struct ctr_struct *ctr = (struct ctr_struct *)file->private_data;
++	struct ctr_struct *ctr = file->private_data;
+ 
+ 	if (*ppos + nbytes > ctr->bufsz)
+ 		nbytes = ctr->bufsz - *ppos;
+@@ -1153,7 +1153,7 @@ static int cpuset_tasks_release(struct i
+ 	struct ctr_struct *ctr;
+ 
+ 	if (file->f_mode & FMODE_READ) {
+-		ctr = (struct ctr_struct *)file->private_data;
++		ctr = file->private_data;
+ 		kfree(ctr->buf);
+ 		kfree(ctr);
+ 	}
+_

@@ -1,0 +1,33 @@
+
+From: Christoph Hellwig <hch@infradead.org>
+
+sk98line tries to register a procfile with the interfacename of the struct
+net_device.  The patch below (ontop of the previous one) makes it work
+unless you change the interface name manually, but as Linux explicitly
+allows that the interface is fundamentally broken and probably should just
+go away.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/sk98lin/skge.c |    5 ++++-
+ 1 files changed, 4 insertions(+), 1 deletion(-)
+
+diff -puN drivers/net/sk98lin/skge.c~sk98lin-procfs-fix drivers/net/sk98lin/skge.c
+--- 25/drivers/net/sk98lin/skge.c~sk98lin-procfs-fix	2004-07-05 13:45:15.806004744 -0700
++++ 25-akpm/drivers/net/sk98lin/skge.c	2004-07-05 13:45:15.813003680 -0700
+@@ -5113,9 +5113,12 @@ static void __devexit skge_remove_one(st
+ 	if ((pAC->GIni.GIMacsFound == 2) && pAC->RlmtNets == 2)
+ 		have_second_mac = 1;
+ 
++	remove_proc_entry(dev->name, pSkRootDir);
+ 	unregister_netdev(dev);
+-	if (have_second_mac)
++	if (have_second_mac) {
++		remove_proc_entry(pAC->dev[1]->name, pSkRootDir);
+ 		unregister_netdev(pAC->dev[1]);
++	}
+ 
+ 	SkGeYellowLED(pAC, pAC->IoBase, 0);
+ 
+_

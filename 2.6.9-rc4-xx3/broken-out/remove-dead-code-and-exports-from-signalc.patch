@@ -1,0 +1,99 @@
+
+From: Christoph Hellwig <hch@lst.de>
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/sched.h |    1 
+ 25-akpm/kernel/signal.c       |   47 ------------------------------------------
+ 2 files changed, 48 deletions(-)
+
+diff -puN include/linux/sched.h~remove-dead-code-and-exports-from-signalc include/linux/sched.h
+--- 25/include/linux/sched.h~remove-dead-code-and-exports-from-signalc	2004-10-05 01:48:00.688274816 -0700
++++ 25-akpm/include/linux/sched.h	2004-10-05 01:48:00.694273904 -0700
+@@ -847,7 +847,6 @@ extern int force_sigsegv(int, struct tas
+ extern int force_sig_info(int, struct siginfo *, struct task_struct *);
+ extern int __kill_pg_info(int sig, struct siginfo *info, pid_t pgrp);
+ extern int kill_pg_info(int, struct siginfo *, pid_t);
+-extern int kill_sl_info(int, struct siginfo *, pid_t);
+ extern int kill_proc_info(int, struct siginfo *, pid_t);
+ extern void do_notify_parent(struct task_struct *, int);
+ extern void force_sig(int, struct task_struct *);
+diff -puN kernel/signal.c~remove-dead-code-and-exports-from-signalc kernel/signal.c
+--- 25/kernel/signal.c~remove-dead-code-and-exports-from-signalc	2004-10-05 01:48:00.690274512 -0700
++++ 25-akpm/kernel/signal.c	2004-10-05 01:48:00.696273600 -0700
+@@ -1143,36 +1143,6 @@ kill_pg_info(int sig, struct siginfo *in
+ 	return retval;
+ }
+ 
+-/*
+- * kill_sl_info() sends a signal to the session leader: this is used
+- * to send SIGHUP to the controlling process of a terminal when
+- * the connection is lost.
+- */
+-
+-
+-int
+-kill_sl_info(int sig, struct siginfo *info, pid_t sid)
+-{
+-	int err, retval = -EINVAL;
+-	struct task_struct *p;
+-
+-	if (sid <= 0)
+-		goto out;
+-
+-	retval = -ESRCH;
+-	read_lock(&tasklist_lock);
+-	do_each_task_pid(sid, PIDTYPE_SID, p) {
+-		if (!p->signal->leader)
+-			continue;
+-		err = group_send_sig_info(sig, info, p);
+-		if (retval)
+-			retval = err;
+-	} while_each_task_pid(sid, PIDTYPE_SID, p);
+-	read_unlock(&tasklist_lock);
+-out:
+-	return retval;
+-}
+-
+ int
+ kill_proc_info(int sig, struct siginfo *info, pid_t pid)
+ {
+@@ -1309,12 +1279,6 @@ kill_pg(pid_t pgrp, int sig, int priv)
+ }
+ 
+ int
+-kill_sl(pid_t sess, int sig, int priv)
+-{
+-	return kill_sl_info(sig, (void *)(long)(priv != 0), sess);
+-}
+-
+-int
+ kill_proc(pid_t pid, int sig, int priv)
+ {
+ 	return kill_proc_info(sig, (void *)(long)(priv != 0), pid);
+@@ -1978,22 +1942,11 @@ relock:
+ EXPORT_SYMBOL(recalc_sigpending);
+ EXPORT_SYMBOL_GPL(dequeue_signal);
+ EXPORT_SYMBOL(flush_signals);
+-EXPORT_SYMBOL(force_sig);
+-EXPORT_SYMBOL(force_sig_info);
+ EXPORT_SYMBOL(kill_pg);
+-EXPORT_SYMBOL(kill_pg_info);
+ EXPORT_SYMBOL(kill_proc);
+-EXPORT_SYMBOL(kill_proc_info);
+-EXPORT_SYMBOL(kill_sl);
+-EXPORT_SYMBOL(kill_sl_info);
+ EXPORT_SYMBOL(ptrace_notify);
+ EXPORT_SYMBOL(send_sig);
+ EXPORT_SYMBOL(send_sig_info);
+-EXPORT_SYMBOL(send_group_sig_info);
+-EXPORT_SYMBOL(sigqueue_alloc);
+-EXPORT_SYMBOL(sigqueue_free);
+-EXPORT_SYMBOL(send_sigqueue);
+-EXPORT_SYMBOL(send_group_sigqueue);
+ EXPORT_SYMBOL(sigprocmask);
+ EXPORT_SYMBOL(block_all_signals);
+ EXPORT_SYMBOL(unblock_all_signals);
+_

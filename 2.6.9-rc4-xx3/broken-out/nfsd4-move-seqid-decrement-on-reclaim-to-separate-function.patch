@@ -1,0 +1,59 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+Move seqid decrement on reclaim to separate function
+
+Signed-off-by: Andy Adamson <andros@citi.umich.edu>
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/nfsd/nfs4state.c |   27 ++++++++++++++++-----------
+ 1 files changed, 16 insertions(+), 11 deletions(-)
+
+diff -puN fs/nfsd/nfs4state.c~nfsd4-move-seqid-decrement-on-reclaim-to-separate-function fs/nfsd/nfs4state.c
+--- 25/fs/nfsd/nfs4state.c~nfsd4-move-seqid-decrement-on-reclaim-to-separate-function	2004-09-23 22:13:24.354536464 -0700
++++ 25-akpm/fs/nfsd/nfs4state.c	2004-09-23 22:13:24.359535704 -0700
+@@ -1275,6 +1275,20 @@ out:
+ 	return status;
+ }
+ 
++/* decrement seqid on successful reclaim, it will be bumped in encode_open */
++static void
++nfs4_set_claim_prev(struct nfsd4_open *open, int *status)
++{
++	if (open->op_claim_type == NFS4_OPEN_CLAIM_PREVIOUS) {
++		if (*status)
++			*status = nfserr_reclaim_bad;
++		else {
++			open->op_stateowner->so_confirmed = 1;
++			open->op_stateowner->so_seqid--;
++		}
++	}
++}
++
+ /*
+  * called with nfs4_lock_state() held.
+  */
+@@ -1370,17 +1384,8 @@ out:
+ 	if (fp && list_empty(&fp->fi_perfile))
+ 		release_file(fp);
+ 
+-	if (open->op_claim_type == NFS4_OPEN_CLAIM_PREVIOUS) {
+-		if (status)
+-			status = nfserr_reclaim_bad;
+-		else {
+-		/* successful reclaim. so_seqid is decremented because
+-		* it will be bumped in encode_open
+-		*/
+-			open->op_stateowner->so_confirmed = 1;
+-			open->op_stateowner->so_seqid--;
+-		}
+-	}
++	/* CLAIM_PREVIOUS has different error returns */
++	nfs4_set_claim_prev(open, &status);
+ 	/*
+ 	* To finish the open response, we just need to set the rflags.
+ 	*/
+_

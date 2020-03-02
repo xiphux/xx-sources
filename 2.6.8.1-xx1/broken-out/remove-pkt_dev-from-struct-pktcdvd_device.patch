@@ -1,0 +1,91 @@
+
+From: Peter Osterlund <petero2@telia.com>
+
+Remove pkt_dev from struct pktcdvd_device in the pktcdvd driver and
+remove unnecessary calls to bdget(). Suggested by Christoph Hellwig.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/pktcdvd.c |   20 ++++----------------
+ 25-akpm/include/linux/pktcdvd.h |    1 -
+ 2 files changed, 4 insertions(+), 17 deletions(-)
+
+diff -puN drivers/block/pktcdvd.c~remove-pkt_dev-from-struct-pktcdvd_device drivers/block/pktcdvd.c
+--- 25/drivers/block/pktcdvd.c~remove-pkt_dev-from-struct-pktcdvd_device	2004-07-31 22:48:32.739015704 -0700
++++ 25-akpm/drivers/block/pktcdvd.c	2004-07-31 22:48:32.746014640 -0700
+@@ -1993,7 +1993,6 @@ static void pkt_release_dev(struct pktcd
+ static int pkt_open(struct inode *inode, struct file *file)
+ {
+ 	struct pktcdvd_device *pd = NULL;
+-	struct block_device *pkt_bdev;
+ 	int ret;
+ 	int special_open, exclusive;
+ 
+@@ -2050,11 +2049,7 @@ static int pkt_open(struct inode *inode,
+ 	 * needed here as well, since ext2 (among others) may change
+ 	 * the blocksize at mount time
+ 	 */
+-	pkt_bdev = bdget(inode->i_rdev);
+-	if (pkt_bdev) {
+-		set_blocksize(pkt_bdev, CD_FRAMESIZE);
+-		bdput(pkt_bdev);
+-	}
++	set_blocksize(inode->i_bdev, CD_FRAMESIZE);
+ 
+ done:
+ 	up(&pd->ctl_mutex);
+@@ -2439,21 +2434,15 @@ out:
+ 	return ret;
+ }
+ 
+-static int pkt_remove_dev(struct pktcdvd_device *pd)
++static int pkt_remove_dev(struct pktcdvd_device *pd, struct block_device *bdev)
+ {
+-	struct block_device *bdev;
+-
+ 	if (!IS_ERR(pd->cdrw.thread))
+ 		kthread_stop(pd->cdrw.thread);
+ 
+ 	/*
+ 	 * will also invalidate buffers for CD-ROM
+ 	 */
+-	bdev = bdget(pd->pkt_dev);
+-	if (bdev) {
+-		invalidate_bdev(bdev, 1);
+-		bdput(bdev);
+-	}
++	invalidate_bdev(bdev, 1);
+ 
+ 	pkt_shrink_pktlist(pd);
+ 
+@@ -2515,7 +2504,7 @@ static int pkt_ioctl(struct inode *inode
+ 		if (pd->refcnt != 1)
+ 			ret = -EBUSY;
+ 		else
+-			ret = pkt_remove_dev(pd);
++			ret = pkt_remove_dev(pd, inode->i_bdev);
+ 		up(&pd->ctl_mutex);
+ 		return ret;
+ 
+@@ -2586,7 +2575,6 @@ int pkt_init(void)
+ 
+ 		spin_lock_init(&pd->lock);
+ 		spin_lock_init(&pd->iosched.lock);
+-		pd->pkt_dev = MKDEV(PACKET_MAJOR, i);
+ 		sprintf(pd->name, "pktcdvd%d", i);
+ 		init_waitqueue_head(&pd->wqueue);
+ 		init_MUTEX(&pd->ctl_mutex);
+diff -puN include/linux/pktcdvd.h~remove-pkt_dev-from-struct-pktcdvd_device include/linux/pktcdvd.h
+--- 25/include/linux/pktcdvd.h~remove-pkt_dev-from-struct-pktcdvd_device	2004-07-31 22:48:32.742015248 -0700
++++ 25-akpm/include/linux/pktcdvd.h	2004-07-31 22:48:32.747014488 -0700
+@@ -229,7 +229,6 @@ struct pktcdvd_device
+ {
+ 	struct block_device	*bdev;		/* dev attached */
+ 	dev_t			dev;		/* dev attached */
+-	dev_t			pkt_dev;	/* our dev */
+ 	char			name[20];
+ 	struct packet_settings	settings;
+ 	struct packet_stats	stats;
+_

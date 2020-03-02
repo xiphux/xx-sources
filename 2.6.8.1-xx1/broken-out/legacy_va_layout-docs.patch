@@ -1,0 +1,103 @@
+
+
+- Add documentation.
+
+- It's an x86-only feature, so don't offer the sysctl on other architectures.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/filesystems/proc.txt |    6 ++++++
+ 25-akpm/arch/i386/mm/mmap.c                |    3 ++-
+ 25-akpm/include/asm-i386/page.h            |    4 ++--
+ 25-akpm/kernel/sysctl.c                    |    5 +++++
+ 4 files changed, 15 insertions(+), 3 deletions(-)
+
+diff -puN Documentation/filesystems/proc.txt~legacy_va_layout-docs Documentation/filesystems/proc.txt
+--- 25/Documentation/filesystems/proc.txt~legacy_va_layout-docs	Wed Aug  4 16:46:45 2004
++++ 25-akpm/Documentation/filesystems/proc.txt	Wed Aug  4 16:47:02 2004
+@@ -1174,6 +1174,12 @@ for writeout by the pdflush daemons.  It
+ Data which has been dirty in-memory for longer than this interval will be
+ written out next time a pdflush daemon wakes up.
+ 
++legacy_va_layout
++----------------
++
++If non-zero, this sysctl disables the new 32-bit mmap mmap layout - the kernel
++will use the legacy (2.4) layout for all processes.
++
+ lower_zone_protection
+ ---------------------
+ 
+diff -puN kernel/sysctl.c~legacy_va_layout-docs kernel/sysctl.c
+--- 25/kernel/sysctl.c~legacy_va_layout-docs	Wed Aug  4 16:46:45 2004
++++ 25-akpm/kernel/sysctl.c	Wed Aug  4 16:46:45 2004
+@@ -42,6 +42,7 @@
+ #include <linux/dcache.h>
+ 
+ #include <asm/uaccess.h>
++#include <asm/processor.h>
+ 
+ #ifdef CONFIG_ROOT_NFS
+ #include <linux/nfs_fs.h>
+@@ -149,7 +150,9 @@ extern ctl_table random_table[];
+ extern ctl_table pty_table[];
+ #endif
+ 
++#ifdef HAVE_ARCH_PICK_MMAP_LAYOUT
+ int sysctl_legacy_va_layout;
++#endif
+ 
+ /* /proc declarations: */
+ 
+@@ -807,6 +810,7 @@ static ctl_table vm_table[] = {
+ 		.strategy	= &sysctl_intvec,
+ 		.extra1		= &zero,
+ 	},
++#ifdef HAVE_ARCH_PICK_MMAP_LAYOUT
+ 	{
+ 		.ctl_name	= VM_LEGACY_VA_LAYOUT,
+ 		.procname	= "legacy_va_layout",
+@@ -817,6 +821,7 @@ static ctl_table vm_table[] = {
+ 		.strategy	= &sysctl_intvec,
+ 		.extra1		= &zero,
+ 	},
++#endif
+ 	{ .ctl_name = 0 }
+ };
+ 
+diff -puN include/asm-i386/page.h~legacy_va_layout-docs include/asm-i386/page.h
+--- 25/include/asm-i386/page.h~legacy_va_layout-docs	Wed Aug  4 16:46:45 2004
++++ 25-akpm/include/asm-i386/page.h	Wed Aug  4 16:46:45 2004
+@@ -118,6 +118,8 @@ static __inline__ int get_order(unsigned
+ 
+ extern int devmem_is_allowed(unsigned long pagenr);
+ 
++extern int sysctl_legacy_va_layout;
++
+ #endif /* __ASSEMBLY__ */
+ 
+ #ifdef __ASSEMBLY__
+@@ -147,8 +149,6 @@ extern int devmem_is_allowed(unsigned lo
+ 	((current->personality & READ_IMPLIES_EXEC) ? VM_EXEC : 0 ) | \
+ 		 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
+-
+-
+ #endif /* __KERNEL__ */
+ 
+ #endif /* _I386_PAGE_H */
+diff -puN arch/i386/mm/mmap.c~legacy_va_layout-docs arch/i386/mm/mmap.c
+--- 25/arch/i386/mm/mmap.c~legacy_va_layout-docs	Wed Aug  4 16:46:45 2004
++++ 25-akpm/arch/i386/mm/mmap.c	Wed Aug  4 16:46:45 2004
+@@ -57,7 +57,8 @@ void arch_pick_mmap_layout(struct mm_str
+ 	 * Fall back to the standard layout if the personality
+ 	 * bit is set, or if the expected stack growth is unlimited:
+ 	 */
+-	if (sysctl_legacy_va_layout || (current->personality & ADDR_COMPAT_LAYOUT) ||
++	if (sysctl_legacy_va_layout ||
++			(current->personality & ADDR_COMPAT_LAYOUT) ||
+ 			current->rlim[RLIMIT_STACK].rlim_cur == RLIM_INFINITY) {
+ 		mm->mmap_base = TASK_UNMAPPED_BASE;
+ 		mm->get_unmapped_area = arch_get_unmapped_area;
+_

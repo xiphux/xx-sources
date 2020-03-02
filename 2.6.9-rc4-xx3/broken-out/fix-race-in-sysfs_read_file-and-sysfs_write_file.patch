@@ -1,0 +1,90 @@
+
+From: Simon Derr <Simon.Derr@bull.net>
+
+- fixes the race between threads by adding a semaphore in sysfs_buffer
+
+- allocates the buffer upon call to pread().  We still call again
+  fill_read_buffer() if the file is "rewinded" to offset zero.
+
+- fixes the comparison in flush_read_buffer().
+
+Signed-off-by: Simon Derr <simon.derr@null.net>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/sysfs/file.c |   18 +++++++++++++++---
+ 1 files changed, 15 insertions(+), 3 deletions(-)
+
+diff -puN fs/sysfs/file.c~fix-race-in-sysfs_read_file-and-sysfs_write_file fs/sysfs/file.c
+--- 25/fs/sysfs/file.c~fix-race-in-sysfs_read_file-and-sysfs_write_file	2004-09-02 15:56:36.397176120 -0700
++++ 25-akpm/fs/sysfs/file.c	2004-09-02 15:56:36.402175360 -0700
+@@ -6,6 +6,7 @@
+ #include <linux/dnotify.h>
+ #include <linux/kobject.h>
+ #include <asm/uaccess.h>
++#include <asm/semaphore.h>
+ 
+ #include "sysfs.h"
+ 
+@@ -53,6 +54,7 @@ struct sysfs_buffer {
+ 	loff_t			pos;
+ 	char			* page;
+ 	struct sysfs_ops	* ops;
++	struct semaphore	sem;
+ };
+ 
+ 
+@@ -106,6 +108,9 @@ static int flush_read_buffer(struct sysf
+ {
+ 	int error;
+ 
++	if (*ppos > buffer->count)
++		return 0;
++
+ 	if (count > (buffer->count - *ppos))
+ 		count = buffer->count - *ppos;
+ 
+@@ -140,13 +145,17 @@ sysfs_read_file(struct file *file, char 
+ 	struct sysfs_buffer * buffer = file->private_data;
+ 	ssize_t retval = 0;
+ 
+-	if (!*ppos) {
++	down(&buffer->sem);
++	if ((!*ppos) || (!buffer->page)) {
+ 		if ((retval = fill_read_buffer(file->f_dentry,buffer)))
+-			return retval;
++			goto out;
+ 	}
+ 	pr_debug("%s: count = %d, ppos = %lld, buf = %s\n",
+ 		 __FUNCTION__,count,*ppos,buffer->page);
+-	return flush_read_buffer(buffer,buf,count,ppos);
++	retval = flush_read_buffer(buffer,buf,count,ppos);
++out:
++	up(&buffer->sem);
++	return retval;
+ }
+ 
+ 
+@@ -220,11 +229,13 @@ sysfs_write_file(struct file *file, cons
+ {
+ 	struct sysfs_buffer * buffer = file->private_data;
+ 
++	down(&buffer->sem);
+ 	count = fill_write_buffer(buffer,buf,count);
+ 	if (count > 0)
+ 		count = flush_write_buffer(file->f_dentry,buffer,count);
+ 	if (count > 0)
+ 		*ppos += count;
++	up(&buffer->sem);
+ 	return count;
+ }
+ 
+@@ -287,6 +298,7 @@ static int check_perm(struct inode * ino
+ 	buffer = kmalloc(sizeof(struct sysfs_buffer),GFP_KERNEL);
+ 	if (buffer) {
+ 		memset(buffer,0,sizeof(struct sysfs_buffer));
++		init_MUTEX(&buffer->sem);
+ 		buffer->ops = ops;
+ 		file->private_data = buffer;
+ 	} else
+_

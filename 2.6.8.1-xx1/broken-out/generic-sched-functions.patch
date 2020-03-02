@@ -1,0 +1,196 @@
+---
+
+ xx-sources-current-xiphux/kernel/sched.c |   58 +++++++++++++++++++------------
+ 1 files changed, 37 insertions(+), 21 deletions(-)
+
+diff -puN kernel/sched.c~generic-sched-functions kernel/sched.c
+--- xx-sources-current/kernel/sched.c~generic-sched-functions	2004-08-07 06:32:03.190275640 -0400
++++ xx-sources-current-xiphux/kernel/sched.c	2004-08-07 06:39:26.867826400 -0400
+@@ -162,9 +162,6 @@
+ #define LOW_CREDIT(p) \
+ 	((p)->interactive_credit < -CREDIT_LIMIT)
+ 
+-#define TASK_PREEMPTS_CURR(p, rq) \
+-	((p)->prio < (rq)->curr->prio)
+-
+ /*
+  * BASE_TIMESLICE scales user-nice values [ -20 ... 19 ]
+  * to time slice values.
+@@ -418,6 +415,25 @@ struct file_operations proc_schedstat_op
+ };
+ #endif
+ 
++static inline int generic_task_queued(task_t *p)
++{
++	return (int)p->array;
++}
++
++static inline int generic_task_running(runqueue_t *rq, task_t *p)
++{
++#ifndef prepare_arch_switch
++	return rq->curr == p;
++#else
++	return task_running(rq, p);
++#endif
++}
++
++static inline int generic_task_preempts_curr(task_t *p, runqueue_t *rq)
++{
++	return p->prio < rq->curr->prio;
++}
++
+ /*
+  * rq_lock - lock a given runqueue and disable interrupts.
+  */
+@@ -831,7 +847,7 @@ static int migrate_task(task_t *p, int d
+ 	 * If the task is not on a runqueue (and not running), then
+ 	 * it is sufficient to simply update the task's cpu field.
+ 	 */
+-	if (!p->array && !task_running(rq, p)) {
++	if (!generic_task_queued(p) && !generic_task_running(rq, p)) {
+ 		set_task_cpu(p, dest_cpu);
+ 		return 0;
+ 	}
+@@ -862,9 +878,9 @@ void wait_task_inactive(task_t * p)
+ repeat:
+ 	rq = task_rq_lock(p, &flags);
+ 	/* Must be off runqueue entirely, not preempted. */
+-	if (unlikely(p->array)) {
++	if (unlikely(generic_task_queued(p))) {
+ 		/* If it's preempted, we yield.  It could be a while. */
+-		preempted = !task_running(rq, p);
++		preempted = !generic_task_running(rq, p);
+ 		task_rq_unlock(rq, &flags);
+ 		cpu_relax();
+ 		if (preempted)
+@@ -992,14 +1008,14 @@ static int try_to_wake_up(task_t * p, un
+ 	if (!(old_state & state))
+ 		goto out;
+ 
+-	if (p->array)
++	if (generic_task_queued(p))
+ 		goto out_running;
+ 
+ 	cpu = task_cpu(p);
+ 	this_cpu = smp_processor_id();
+ 
+ #ifdef CONFIG_SMP
+-	if (unlikely(task_running(rq, p)))
++	if (unlikely(generic_task_running(rq, p)))
+ 		goto out_activate;
+ 
+ 	new_cpu = cpu;
+@@ -1071,7 +1087,7 @@ out_set_cpu:
+ 		old_state = p->state;
+ 		if (!(old_state & state))
+ 			goto out;
+-		if (p->array)
++		if (generic_task_queued(p))
+ 			goto out_running;
+ 
+ 		this_cpu = smp_processor_id();
+@@ -1099,7 +1115,7 @@ out_activate:
+ 	 */
+ 	activate_task(p, rq, cpu == this_cpu);
+ 	if (!sync || cpu != this_cpu) {
+-		if (TASK_PREEMPTS_CURR(p, rq))
++		if (generic_task_preempts_curr(p, rq))
+ 			resched_task(rq->curr);
+ 	}
+ 	success = 1;
+@@ -1246,7 +1262,7 @@ void fastcall wake_up_new_task(task_t * 
+ 		p->timestamp = (p->timestamp - this_rq->timestamp_last_tick)
+ 					+ rq->timestamp_last_tick;
+ 		__activate_task(p, rq);
+-		if (TASK_PREEMPTS_CURR(p, rq))
++		if (generic_task_preempts_curr(p, rq))
+ 			resched_task(rq->curr);
+ 
+ 		current->sleep_avg = JIFFIES_TO_NS(CURRENT_BONUS(current) *
+@@ -1605,7 +1621,7 @@ void pull_task(runqueue_t *src_rq, prio_
+ 	 * Note that idle threads have a prio of MAX_PRIO, for this test
+ 	 * to be always true for them.
+ 	 */
+-	if (TASK_PREEMPTS_CURR(p, this_rq))
++	if (generic_task_preempts_curr(p, this_rq))
+ 		resched_task(this_rq->curr);
+ }
+ 
+@@ -1622,7 +1638,7 @@ int can_migrate_task(task_t *p, runqueue
+ 	 * 2) cannot be migrated to this CPU due to cpus_allowed, or
+ 	 * 3) are cache-hot on their current CPU.
+ 	 */
+-	if (task_running(rq, p))
++	if (generic_task_running(rq, p))
+ 		return 0;
+ 	if (!cpu_isset(this_cpu, p->cpus_allowed))
+ 		return 0;
+@@ -2263,7 +2279,7 @@ void scheduler_tick(int user_ticks, int 
+ 	cpustat->system += sys_ticks;
+ 
+ 	/* Task might have expired already, but not scheduled off yet */
+-	if (p->array != rq->active) {
++	if (generic_task_queued(p) != (int)rq->active) {
+ 		set_tsk_need_resched(p);
+ 		goto out;
+ 	}
+@@ -2326,7 +2342,7 @@ void scheduler_tick(int user_ticks, int 
+ 		if (TASK_INTERACTIVE(p) && !((task_timeslice(p) -
+ 			p->time_slice) % TIMESLICE_GRANULARITY(p)) &&
+ 			(p->time_slice >= TIMESLICE_GRANULARITY(p)) &&
+-			(p->array == rq->active)) {
++			(generic_task_queued(p) == (int)rq->active)) {
+ 
+ 			dequeue_task(p, rq->active);
+ 			set_tsk_need_resched(p);
+@@ -2859,7 +2875,7 @@ void set_user_nice(task_t *p, long nice)
+ 		 * If the task increased its priority or is running and
+ 		 * lowered its priority, then reschedule its CPU:
+ 		 */
+-		if (delta < 0 || (delta > 0 && task_running(rq, p)))
++		if (delta < 0 || (delta > 0 && generic_task_running(rq, p)))
+ 			resched_task(rq->curr);
+ 	}
+ out_unlock:
+@@ -2966,7 +2982,7 @@ static inline task_t *find_process_by_pi
+ /* Actually do priority change: must hold rq lock. */
+ static void __setscheduler(struct task_struct *p, int policy, int prio)
+ {
+-	BUG_ON(p->array);
++	BUG_ON(generic_task_queued(p));
+ 	p->policy = policy;
+ 	p->rt_priority = prio;
+ 	if (policy != SCHED_NORMAL)
+@@ -3056,10 +3072,10 @@ static int setscheduler(pid_t pid, int p
+ 		 * our priority decreased, or if we are not currently running on
+ 		 * this runqueue and our priority is higher than the current's
+ 		 */
+-		if (task_running(rq, p)) {
++		if (generic_task_running(rq, p)) {
+ 			if (p->prio > oldprio)
+ 				resched_task(rq->curr);
+-		} else if (TASK_PREEMPTS_CURR(p, rq))
++		} else if (generic_task_preempts_curr(p, rq))
+ 			resched_task(rq->curr);
+ 	}
+ 
+@@ -3668,7 +3684,7 @@ static void __migrate_task(struct task_s
+ 		goto out;
+ 
+ 	set_task_cpu(p, dest_cpu);
+-	if (p->array) {
++	if (generic_task_queued(p)) {
+ 		/*
+ 		 * Sync timestamp with rq_dest's before activating.
+ 		 * The same thing could be achieved by doing this step
+@@ -3679,7 +3695,7 @@ static void __migrate_task(struct task_s
+ 				+ rq_dest->timestamp_last_tick;
+ 		deactivate_task(p, rq_src);
+ 		activate_task(p, rq_dest, 0);
+-		if (TASK_PREEMPTS_CURR(p, rq_dest))
++		if (generic_task_preempts_curr(p, rq_dest))
+ 			resched_task(rq_dest->curr);
+ 	}
+ 
+
+_

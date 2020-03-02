@@ -1,0 +1,28 @@
+Index: xx-sources/fs/coda/dir.c
+===================================================================
+--- xx-sources.orig/fs/coda/dir.c	2004-08-21 05:03:23.000000000 -0400
++++ xx-sources/fs/coda/dir.c	2004-08-24 16:35:01.058977312 -0400
+@@ -435,8 +435,7 @@
+         }
+ 
+ 	coda_dir_changed(dir, -1);
+-	de->d_inode->i_nlink--;
+-	d_delete(de);
++	de->d_inode->i_nlink = 0;
+ 	unlock_kernel();
+ 
+         return 0;
+@@ -462,8 +461,12 @@
+ 
+         if ( !error ) {
+ 		if ( new_dentry->d_inode ) {
+-			if ( S_ISDIR(new_dentry->d_inode->i_mode) )
++			if ( S_ISDIR(new_dentry->d_inode->i_mode) ) {
+                         	link_adjust = 1;
++				new_dentry->d_inode->i_nlink = 0;
++			}
++			else
++				new_dentry->d_inode->i_nlink--;
+ 
+                         coda_dir_changed(old_dir, -link_adjust);
+                         coda_dir_changed(new_dir,  link_adjust);

@@ -1,0 +1,224 @@
+
+From: Pavel Machek <pavel@ucw.cz>
+
+It fixes levels for calling driver model, puts devices into sleep before
+powering down (so that emergency parking does not happen), and actually
+introduces SMP support, but its disabled for now.  Plus noone should try to
+freeze_processes() when thats not implemented, we now BUG()s -- we do not
+want Heisenbugs.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/suspend.h |   23 +++++-----
+ 25-akpm/kernel/power/Makefile   |    1 
+ 25-akpm/kernel/power/smp.c      |   85 ++++++++++++++++++++++++++++++++++++++++
+ 25-akpm/kernel/power/swsusp.c   |   19 +++++---
+ 4 files changed, 109 insertions(+), 19 deletions(-)
+
+diff -puN include/linux/suspend.h~next-step-of-smp-support-fix-device-suspending include/linux/suspend.h
+--- 25/include/linux/suspend.h~next-step-of-smp-support-fix-device-suspending	2004-06-27 22:39:10.913992520 -0700
++++ 25-akpm/include/linux/suspend.h	2004-06-27 22:39:10.922991152 -0700
+@@ -67,20 +67,19 @@ extern int pm_prepare_console(void);
+ extern void pm_restore_console(void);
+ 
+ #else
+-static inline void refrigerator(unsigned long flag)
+-{
+-
+-}
+-static inline int freeze_processes(void)
+-{
+-	return 0;
+-}
+-static inline void thaw_processes(void)
+-{
+-
+-}
++static inline void refrigerator(unsigned long flag) {}
++static inline int freeze_processes(void) { BUG(); }
++static inline void thaw_processes(void) {}
+ #endif	/* CONFIG_PM */
+ 
++#ifdef CONFIG_SMP
++extern void disable_nonboot_cpus(void);
++extern void enable_nonboot_cpus(void);
++#else
++static inline void disable_nonboot_cpus(void) {}
++static inline void enable_nonboot_cpus(void) {}
++#endif
++
+ asmlinkage void do_magic(int is_resume);
+ asmlinkage void do_magic_resume_1(void);
+ asmlinkage void do_magic_resume_2(void);
+diff -puN kernel/power/Makefile~next-step-of-smp-support-fix-device-suspending kernel/power/Makefile
+--- 25/kernel/power/Makefile~next-step-of-smp-support-fix-device-suspending	2004-06-27 22:39:10.915992216 -0700
++++ 25-akpm/kernel/power/Makefile	2004-06-27 22:39:10.926990544 -0700
+@@ -1,4 +1,5 @@
+ obj-y				:= main.o process.o console.o pm.o
++obj-$(CONFIG_SMP)		+= smp.o
+ obj-$(CONFIG_SOFTWARE_SUSPEND)	+= swsusp.o
+ obj-$(CONFIG_PM_DISK)		+= disk.o pmdisk.o
+ 
+diff -puN kernel/power/smp.c~next-step-of-smp-support-fix-device-suspending kernel/power/smp.c
+--- 25/kernel/power/smp.c~next-step-of-smp-support-fix-device-suspending	2004-06-27 22:39:10.917991912 -0700
++++ 25-akpm/kernel/power/smp.c	2004-06-27 22:39:10.925990696 -0700
+@@ -0,0 +1,85 @@
++/*
++ * drivers/power/smp.c - Functions for stopping other CPUs.
++ *
++ * Copyright 2004 Pavel Machek <pavel@suse.cz>
++ * Copyright (C) 2002-2003 Nigel Cunningham <ncunningham@clear.net.nz>
++ *
++ * This file is released under the GPLv2.
++ */
++
++#undef DEBUG
++
++#include <linux/smp_lock.h>
++#include <linux/interrupt.h>
++#include <linux/suspend.h>
++#include <linux/module.h>
++#include <asm/atomic.h>
++#include <asm/tlbflush.h>
++
++static atomic_t cpu_counter, freeze;
++
++
++static void smp_pause(void * data)
++{
++	struct saved_context ctxt;
++	__save_processor_state(&ctxt);
++	printk("Sleeping in:\n");
++	dump_stack();
++	atomic_inc(&cpu_counter);
++	while (atomic_read(&freeze)) {
++		/* FIXME: restore takes place at random piece inside this.
++		   This should probably be written in assembly, and
++		   preserve general-purpose registers, too
++
++		   What about stack? We may need to move to new stack here.
++
++		   This should better be ran with interrupts disabled.
++		 */
++		cpu_relax();
++		barrier();
++	}
++	atomic_dec(&cpu_counter);
++	__restore_processor_state(&ctxt);
++}
++
++cpumask_t oldmask;
++
++void disable_nonboot_cpus(void)
++{
++	printk("Freezing CPUs (at %d)", smp_processor_id());
++	oldmask = current->cpus_allowed;
++	set_cpus_allowed(current, cpumask_of_cpu(0));
++	current->state = TASK_INTERRUPTIBLE;
++	schedule_timeout(HZ);
++	printk("...");
++	BUG_ON(smp_processor_id() != 0);
++
++	/* FIXME: for this to work, all the CPUs must be running
++	 * "idle" thread (or we deadlock). Is that guaranteed? */
++
++	atomic_set(&cpu_counter, 0);
++	atomic_set(&freeze, 1);
++	smp_call_function(smp_pause, NULL, 0, 0);
++	while (atomic_read(&cpu_counter) < (num_online_cpus() - 1)) {
++		cpu_relax();
++		barrier();
++	}
++	printk("ok\n");
++}
++
++void enable_nonboot_cpus(void)
++{
++	printk("Restarting CPUs");
++	atomic_set(&freeze, 0);
++	while (atomic_read(&cpu_counter)) {
++		cpu_relax();
++		barrier();
++	}
++	printk("...");
++	set_cpus_allowed(current, oldmask);
++	schedule();
++	printk("ok\n");
++
++}
++
++
+diff -puN kernel/power/swsusp.c~next-step-of-smp-support-fix-device-suspending kernel/power/swsusp.c
+--- 25/kernel/power/swsusp.c~next-step-of-smp-support-fix-device-suspending	2004-06-27 22:39:10.919991608 -0700
++++ 25-akpm/kernel/power/swsusp.c	2004-06-27 22:39:10.924990848 -0700
+@@ -696,6 +696,7 @@ static void suspend_power_down(void)
+ 	else
+ #endif
+ 	{
++		device_suspend(3);
+ 		device_shutdown();
+ 		machine_power_off();
+ 	}
+@@ -716,7 +717,7 @@ asmlinkage void do_magic_resume_1(void)
+ 	mb();
+ 	spin_lock_irq(&suspend_pagedir_lock);	/* Done to disable interrupts */ 
+ 
+-	device_power_down(4);
++	device_power_down(3);
+ 	PRINTK( "Waiting for DMAs to settle down...\n");
+ 	mdelay(1000);	/* We do not want some readahead with DMA to corrupt our memory, right?
+ 			   Do it with disabled interrupts for best effect. That way, if some
+@@ -785,7 +786,7 @@ asmlinkage void do_magic_suspend_2(void)
+ {
+ 	int is_problem;
+ 	read_swapfiles();
+-	device_power_down(4);
++	device_power_down(3);
+ 	is_problem = suspend_prepare_image();
+ 	device_power_up();
+ 	spin_unlock_irq(&suspend_pagedir_lock);
+@@ -802,7 +803,6 @@ asmlinkage void do_magic_suspend_2(void)
+ 	barrier();
+ 	mb();
+ 	spin_lock_irq(&suspend_pagedir_lock);	/* Done to disable interrupts */ 
+-	mdelay(1000);
+ 
+ 	free_pages((unsigned long) pagedir_nosave, pagedir_order);
+ 	spin_unlock_irq(&suspend_pagedir_lock);
+@@ -839,9 +839,10 @@ int software_suspend(void)
+                    need half of memory free. */
+ 
+ 		free_some_memory();
+-		
+-		/* Save state of all device drivers, and stop them. */		   
+-		if ((res = device_suspend(4))==0)
++		disable_nonboot_cpus();
++		/* Save state of all device drivers, and stop them. */
++		printk("Suspending devices... ");
++		if ((res = device_suspend(3))==0) {
+ 			/* If stopping device drivers worked, we proceed basically into
+ 			 * suspend_save_image.
+ 			 *
+@@ -852,7 +853,9 @@ int software_suspend(void)
+ 			 * using normal kernel mechanism.
+ 			 */
+ 			do_magic(0);
++		}
+ 		thaw_processes();
++		enable_nonboot_cpus();
+ 	} else
+ 		res = -EBUSY;
+ 	software_suspend_enabled = 1;
+@@ -1192,7 +1195,9 @@ static int __init software_resume(void)
+ 	printk( "resuming from %s\n", resume_file);
+ 	if (read_suspend_image(resume_file, 0))
+ 		goto read_failure;
+-	device_suspend(4);
++	/* FIXME: Should we stop processes here, just to be safer? */
++	disable_nonboot_cpus();
++	device_suspend(3);
+ 	do_magic(1);
+ 	panic("This never returns");
+ 
+_

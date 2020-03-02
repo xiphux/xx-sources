@@ -1,0 +1,49 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/ide/ide.c       |    6 +++---
+ 25-akpm/drivers/ide/legacy/hd.c |    2 +-
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN drivers/ide/ide.c~lock-initializer-cleanup-ide drivers/ide/ide.c
+--- 25/drivers/ide/ide.c~lock-initializer-cleanup-ide	Wed Jan 12 16:54:15 2005
++++ 25-akpm/drivers/ide/ide.c	Wed Jan 12 16:54:15 2005
+@@ -175,7 +175,7 @@ static int system_bus_speed;	/* holds wh
+ static int initializing;	/* set while initializing built-in drivers */
+ 
+ DECLARE_MUTEX(ide_cfg_sem);
+-spinlock_t ide_lock __cacheline_aligned_in_smp = SPIN_LOCK_UNLOCKED;
++ __cacheline_aligned_in_smp DEFINE_SPINLOCK(ide_lock);
+ 
+ #ifdef CONFIG_BLK_DEV_IDEPCI
+ static int ide_scan_direction; /* THIS was formerly 2.2.x pci=reverse */
+@@ -368,8 +368,8 @@ static int ide_open (struct inode * inod
+  *	list of drivers.  Currently nobody takes both at once.
+  */
+ 
+-static spinlock_t drives_lock = SPIN_LOCK_UNLOCKED;
+-static spinlock_t drivers_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(drives_lock);
++static DEFINE_SPINLOCK(drivers_lock);
+ static LIST_HEAD(drivers);
+ 
+ /* Iterator for the driver list. */
+diff -puN drivers/ide/legacy/hd.c~lock-initializer-cleanup-ide drivers/ide/legacy/hd.c
+--- 25/drivers/ide/legacy/hd.c~lock-initializer-cleanup-ide	Wed Jan 12 16:54:15 2005
++++ 25-akpm/drivers/ide/legacy/hd.c	Wed Jan 12 16:54:15 2005
+@@ -94,7 +94,7 @@
+ #define BBD_ERR			0x80	/* pre-EIDE meaning:  block marked bad */
+ #define ICRC_ERR		0x80	/* new meaning:  CRC error during transfer */
+ 
+-static spinlock_t hd_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(hd_lock);
+ static struct request_queue *hd_queue;
+ 
+ #define MAJOR_NR HD_MAJOR
+_

@@ -1,0 +1,32 @@
+
+From: "Davis, Jason" <jason.davis@unisys.com>
+
+This update only applies to Unisys' ES7000 server machines.  The patch adds
+a OEM id check to verify the current machine running is actually a Unisys
+type box before executing the Unisys OEM parser routine.  It also increases
+the MAX_MP_BUSSES definition from 32 to 256.  On the ES7000s, bus ID
+numbering can range from 0 to 255.  Without the patch, the system panics if
+booted with acpi=off.
+
+This patch has been tested and verified on an authentic ES7000 machine.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/asm-i386/mach-es7000/mach_mpparse.h |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletion(-)
+
+diff -puN include/asm-i386/mach-es7000/mach_mpparse.h~platform-update-for-es7000 include/asm-i386/mach-es7000/mach_mpparse.h
+--- 25/include/asm-i386/mach-es7000/mach_mpparse.h~platform-update-for-es7000	2004-08-28 14:34:22.067980104 -0700
++++ 25-akpm/include/asm-i386/mach-es7000/mach_mpparse.h	2004-08-28 14:34:22.070979648 -0700
+@@ -21,7 +21,8 @@ static inline int mps_oem_check(struct m
+ 	if (mpc->mpc_oemptr) {
+ 		struct mp_config_oemtable *oem_table = 
+ 			(struct mp_config_oemtable *)mpc->mpc_oemptr;
+-		return parse_unisys_oem((char *)oem_table, oem_table->oem_length);
++		if (!strncmp(oem, "UNISYS", 6))
++			return parse_unisys_oem((char *)oem_table, oem_table->oem_length);
+ 	}
+ 	return 0;
+ }
+_

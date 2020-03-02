@@ -1,0 +1,223 @@
+Take all the relatives, siblings etc and make them public in scheduler.c
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+
+Index: linux-2.6.10-rc1-mm4/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc1-mm4.orig/kernel/sched.c	2004-11-10 09:21:04.148038761 +1100
++++ linux-2.6.10-rc1-mm4/kernel/sched.c	2004-11-10 09:21:05.897757660 +1100
+@@ -3232,104 +3232,6 @@ out_unlock:
+ 	return retval;
+ }
+ 
+-static inline struct task_struct *eldest_child(struct task_struct *p)
+-{
+-	if (list_empty(&p->children)) return NULL;
+-	return list_entry(p->children.next,struct task_struct,sibling);
+-}
+-
+-static inline struct task_struct *older_sibling(struct task_struct *p)
+-{
+-	if (p->sibling.prev==&p->parent->children) return NULL;
+-	return list_entry(p->sibling.prev,struct task_struct,sibling);
+-}
+-
+-static inline struct task_struct *younger_sibling(struct task_struct *p)
+-{
+-	if (p->sibling.next==&p->parent->children) return NULL;
+-	return list_entry(p->sibling.next,struct task_struct,sibling);
+-}
+-
+-static void show_task(task_t * p)
+-{
+-	task_t *relative;
+-	unsigned state;
+-	unsigned long free = 0;
+-	static const char *stat_nam[] = { "R", "S", "D", "T", "t", "Z", "X" };
+-
+-	printk("%-13.13s ", p->comm);
+-	state = p->state ? __ffs(p->state) + 1 : 0;
+-	if (state < ARRAY_SIZE(stat_nam))
+-		printk(stat_nam[state]);
+-	else
+-		printk("?");
+-#if (BITS_PER_LONG == 32)
+-	if (state == TASK_RUNNING)
+-		printk(" running ");
+-	else
+-		printk(" %08lX ", thread_saved_pc(p));
+-#else
+-	if (state == TASK_RUNNING)
+-		printk("  running task   ");
+-	else
+-		printk(" %016lx ", thread_saved_pc(p));
+-#endif
+-#ifdef CONFIG_DEBUG_STACK_USAGE
+-	{
+-		unsigned long * n = (unsigned long *) (p->thread_info+1);
+-		while (!*n)
+-			n++;
+-		free = (unsigned long) n - (unsigned long)(p->thread_info+1);
+-	}
+-#endif
+-	printk("%5lu %5d %6d ", free, p->pid, p->parent->pid);
+-	if ((relative = eldest_child(p)))
+-		printk("%5d ", relative->pid);
+-	else
+-		printk("      ");
+-	if ((relative = younger_sibling(p)))
+-		printk("%7d", relative->pid);
+-	else
+-		printk("       ");
+-	if ((relative = older_sibling(p)))
+-		printk(" %5d", relative->pid);
+-	else
+-		printk("      ");
+-	if (!p->mm)
+-		printk(" (L-TLB)\n");
+-	else
+-		printk(" (NOTLB)\n");
+-
+-	if (state != TASK_RUNNING)
+-		show_stack(p, NULL);
+-}
+-
+-void show_state(void)
+-{
+-	task_t *g, *p;
+-
+-#if (BITS_PER_LONG == 32)
+-	printk("\n"
+-	       "                                               sibling\n");
+-	printk("  task             PC      pid father child younger older\n");
+-#else
+-	printk("\n"
+-	       "                                                       sibling\n");
+-	printk("  task                 PC          pid father child younger older\n");
+-#endif
+-	read_lock(&tasklist_lock);
+-	do_each_thread(g, p) {
+-		/*
+-		 * reset the NMI-timeout, listing all files on a slow
+-		 * console might take alot of time:
+-		 */
+-		touch_nmi_watchdog();
+-		show_task(p);
+-	} while_each_thread(g, p);
+-
+-	read_unlock(&tasklist_lock);
+-}
+-
+ static void __devinit ingo_init_idle(task_t *idle, int cpu)
+ {
+ 	runqueue_t *rq = cpu_rq(cpu);
+Index: linux-2.6.10-rc1-mm4/kernel/scheduler.c
+===================================================================
+--- linux-2.6.10-rc1-mm4.orig/kernel/scheduler.c	2004-11-10 09:21:04.149038600 +1100
++++ linux-2.6.10-rc1-mm4/kernel/scheduler.c	2004-11-10 09:21:05.899757339 +1100
+@@ -635,6 +635,104 @@ void __sched yield(void)
+ 
+ EXPORT_SYMBOL(yield);
+ 
++static inline struct task_struct *eldest_child(struct task_struct *p)
++{
++	if (list_empty(&p->children)) return NULL;
++	return list_entry(p->children.next,struct task_struct,sibling);
++}
++
++static inline struct task_struct *older_sibling(struct task_struct *p)
++{
++	if (p->sibling.prev==&p->parent->children) return NULL;
++	return list_entry(p->sibling.prev,struct task_struct,sibling);
++}
++
++static inline struct task_struct *younger_sibling(struct task_struct *p)
++{
++	if (p->sibling.next==&p->parent->children) return NULL;
++	return list_entry(p->sibling.next,struct task_struct,sibling);
++}
++
++static void show_task(task_t * p)
++{
++	task_t *relative;
++	unsigned state;
++	unsigned long free = 0;
++	static const char *stat_nam[] = { "R", "S", "D", "T", "t", "Z", "X" };
++
++	printk("%-13.13s ", p->comm);
++	state = p->state ? __ffs(p->state) + 1 : 0;
++	if (state < ARRAY_SIZE(stat_nam))
++		printk(stat_nam[state]);
++	else
++		printk("?");
++#if (BITS_PER_LONG == 32)
++	if (state == TASK_RUNNING)
++		printk(" running ");
++	else
++		printk(" %08lX ", thread_saved_pc(p));
++#else
++	if (state == TASK_RUNNING)
++		printk("  running task   ");
++	else
++		printk(" %016lx ", thread_saved_pc(p));
++#endif
++#ifdef CONFIG_DEBUG_STACK_USAGE
++	{
++		unsigned long * n = (unsigned long *) (p->thread_info+1);
++		while (!*n)
++			n++;
++		free = (unsigned long) n - (unsigned long)(p->thread_info+1);
++	}
++#endif
++	printk("%5lu %5d %6d ", free, p->pid, p->parent->pid);
++	if ((relative = eldest_child(p)))
++		printk("%5d ", relative->pid);
++	else
++		printk("      ");
++	if ((relative = younger_sibling(p)))
++		printk("%7d", relative->pid);
++	else
++		printk("       ");
++	if ((relative = older_sibling(p)))
++		printk(" %5d", relative->pid);
++	else
++		printk("      ");
++	if (!p->mm)
++		printk(" (L-TLB)\n");
++	else
++		printk(" (NOTLB)\n");
++
++	if (state != TASK_RUNNING)
++		show_stack(p, NULL);
++}
++
++void show_state(void)
++{
++	task_t *g, *p;
++
++#if (BITS_PER_LONG == 32)
++	printk("\n"
++	       "                                               sibling\n");
++	printk("  task             PC      pid father child younger older\n");
++#else
++	printk("\n"
++	       "                                                       sibling\n");
++	printk("  task                 PC          pid father child younger older\n");
++#endif
++	read_lock(&tasklist_lock);
++	do_each_thread(g, p) {
++		/*
++		 * reset the NMI-timeout, listing all files on a slow
++		 * console might take alot of time:
++		 */
++		touch_nmi_watchdog();
++		show_task(p);
++	} while_each_thread(g, p);
++
++	read_unlock(&tasklist_lock);
++}
++
+ extern struct sched_drv ingo_sched_drv;
+ static const struct sched_drv *scheduler = &ingo_sched_drv;
+ 

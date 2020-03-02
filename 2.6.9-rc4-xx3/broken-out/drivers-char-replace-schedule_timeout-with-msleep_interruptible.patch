@@ -1,0 +1,808 @@
+
+From: <janitor@sternwelten.at>
+
+Replace lots of open-coded sleeps with msleep_interruptible() under
+drivers/char.
+
+Signed-off-by: Maximilian Attems <janitor@sternwelten.at>
+Signed-off-by: Nishanth Aravamudan <nacc@us.ibm.com>
+Signed-off-by: Rogier Wolff <R.E.Wolff@BitWizard.nl>
+Signed-off-by: Christoph Lameter <christoph@lameter.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/amiserial.c                   |    7 ++---
+ 25-akpm/drivers/char/cyclades.c                    |   11 ++-------
+ 25-akpm/drivers/char/dtlk.c                        |   19 ++++-----------
+ 25-akpm/drivers/char/epca.c                        |    3 --
+ 25-akpm/drivers/char/esp.c                         |    7 ++---
+ 25-akpm/drivers/char/ftape/lowlevel/ftape-io.c     |   20 +++++-----------
+ 25-akpm/drivers/char/ftape/zftape/zftape-buffers.c |    4 +--
+ 25-akpm/drivers/char/generic_serial.c              |    7 ++---
+ 25-akpm/drivers/char/hvc_console.c                 |    5 ++--
+ 25-akpm/drivers/char/ip2main.c                     |    3 --
+ 25-akpm/drivers/char/isicom.c                      |    3 --
+ 25-akpm/drivers/char/istallion.c                   |   24 +-------------------
+ 25-akpm/drivers/char/lcd.c                         |    4 +--
+ 25-akpm/drivers/char/moxa.c                        |    3 --
+ 25-akpm/drivers/char/mxser.c                       |    4 +--
+ 25-akpm/drivers/char/pcmcia/synclink_cs.c          |   12 +++-------
+ 25-akpm/drivers/char/pcxx.c                        |    3 --
+ 25-akpm/drivers/char/riscom8.c                     |    7 ++---
+ 25-akpm/drivers/char/rocket.c                      |    6 +----
+ 25-akpm/drivers/char/serial167.c                   |    3 --
+ 25-akpm/drivers/char/specialix.c                   |    6 +----
+ 25-akpm/drivers/char/stallion.c                    |   25 ++-------------------
+ 25-akpm/drivers/char/synclink.c                    |   13 ++++------
+ 25-akpm/drivers/char/synclinkmp.c                  |   15 ++++--------
+ 25-akpm/drivers/char/tpqic02.c                     |    3 --
+ 25 files changed, 66 insertions(+), 151 deletions(-)
+
+diff -puN drivers/char/amiserial.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/amiserial.c
+--- 25/drivers/char/amiserial.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/amiserial.c	Mon Oct  4 15:09:11 2004
+@@ -32,6 +32,7 @@
+  */
+ 
+ #include <linux/config.h>
++#include <linux/delay.h>
+ 
+ #undef SERIAL_PARANOIA_CHECK
+ #define SERIAL_DO_RESTART
+@@ -1563,8 +1564,7 @@ static void rs_close(struct tty_struct *
+ 	info->tty = 0;
+ 	if (info->blocked_open) {
+ 		if (info->close_delay) {
+-			current->state = TASK_INTERRUPTIBLE;
+-			schedule_timeout(info->close_delay);
++			msleep_interruptible(jiffies_to_msecs(info->close_delay));
+ 		}
+ 		wake_up_interruptible(&info->open_wait);
+ 	}
+@@ -1622,8 +1622,7 @@ static void rs_wait_until_sent(struct tt
+ #ifdef SERIAL_DEBUG_RS_WAIT_UNTIL_SENT
+ 		printk("serdatr = %d (jiff=%lu)...", lsr, jiffies);
+ #endif
+-		current->state = TASK_INTERRUPTIBLE;
+-		schedule_timeout(char_time);
++		msleep_interruptible(jiffies_to_msecs(char_time));
+ 		if (signal_pending(current))
+ 			break;
+ 		if (timeout && time_after(jiffies, orig_jiffies + timeout))
+diff -puN drivers/char/cyclades.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/cyclades.c
+--- 25/drivers/char/cyclades.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/cyclades.c	Mon Oct  4 15:09:17 2004
+@@ -2690,20 +2690,16 @@ cy_wait_until_sent(struct tty_struct *tt
+ #ifdef CY_DEBUG_WAIT_UNTIL_SENT
+ 	    printk("Not clean (jiff=%lu)...", jiffies);
+ #endif
+-	    current->state = TASK_INTERRUPTIBLE;
+-	    schedule_timeout(char_time);
+-	    if (signal_pending(current))
++	    if (msleep_interruptible(jiffies_to_msecs(char_time)))
+ 		break;
+ 	    if (timeout && time_after(jiffies, orig_jiffies + timeout))
+ 		break;
+ 	}
+-	current->state = TASK_RUNNING;
+     } else {
+ 	// Nothing to do!
+     }
+     /* Run one more char cycle */
+-    current->state = TASK_INTERRUPTIBLE;
+-    schedule_timeout(char_time * 5);
++    msleep_interruptible(jiffies_to_msecs(char_time * 5));
+ #ifdef CY_DEBUG_WAIT_UNTIL_SENT
+     printk("Clean (jiff=%lu)...done\n", jiffies);
+ #endif
+@@ -2828,8 +2824,7 @@ cy_close(struct tty_struct *tty, struct 
+     if (info->blocked_open) {
+ 	CY_UNLOCK(info, flags);
+         if (info->close_delay) {
+-            current->state = TASK_INTERRUPTIBLE;
+-            schedule_timeout(info->close_delay);
++            msleep_interruptible(jiffies_to_msecs(info->close_delay));
+         }
+         wake_up_interruptible(&info->open_wait);
+ 	CY_LOCK(info, flags);
+diff -puN drivers/char/dtlk.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/dtlk.c
+--- 25/drivers/char/dtlk.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/dtlk.c	Mon Oct  4 15:09:11 2004
+@@ -107,7 +107,6 @@ static struct file_operations dtlk_fops 
+ };
+ 
+ /* local prototypes */
+-static void dtlk_delay(int ms);
+ static int dtlk_dev_probe(void);
+ static struct dtlk_settings *dtlk_interrogate(void);
+ static int dtlk_readable(void);
+@@ -146,7 +145,7 @@ static ssize_t dtlk_read(struct file *fi
+ 			return i;
+ 		if (file->f_flags & O_NONBLOCK)
+ 			break;
+-		dtlk_delay(100);
++		msleep_interruptible(100);
+ 	}
+ 	if (retries == loops_per_jiffy)
+ 		printk(KERN_ERR "dtlk_read times out\n");
+@@ -191,7 +190,7 @@ static ssize_t dtlk_write(struct file *f
+ 				   rate to 500 bytes/sec, but that's
+ 				   still enough to keep up with the
+ 				   speech synthesizer. */
+-				dtlk_delay(1);
++				msleep_interruptible(1);
+ 			else {
+ 				/* the RDY bit goes zero 2-3 usec
+ 				   after writing, and goes 1 again
+@@ -212,7 +211,7 @@ static ssize_t dtlk_write(struct file *f
+ 		if (file->f_flags & O_NONBLOCK)
+ 			break;
+ 
+-		dtlk_delay(1);
++		msleep_interruptible(1);
+ 
+ 		if (++retries > 10 * HZ) { /* wait no more than 10 sec
+ 					      from last write */
+@@ -351,8 +350,7 @@ static int __init dtlk_init(void)
+ static void __exit dtlk_cleanup (void)
+ {
+ 	dtlk_write_bytes("goodbye", 8);
+-	current->state = TASK_INTERRUPTIBLE;
+-	schedule_timeout(5 * HZ / 10);		/* nap 0.50 sec but
++	msleep_interruptible(500);		/* nap 0.50 sec but
+ 						   could be awakened
+ 						   earlier by
+ 						   signals... */
+@@ -368,13 +366,6 @@ module_exit(dtlk_cleanup);
+ 
+ /* ------------------------------------------------------------------------ */
+ 
+-/* sleep for ms milliseconds */
+-static void dtlk_delay(int ms)
+-{
+-	current->state = TASK_INTERRUPTIBLE;
+-	schedule_timeout((ms * HZ + 1000 - HZ) / 1000);
+-}
+-
+ static int dtlk_readable(void)
+ {
+ #ifdef TRACING
+@@ -431,7 +422,7 @@ static int __init dtlk_dev_probe(void)
+ 			/* posting an index takes 18 msec.  Here, we
+ 			   wait up to 100 msec to see whether it
+ 			   appears. */
+-			dtlk_delay(100);
++			msleep_interruptible(100);
+ 			dtlk_has_indexing = dtlk_readable();
+ #ifdef TRACING
+ 			printk(", indexing %d\n", dtlk_has_indexing);
+diff -puN drivers/char/epca.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/epca.c
+--- 25/drivers/char/epca.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/epca.c	Mon Oct  4 15:09:11 2004
+@@ -561,8 +561,7 @@ static void pc_close(struct tty_struct *
+ 
+ 			if (ch->close_delay) 
+ 			{
+-				current->state = TASK_INTERRUPTIBLE;
+-				schedule_timeout(ch->close_delay);
++				msleep_interruptible(jiffies_to_msecs(ch->close_delay));
+ 			}
+ 
+ 			wake_up_interruptible(&ch->open_wait);
+diff -puN drivers/char/esp.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/esp.c
+--- 25/drivers/char/esp.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/esp.c	Mon Oct  4 15:09:11 2004
+@@ -57,6 +57,7 @@
+ #include <linux/ioport.h>
+ #include <linux/mm.h>
+ #include <linux/init.h>
++#include <linux/delay.h>
+ 
+ #include <asm/system.h>
+ #include <asm/io.h>
+@@ -2066,8 +2067,7 @@ static void rs_close(struct tty_struct *
+ 
+ 	if (info->blocked_open) {
+ 		if (info->close_delay) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(info->close_delay);
++			msleep_interruptible(jiffies_to_msecs(info->close_delay));
+ 		}
+ 		wake_up_interruptible(&info->open_wait);
+ 	}
+@@ -2098,8 +2098,7 @@ static void rs_wait_until_sent(struct tt
+ 
+ 	while ((serial_in(info, UART_ESI_STAT1) != 0x03) ||
+ 		(serial_in(info, UART_ESI_STAT2) != 0xff)) {
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout(char_time);
++		msleep_interruptible(jiffies_to_msecs(char_time));
+ 
+ 		if (signal_pending(current))
+ 			break;
+diff -puN drivers/char/ftape/lowlevel/ftape-io.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/ftape/lowlevel/ftape-io.c
+--- 25/drivers/char/ftape/lowlevel/ftape-io.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/ftape/lowlevel/ftape-io.c	Mon Oct  4 15:09:11 2004
+@@ -32,6 +32,7 @@
+ #include <asm/system.h>
+ #include <linux/ioctl.h>
+ #include <linux/mtio.h>
++#include <linux/delay.h>
+ 
+ #include <linux/ftape.h>
+ #include <linux/qic117.h>
+@@ -96,19 +97,12 @@ void ftape_sleep(unsigned int time)
+ 		timeout = ticks;
+ 		save_flags(flags);
+ 		sti();
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		do {
+-			/*  Mmm. Isn't current->blocked == 0xffffffff ?
+-			 */
+-			if (signal_pending(current)) {
+-				TRACE(ft_t_err,
+-				      "awoken by non-blocked signal :-(");
+-				break;	/* exit on signal */
+-			}
+-			while (current->state != TASK_RUNNING) {
+-				timeout = schedule_timeout(timeout);
+-			}
+-		} while (timeout);
++		msleep_interruptible(jiffies_to_msecs(timeout));
++		/*  Mmm. Isn't current->blocked == 0xffffffff ?
++		 */
++		if (signal_pending(current)) {
++			TRACE(ft_t_err, "awoken by non-blocked signal :-(");
++		}
+ 		restore_flags(flags);
+ 	}
+ 	TRACE_EXIT;
+diff -puN drivers/char/generic_serial.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/generic_serial.c
+--- 25/drivers/char/generic_serial.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/generic_serial.c	Mon Oct  4 15:09:11 2004
+@@ -26,6 +26,7 @@
+ #include <linux/mm.h>
+ #include <linux/generic_serial.h>
+ #include <linux/interrupt.h>
++#include <linux/delay.h>
+ #include <asm/semaphore.h>
+ #include <asm/uaccess.h>
+ 
+@@ -399,8 +400,7 @@ static int gs_wait_tx_flushed (void * pt
+ 		gs_dprintk (GS_DEBUG_FLUSH, "Expect to finish in %d jiffies "
+ 			    "(%d chars).\n", jiffies_to_transmit, charsleft); 
+ 
+-		set_current_state (TASK_INTERRUPTIBLE);
+-		schedule_timeout(jiffies_to_transmit);
++		msleep_interruptible(jiffies_to_msecs(jiffies_to_transmit));
+ 		if (signal_pending (current)) {
+ 			gs_dprintk (GS_DEBUG_FLUSH, "Signal pending. Bombing out: "); 
+ 			rv = -EINTR;
+@@ -767,8 +767,7 @@ void gs_close(struct tty_struct * tty, s
+ 
+ 	if (port->blocked_open) {
+ 		if (port->close_delay) {
+-			set_current_state (TASK_INTERRUPTIBLE);
+-			schedule_timeout(port->close_delay);
++			msleep_interruptible(jiffies_to_msecs(port->close_delay));
+ 		}
+ 		wake_up_interruptible(&port->open_wait);
+ 	}
+diff -puN drivers/char/ip2main.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/ip2main.c
+--- 25/drivers/char/ip2main.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/ip2main.c	Mon Oct  4 15:09:11 2004
+@@ -1632,8 +1632,7 @@ ip2_close( PTTY tty, struct file *pFile 
+ 
+ 	if (pCh->wopen) {
+ 		if (pCh->ClosingDelay) {
+-			current->state = TASK_INTERRUPTIBLE;
+-			schedule_timeout(pCh->ClosingDelay);
++			msleep_interruptible(jiffies_to_msecs(pCh->ClosingDelay));
+ 		}
+ 		wake_up_interruptible(&pCh->open_wait);
+ 	}
+diff -puN drivers/char/hvc_console.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/hvc_console.c
+--- 25/drivers/char/hvc_console.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/hvc_console.c	Mon Oct  4 15:09:11 2004
+@@ -37,6 +37,7 @@
+ #include <linux/tty_flip.h>
+ #include <linux/sched.h>
+ #include <linux/spinlock.h>
++#include <linux/delay.h>
+ #include <asm/uaccess.h>
+ #include <asm/hvconsole.h>
+ #include <asm/vio.h>
+@@ -44,7 +45,7 @@
+ #define HVC_MAJOR	229
+ #define HVC_MINOR	0
+ 
+-#define TIMEOUT		((HZ + 99) / 100)
++#define TIMEOUT		(10)
+ 
+ /*
+  * Wait this long per iteration while trying to push buffered data to the
+@@ -607,7 +608,7 @@ int khvcd(void *unused)
+ 			if (poll_mask == 0)
+ 				schedule();
+ 			else
+-				schedule_timeout(TIMEOUT);
++				msleep_interruptible(TIMEOUT);
+ 		}
+ 		__set_current_state(TASK_RUNNING);
+ 	} while (!kthread_should_stop());
+diff -puN drivers/char/isicom.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/isicom.c
+--- 25/drivers/char/isicom.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/isicom.c	Mon Oct  4 15:09:11 2004
+@@ -1124,11 +1124,10 @@ static void isicom_close(struct tty_stru
+ 	port->tty = NULL;
+ 	if (port->blocked_open) {
+ 		if (port->close_delay) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+ #ifdef ISICOM_DEBUG			
+ 			printk(KERN_DEBUG "ISICOM: scheduling until time out.\n");
+ #endif			
+-			schedule_timeout(port->close_delay);
++			msleep_interruptible(jiffies_to_msecs(port->close_delay));
+ 		}
+ 		wake_up_interruptible(&port->open_wait);
+ 	}	
+diff -puN drivers/char/istallion.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/istallion.c
+--- 25/drivers/char/istallion.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/istallion.c	Mon Oct  4 15:09:11 2004
+@@ -691,7 +691,6 @@ static int	stli_rawopen(stlibrd_t *brdp,
+ static int	stli_rawclose(stlibrd_t *brdp, stliport_t *portp, unsigned long arg, int wait);
+ static int	stli_waitcarrier(stlibrd_t *brdp, stliport_t *portp, struct file *filp);
+ static void	stli_dohangup(void *arg);
+-static void	stli_delay(int len);
+ static int	stli_setport(stliport_t *portp);
+ static int	stli_cmdwait(stlibrd_t *brdp, stliport_t *portp, unsigned long cmd, void *arg, int size, int copyback);
+ static void	stli_sendcmd(stlibrd_t *brdp, stliport_t *portp, unsigned long cmd, void *arg, int size, int copyback);
+@@ -1180,7 +1179,7 @@ static void stli_close(struct tty_struct
+ 
+ 	if (portp->openwaitcnt) {
+ 		if (portp->close_delay)
+-			stli_delay(portp->close_delay);
++			msleep_interruptible(jiffies_to_msecs(portp->close_delay));
+ 		wake_up_interruptible(&portp->open_wait);
+ 	}
+ 
+@@ -1478,25 +1477,6 @@ static int stli_setport(stliport_t *port
+ /*****************************************************************************/
+ 
+ /*
+- *	Wait for a specified delay period, this is not a busy-loop. It will
+- *	give up the processor while waiting. Unfortunately this has some
+- *	rather intimate knowledge of the process management stuff.
+- */
+-
+-static void stli_delay(int len)
+-{
+-#ifdef DEBUG
+-	printk("stli_delay(len=%d)\n", len);
+-#endif
+-	if (len > 0) {
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout(len);
+-	}
+-}
+-
+-/*****************************************************************************/
+-
+-/*
+  *	Possibly need to wait for carrier (DCD signal) to come high. Say
+  *	maybe because if we are clocal then we don't need to wait...
+  */
+@@ -2504,7 +2484,7 @@ static void stli_waituntilsent(struct tt
+ 	while (test_bit(ST_TXBUSY, &portp->state)) {
+ 		if (signal_pending(current))
+ 			break;
+-		stli_delay(2);
++		msleep_interruptible(20);
+ 		if (time_after_eq(jiffies, tend))
+ 			break;
+ 	}
+diff -puN drivers/char/lcd.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/lcd.c
+--- 25/drivers/char/lcd.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/lcd.c	Mon Oct  4 15:09:11 2004
+@@ -24,6 +24,7 @@
+ #include <linux/mc146818rtc.h>
+ #include <linux/netdevice.h>
+ #include <linux/sched.h>
++#include <linux/delay.h>
+ 
+ #include <asm/io.h>
+ #include <asm/uaccess.h>
+@@ -583,8 +584,7 @@ static long lcd_read(struct inode *inode
+ 	lcd_waiters++;
+ 	while (((buttons_now = (long) button_pressed()) == 0) &&
+ 	       !(signal_pending(current))) {
+-		current->state = TASK_INTERRUPTIBLE;
+-		schedule_timeout(2 * HZ);
++		msleep_interruptible(2000);
+ 	}
+ 	lcd_waiters--;
+ 
+diff -puN drivers/char/moxa.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/moxa.c
+--- 25/drivers/char/moxa.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/moxa.c	Mon Oct  4 15:09:11 2004
+@@ -625,8 +625,7 @@ static void moxa_close(struct tty_struct
+ 	ch->tty = NULL;
+ 	if (ch->blocked_open) {
+ 		if (ch->close_delay) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(ch->close_delay);
++			msleep_interruptible(jiffies_to_msecs(ch->close_delay));
+ 		}
+ 		wake_up_interruptible(&ch->open_wait);
+ 	}
+diff -puN drivers/char/mxser.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/mxser.c
+--- 25/drivers/char/mxser.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/mxser.c	Mon Oct  4 15:09:11 2004
+@@ -59,6 +59,7 @@
+ #include <linux/smp_lock.h>
+ #include <linux/pci.h>
+ #include <linux/init.h>
++#include <linux/delay.h>
+ 
+ #include <asm/system.h>
+ #include <asm/io.h>
+@@ -818,8 +819,7 @@ static void mxser_close(struct tty_struc
+ 	info->tty = NULL;
+ 	if (info->blocked_open) {
+ 		if (info->close_delay) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(info->close_delay);
++			msleep_interruptible(jiffies_to_msecs(info->close_delay));
+ 		}
+ 		wake_up_interruptible(&info->open_wait);
+ 	}
+diff -puN drivers/char/pcxx.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/pcxx.c
+--- 25/drivers/char/pcxx.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/pcxx.c	Mon Oct  4 15:09:11 2004
+@@ -538,8 +538,7 @@ static void pcxe_close(struct tty_struct
+ 		info->tty = NULL;
+ 		if(info->blocked_open) {
+ 			if(info->close_delay) {
+-				current->state = TASK_INTERRUPTIBLE;
+-				schedule_timeout(info->close_delay);
++				msleep_interruptible(jiffies_to_msecs(info->close_delay));
+ 			}
+ 			wake_up_interruptible(&info->open_wait);
+ 		}
+diff -puN drivers/char/riscom8.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/riscom8.c
+--- 25/drivers/char/riscom8.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/riscom8.c	Mon Oct  4 15:09:11 2004
+@@ -45,6 +45,7 @@
+ #include <linux/fcntl.h>
+ #include <linux/major.h>
+ #include <linux/init.h>
++#include <linux/delay.h>
+ 
+ #include <asm/uaccess.h>
+ 
+@@ -1114,8 +1115,7 @@ static void rc_close(struct tty_struct *
+ 		 */
+ 		timeout = jiffies+HZ;
+ 		while(port->IER & IER_TXEMPTY)  {
+-			current->state = TASK_INTERRUPTIBLE;
+- 			schedule_timeout(port->timeout);
++			msleep_interruptible(jiffies_to_msecs(port->timeout));
+ 			if (time_after(jiffies, timeout))
+ 				break;
+ 		}
+@@ -1130,8 +1130,7 @@ static void rc_close(struct tty_struct *
+ 	port->tty = NULL;
+ 	if (port->blocked_open) {
+ 		if (port->close_delay) {
+-			current->state = TASK_INTERRUPTIBLE;
+-			schedule_timeout(port->close_delay);
++			msleep_interruptible(jiffies_to_msecs(port->close_delay));
+ 		}
+ 		wake_up_interruptible(&port->open_wait);
+ 	}
+diff -puN drivers/char/rocket.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/rocket.c
+--- 25/drivers/char/rocket.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/rocket.c	Mon Oct  4 15:09:11 2004
+@@ -1112,8 +1112,7 @@ static void rp_close(struct tty_struct *
+ 
+ 	if (info->blocked_open) {
+ 		if (info->close_delay) {
+-			current->state = TASK_INTERRUPTIBLE;
+-			schedule_timeout(info->close_delay);
++			msleep_interruptible(jiffies_to_msecs(info->close_delay));
+ 		}
+ 		wake_up_interruptible(&info->open_wait);
+ 	} else {
+@@ -1538,8 +1537,7 @@ static void rp_wait_until_sent(struct tt
+ #ifdef ROCKET_DEBUG_WAIT_UNTIL_SENT
+ 		printk(KERN_INFO "txcnt = %d (jiff=%lu,check=%d)...", txcnt, jiffies, check_time);
+ #endif
+-		current->state = TASK_INTERRUPTIBLE;
+-		schedule_timeout(check_time);
++		msleep_interruptible(jiffies_to_msecs(check_time));
+ 		if (signal_pending(current))
+ 			break;
+ 	}
+diff -puN drivers/char/serial167.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/serial167.c
+--- 25/drivers/char/serial167.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/serial167.c	Mon Oct  4 15:09:11 2004
+@@ -1840,8 +1840,7 @@ cy_close(struct tty_struct * tty, struct
+     info->tty = 0;
+     if (info->blocked_open) {
+ 	if (info->close_delay) {
+-	    current->state = TASK_INTERRUPTIBLE;
+-	    schedule_timeout(info->close_delay);
++	    msleep_interruptible(jiffies_to_msecs(info->close_delay));
+ 	}
+ 	wake_up_interruptible(&info->open_wait);
+     }
+diff -puN drivers/char/specialix.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/specialix.c
+--- 25/drivers/char/specialix.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/specialix.c	Mon Oct  4 15:09:11 2004
+@@ -1452,8 +1452,7 @@ static void sx_close(struct tty_struct *
+ 		 */
+ 		timeout = jiffies+HZ;
+ 		while(port->IER & IER_TXEMPTY) {
+-			current->state = TASK_INTERRUPTIBLE;
+- 			schedule_timeout(port->timeout);
++			msleep_interruptible(jiffies_to_msecs(port->timeout));
+ 			if (time_after(jiffies, timeout)) {
+ 				printk (KERN_INFO "Timeout waiting for close\n");
+ 				break;
+@@ -1470,8 +1469,7 @@ static void sx_close(struct tty_struct *
+ 	port->tty = NULL;
+ 	if (port->blocked_open) {
+ 		if (port->close_delay) {
+-			current->state = TASK_INTERRUPTIBLE;
+-			schedule_timeout(port->close_delay);
++			msleep_interruptible(jiffies_to_msecs(port->close_delay));
+ 		}
+ 		wake_up_interruptible(&port->open_wait);
+ 	}
+diff -puN drivers/char/stallion.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/stallion.c
+--- 25/drivers/char/stallion.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/stallion.c	Mon Oct  4 15:09:11 2004
+@@ -42,6 +42,7 @@
+ #include <linux/smp_lock.h>
+ #include <linux/devfs_fs_kernel.h>
+ #include <linux/device.h>
++#include <linux/delay.h>
+ 
+ #include <asm/io.h>
+ #include <asm/uaccess.h>
+@@ -512,7 +513,6 @@ static int	stl_clrportstats(stlport_t *p
+ static int	stl_getportstruct(stlport_t __user *arg);
+ static int	stl_getbrdstruct(stlbrd_t __user *arg);
+ static int	stl_waitcarrier(stlport_t *portp, struct file *filp);
+-static void	stl_delay(int len);
+ static void	stl_eiointr(stlbrd_t *brdp);
+ static void	stl_echatintr(stlbrd_t *brdp);
+ static void	stl_echmcaintr(stlbrd_t *brdp);
+@@ -1204,7 +1204,7 @@ static void stl_close(struct tty_struct 
+ 
+ 	if (portp->openwaitcnt) {
+ 		if (portp->close_delay)
+-			stl_delay(portp->close_delay);
++			msleep_interruptible(jiffies_to_msecs(portp->close_delay));
+ 		wake_up_interruptible(&portp->open_wait);
+ 	}
+ 
+@@ -1216,25 +1216,6 @@ static void stl_close(struct tty_struct 
+ /*****************************************************************************/
+ 
+ /*
+- *	Wait for a specified delay period, this is not a busy-loop. It will
+- *	give up the processor while waiting. Unfortunately this has some
+- *	rather intimate knowledge of the process management stuff.
+- */
+-
+-static void stl_delay(int len)
+-{
+-#ifdef DEBUG
+-	printk("stl_delay(len=%d)\n", len);
+-#endif
+-	if (len > 0) {
+-		current->state = TASK_INTERRUPTIBLE;
+-		schedule_timeout(len);
+-	}
+-}
+-
+-/*****************************************************************************/
+-
+-/*
+  *	Write routine. Take data and stuff it in to the TX ring queue.
+  *	If transmit interrupts are not running then start them.
+  */
+@@ -1854,7 +1835,7 @@ static void stl_waituntilsent(struct tty
+ 	while (stl_datastate(portp)) {
+ 		if (signal_pending(current))
+ 			break;
+-		stl_delay(2);
++		msleep_interruptible(20);
+ 		if (time_after_eq(jiffies, tend))
+ 			break;
+ 	}
+diff -puN drivers/char/synclink.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/synclink.c
+--- 25/drivers/char/synclink.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/synclink.c	Mon Oct  4 15:09:11 2004
+@@ -82,6 +82,7 @@
+ #include <linux/ioport.h>
+ #include <linux/mm.h>
+ #include <linux/slab.h>
++#include <linux/delay.h>
+ 
+ #include <linux/netdevice.h>
+ 
+@@ -3259,8 +3260,7 @@ static void mgsl_close(struct tty_struct
+ 	
+ 	if (info->blocked_open) {
+ 		if (info->close_delay) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(info->close_delay);
++			msleep_interruptible(jiffies_to_msecs(info->close_delay));
+ 		}
+ 		wake_up_interruptible(&info->open_wait);
+ 	}
+@@ -3326,8 +3326,7 @@ static void mgsl_wait_until_sent(struct 
+ 	if ( info->params.mode == MGSL_MODE_HDLC ||
+ 		info->params.mode == MGSL_MODE_RAW ) {
+ 		while (info->tx_active) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(char_time);
++			msleep_interruptible(jiffies_to_msecs(char_time));
+ 			if (signal_pending(current))
+ 				break;
+ 			if (timeout && time_after(jiffies, orig_jiffies + timeout))
+@@ -3336,8 +3335,7 @@ static void mgsl_wait_until_sent(struct 
+ 	} else {
+ 		while (!(usc_InReg(info,TCSR) & TXSTATUS_ALL_SENT) &&
+ 			info->tx_enabled) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(char_time);
++			msleep_interruptible(jiffies_to_msecs(char_time));
+ 			if (signal_pending(current))
+ 				break;
+ 			if (timeout && time_after(jiffies, orig_jiffies + timeout))
+@@ -7200,8 +7198,7 @@ BOOLEAN mgsl_irq_test( struct mgsl_struc
+ 
+ 	EndTime=100;
+ 	while( EndTime-- && !info->irq_occurred ) {
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout(msecs_to_jiffies(10));
++		msleep_interruptible(10);
+ 	}
+ 	
+ 	spin_lock_irqsave(&info->irq_spinlock,flags);
+diff -puN drivers/char/pcmcia/synclink_cs.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/pcmcia/synclink_cs.c
+--- 25/drivers/char/pcmcia/synclink_cs.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/pcmcia/synclink_cs.c	Mon Oct  4 15:09:11 2004
+@@ -2609,8 +2609,7 @@ static void mgslpc_close(struct tty_stru
+ 	
+ 	if (info->blocked_open) {
+ 		if (info->close_delay) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(info->close_delay);
++			msleep_interruptible(jiffies_to_msecs(info->close_delay));
+ 		}
+ 		wake_up_interruptible(&info->open_wait);
+ 	}
+@@ -2665,8 +2664,7 @@ static void mgslpc_wait_until_sent(struc
+ 		
+ 	if (info->params.mode == MGSL_MODE_HDLC) {
+ 		while (info->tx_active) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(char_time);
++			msleep_interruptible(jiffies_to_msecs(char_time));
+ 			if (signal_pending(current))
+ 				break;
+ 			if (timeout && time_after(jiffies, orig_jiffies + timeout))
+@@ -2675,8 +2673,7 @@ static void mgslpc_wait_until_sent(struc
+ 	} else {
+ 		while ((info->tx_count || info->tx_active) &&
+ 			info->tx_enabled) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(char_time);
++			msleep_interruptible(jiffies_to_msecs(char_time));
+ 			if (signal_pending(current))
+ 				break;
+ 			if (timeout && time_after(jiffies, orig_jiffies + timeout))
+@@ -4129,8 +4126,7 @@ BOOLEAN irq_test(MGSLPC_INFO *info)
+ 
+ 	end_time=100;
+ 	while(end_time-- && !info->irq_occurred) {
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout(msecs_to_jiffies(10));
++		msleep_interruptible(10);
+ 	}
+ 	
+ 	info->testing_irq = FALSE;
+diff -puN drivers/char/synclinkmp.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/synclinkmp.c
+--- 25/drivers/char/synclinkmp.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/synclinkmp.c	Mon Oct  4 15:09:11 2004
+@@ -878,8 +878,7 @@ static void close(struct tty_struct *tty
+ 
+ 	if (info->blocked_open) {
+ 		if (info->close_delay) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(info->close_delay);
++			msleep_interruptible(jiffies_to_msecs(info->close_delay));
+ 		}
+ 		wake_up_interruptible(&info->open_wait);
+ 	}
+@@ -1164,8 +1163,7 @@ static void wait_until_sent(struct tty_s
+ 
+ 	if ( info->params.mode == MGSL_MODE_HDLC ) {
+ 		while (info->tx_active) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(char_time);
++			msleep_interruptible(jiffies_to_msecs(char_time));
+ 			if (signal_pending(current))
+ 				break;
+ 			if (timeout && time_after(jiffies, orig_jiffies + timeout))
+@@ -1175,8 +1173,7 @@ static void wait_until_sent(struct tty_s
+ 		//TODO: determine if there is something similar to USC16C32
+ 		// 	TXSTATUS_ALL_SENT status
+ 		while ( info->tx_active && info->tx_enabled) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(char_time);
++			msleep_interruptible(jiffies_to_msecs(char_time));
+ 			if (signal_pending(current))
+ 				break;
+ 			if (timeout && time_after(jiffies, orig_jiffies + timeout))
+@@ -5209,8 +5206,7 @@ int irq_test(SLMP_INFO *info)
+ 
+ 	timeout=100;
+ 	while( timeout-- && !info->irq_occurred ) {
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout(msecs_to_jiffies(10));
++		msleep_interruptible(10);
+ 	}
+ 
+ 	spin_lock_irqsave(&info->lock,flags);
+@@ -5360,8 +5356,7 @@ int loopback_test(SLMP_INFO *info)
+ 	/* wait for receive complete */
+ 	/* Set a timeout for waiting for interrupt. */
+ 	for ( timeout = 100; timeout; --timeout ) {
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout(msecs_to_jiffies(10));
++		msleep_interruptible(10);
+ 
+ 		if (rx_get_frame(info)) {
+ 			rc = TRUE;
+diff -puN drivers/char/tpqic02.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/tpqic02.c
+--- 25/drivers/char/tpqic02.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/tpqic02.c	Mon Oct  4 15:09:11 2004
+@@ -554,10 +554,9 @@ static int wait_for_ready(time_t timeout
+ 	    /* not ready and no exception && timeout not expired yet */
+ 	while (((stat = inb_p(QIC02_STAT_PORT) & QIC02_STAT_MASK) == QIC02_STAT_MASK) && time_before(jiffies, spin_t)) {
+ 		/* be `nice` to other processes on long operations... */
+-		current->state = TASK_INTERRUPTIBLE;
+ 		/* nap 0.30 sec between checks, */
+ 		/* but could be woken up earlier by signals... */
+-		schedule_timeout(3 * HZ / 10);
++		msleep_interruptible(300);
+ 	}
+ 
+ 	/* don't use jiffies for this test because it may have changed by now */
+diff -puN drivers/char/ftape/zftape/zftape-buffers.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible drivers/char/ftape/zftape/zftape-buffers.c
+--- 25/drivers/char/ftape/zftape/zftape-buffers.c~drivers-char-replace-schedule_timeout-with-msleep_interruptible	Mon Oct  4 15:09:11 2004
++++ 25-akpm/drivers/char/ftape/zftape/zftape-buffers.c	Mon Oct  4 15:09:11 2004
+@@ -27,6 +27,7 @@
+ #include <linux/errno.h>
+ #include <linux/mm.h>
+ #include <linux/slab.h>
++#include <linux/delay.h>
+ 
+ #include <linux/zftape.h>
+ 
+@@ -119,8 +120,7 @@ void *zft_kmalloc(size_t size)
+ 	void *new;
+ 
+ 	while ((new = kmalloc(size, GFP_KERNEL)) == NULL) {
+-		current->state   = TASK_INTERRUPTIBLE;
+-		schedule_timeout(HZ/10);
++		msleep_interruptible(100);
+ 	}
+ 	memset(new, 0, size);
+ 	used_memory += size;
+_

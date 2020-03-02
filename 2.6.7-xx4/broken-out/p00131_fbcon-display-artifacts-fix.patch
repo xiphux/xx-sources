@@ -1,0 +1,61 @@
+
+From: "Antonino A. Daplas" <adaplas@hotpop.com>
+
+Fixed display artifacts present in the space reserved for the boot logo. 
+Use attributes of the background erase character instead of hardcoding the
+color to zero.
+
+Signed-off-by: Antonino A. Daplas <adaplas@pol.net>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/video/console/fbcon.c |   11 +++++++++++
+ 25-akpm/drivers/video/fbmem.c         |    7 -------
+ 2 files changed, 11 insertions(+), 7 deletions(-)
+
+diff -puN drivers/video/console/fbcon.c~fbcon-display-artifacts-fix drivers/video/console/fbcon.c
+--- 25/drivers/video/console/fbcon.c~fbcon-display-artifacts-fix	2004-06-27 23:05:03.540957344 -0700
++++ 25-akpm/drivers/video/console/fbcon.c	2004-06-27 23:05:03.547956280 -0700
+@@ -1759,6 +1759,17 @@ static int fbcon_switch(struct vc_data *
+ 	if (vt_cons[vc->vc_num]->vc_mode == KD_TEXT)
+ 		accel_clear_margins(vc, info, 0);
+ 	if (logo_shown == -2) {
++		struct fb_fillrect rect;
++		int bgshift = (vc->vc_hi_font_mask) ? 13 : 12;
++
++		logo_shown = fg_console;
++		rect.color = attr_bgcol_ec(bgshift, vc);
++		rect.rop = ROP_COPY;
++		rect.dx = rect.dy = 0;
++		rect.width = info->var.xres;
++		rect.height = logo_lines * vc->vc_font.height;
++		info->fbops->fb_fillrect(info, &rect);
++
+ 		logo_shown = fg_console;
+ 		/* This is protected above by initmem_freed */
+ 		fb_show_logo(info);
+diff -puN drivers/video/fbmem.c~fbcon-display-artifacts-fix drivers/video/fbmem.c
+--- 25/drivers/video/fbmem.c~fbcon-display-artifacts-fix	2004-06-27 23:05:03.542957040 -0700
++++ 25-akpm/drivers/video/fbmem.c	2004-06-27 23:05:03.548956128 -0700
+@@ -721,7 +721,6 @@ int fb_show_logo(struct fb_info *info)
+ 	u32 *palette = NULL, *saved_pseudo_palette = NULL;
+ 	unsigned char *logo_new = NULL;
+ 	struct fb_image image;
+-	struct fb_fillrect rect;
+ 	int x;
+ 
+ 	/* Return if the frame buffer is not mapped or suspended */
+@@ -767,12 +766,6 @@ int fb_show_logo(struct fb_info *info)
+ 	image.height = fb_logo.logo->height;
+ 	image.dy = 0;
+ 
+-	rect.dx = 0;
+-	rect.dy = 0;
+-	rect.color = 0;
+-	rect.width = info->var.xres;
+-	rect.height = fb_logo.logo->height;
+-	info->fbops->fb_fillrect(info, &rect);
+ 	for (x = 0; x < num_online_cpus() * (fb_logo.logo->width + 8) &&
+ 	     x <= info->var.xres-fb_logo.logo->width; x += (fb_logo.logo->width + 8)) {
+ 		image.dx = x;
+_

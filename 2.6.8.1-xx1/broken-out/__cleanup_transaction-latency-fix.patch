@@ -1,0 +1,36 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/jbd/checkpoint.c |    7 +++++++
+ 1 files changed, 7 insertions(+)
+
+diff -puN fs/jbd/checkpoint.c~__cleanup_transaction-latency-fix fs/jbd/checkpoint.c
+--- 25/fs/jbd/checkpoint.c~__cleanup_transaction-latency-fix	2004-07-13 01:14:53.903002432 -0700
++++ 25-akpm/fs/jbd/checkpoint.c	2004-07-13 01:21:15.966919888 -0700
+@@ -132,6 +132,7 @@ static int __cleanup_transaction(journal
+ {
+ 	struct journal_head *jh, *next_jh, *last_jh;
+ 	struct buffer_head *bh;
++	unsigned char nr_buffers = 1;
+ 	int ret = 0;
+ 
+ 	assert_spin_locked(&journal->j_list_lock);
+@@ -185,9 +186,15 @@ static int __cleanup_transaction(journal
+ 			journal_remove_journal_head(bh);
+ 			__brelse(bh);
+ 			ret = 1;
++			nr_buffers++;
+ 		} else {
+ 			jbd_unlock_bh_state(bh);
+ 		}
++		if (nr_buffers == 0) {
++			spin_lock(&journal->j_list_lock);
++			cpu_relax();
++			goto out_return_1;
++		}
+ 		jh = next_jh;
+ 	} while (jh != last_jh);
+ 
+_

@@ -1,0 +1,30 @@
+
+
+Fix cross-arch ulong/int disaster with find_next_bit().
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/cpumask.h |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN include/linux/cpumask.h~first-next_cpu-returns-values-nr_cpus-fix include/linux/cpumask.h
+--- 25/include/linux/cpumask.h~first-next_cpu-returns-values-nr_cpus-fix	2004-08-01 17:48:52.201469680 -0700
++++ 25-akpm/include/linux/cpumask.h	2004-08-01 17:49:32.632323256 -0700
+@@ -208,13 +208,13 @@ static inline void __cpus_shift_left(cpu
+ #define first_cpu(src) __first_cpu(&(src), NR_CPUS)
+ static inline int __first_cpu(const cpumask_t *srcp, int nbits)
+ {
+-	return min(NR_CPUS, find_first_bit(srcp->bits, nbits));
++	return min_t(int, nbits, find_first_bit(srcp->bits, nbits));
+ }
+ 
+ #define next_cpu(n, src) __next_cpu((n), &(src), NR_CPUS)
+ static inline int __next_cpu(int n, const cpumask_t *srcp, int nbits)
+ {
+-	return min(NR_CPUS, find_next_bit(srcp->bits, nbits, n+1));
++	return min_t(int, nbits, find_next_bit(srcp->bits, nbits, n+1));
+ }
+ 
+ #define cpumask_of_cpu(cpu)						\
+_

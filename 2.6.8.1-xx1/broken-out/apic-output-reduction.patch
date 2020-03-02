@@ -1,0 +1,526 @@
+
+From: Mark Broadbent <markb@wetlettuce.com>
+
+--=-gUTWjycNx/5aD6k9Z7ew
+Content-Type: text/plain
+Content-Transfer-Encoding: 7bit
+
+On Mon, 2004-07-26 at 22:37, Andrew Morton wrote:
+> Mark Broadbent <markb@wetlettuce.com> wrote:
+> >
+> > On Tue, 2004-07-13 at 20:27, Andrew Morton wrote:
+> >  > Could I please be sent a frech copy of this with a changelog and
+> >  > a signed-off-by tag?
+> > 
+> >  Sure thing. Changelog and patch below.  This patch include Jeffs
+> >  comments regarding EXPORT_SYMBOL removal and placing extern declaration
+> >  into apic.h.
+> 
+> The patch was severely wordwrapped.  Please resend (uncluding changelog) as
+> an attachment, and please include an update to
+> Documentation/kernel-paremeters.txt.
+
+Sorry about that, patch attached.
+
+Thanks
+Mark
+
+--=-gUTWjycNx/5aD6k9Z7ew
+Content-Disposition: attachment; filename=apic-output-reduction.patch
+Content-Type: text/x-patch; name=apic-output-reduction.patch; charset=iso-8859-1
+Content-Transfer-Encoding: 7bit
+
+Changelog:
+The APIC and IO-APIC code is very verbose on startup especially on SMP
+machines.  This patch allows the verbosity of the APIC code to be
+controlled through the boot-time option apic= using three levels: quiet,
+verbose and debug.  The default level is quiet.
+
+Signed-off-by: Mark Broadbent <markb@wetlettuce.com>
+
+Index: linux-2.6.7/include/asm-i386/apic.h
+===================================================================
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/kernel-parameters.txt |    5 +
+ 25-akpm/arch/i386/kernel/apic.c             |   72 ++++++++++++++++++++--------
+ 25-akpm/arch/i386/kernel/io_apic.c          |   71 +++++++++++++++++++--------
+ 25-akpm/include/asm-i386/apic.h             |   27 ++++++++--
+ 4 files changed, 127 insertions(+), 48 deletions(-)
+
+diff -puN arch/i386/kernel/apic.c~apic-output-reduction arch/i386/kernel/apic.c
+--- 25/arch/i386/kernel/apic.c~apic-output-reduction	Tue Jul 27 14:27:40 2004
++++ 25-akpm/arch/i386/kernel/apic.c	Tue Jul 27 14:27:40 2004
+@@ -39,6 +39,12 @@
+ 
+ #include "io_ports.h"
+ 
++/*
++ * Debug level
++ */
++int apic_verbosity;
++
++
+ static void apic_pm_activate(void);
+ 
+ void __init apic_intr_init(void)
+@@ -173,7 +179,8 @@ void __init connect_bsp_APIC(void)
+ 		 * PIC mode, enable APIC mode in the IMCR, i.e.
+ 		 * connect BSP's local APIC to INT and NMI lines.
+ 		 */
+-		printk("leaving PIC mode, enabling APIC mode.\n");
++		apic_printk(APIC_VERBOSE, "leaving PIC mode, "
++				"enabling APIC mode.\n");
+ 		outb(0x70, 0x22);
+ 		outb(0x01, 0x23);
+ 	}
+@@ -189,7 +196,8 @@ void disconnect_bsp_APIC(void)
+ 		 * interrupts, including IPIs, won't work beyond
+ 		 * this point!  The only exception are INIT IPIs.
+ 		 */
+-		printk("disabling APIC mode, entering PIC mode.\n");
++		apic_printk(APIC_VERBOSE, "disabling APIC mode, "
++				"entering PIC mode.\n");
+ 		outb(0x70, 0x22);
+ 		outb(0x00, 0x23);
+ 	}
+@@ -230,10 +238,10 @@ int __init verify_local_APIC(void)
+ 	 * The version register is read-only in a real APIC.
+ 	 */
+ 	reg0 = apic_read(APIC_LVR);
+-	Dprintk("Getting VERSION: %x\n", reg0);
++	apic_printk(APIC_DEBUG, "Getting VERSION: %x\n", reg0);
+ 	apic_write(APIC_LVR, reg0 ^ APIC_LVR_MASK);
+ 	reg1 = apic_read(APIC_LVR);
+-	Dprintk("Getting VERSION: %x\n", reg1);
++	apic_printk(APIC_DEBUG, "Getting VERSION: %x\n", reg1);
+ 
+ 	/*
+ 	 * The two version reads above should print the same
+@@ -257,7 +265,7 @@ int __init verify_local_APIC(void)
+ 	 * The ID register is read/write in a real APIC.
+ 	 */
+ 	reg0 = apic_read(APIC_ID);
+-	Dprintk("Getting ID: %x\n", reg0);
++	apic_printk(APIC_DEBUG, "Getting ID: %x\n", reg0);
+ 
+ 	/*
+ 	 * The next two are just to see if we have sane values.
+@@ -265,9 +273,9 @@ int __init verify_local_APIC(void)
+ 	 * compatibility mode, but most boxes are anymore.
+ 	 */
+ 	reg0 = apic_read(APIC_LVT0);
+-	Dprintk("Getting LVT0: %x\n", reg0);
++	apic_printk(APIC_DEBUG, "Getting LVT0: %x\n", reg0);
+ 	reg1 = apic_read(APIC_LVT1);
+-	Dprintk("Getting LVT1: %x\n", reg1);
++	apic_printk(APIC_DEBUG, "Getting LVT1: %x\n", reg1);
+ 
+ 	return 1;
+ }
+@@ -279,7 +287,7 @@ void __init sync_Arb_IDs(void)
+ 	 */
+ 	apic_wait_icr_idle();
+ 
+-	Dprintk("Synchronizing Arb IDs.\n");
++	apic_printk(APIC_DEBUG, "Synchronizing Arb IDs.\n");
+ 	apic_write_around(APIC_ICR, APIC_DEST_ALLINC | APIC_INT_LEVELTRIG
+ 				| APIC_DM_INIT);
+ }
+@@ -427,10 +435,12 @@ void __init setup_local_APIC (void)
+ 	value = apic_read(APIC_LVT0) & APIC_LVT_MASKED;
+ 	if (!smp_processor_id() && (pic_mode || !value)) {
+ 		value = APIC_DM_EXTINT;
+-		printk("enabled ExtINT on CPU#%d\n", smp_processor_id());
++		apic_printk(APIC_VERBOSE, "enabled ExtINT on CPU#%d\n",
++				smp_processor_id());
+ 	} else {
+ 		value = APIC_DM_EXTINT | APIC_LVT_MASKED;
+-		printk("masked ExtINT on CPU#%d\n", smp_processor_id());
++		apic_printk(APIC_VERBOSE, "masked ExtINT on CPU#%d\n",
++				smp_processor_id());
+ 	}
+ 	apic_write_around(APIC_LVT0, value);
+ 
+@@ -450,7 +460,8 @@ void __init setup_local_APIC (void)
+ 		if (maxlvt > 3)		/* Due to the Pentium erratum 3AP. */
+ 			apic_write(APIC_ESR, 0);
+ 		value = apic_read(APIC_ESR);
+-		printk("ESR value before enabling vector: %08lx\n", value);
++		apic_printk(APIC_VERBOSE, "ESR value before enabling vector:"
++				" %08lx\n", value);
+ 
+ 		value = ERROR_APIC_VECTOR;      // enables sending errors
+ 		apic_write_around(APIC_LVTERR, value);
+@@ -460,7 +471,8 @@ void __init setup_local_APIC (void)
+ 		if (maxlvt > 3)
+ 			apic_write(APIC_ESR, 0);
+ 		value = apic_read(APIC_ESR);
+-		printk("ESR value after enabling vector: %08lx\n", value);
++		apic_printk(APIC_VERBOSE, "ESR value after enabling vector:"
++				" %08lx\n", value);
+ 	} else {
+ 		if (esr_disable)	
+ 			/* 
+@@ -635,6 +647,21 @@ static int __init lapic_enable(char *str
+ }
+ __setup("lapic", lapic_enable);
+ 
++static int __init apic_set_verbosity(char *str)
++{
++	if (strcmp("debug", str) == 0)
++		apic_verbosity = APIC_DEBUG;
++	else if (strcmp("verbose", str) == 0)
++		apic_verbosity = APIC_VERBOSE;
++	else
++		printk(KERN_WARNING "APIC Verbosity level %s not recognised"
++				" use apic=verbose or apic=debug", str);
++
++	return 0;
++}
++
++__setup("apic=", apic_set_verbosity);
++
+ static int __init detect_init_APIC (void)
+ {
+ 	u32 h, l, features;
+@@ -671,7 +698,8 @@ static int __init detect_init_APIC (void
+ 		 */
+ 		rdmsr(MSR_IA32_APICBASE, l, h);
+ 		if (!(l & MSR_IA32_APICBASE_ENABLE)) {
+-			printk("Local APIC disabled by BIOS -- reenabling.\n");
++			apic_printk(APIC_VERBOSE, "Local APIC disabled "
++					"by BIOS -- reenabling.\n");
+ 			l &= ~MSR_IA32_APICBASE_BASE;
+ 			l |= MSR_IA32_APICBASE_ENABLE | APIC_DEFAULT_PHYS_BASE;
+ 			wrmsr(MSR_IA32_APICBASE, l, h);
+@@ -698,7 +726,7 @@ static int __init detect_init_APIC (void
+ 	if (nmi_watchdog != NMI_NONE)
+ 		nmi_watchdog = NMI_LOCAL_APIC;
+ 
+-	printk("Found and enabled local APIC!\n");
++	apic_printk(APIC_VERBOSE, "Found and enabled local APIC!\n");
+ 
+ 	apic_pm_activate();
+ 
+@@ -725,7 +753,8 @@ void __init init_apic_mappings(void)
+ 		apic_phys = mp_lapic_addr;
+ 
+ 	set_fixmap_nocache(FIX_APIC_BASE, apic_phys);
+-	Dprintk("mapped APIC to %08lx (%08lx)\n", APIC_BASE, apic_phys);
++	apic_printk(APIC_DEBUG, "mapped APIC to %08lx (%08lx)\n", APIC_BASE,
++			apic_phys);
+ 
+ 	/*
+ 	 * Fetch the APIC ID of the BSP in case we have a
+@@ -755,7 +784,8 @@ fake_ioapic_page:
+ 				ioapic_phys = __pa(ioapic_phys);
+ 			}
+ 			set_fixmap_nocache(idx, ioapic_phys);
+-			Dprintk("mapped IOAPIC to %08lx (%08lx)\n",
++			apic_printk(APIC_DEBUG, "mapped IOAPIC to "
++					"%08lx (%08lx)\n",
+ 					__fix_to_virt(idx), ioapic_phys);
+ 			idx++;
+ 		}
+@@ -894,7 +924,7 @@ int __init calibrate_APIC_clock(void)
+ 	int i;
+ 	const int LOOPS = HZ/10;
+ 
+-	printk("calibrating APIC timer ...\n");
++	apic_printk(APIC_VERBOSE, "calibrating APIC timer ...\n");
+ 
+ 	/*
+ 	 * Put whatever arbitrary (but long enough) timeout
+@@ -939,11 +969,13 @@ int __init calibrate_APIC_clock(void)
+ 	result = (tt1-tt2)*APIC_DIVISOR/LOOPS;
+ 
+ 	if (cpu_has_tsc)
+-		printk("..... CPU clock speed is %ld.%04ld MHz.\n",
++		apic_printk(APIC_VERBOSE, "..... CPU clock speed is "
++			"%ld.%04ld MHz.\n",
+ 			((long)(t2-t1)/LOOPS)/(1000000/HZ),
+ 			((long)(t2-t1)/LOOPS)%(1000000/HZ));
+ 
+-	printk("..... host bus clock speed is %ld.%04ld MHz.\n",
++	apic_printk(APIC_VERBOSE, "..... host bus clock speed is "
++		"%ld.%04ld MHz.\n",
+ 		result/(1000000/HZ),
+ 		result%(1000000/HZ));
+ 
+@@ -954,7 +986,7 @@ static unsigned int calibration_result;
+ 
+ void __init setup_boot_APIC_clock(void)
+ {
+-	printk("Using local APIC timer interrupts.\n");
++	apic_printk(APIC_VERBOSE, "Using local APIC timer interrupts.\n");
+ 	using_apic_timer = 1;
+ 
+ 	local_irq_disable();
+diff -puN arch/i386/kernel/io_apic.c~apic-output-reduction arch/i386/kernel/io_apic.c
+--- 25/arch/i386/kernel/io_apic.c~apic-output-reduction	Tue Jul 27 14:27:40 2004
++++ 25-akpm/arch/i386/kernel/io_apic.c	Tue Jul 27 14:27:40 2004
+@@ -706,13 +706,15 @@ static int __init ioapic_pirq_setup(char
+ 		pirq_entries[i] = -1;
+ 
+ 	pirqs_enabled = 1;
+-	printk(KERN_INFO "PIRQ redirection, working around broken MP-BIOS.\n");
++	apic_printk(APIC_VERBOSE, KERN_INFO
++			"PIRQ redirection, working around broken MP-BIOS.\n");
+ 	max = MAX_PIRQS;
+ 	if (ints[0] < MAX_PIRQS)
+ 		max = ints[0];
+ 
+ 	for (i = 0; i < max; i++) {
+-		printk(KERN_DEBUG "... PIRQ%d -> IRQ %d\n", i, ints[i+1]);
++		apic_printk(APIC_VERBOSE, KERN_DEBUG
++				"... PIRQ%d -> IRQ %d\n", i, ints[i+1]);
+ 		/*
+ 		 * PIRQs are mapped upside down, usually.
+ 		 */
+@@ -773,8 +775,8 @@ int IO_APIC_get_PCI_irq_vector(int bus, 
+ {
+ 	int apic, i, best_guess = -1;
+ 
+-	Dprintk("querying PCI -> IRQ mapping bus:%d, slot:%d, pin:%d.\n",
+-		bus, slot, pin);
++	apic_printk(APIC_DEBUG, "querying PCI -> IRQ mapping bus:%d, "
++		"slot:%d, pin:%d.\n", bus, slot, pin);
+ 	if (mp_bus_id_to_pci_bus[bus] == -1) {
+ 		printk(KERN_WARNING "PCI BIOS passed nonexistent PCI bus %d!\n", bus);
+ 		return -1;
+@@ -842,7 +844,8 @@ static int __init EISA_ELCR(unsigned int
+ 		unsigned int port = 0x4d0 + (irq >> 3);
+ 		return (inb(port) >> (irq & 7)) & 1;
+ 	}
+-	printk(KERN_INFO "Broken MPtable reports ISA irq %d\n", irq);
++	apic_printk(APIC_VERBOSE, KERN_INFO
++			"Broken MPtable reports ISA irq %d\n", irq);
+ 	return 0;
+ }
+ 
+@@ -1084,10 +1087,12 @@ static int pin_2_irq(int idx, int apic, 
+ 	if ((pin >= 16) && (pin <= 23)) {
+ 		if (pirq_entries[pin-16] != -1) {
+ 			if (!pirq_entries[pin-16]) {
+-				printk(KERN_DEBUG "disabling PIRQ%d\n", pin-16);
++				apic_printk(APIC_VERBOSE, KERN_DEBUG
++						"disabling PIRQ%d\n", pin-16);
+ 			} else {
+ 				irq = pirq_entries[pin-16];
+-				printk(KERN_DEBUG "using PIRQ%d -> IRQ %d\n",
++				apic_printk(APIC_VERBOSE, KERN_DEBUG
++						"using PIRQ%d -> IRQ %d\n",
+ 						pin-16, irq);
+ 			}
+ 		}
+@@ -1177,7 +1182,7 @@ void __init setup_IO_APIC_irqs(void)
+ 	int apic, pin, idx, irq, first_notcon = 1, vector;
+ 	unsigned long flags;
+ 
+-	printk(KERN_DEBUG "init IO_APIC IRQs\n");
++	apic_printk(APIC_VERBOSE, KERN_DEBUG "init IO_APIC IRQs\n");
+ 
+ 	for (apic = 0; apic < nr_ioapics; apic++) {
+ 	for (pin = 0; pin < nr_ioapic_registers[apic]; pin++) {
+@@ -1196,10 +1201,14 @@ void __init setup_IO_APIC_irqs(void)
+ 		idx = find_irq_entry(apic,pin,mp_INT);
+ 		if (idx == -1) {
+ 			if (first_notcon) {
+-				printk(KERN_DEBUG " IO-APIC (apicid-pin) %d-%d", mp_ioapics[apic].mpc_apicid, pin);
++				apic_printk(APIC_VERBOSE, KERN_DEBUG
++						" IO-APIC (apicid-pin) %d-%d",
++						mp_ioapics[apic].mpc_apicid,
++						pin);
+ 				first_notcon = 0;
+ 			} else
+-				printk(", %d-%d", mp_ioapics[apic].mpc_apicid, pin);
++				apic_printk(APIC_VERBOSE, ", %d-%d",
++					mp_ioapics[apic].mpc_apicid, pin);
+ 			continue;
+ 		}
+ 
+@@ -1240,7 +1249,7 @@ void __init setup_IO_APIC_irqs(void)
+ 	}
+ 
+ 	if (!first_notcon)
+-		printk(" not connected.\n");
++		apic_printk(APIC_VERBOSE, " not connected.\n");
+ }
+ 
+ /*
+@@ -1300,6 +1309,9 @@ void __init print_IO_APIC(void)
+ 	union IO_APIC_reg_03 reg_03;
+ 	unsigned long flags;
+ 
++	if (apic_verbosity == APIC_QUIET)
++		return;
++
+  	printk(KERN_DEBUG "number of MP IRQ sources: %d.\n", mp_irq_entries);
+ 	for (i = 0; i < nr_ioapics; i++)
+ 		printk(KERN_DEBUG "number of IO-APIC #%d registers: %d.\n",
+@@ -1442,6 +1454,9 @@ static void print_APIC_bitfield (int bas
+ 	unsigned int v;
+ 	int i, j;
+ 
++	if (apic_verbosity == APIC_QUIET)
++		return;
++
+ 	printk(KERN_DEBUG "0123456789abcdef0123456789abcdef\n" KERN_DEBUG);
+ 	for (i = 0; i < 8; i++) {
+ 		v = apic_read(base + i*0x10);
+@@ -1459,6 +1474,9 @@ void /*__init*/ print_local_APIC(void * 
+ {
+ 	unsigned int v, ver, maxlvt;
+ 
++	if (apic_verbosity == APIC_QUIET)
++		return;
++
+ 	printk("\n" KERN_DEBUG "printing local APIC contents on CPU#%d/%d:\n",
+ 		smp_processor_id(), hard_smp_processor_id());
+ 	v = apic_read(APIC_ID);
+@@ -1546,6 +1564,9 @@ void /*__init*/ print_PIC(void)
+ 	unsigned int v;
+ 	unsigned long flags;
+ 
++	if (apic_verbosity == APIC_QUIET)
++		return;
++
+ 	printk(KERN_DEBUG "\nprinting PIC contents\n");
+ 
+ 	spin_lock_irqsave(&i8259A_lock, flags);
+@@ -1681,7 +1702,9 @@ static void __init setup_ioapic_ids_from
+ 		} else {
+ 			physid_mask_t tmp;
+ 			tmp = apicid_to_cpu_present(mp_ioapics[apic].mpc_apicid);
+-			printk("Setting %d in the phys_id_present_map\n", mp_ioapics[apic].mpc_apicid);
++			apic_printk(APIC_VERBOSE, "Setting %d in the "
++					"phys_id_present_map\n",
++					mp_ioapics[apic].mpc_apicid);
+ 			physids_or(phys_id_present_map, phys_id_present_map, tmp);
+ 		}
+ 
+@@ -1700,8 +1723,9 @@ static void __init setup_ioapic_ids_from
+ 		 * Read the right value from the MPC table and
+ 		 * write it into the ID register.
+ 	 	 */
+-		printk(KERN_INFO "...changing IO-APIC physical APIC ID to %d ...",
+-					mp_ioapics[apic].mpc_apicid);
++		apic_printk(APIC_VERBOSE, KERN_INFO
++			"...changing IO-APIC physical APIC ID to %d ...",
++			mp_ioapics[apic].mpc_apicid);
+ 
+ 		reg_00.bits.ID = mp_ioapics[apic].mpc_apicid;
+ 		spin_lock_irqsave(&ioapic_lock, flags);
+@@ -1717,7 +1741,7 @@ static void __init setup_ioapic_ids_from
+ 		if (reg_00.bits.ID != mp_ioapics[apic].mpc_apicid)
+ 			panic("could not set ID!\n");
+ 		else
+-			printk(" ok.\n");
++			apic_printk(APIC_VERBOSE, " ok.\n");
+ 	}
+ }
+ #else
+@@ -2032,11 +2056,11 @@ static void setup_nmi (void)
+ 	 * is from Maciej W. Rozycki - so we do not have to EOI from
+ 	 * the NMI handler or the timer interrupt.
+ 	 */ 
+-	printk(KERN_INFO "activating NMI Watchdog ...");
++	apic_printk(APIC_VERBOSE, KERN_INFO "activating NMI Watchdog ...");
+ 
+ 	on_each_cpu(enable_NMI_through_LVT0, NULL, 1, 1);
+ 
+-	printk(" done.\n");
++	apic_printk(APIC_VERBOSE, " done.\n");
+ }
+ 
+ /*
+@@ -2213,7 +2237,8 @@ static inline void check_timer(void)
+ 		return;
+ 	}
+ 	printk(" failed :(.\n");
+-	panic("IO-APIC + timer doesn't work! Try using the 'noapic' kernel parameter\n");
++	panic("IO-APIC + timer doesn't work!  Boot with apic=debug and send a "
++		"report.  Then try booting with the 'noapic' option");
+ }
+ 
+ /*
+@@ -2427,7 +2452,8 @@ int __init io_apic_get_unique_id (int io
+ 			panic("IOAPIC[%d]: Unable change apic_id!\n", ioapic);
+ 	}
+ 
+-	printk(KERN_INFO "IOAPIC[%d]: Assigned apic_id %d\n", ioapic, apic_id);
++	apic_printk(APIC_VERBOSE, KERN_INFO
++			"IOAPIC[%d]: Assigned apic_id %d\n", ioapic, apic_id);
+ 
+ 	return apic_id;
+ }
+@@ -2493,9 +2519,10 @@ int io_apic_set_pci_routing (int ioapic,
+ 
+ 	entry.vector = assign_irq_vector(irq);
+ 
+-	Dprintk(KERN_DEBUG "IOAPIC[%d]: Set PCI routing entry (%d-%d -> 0x%x -> "
+-		"IRQ %d Mode:%i Active:%i)\n", ioapic, 
+-		mp_ioapics[ioapic].mpc_apicid, pin, entry.vector, irq, edge_level, active_high_low);
++	apic_printk(APIC_DEBUG, KERN_DEBUG "IOAPIC[%d]: Set PCI routing entry "
++		"(%d-%d -> 0x%x -> IRQ %d Mode:%i Active:%i)\n", ioapic,
++		mp_ioapics[ioapic].mpc_apicid, pin, entry.vector, irq,
++		edge_level, active_high_low);
+ 
+  	if (use_pci_vector() && !platform_legacy_irq(irq))
+ 		irq = IO_APIC_VECTOR(irq);
+diff -puN Documentation/kernel-parameters.txt~apic-output-reduction Documentation/kernel-parameters.txt
+--- 25/Documentation/kernel-parameters.txt~apic-output-reduction	Tue Jul 27 14:27:40 2004
++++ 25-akpm/Documentation/kernel-parameters.txt	Tue Jul 27 14:27:40 2004
+@@ -189,6 +189,11 @@ running once the system is up.
+ 			Disable APC CPU standby support. SPARCstation-Fox does
+ 			not play well with APC CPU idle - disable it if you have
+ 			APC and your system crashes randomly.
++
++	apic=		[APIC,i386] Change the output verbosity  whilst booting
++			Format: { quiet (default) | verbose | debug }
++			Change the amount of debugging information output
++			when initialising the APIC and IO-APIC components.
+  
+ 	apm=		[APM] Advanced Power Management
+ 			See header of arch/i386/kernel/apm.c.
+diff -puN include/asm-i386/apic.h~apic-output-reduction include/asm-i386/apic.h
+--- 25/include/asm-i386/apic.h~apic-output-reduction	Tue Jul 27 14:27:40 2004
++++ 25-akpm/include/asm-i386/apic.h	Tue Jul 27 14:27:40 2004
+@@ -7,13 +7,28 @@
+ #include <asm/apicdef.h>
+ #include <asm/system.h>
+ 
+-#define APIC_DEBUG 0
+-
+-#if APIC_DEBUG
+-#define Dprintk(x...) printk(x)
+-#else
+ #define Dprintk(x...)
+-#endif
++
++/*
++ * Debugging macros
++ */
++#define APIC_QUIET   0
++#define APIC_VERBOSE 1
++#define APIC_DEBUG   2
++
++extern int apic_verbosity;
++
++/*
++ * Define the default level of output to be very little
++ * This can be turned up by using apic=verbose for more
++ * information and apic=debug for _lots_ of information.
++ * apic_verbosity is defined in apic.c
++ */
++#define apic_printk(v, s, a...) do {       \
++		if ((v) <= apic_verbosity) \
++			printk(s, ##a);    \
++	} while (0)
++
+ 
+ #ifdef CONFIG_X86_LOCAL_APIC
+ 
+_

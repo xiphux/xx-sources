@@ -1,0 +1,559 @@
+
+From: Ingo Molnar <mingo@redhat.com>,
+      Arjan van de Ven <arjanv@redhat.com>
+
+Add a whole bunch more might_sleep() checks.  We also enable might_sleep()
+checking in copy_*_user().  This was non-trivial because of the "copy_*_user()
+in atomic regions" trick would generate false positives.  Fix that up by
+adding a new __copy_*_user_inatomic(), which avoids the might_sleep() check.
+
+Only i386 is supported in this patch.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/lib/usercopy.c        |    2 ++
+ 25-akpm/drivers/block/ll_rw_blk.c       |    1 +
+ 25-akpm/fs/buffer.c                     |    3 +++
+ 25-akpm/fs/ext3/inode.c                 |    3 +++
+ 25-akpm/fs/fs-writeback.c               |    1 +
+ 25-akpm/fs/inode.c                      |    1 +
+ 25-akpm/fs/jbd/revoke.c                 |    1 +
+ 25-akpm/fs/proc/base.c                  |    1 +
+ 25-akpm/include/asm-alpha/uaccess.h     |    4 ++++
+ 25-akpm/include/asm-arm/uaccess.h       |    3 +++
+ 25-akpm/include/asm-arm26/uaccess.h     |    3 +++
+ 25-akpm/include/asm-cris/uaccess.h      |    2 ++
+ 25-akpm/include/asm-h8300/uaccess.h     |    2 ++
+ 25-akpm/include/asm-i386/checksum.h     |    7 +++++--
+ 25-akpm/include/asm-i386/uaccess.h      |   17 +++++++++++++++--
+ 25-akpm/include/asm-ia64/uaccess.h      |    3 ++-
+ 25-akpm/include/asm-m68k/uaccess.h      |    3 +++
+ 25-akpm/include/asm-m68knommu/uaccess.h |    2 ++
+ 25-akpm/include/asm-mips/uaccess.h      |    3 +++
+ 25-akpm/include/asm-parisc/uaccess.h    |    2 ++
+ 25-akpm/include/asm-ppc/uaccess.h       |    2 ++
+ 25-akpm/include/asm-ppc64/uaccess.h     |    3 +++
+ 25-akpm/include/asm-s390/uaccess.h      |    3 +++
+ 25-akpm/include/asm-sh/uaccess.h        |    4 ++++
+ 25-akpm/include/asm-sh64/uaccess.h      |    3 +++
+ 25-akpm/include/asm-sparc/uaccess.h     |    3 +++
+ 25-akpm/include/asm-sparc64/uaccess.h   |    2 ++
+ 25-akpm/include/asm-um/uaccess.h        |    3 +++
+ 25-akpm/include/asm-v850/uaccess.h      |    3 +++
+ 25-akpm/include/asm-x86_64/uaccess.h    |    3 +++
+ 25-akpm/include/linux/buffer_head.h     |    1 +
+ 25-akpm/include/linux/pagemap.h         |    1 +
+ 25-akpm/include/linux/writeback.h       |    1 +
+ 25-akpm/mm/filemap.c                    |    5 +++--
+ 25-akpm/mm/mempool.c                    |    1 +
+ 35 files changed, 95 insertions(+), 7 deletions(-)
+
+diff -puN arch/i386/lib/usercopy.c~add-a-few-might_sleep-checks arch/i386/lib/usercopy.c
+--- 25/arch/i386/lib/usercopy.c~add-a-few-might_sleep-checks	2004-08-09 22:01:20.431644352 -0700
++++ 25-akpm/arch/i386/lib/usercopy.c	2004-08-09 22:01:20.484636296 -0700
+@@ -31,6 +31,7 @@ static inline int __movsl_is_ok(unsigned
+ #define __do_strncpy_from_user(dst,src,count,res)			   \
+ do {									   \
+ 	int __d0, __d1, __d2;						   \
++	might_sleep();							   \
+ 	__asm__ __volatile__(						   \
+ 		"	testl %1,%1\n"					   \
+ 		"	jz 2f\n"					   \
+@@ -119,6 +120,7 @@ strncpy_from_user(char *dst, const char 
+ #define __do_clear_user(addr,size)					\
+ do {									\
+ 	int __d0;							\
++	might_sleep();							\
+   	__asm__ __volatile__(						\
+ 		"0:	rep; stosl\n"					\
+ 		"	movl %2,%0\n"					\
+diff -puN drivers/block/ll_rw_blk.c~add-a-few-might_sleep-checks drivers/block/ll_rw_blk.c
+--- 25/drivers/block/ll_rw_blk.c~add-a-few-might_sleep-checks	2004-08-09 22:01:20.433644048 -0700
++++ 25-akpm/drivers/block/ll_rw_blk.c	2004-08-09 22:01:20.486635992 -0700
+@@ -2533,6 +2533,7 @@ void generic_make_request(struct bio *bi
+ 	sector_t maxsector;
+ 	int ret, nr_sectors = bio_sectors(bio);
+ 
++	might_sleep();
+ 	/* Test device or partition size, when known. */
+ 	maxsector = bio->bi_bdev->bd_inode->i_size >> 9;
+ 	if (maxsector) {
+diff -puN fs/buffer.c~add-a-few-might_sleep-checks fs/buffer.c
+--- 25/fs/buffer.c~add-a-few-might_sleep-checks	2004-08-09 22:01:20.435643744 -0700
++++ 25-akpm/fs/buffer.c	2004-08-09 22:01:20.488635688 -0700
+@@ -1551,6 +1551,7 @@ __getblk(struct block_device *bdev, sect
+ {
+ 	struct buffer_head *bh = __find_get_block(bdev, block, size);
+ 
++	might_sleep();
+ 	if (bh == NULL)
+ 		bh = __getblk_slow(bdev, block, size);
+ 	return bh;
+@@ -1776,6 +1777,8 @@ void unmap_underlying_metadata(struct bl
+ {
+ 	struct buffer_head *old_bh;
+ 
++	might_sleep();
++
+ 	old_bh = __find_get_block_slow(bdev, block, 0);
+ 	if (old_bh) {
+ 		clear_buffer_dirty(old_bh);
+diff -puN fs/ext3/inode.c~add-a-few-might_sleep-checks fs/ext3/inode.c
+--- 25/fs/ext3/inode.c~add-a-few-might_sleep-checks	2004-08-09 22:01:20.437643440 -0700
++++ 25-akpm/fs/ext3/inode.c	2004-08-09 22:01:20.491635232 -0700
+@@ -66,6 +66,8 @@ int ext3_forget(handle_t *handle, int is
+ {
+ 	int err;
+ 
++	might_sleep();
++
+ 	BUFFER_TRACE(bh, "enter");
+ 
+ 	jbd_debug(4, "forgetting bh %p: is_metadata = %d, mode %o, "
+@@ -2870,6 +2872,7 @@ int ext3_mark_inode_dirty(handle_t *hand
+ 	struct ext3_iloc iloc;
+ 	int err;
+ 
++	might_sleep();
+ 	err = ext3_reserve_inode_write(handle, inode, &iloc);
+ 	if (!err)
+ 		err = ext3_mark_iloc_dirty(handle, inode, &iloc);
+diff -puN fs/fs-writeback.c~add-a-few-might_sleep-checks fs/fs-writeback.c
+--- 25/fs/fs-writeback.c~add-a-few-might_sleep-checks	2004-08-09 22:01:20.438643288 -0700
++++ 25-akpm/fs/fs-writeback.c	2004-08-09 22:01:20.491635232 -0700
+@@ -398,6 +398,7 @@ writeback_inodes(struct writeback_contro
+ {
+ 	struct super_block *sb;
+ 
++	might_sleep();
+ 	spin_lock(&inode_lock);
+ 	spin_lock(&sb_lock);
+ restart:
+diff -puN fs/inode.c~add-a-few-might_sleep-checks fs/inode.c
+--- 25/fs/inode.c~add-a-few-might_sleep-checks	2004-08-09 22:01:20.440642984 -0700
++++ 25-akpm/fs/inode.c	2004-08-09 22:01:20.492635080 -0700
+@@ -243,6 +243,7 @@ void __iget(struct inode * inode)
+  */
+ void clear_inode(struct inode *inode)
+ {
++	might_sleep();
+ 	invalidate_inode_buffers(inode);
+        
+ 	if (inode->i_data.nrpages)
+diff -puN fs/jbd/revoke.c~add-a-few-might_sleep-checks fs/jbd/revoke.c
+--- 25/fs/jbd/revoke.c~add-a-few-might_sleep-checks	2004-08-09 22:01:20.441642832 -0700
++++ 25-akpm/fs/jbd/revoke.c	2004-08-09 22:01:20.493634928 -0700
+@@ -332,6 +332,7 @@ int journal_revoke(handle_t *handle, uns
+ 	struct block_device *bdev;
+ 	int err;
+ 
++	might_sleep();
+ 	if (bh_in)
+ 		BUFFER_TRACE(bh_in, "enter");
+ 
+diff -puN fs/proc/base.c~add-a-few-might_sleep-checks fs/proc/base.c
+--- 25/fs/proc/base.c~add-a-few-might_sleep-checks	2004-08-09 22:01:20.443642528 -0700
++++ 25-akpm/fs/proc/base.c	2004-08-09 22:01:20.494634776 -0700
+@@ -1558,6 +1558,7 @@ struct dentry *proc_pid_unhash(struct ta
+ 	
+ void proc_pid_flush(struct dentry *proc_dentry)
+ {
++	might_sleep();
+ 	if(proc_dentry != NULL) {
+ 		shrink_dcache_parent(proc_dentry);
+ 		dput(proc_dentry);
+diff -puN include/asm-alpha/uaccess.h~add-a-few-might_sleep-checks include/asm-alpha/uaccess.h
+--- 25/include/asm-alpha/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.444642376 -0700
++++ 25-akpm/include/asm-alpha/uaccess.h	2004-08-09 22:01:20.495634624 -0700
+@@ -395,6 +395,10 @@ __copy_tofrom_user(void *to, const void 
+ 	__copy_tofrom_user_nocheck((to),(__force void *)(from),(n));	\
+ })
+ 
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
++
++
+ extern inline long
+ copy_to_user(void __user *to, const void *from, long n)
+ {
+diff -puN include/asm-arm26/uaccess.h~add-a-few-might_sleep-checks include/asm-arm26/uaccess.h
+--- 25/include/asm-arm26/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.446642072 -0700
++++ 25-akpm/include/asm-arm26/uaccess.h	2004-08-09 22:01:20.495634624 -0700
+@@ -217,6 +217,9 @@ static __inline__ unsigned long __copy_t
+ 	return n;
+ }
+ 
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
++
+ static __inline__ unsigned long clear_user (void *to, unsigned long n)
+ {
+ 	if (access_ok(VERIFY_WRITE, to, n))
+diff -puN include/asm-arm/uaccess.h~add-a-few-might_sleep-checks include/asm-arm/uaccess.h
+--- 25/include/asm-arm/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.448641768 -0700
++++ 25-akpm/include/asm-arm/uaccess.h	2004-08-09 22:01:20.496634472 -0700
+@@ -394,6 +394,9 @@ static inline unsigned long __copy_to_us
+ 	return __arch_copy_to_user(to, from, n);
+ }
+ 
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
++
+ static inline unsigned long clear_user (void __user *to, unsigned long n)
+ {
+ 	if (access_ok(VERIFY_WRITE, to, n))
+diff -puN include/asm-cris/uaccess.h~add-a-few-might_sleep-checks include/asm-cris/uaccess.h
+--- 25/include/asm-cris/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.449641616 -0700
++++ 25-akpm/include/asm-cris/uaccess.h	2004-08-09 22:01:20.496634472 -0700
+@@ -434,6 +434,8 @@ __generic_clear_user_nocheck(void *to, u
+ 
+ #define __copy_to_user(to,from,n)   __generic_copy_to_user_nocheck((to),(from),(n))
+ #define __copy_from_user(to,from,n) __generic_copy_from_user_nocheck((to),(from),(n))
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
+ #define __clear_user(to,n) __generic_clear_user_nocheck((to),(n))
+ 
+ #define strlen_user(str)	strnlen_user((str), 0x7ffffffe)
+diff -puN include/asm-h8300/uaccess.h~add-a-few-might_sleep-checks include/asm-h8300/uaccess.h
+--- 25/include/asm-h8300/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.451641312 -0700
++++ 25-akpm/include/asm-h8300/uaccess.h	2004-08-09 22:01:20.497634320 -0700
+@@ -123,6 +123,8 @@ extern int __get_user_bad(void);
+ 
+ #define __copy_from_user(to, from, n) copy_from_user(to, from, n)
+ #define __copy_to_user(to, from, n) copy_to_user(to, from, n)
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
+ 
+ #define copy_to_user_ret(to,from,n,retval) ({ if (copy_to_user(to,from,n)) return retval; })
+ 
+diff -puN include/asm-i386/checksum.h~add-a-few-might_sleep-checks include/asm-i386/checksum.h
+--- 25/include/asm-i386/checksum.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.452641160 -0700
++++ 25-akpm/include/asm-i386/checksum.h	2004-08-09 22:01:20.497634320 -0700
+@@ -43,10 +43,12 @@ unsigned int csum_partial_copy_nocheck (
+ }
+ 
+ static __inline__
+-unsigned int csum_partial_copy_from_user ( const char __user *src, char *dst,
++unsigned int csum_partial_copy_from_user(const char __user *src, char *dst,
+ 						int len, int sum, int *err_ptr)
+ {
+-	return csum_partial_copy_generic ( (__force char *)src, dst, len, sum, err_ptr, NULL);
++	might_sleep();
++	return csum_partial_copy_generic((__force char *)src, dst,
++					len, sum, err_ptr, NULL);
+ }
+ 
+ /*
+@@ -177,6 +179,7 @@ static __inline__ unsigned int csum_and_
+ 						     int len, int sum, 
+ 						     int *err_ptr)
+ {
++	might_sleep();
+ 	if (access_ok(VERIFY_WRITE, dst, len))
+ 		return csum_partial_copy_generic(src, (__force char *)dst, len, sum, NULL, err_ptr);
+ 
+diff -puN include/asm-i386/uaccess.h~add-a-few-might_sleep-checks include/asm-i386/uaccess.h
+--- 25/include/asm-i386/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.453641008 -0700
++++ 25-akpm/include/asm-i386/uaccess.h	2004-08-09 22:01:20.498634168 -0700
+@@ -400,7 +400,7 @@ unsigned long __copy_from_user_ll(void *
+  * On success, this will be zero.
+  */
+ static inline unsigned long
+-__copy_to_user(void __user *to, const void *from, unsigned long n)
++__copy_to_user_inatomic(void __user *to, const void *from, unsigned long n)
+ {
+ 	if (__builtin_constant_p(n)) {
+ 		unsigned long ret;
+@@ -420,6 +420,13 @@ __copy_to_user(void __user *to, const vo
+ 	return __copy_to_user_ll(to, from, n);
+ }
+ 
++static inline unsigned long
++__copy_to_user(void __user *to, const void *from, unsigned long n)
++{
++       might_sleep();
++       return __copy_to_user_inatomic(to, from, n);
++}
++
+ /**
+  * __copy_from_user: - Copy a block of data from user space, with less checking.
+  * @to:   Destination address, in kernel space.
+@@ -438,7 +445,7 @@ __copy_to_user(void __user *to, const vo
+  * data to the requested size using zero bytes.
+  */
+ static inline unsigned long
+-__copy_from_user(void *to, const void __user *from, unsigned long n)
++__copy_from_user_inatomic(void *to, const void __user *from, unsigned long n)
+ {
+ 	if (__builtin_constant_p(n)) {
+ 		unsigned long ret;
+@@ -458,6 +465,12 @@ __copy_from_user(void *to, const void __
+ 	return __copy_from_user_ll(to, from, n);
+ }
+ 
++static inline unsigned long
++__copy_from_user(void *to, const void __user *from, unsigned long n)
++{
++       might_sleep();
++       return __copy_from_user_inatomic(to, from, n);
++}
+ unsigned long copy_to_user(void __user *to, const void *from, unsigned long n);
+ unsigned long copy_from_user(void *to,
+ 			const void __user *from, unsigned long n);
+diff -puN include/asm-ia64/uaccess.h~add-a-few-might_sleep-checks include/asm-ia64/uaccess.h
+--- 25/include/asm-ia64/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.454640856 -0700
++++ 25-akpm/include/asm-ia64/uaccess.h	2004-08-09 22:01:20.499634016 -0700
+@@ -202,7 +202,8 @@ extern unsigned long __copy_user (void *
+ 
+ #define __copy_to_user(to, from, n)	__copy_user((to), (from), (n))
+ #define __copy_from_user(to, from, n)	__copy_user((to), (from), (n))
+-
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
+ #define copy_to_user(to, from, n)	__copy_tofrom_user((to), (from), (n), 1)
+ #define copy_from_user(to, from, n)	__copy_tofrom_user((to), (from), (n), 0)
+ 
+diff -puN include/asm-m68knommu/uaccess.h~add-a-few-might_sleep-checks include/asm-m68knommu/uaccess.h
+--- 25/include/asm-m68knommu/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.456640552 -0700
++++ 25-akpm/include/asm-m68knommu/uaccess.h	2004-08-09 22:01:20.499634016 -0700
+@@ -134,6 +134,8 @@ extern int __get_user_bad(void);
+ 
+ #define __copy_from_user(to, from, n) copy_from_user(to, from, n)
+ #define __copy_to_user(to, from, n) copy_to_user(to, from, n)
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
+ 
+ #define copy_to_user_ret(to,from,n,retval) ({ if (copy_to_user(to,from,n)) return retval; })
+ 
+diff -puN include/asm-m68k/uaccess.h~add-a-few-might_sleep-checks include/asm-m68k/uaccess.h
+--- 25/include/asm-m68k/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.457640400 -0700
++++ 25-akpm/include/asm-m68k/uaccess.h	2004-08-09 22:01:20.500633864 -0700
+@@ -521,6 +521,9 @@ __constant_copy_from_user(void *to, cons
+ 	 : "0"(to), "1"(from), "2"(n/4)			\
+ 	 : "d0", "memory")
+ 
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
++
+ static inline unsigned long
+ __constant_copy_to_user(void *to, const void *from, unsigned long n)
+ {
+diff -puN include/asm-mips/uaccess.h~add-a-few-might_sleep-checks include/asm-mips/uaccess.h
+--- 25/include/asm-mips/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.459640096 -0700
++++ 25-akpm/include/asm-mips/uaccess.h	2004-08-09 22:01:20.500633864 -0700
+@@ -463,6 +463,9 @@ extern size_t __copy_user(void *__to, co
+ 	__cu_len;							\
+ })
+ 
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
++
+ /*
+  * copy_to_user: - Copy a block of data into user space.
+  * @to:   Destination address, in user space.
+diff -puN include/asm-parisc/uaccess.h~add-a-few-might_sleep-checks include/asm-parisc/uaccess.h
+--- 25/include/asm-parisc/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.460639944 -0700
++++ 25-akpm/include/asm-parisc/uaccess.h	2004-08-09 22:01:20.501633712 -0700
+@@ -279,5 +279,7 @@ extern long lstrnlen_user(const char __u
+ #define __copy_to_user lcopy_to_user
+ #define copy_in_user lcopy_in_user
+ #define __copy_in_user lcopy_in_user
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
+ 
+ #endif /* __PARISC_UACCESS_H */
+diff -puN include/asm-ppc64/uaccess.h~add-a-few-might_sleep-checks include/asm-ppc64/uaccess.h
+--- 25/include/asm-ppc64/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.461639792 -0700
++++ 25-akpm/include/asm-ppc64/uaccess.h	2004-08-09 22:01:20.501633712 -0700
+@@ -281,6 +281,9 @@ extern unsigned long copy_in_user(void _
+ 
+ extern unsigned long __clear_user(void __user *addr, unsigned long size);
+ 
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
++
+ static inline unsigned long
+ clear_user(void __user *addr, unsigned long size)
+ {
+diff -puN include/asm-ppc/uaccess.h~add-a-few-might_sleep-checks include/asm-ppc/uaccess.h
+--- 25/include/asm-ppc/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.462639640 -0700
++++ 25-akpm/include/asm-ppc/uaccess.h	2004-08-09 22:01:20.502633560 -0700
+@@ -331,6 +331,8 @@ copy_to_user(void __user *to, const void
+ 	__copy_tofrom_user((void __user *)(to), (from), (size))
+ #define __copy_to_user(to, from, size) \
+ 	__copy_tofrom_user((to), (void __user *)(from), (size))
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
+ 
+ extern unsigned long __clear_user(void __user *addr, unsigned long size);
+ 
+diff -puN include/asm-s390/uaccess.h~add-a-few-might_sleep-checks include/asm-s390/uaccess.h
+--- 25/include/asm-s390/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.464639336 -0700
++++ 25-akpm/include/asm-s390/uaccess.h	2004-08-09 22:01:20.502633560 -0700
+@@ -272,6 +272,9 @@ __copy_to_user(void __user *to, const vo
+ 	return __copy_to_user_asm(from, n, to);
+ }
+ 
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
++
+ /**
+  * copy_to_user: - Copy a block of data into user space.
+  * @to:   Destination address, in user space.
+diff -puN include/asm-sh64/uaccess.h~add-a-few-might_sleep-checks include/asm-sh64/uaccess.h
+--- 25/include/asm-sh64/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.465639184 -0700
++++ 25-akpm/include/asm-sh64/uaccess.h	2004-08-09 22:01:20.503633408 -0700
+@@ -261,6 +261,9 @@ if (__copy_from_user(to,from,n)) \
+ 	return retval; \
+ })
+ 
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
++
+ /* XXX: Not sure it works well..
+    should be such that: 4byte clear and the rest. */
+ extern __kernel_size_t __clear_user(void *addr, __kernel_size_t size);
+diff -puN include/asm-sh/uaccess.h~add-a-few-might_sleep-checks include/asm-sh/uaccess.h
+--- 25/include/asm-sh/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.466639032 -0700
++++ 25-akpm/include/asm-sh/uaccess.h	2004-08-09 22:01:20.503633408 -0700
+@@ -446,6 +446,10 @@ __copy_res; })
+ 	__copy_user((void *)(to),		\
+ 		    (void *)(from), n)
+ 
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
++
++
+ #define copy_from_user(to,from,n) ({ \
+ void *__copy_to = (void *) (to); \
+ void *__copy_from = (void *) (from); \
+diff -puN include/asm-sparc64/uaccess.h~add-a-few-might_sleep-checks include/asm-sparc64/uaccess.h
+--- 25/include/asm-sparc64/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.468638728 -0700
++++ 25-akpm/include/asm-sparc64/uaccess.h	2004-08-09 22:01:20.504633256 -0700
+@@ -264,6 +264,8 @@ extern unsigned long __copy_in_user(void
+ #define copy_from_user __copy_from_user
+ #define copy_to_user __copy_to_user
+ #define copy_in_user __copy_in_user
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
+ 
+ extern unsigned long __bzero_noasi(void __user *, unsigned long);
+ 
+diff -puN include/asm-sparc/uaccess.h~add-a-few-might_sleep-checks include/asm-sparc/uaccess.h
+--- 25/include/asm-sparc/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.469638576 -0700
++++ 25-akpm/include/asm-sparc/uaccess.h	2004-08-09 22:01:20.504633256 -0700
+@@ -322,6 +322,9 @@ static inline unsigned long __copy_from_
+ 	return __copy_user((void __user *) to, from, n);
+ }
+ 
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
++
+ static inline unsigned long __clear_user(void __user *addr, unsigned long size)
+ {
+ 	unsigned long ret;
+diff -puN include/asm-um/uaccess.h~add-a-few-might_sleep-checks include/asm-um/uaccess.h
+--- 25/include/asm-um/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.470638424 -0700
++++ 25-akpm/include/asm-um/uaccess.h	2004-08-09 22:01:20.505633104 -0700
+@@ -36,6 +36,9 @@
+ 
+ #define __copy_to_user(to, from, n) copy_to_user(to, from, n)
+ 
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
++
+ #define __get_user(x, ptr) \
+ ({ \
+         const __typeof__(ptr) __private_ptr = ptr; \
+diff -puN include/asm-v850/uaccess.h~add-a-few-might_sleep-checks include/asm-v850/uaccess.h
+--- 25/include/asm-v850/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.472638120 -0700
++++ 25-akpm/include/asm-v850/uaccess.h	2004-08-09 22:01:20.505633104 -0700
+@@ -112,6 +112,9 @@ extern int bad_user_access_length (void)
+ #define __copy_from_user(to, from, n)	(memcpy (to, from, n), 0)
+ #define __copy_to_user(to, from, n)	(memcpy(to, from, n), 0)
+ 
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
++
+ #define copy_from_user(to, from, n)	__copy_from_user (to, from, n)
+ #define copy_to_user(to, from, n) 	__copy_to_user(to, from, n)
+ 
+diff -puN include/asm-x86_64/uaccess.h~add-a-few-might_sleep-checks include/asm-x86_64/uaccess.h
+--- 25/include/asm-x86_64/uaccess.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.473637968 -0700
++++ 25-akpm/include/asm-x86_64/uaccess.h	2004-08-09 22:01:20.506632952 -0700
+@@ -351,4 +351,7 @@ long strlen_user(const char __user *str)
+ unsigned long clear_user(void __user *mem, unsigned long len);
+ unsigned long __clear_user(void __user *mem, unsigned long len);
+ 
++#define __copy_to_user_inatomic __copy_to_user
++#define __copy_from_user_inatomic __copy_from_user
++
+ #endif /* __X86_64_UACCESS_H */
+diff -puN include/linux/buffer_head.h~add-a-few-might_sleep-checks include/linux/buffer_head.h
+--- 25/include/linux/buffer_head.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.474637816 -0700
++++ 25-akpm/include/linux/buffer_head.h	2004-08-09 22:01:20.506632952 -0700
+@@ -278,6 +278,7 @@ map_bh(struct buffer_head *bh, struct su
+  */
+ static inline void wait_on_buffer(struct buffer_head *bh)
+ {
++	might_sleep();
+ 	if (buffer_locked(bh) || atomic_read(&bh->b_count) == 0)
+ 		__wait_on_buffer(bh);
+ }
+diff -puN include/linux/pagemap.h~add-a-few-might_sleep-checks include/linux/pagemap.h
+--- 25/include/linux/pagemap.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.476637512 -0700
++++ 25-akpm/include/linux/pagemap.h	2004-08-09 22:01:20.507632800 -0700
+@@ -156,6 +156,7 @@ extern void FASTCALL(unlock_page(struct 
+ 
+ static inline void lock_page(struct page *page)
+ {
++	might_sleep();
+ 	if (TestSetPageLocked(page))
+ 		__lock_page(page);
+ }
+diff -puN include/linux/writeback.h~add-a-few-might_sleep-checks include/linux/writeback.h
+--- 25/include/linux/writeback.h~add-a-few-might_sleep-checks	2004-08-09 22:01:20.477637360 -0700
++++ 25-akpm/include/linux/writeback.h	2004-08-09 22:01:20.507632800 -0700
+@@ -64,6 +64,7 @@ void sync_inodes(int wait);
+ /* writeback.h requires fs.h; it, too, is not included from here. */
+ static inline void wait_on_inode(struct inode *inode)
+ {
++	might_sleep();
+ 	if (inode->i_state & I_LOCK)
+ 		__wait_on_inode(inode);
+ }
+diff -puN mm/filemap.c~add-a-few-might_sleep-checks mm/filemap.c
+--- 25/mm/filemap.c~add-a-few-might_sleep-checks	2004-08-09 22:01:20.479637056 -0700
++++ 25-akpm/mm/filemap.c	2004-08-09 22:01:20.508632648 -0700
+@@ -834,7 +834,8 @@ int file_read_actor(read_descriptor_t *d
+ 	 */
+ 	if (!fault_in_pages_writeable(desc->arg.buf, size)) {
+ 		kaddr = kmap_atomic(page, KM_USER0);
+-		left = __copy_to_user(desc->arg.buf, kaddr + offset, size);
++		left = __copy_to_user_inatomic(desc->arg.buf,
++						kaddr + offset, size);
+ 		kunmap_atomic(kaddr, KM_USER0);
+ 		if (left == 0)
+ 			goto success;
+@@ -1630,7 +1631,7 @@ filemap_copy_from_user(struct page *page
+ 	int left;
+ 
+ 	kaddr = kmap_atomic(page, KM_USER0);
+-	left = __copy_from_user(kaddr + offset, buf, bytes);
++	left = __copy_from_user_inatomic(kaddr + offset, buf, bytes);
+ 	kunmap_atomic(kaddr, KM_USER0);
+ 
+ 	if (left != 0) {
+diff -puN mm/mempool.c~add-a-few-might_sleep-checks mm/mempool.c
+--- 25/mm/mempool.c~add-a-few-might_sleep-checks	2004-08-09 22:01:20.480636904 -0700
++++ 25-akpm/mm/mempool.c	2004-08-09 22:01:20.509632496 -0700
+@@ -194,6 +194,7 @@ void * mempool_alloc(mempool_t *pool, in
+ 	DEFINE_WAIT(wait);
+ 	int gfp_nowait = gfp_mask & ~(__GFP_WAIT | __GFP_IO);
+ 
++	might_sleep_if(gfp_mask & __GFP_WAIT);
+ repeat_alloc:
+ 	element = pool->alloc(gfp_nowait|__GFP_NOWARN, pool->pool_data);
+ 	if (likely(element != NULL))
+_

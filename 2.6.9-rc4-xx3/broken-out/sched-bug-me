@@ -1,0 +1,56 @@
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-10-14 19:05:03.117621320 -0400
++++ xx-sources/kernel/sched.c	2004-10-14 19:27:27.572233152 -0400
+@@ -109,11 +109,13 @@
+ 
+ inline void fastcall sched_fork(task_t *p)
+ {
++	BUG_ON(!current_scheduler->sched_fork_fn);
+ 	current_scheduler->sched_fork_fn(p);
+ }
+ 
+ inline void fastcall wake_up_new_task(task_t * p, unsigned long clone_flags)
+ {
++	BUG_ON(!current_scheduler->wake_up_new_task_fn);
+ 	current_scheduler->wake_up_new_task_fn(p, clone_flags);
+ }
+ 
+@@ -131,6 +133,7 @@
+ 
+ inline asmlinkage void schedule_tail(task_t *prev)
+ {
++	BUG_ON(!current_scheduler->schedule_tail_fn);
+ 	current_scheduler->schedule_tail_fn(prev);
+ }
+ 
+@@ -172,6 +175,7 @@
+ 
+ inline void scheduler_tick(int user_ticks, int sys_ticks)
+ {
++	BUG_ON(!current_scheduler->scheduler_tick_fn);
+ 	current_scheduler->scheduler_tick_fn(user_ticks, sys_ticks);
+ }
+ 
+@@ -325,6 +329,7 @@
+ 
+ inline asmlinkage void __sched schedule(void)
+ {
++	BUG_ON(!current_scheduler->schedule_fn);
+ 	current_scheduler->schedule_fn();
+ }
+ 
+@@ -636,11 +641,13 @@
+ 
+ void __init sched_init(void)
+ {
++	BUG_ON(!current_scheduler->sched_init_fn);
+ 	current_scheduler->sched_init_fn();
+ }
+ 
+ void __init sched_init_smp(void)
+ {
++	BUG_ON(!current_scheduler->sched_init_fn);
+ 	current_scheduler->sched_init_smp_fn();
+ }
+ 

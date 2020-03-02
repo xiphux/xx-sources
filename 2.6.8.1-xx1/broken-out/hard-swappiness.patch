@@ -1,0 +1,48 @@
+Index: linux-2.6.8-rc2-mm2/mm/vmscan.c
+===================================================================
+--- linux-2.6.8-rc2-mm2.orig/mm/vmscan.c	2004-08-03 01:29:29.203061023 +1000
++++ linux-2.6.8-rc2-mm2/mm/vmscan.c	2004-08-03 01:34:48.375891541 +1000
+@@ -119,7 +119,7 @@
+ /*
+  * From 0 .. 100.  Higher means more swappy.
+  */
+-int vm_swappiness = 60;
++int vm_swappiness = 33;
+ static long total_memory;
+ 
+ static LIST_HEAD(shrinker_list);
+@@ -657,7 +657,6 @@
+ 	struct pagevec pvec;
+ 	int reclaim_mapped = 0;
+ 	long mapped_ratio;
+-	long distress;
+ 	long swap_tendency;
+ 
+ 	lru_add_drain();
+@@ -689,12 +688,6 @@
+ 	spin_unlock_irq(&zone->lru_lock);
+ 
+ 	/*
+-	 * `distress' is a measure of how much trouble we're having reclaiming
+-	 * pages.  0 -> no problems.  100 -> great trouble.
+-	 */
+-	distress = 100 >> zone->prev_priority;
+-
+-	/*
+ 	 * The point of this algorithm is to decide when to start reclaiming
+ 	 * mapped memory instead of just pagecache.  Work out how much memory
+ 	 * is mapped.
+@@ -705,12 +698,9 @@
+ 	 * Now decide how much we really want to unmap some pages.  The mapped
+ 	 * ratio is downgraded - just because there's a lot of mapped memory
+ 	 * doesn't necessarily mean that page reclaim isn't succeeding.
+-	 *
+-	 * The distress ratio is important - we don't want to start going oom.
+-	 *
+ 	 * A 100% value of vm_swappiness overrides this algorithm altogether.
+ 	 */
+-	swap_tendency = mapped_ratio / 2 + distress + vm_swappiness;
++	swap_tendency = mapped_ratio + vm_swappiness;
+ 
+ 	/*
+ 	 * Now use this metric to decide whether to start moving mapped memory

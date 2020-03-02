@@ -1,0 +1,54 @@
+---
+
+ linux-2.6.7-xx4-xiphux/kernel/sched.c |   22 ++++++++++++++--------
+ 1 files changed, 14 insertions(+), 8 deletions(-)
+
+diff -puN kernel/sched.c~staircase-7.4-to-7.6 kernel/sched.c
+--- linux-2.6.7-xx4/kernel/sched.c~staircase-7.4-to-7.6	2004-06-28 22:05:06.636667616 -0400
++++ linux-2.6.7-xx4-xiphux/kernel/sched.c	2004-06-28 22:05:34.866376048 -0400
+@@ -562,8 +562,8 @@ static void enqueue_task(struct task_str
+ 		)
+ {
+ #ifdef CONFIG_STAIRCASE
+-	if (rq->curr->flags & PF_PREEMPTED) {
+-		rq->curr->flags &= ~PF_PREEMPTED;
++	if (p->flags & PF_PREEMPTED) {
++		p->flags &= ~PF_PREEMPTED;
+ 		list_add(&p->run_list, rq->queue + p->prio);
+ 	} else
+ 		list_add_tail(&p->run_list, rq->queue + p->prio);
+@@ -786,20 +786,26 @@ static int effective_prio(task_t *p)
+ 	return prio;
+ }
+ 
++/*
++ * recalc_task_prio - this checks for tasks that run ultra short timeslices
++ * or have just forked a thread/process and make them continue their old
++ * slice instead of starting a new one at high priority.
++ */
+ static void recalc_task_prio(task_t *p, unsigned long long now)
+ {
+ 	unsigned long sleep_time = now - p->timestamp;
+-	unsigned long run_time = NS_TO_JIFFIES(p->runtime);
+-	unsigned long total_run = NS_TO_JIFFIES(p->totalrun) + run_time;
+-	if (((!run_time && NS_TO_JIFFIES(p->runtime + sleep_time) <
+-		rr_interval(p)) || p->flags & PF_FORKED) && !batch_task(p)) {
++	unsigned long ns_totalrun = p->totalrun + p->runtime;
++	unsigned long total_run = NS_TO_JIFFIES(ns_totalrun);
++	if ((p->flags & PF_FORKED || (!(NS_TO_JIFFIES(p->runtime)) &&
++		NS_TO_JIFFIES(p->runtime + sleep_time) < RR_INTERVAL)) &&
++			!batch_task(p)) {
+ 			p->flags &= ~PF_FORKED;
+ 			if (p->slice - total_run < 1) {
+ 				p->totalrun = 0;
+ 				dec_burst(p);
+ 			} else {
+-				p->totalrun += p->runtime;
+-				p->slice -= NS_TO_JIFFIES(p->totalrun);
++				p->totalrun = ns_totalrun;
++				p->slice -= total_run;
+ 			}
+ 	} else {
+ 		inc_burst(p);
+
+_

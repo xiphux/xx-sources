@@ -1,0 +1,335 @@
+---
+
+ linux-2.6.7-rc3-xx5-xiphux/fs/proc/array.c       |   23 +++++
+ linux-2.6.7-rc3-xx5-xiphux/fs/proc/base.c        |   15 +++
+ linux-2.6.7-rc3-xx5-xiphux/include/linux/sched.h |   26 ++++++
+ linux-2.6.7-rc3-xx5-xiphux/kernel/sched.c        |   96 +++++++++++++++++++++--
+ 4 files changed, 152 insertions(+), 8 deletions(-)
+
+diff -puN fs/proc/array.c~spa-tstats-v0.1 fs/proc/array.c
+--- linux-2.6.7-rc3-xx5/fs/proc/array.c~spa-tstats-v0.1	2004-06-15 22:39:38.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/fs/proc/array.c	2004-06-15 22:42:47.624804048 -0400
+@@ -431,3 +431,26 @@ int proc_pid_statm(struct task_struct *t
+ 	return sprintf(buffer,"%d %d %d %d %d %d %d\n",
+ 		       size, resident, shared, text, lib, data, 0);
+ }
++#ifdef CONFIG_SPA
++int task_cpu_sched_stats(struct task_struct *p, char *buffer)
++{
++	struct task_sched_stats stats;
++	unsigned long nvcsw, nivcsw, cnvcsw, cnivcsw; /* context switch counts */
++
++	read_lock(&tasklist_lock);
++	get_task_sched_stats(p, &stats);
++	nvcsw = p->nvcsw;
++	nivcsw = p-> nivcsw;
++	cnvcsw = p->cnvcsw;
++	cnivcsw = p->cnivcsw;
++	read_unlock(&tasklist_lock);
++	return sprintf(buffer,
++		"%llu (%llu) %llu (%llu) %llu (%llu) %llu %lu %lu %lu %lu @ %llu\n",
++		stats.total_sleep, stats.avg_sleep_per_cycle,
++		stats.total_cpu, stats.avg_cpu_per_cycle,
++		stats.total_delay, stats.avg_delay_per_cycle,
++		stats.cycle_count,
++		nvcsw, nivcsw, cnvcsw, cnivcsw,
++		stats.timestamp);
++}
++#endif
+diff -puN fs/proc/base.c~spa-tstats-v0.1 fs/proc/base.c
+--- linux-2.6.7-rc3-xx5/fs/proc/base.c~spa-tstats-v0.1	2004-06-15 22:39:47.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/fs/proc/base.c	2004-06-15 22:49:22.061840504 -0400
+@@ -83,6 +83,9 @@ enum pid_directory_inos {
+ 	PROC_TID_MAPS,
+ 	PROC_TID_MOUNTS,
+ 	PROC_TID_WCHAN,
++#ifdef CONFIG_SPA
++	PROC_TID_CPU_STATS,
++#endif
+ #ifdef CONFIG_SECURITY
+ 	PROC_TID_ATTR,
+ 	PROC_TID_ATTR_CURRENT,
+@@ -145,6 +148,9 @@ static struct pid_entry tid_base_stuff[]
+ #ifdef CONFIG_KALLSYMS
+ 	E(PROC_TID_WCHAN,      "wchan",   S_IFREG|S_IRUGO),
+ #endif
++#ifdef CONFIG_SPA
++	E(PROC_TID_CPU_STATS,  "cpustats",   S_IFREG|S_IRUGO),
++#endif
+ 	{0,0,NULL,0}
+ };
+ 
+@@ -181,6 +187,9 @@ int proc_pid_stat(struct task_struct*,ch
+ int proc_pid_status(struct task_struct*,char*);
+ int proc_pid_statm(struct task_struct*,char*);
+ int proc_pid_cpu(struct task_struct*,char*);
++#ifdef CONFIG_SPA
++extern int task_cpu_sched_stats(struct task_struct *p, char *buffer);
++#endif
+ 
+ static int proc_fd_link(struct inode *inode, struct dentry **dentry, struct vfsmount **mnt)
+ {
+@@ -1375,6 +1384,12 @@ static struct dentry *proc_pident_lookup
+ 			ei->op.proc_read = proc_pid_wchan;
+ 			break;
+ #endif
++#ifdef CONFIG_SPA
++		case PROC_TID_CPU_STATS:
++			inode->i_fop = &proc_info_file_operations;
++			ei->op.proc_read = task_cpu_sched_stats;
++			break;
++#endif
+ 		default:
+ 			printk("procfs: impossible type (%d)",p->type);
+ 			iput(inode);
+diff -puN include/linux/sched.h~spa-tstats-v0.1 include/linux/sched.h
+--- linux-2.6.7-rc3-xx5/include/linux/sched.h~spa-tstats-v0.1	2004-06-15 22:39:53.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/include/linux/sched.h	2004-06-15 22:50:59.815979616 -0400
+@@ -426,6 +426,7 @@ struct task_struct {
+ 	u64 avg_delay_per_cycle;
+ 	u64 avg_cpu_per_cycle;
+ 	unsigned int interactive_bonus, throughput_bonus, sub_cycle_count;
++	u64 cycle_count, total_sleep, total_cpu, total_delay;
+ #else
+ 	unsigned long sleep_avg;
+ 	long interactive_credit;
+@@ -739,6 +740,31 @@ static inline int set_cpus_allowed(task_
+ 
+ extern unsigned long long sched_clock(void);
+ 
++#ifdef CONFIG_SPA
++/*
++ * Scheduling statistics for a task/thread
++ */
++struct task_sched_stats {
++	u64 timestamp;
++	u64 avg_sleep_per_cycle;
++	u64 avg_delay_per_cycle;
++	u64 avg_cpu_per_cycle;
++	u64 cycle_count;
++	u64 total_sleep;
++	u64 total_cpu;
++	u64 total_delay;
++};
++
++/*
++ * Get "up to date" scheduling statistics for the given task
++ * This function should be used if reliable scheduling statistitcs are required
++ * outside the scheduler itself as the relevant fields in the task structure
++ * are not "up to date" NB the possible difference between those in the task
++ * structure and the correct values could be quite large for sleeping tasks.
++ */
++extern void get_task_sched_stats(const struct task_struct *tsk, struct task_sched_stats *stats);
++#endif
++
+ #ifdef CONFIG_SMP
+ extern void sched_balance_exec(void);
+ #else
+diff -puN kernel/sched.c~spa-tstats-v0.1 kernel/sched.c
+--- linux-2.6.7-rc3-xx5/kernel/sched.c~spa-tstats-v0.1	2004-06-15 22:40:00.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/kernel/sched.c	2004-06-15 23:02:52.934569112 -0400
+@@ -720,9 +720,13 @@ static inline void __activate_idle_task(
+  */
+ static void update_stats_for_cycle(task_t *p, const runqueue_t *rq)
+ {
++	u64 delta;
++
+ 	apply_sched_avg_decay(&p->avg_delay_per_cycle);
+ 	apply_sched_avg_decay(&p->avg_cpu_per_cycle);
+-	p->avg_sleep_per_cycle += (rq->timestamp_last_tick - p->sched_timestamp);
++	delta = (rq->timestamp_last_tick - p->sched_timestamp);
++	p->avg_sleep_per_cycle += delta;
++	p->total_sleep += delta;
+ 	/*
+ 	 * Do this second so that averages for all measures are for
+ 	 * the current cycle
+@@ -730,6 +734,7 @@ static void update_stats_for_cycle(task_
+ 	apply_sched_avg_decay(&p->avg_sleep_per_cycle);
+ 	p->sched_timestamp = rq->timestamp_last_tick;
+ 	p->sub_cycle_count = 0;
++	p->cycle_count++;
+ }
+ 
+ #if BITS_PER_LONG < 64
+@@ -1424,6 +1429,9 @@ void fastcall sched_fork(task_t *p)
+ 	p->avg_sleep_per_cycle = 0;
+ 	p->avg_delay_per_cycle = 0;
+ 	p->avg_cpu_per_cycle = 0;
++	p->total_sleep = 0;
++	p->total_delay = 0;
++	p->total_cpu = 0;
+ 	p->interactive_bonus = 0;
+ 	p->throughput_bonus = 0;
+ 	p->sub_cycle_count = 0;
+@@ -1986,13 +1994,16 @@ void pull_task(runqueue_t *src_rq,
+ 	       )
+ {
+ #ifdef CONFIG_SPA
++	u64 delta;
+ 	dequeue_task(p);
+ #else
+ 	dequeue_task(p, src_array);
+ #endif
+ 	src_rq->nr_running--;
+ #ifdef CONFIG_SPA
+-	p->avg_delay_per_cycle += (src_rq->timestamp_last_tick - p->sched_timestamp);
++	delta = (src_rq->timestamp_last_tick - p->sched_timestamp);
++	p->avg_delay_per_cycle += delta;
++	p->total_delay += delta;
+ #endif
+ 	set_task_cpu(p, this_cpu);
+ 	this_rq->nr_running++;
+@@ -2797,6 +2808,7 @@ void scheduler_tick(int user_ticks, int 
+ 	}
+ 	if (!--p->time_slice) {
+ #ifdef CONFIG_SPA
++		u64 delta;
+ 		dequeue_task(p);
+ #else
+ 		dequeue_task(p, rq->active);
+@@ -2807,7 +2819,9 @@ void scheduler_tick(int user_ticks, int 
+ #endif
+ 		p->time_slice = task_timeslice(p);
+ #ifdef CONFIG_SPA
+-		p->avg_cpu_per_cycle += (rq->timestamp_last_tick - p->sched_timestamp);
++		delta = (rq->timestamp_last_tick - p->sched_timestamp);
++		p->avg_cpu_per_cycle += delta;
++		p->total_cpu += delta;
+ 		p->sched_timestamp = rq->timestamp_last_tick;
+ 		recalc_throughput_bonus(p, rq->nr_running);
+ 		reassess_cpu_boundness(p);
+@@ -2991,7 +3005,9 @@ asmlinkage void __sched schedule(void)
+ 	unsigned long run_time;
+ #endif
+ 	int cpu;
+-#ifndef CONFIG_SPA
++#ifdef CONFIG_SPA
++	u64 delta;
++#else
+ 	int idx;
+ #endif
+ 
+@@ -3121,7 +3137,9 @@ switch_tasks:
+ 	/*
+ 	 * Update estimate of average CPU time used per cycle
+ 	 */
+-	prev->avg_cpu_per_cycle += (rq->timestamp_last_tick - prev->sched_timestamp);
++	delta = (rq->timestamp_last_tick - prev->sched_timestamp);
++	prev->avg_cpu_per_cycle += delta;
++	prev->total_cpu += delta;
+ 	prev->timestamp = prev->sched_timestamp = rq->timestamp_last_tick;
+ #else
+ 	prev->sleep_avg -= run_time;
+@@ -3138,7 +3156,9 @@ switch_tasks:
+ 		/*
+ 		 * Update estimate of average delay on run queue per cycle
+ 		 */
+-		next->avg_delay_per_cycle += (rq->timestamp_last_tick - next->sched_timestamp);
++		delta = (rq->timestamp_last_tick - next->sched_timestamp);
++		next->avg_delay_per_cycle += delta;
++		next->total_delay += delta;
+ 		next->timestamp = next->sched_timestamp = rq->timestamp_last_tick;
+ #else
+ 		next->timestamp = now;
+@@ -3915,6 +3935,57 @@ out_unlock:
+ 	return real_len;
+ }
+ 
++#ifdef CONFIG_SPA
++void get_task_sched_stats(const struct task_struct *tsk, struct task_sched_stats *stats)
++{
++	int on_runq = 0;
++	int on_cpu = 0;
++	u64 timestamp;
++	runqueue_t *rq = this_rq_lock();
++
++	stats->timestamp = rq->timestamp_last_tick;
++	stats->avg_sleep_per_cycle = tsk->avg_sleep_per_cycle;
++	stats->avg_delay_per_cycle = tsk->avg_delay_per_cycle;
++	stats->avg_cpu_per_cycle = tsk->avg_cpu_per_cycle;
++	stats->cycle_count = tsk->cycle_count;
++	stats->total_sleep = tsk->total_sleep;
++	stats->total_cpu = tsk->total_cpu;
++	stats->total_delay = tsk->total_delay;
++	timestamp = tsk->sched_timestamp;
++	if ((on_runq = task_queued(tsk)))
++		on_cpu = rq->idle == tsk;
++
++	rq_unlock(rq);
++
++	/*
++	 * Update values to the previous tick (only)
++	 */
++	if (stats->timestamp > timestamp) {
++		u64 delta = stats->timestamp - timestamp;
++
++		if (on_cpu) {
++			stats->avg_cpu_per_cycle += delta;
++			stats->total_cpu += delta;
++		} else if (on_runq) {
++			stats->avg_delay_per_cycle += delta;
++			stats->total_delay += delta;
++		} else {
++			stats->avg_sleep_per_cycle += delta;
++			stats->total_sleep += delta;
++		}
++	}
++	/*
++	 * Convert internal "real number" representation of average times
++	 * to integer values in nanoseconds
++	 */
++	stats->avg_sleep_per_cycle = SCHED_AVG_RND(stats->avg_sleep_per_cycle);
++	stats->avg_cpu_per_cycle = SCHED_AVG_RND(stats->avg_cpu_per_cycle);
++	stats->avg_delay_per_cycle = SCHED_AVG_RND(stats->avg_delay_per_cycle);
++}
++
++EXPORT_SYMBOL(get_task_sched_stats);
++#endif
++
+ /**
+  * sys_sched_yield - yield the current processor to other threads.
+  *
+@@ -4358,6 +4429,9 @@ static void __migrate_task(struct task_s
+ 	if (p->array)
+ #endif
+ 	{
++#ifdef CONFIG_SPA
++		u64 delta;
++#endif
+ 		/*
+ 		 * Sync timestamp with rq_dest's before activating.
+ 		 * The same thing could be achieved by doing this step
+@@ -4369,7 +4443,9 @@ static void __migrate_task(struct task_s
+ 		deactivate_task(p, rq_src);
+ #ifdef CONFIG_SPA
+ 		set_task_cpu(p, dest_cpu);
+-		p->avg_delay_per_cycle += (rq_dest->timestamp_last_tick - p->sched_timestamp);
++		delta = (rq_dest->timestamp_last_tick - p->sched_timestamp);
++		p->avg_delay_per_cycle += delta;
++		p->total_delay += delta;
+ 		if (PRIO_PREEMPTS_CURR(activate_task(p, rq_dest, 0), rq_dest))
+ #else
+ 		activate_task(p, rq_dest, 0);
+@@ -4379,8 +4455,11 @@ static void __migrate_task(struct task_s
+ 	}
+ #ifdef CONFIG_SPA
+ 	else {
++		u64 delta;
+ 		set_task_cpu(p, dest_cpu);
+-		p->avg_sleep_per_cycle += (rq_dest->timestamp_last_tick - p->sched_timestamp);
++		delta = (rq_dest->timestamp_last_tick - p->sched_timestamp);
++		p->avg_sleep_per_cycle += delta;
++		p->total_sleep += delta;
+ 	}
+ 	p->sched_timestamp = rq_dest->timestamp_last_tick;
+ #endif
+@@ -4956,6 +5035,7 @@ void __init sched_init(void)
+ 		for (j = 0; j <= IDLE_PRIO; j++) {
+ 			rq->queues[j].prio = j;
+ 			INIT_LIST_HEAD(&rq->queues[j].queue);
++			__clear_bit(j, rq->bitmap);
+ 		}
+ 		memset(rq->bitmap, 0, BITS_TO_LONGS(IDLE_PRIO+1)*sizeof(long));
+ 		// delimiter for bitsearch
+
+_

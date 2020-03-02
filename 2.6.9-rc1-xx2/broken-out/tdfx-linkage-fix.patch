@@ -1,0 +1,33 @@
+
+From: Paolo Ornati <ornati@fastwebnet.it>
+
+drivers/built-in.o(.data+0x40a68): undefined reference to `cfb_fillrect'
+drivers/built-in.o(.data+0x40a6c): undefined reference to `cfb_copyarea'
+
+3dfx framebuffer driver depends on "cfb_fillrect.c" and "cfb_copyarea.c" if
+it's compiled without CONFIG_FB_3DFX_ACCEL turned on...
+
+Signed-off-by: Paolo Ornati <ornati@fastwebnet.it>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/video/Makefile |    6 +++++-
+ 1 files changed, 5 insertions(+), 1 deletion(-)
+
+diff -puN drivers/video/Makefile~tdfx-linkage-fix drivers/video/Makefile
+--- 25/drivers/video/Makefile~tdfx-linkage-fix	Thu Aug 26 16:28:57 2004
++++ 25-akpm/drivers/video/Makefile	Thu Aug 26 16:28:57 2004
+@@ -34,7 +34,11 @@ obj-$(CONFIG_FB_CYBER)            += cyb
+ obj-$(CONFIG_FB_CYBER2000)        += cyber2000fb.o cfbfillrect.o cfbcopyarea.o cfbimgblt.o
+ obj-$(CONFIG_FB_GBE)              += gbefb.o cfbfillrect.o cfbcopyarea.o cfbimgblt.o
+ obj-$(CONFIG_FB_SGIVW)            += sgivwfb.o cfbfillrect.o cfbcopyarea.o cfbimgblt.o
+-obj-$(CONFIG_FB_3DFX)             += tdfxfb.o cfbimgblt.o
++obj-$(CONFIG_FB_3DFX)             += tdfxfb.o tdfxfb_lib.o
++tdfxfb_lib-y                      := cfbimgblt.o
++ifneq ($(CONFIG_FB_3DFX_ACCEL),y)
++tdfxfb_lib-y                      += cfbfillrect.o cfbcopyarea.o
++endif
+ obj-$(CONFIG_FB_MAC)              += macfb.o macmodes.o cfbfillrect.o cfbcopyarea.o cfbimgblt.o 
+ obj-$(CONFIG_FB_HP300)            += hpfb.o cfbfillrect.o cfbimgblt.o
+ obj-$(CONFIG_FB_OF)               += offb.o cfbfillrect.o cfbimgblt.o cfbcopyarea.o
+_

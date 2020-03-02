@@ -1,0 +1,119 @@
+
+From: Andrey Panin <pazke@donpac.ru>
+
+This patch ports sonypi driver to new DMI probing API and removes
+is_unsafe_smbus global variable.
+
+Signed-off-by: Andrey Panin <pazke@donpac.ru>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/dmi_scan.c    |   25 -------------------------
+ 25-akpm/drivers/i2c/busses/i2c-piix4.c |   24 +++++++++++-------------
+ 2 files changed, 11 insertions(+), 38 deletions(-)
+
+diff -puN arch/i386/kernel/dmi_scan.c~267-mm1-port-piix4-smbus-driver-to-new-dmi-probing arch/i386/kernel/dmi_scan.c
+--- 25/arch/i386/kernel/dmi_scan.c~267-mm1-port-piix4-smbus-driver-to-new-dmi-probing	Wed Jun 23 14:17:18 2004
++++ 25-akpm/arch/i386/kernel/dmi_scan.c	Wed Jun 23 14:17:19 2004
+@@ -19,7 +19,6 @@ EXPORT_SYMBOL(dmi_broken);
+ unsigned int i8042_dmi_noloop = 0;
+ EXPORT_SYMBOL(i8042_dmi_noloop);
+ 
+-int is_unsafe_smbus;
+ int es7000_plat = 0;
+ 
+ struct dmi_header
+@@ -302,19 +301,6 @@ static int __init local_apic_kills_bios(
+ 	return 0;
+ }
+ 
+-/* 
+- * Don't access SMBus on IBM systems which get corrupted eeproms 
+- */
+-
+-static __init int disable_smbus(struct dmi_blacklist *d)
+-{   
+-	if (is_unsafe_smbus == 0) {
+-		is_unsafe_smbus = 1;
+-		printk(KERN_INFO "%s machine detected. Disabling SMBus accesses.\n", d->ident);
+-	}
+-	return 0;
+-}
+-
+ /*
+  *  Check for clue free BIOS implementations who use
+  *  the following QA technique
+@@ -776,15 +762,6 @@ static __initdata struct dmi_blacklist d
+ 			} },
+ 
+ 	/*
+-	 *	SMBus / sensors settings
+-	 */
+-	 
+-	{ disable_smbus, "IBM", {
+-			MATCH(DMI_SYS_VENDOR, "IBM"),
+-			NO_MATCH, NO_MATCH, NO_MATCH
+-			} },
+-
+-	/*
+ 	 * Some Athlon laptops have really fucked PST tables.
+ 	 * A BIOS update is all that can save them.
+ 	 * Mention this, and disable cpufreq.
+@@ -1078,8 +1055,6 @@ void __init dmi_scan_machine(void)
+ 		printk(KERN_INFO "DMI not present.\n");
+ }
+ 
+-EXPORT_SYMBOL(is_unsafe_smbus);
+-
+ 
+ /**
+  *	dmi_check_system - check system DMI data
+diff -puN drivers/i2c/busses/i2c-piix4.c~267-mm1-port-piix4-smbus-driver-to-new-dmi-probing drivers/i2c/busses/i2c-piix4.c
+--- 25/drivers/i2c/busses/i2c-piix4.c~267-mm1-port-piix4-smbus-driver-to-new-dmi-probing	Wed Jun 23 14:17:18 2004
++++ 25-akpm/drivers/i2c/busses/i2c-piix4.c	Wed Jun 23 14:18:22 2004
+@@ -40,6 +40,7 @@
+ #include <linux/i2c.h>
+ #include <linux/init.h>
+ #include <linux/apm_bios.h>
++#include <linux/dmi.h>
+ #include <asm/io.h>
+ 
+ 
+@@ -114,18 +115,13 @@ static int piix4_transaction(void);
+ static unsigned short piix4_smba = 0;
+ static struct i2c_adapter piix4_adapter;
+ 
+-/*
+- * Get DMI information.
+- */
+-static int __devinit ibm_dmi_probe(void)
+-{
+-#ifdef CONFIG_X86
+-	extern int is_unsafe_smbus;
+-	return is_unsafe_smbus;
+-#else
+-	return 0;
+-#endif
+-}
++static struct dmi_system_id __devinitdata piix4_dmi_table[] = {
++	{
++		.ident = "IBM",
++		.matches = { DMI_MATCH(DMI_SYS_VENDOR, "IBM"), },
++	},
++	{ },
++};
+ 
+ static int __devinit piix4_setup(struct pci_dev *PIIX4_dev,
+ 				const struct pci_device_id *id)
+@@ -138,7 +134,9 @@ static int __devinit piix4_setup(struct 
+ 
+ 	dev_info(&PIIX4_dev->dev, "Found %s device\n", pci_name(PIIX4_dev));
+ 
+-	if(ibm_dmi_probe() && PIIX4_dev->vendor == PCI_VENDOR_ID_INTEL) {
++	/* Don't access SMBus on IBM systems which get corrupted eeproms */
++	if (dmi_check_system(piix4_dmi_table) &&
++			PIIX4_dev->vendor == PCI_VENDOR_ID_INTEL) {
+ 		dev_err(&PIIX4_dev->dev, "IBM Laptop detected; this module "
+ 			"may corrupt your serial eeprom! Refusing to load "
+ 			"module!\n");
+_

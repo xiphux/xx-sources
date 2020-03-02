@@ -1,0 +1,133 @@
+
+From: Mike Kravetz <kravetz@us.ibm.com>
+
+Races have been observed between excec-time overwriting of task->comm and
+/proc accesses to the same data.  This causes environment string
+information to appear in /proc.
+
+Fix that up by taking task_lock() around updates to and accesses to
+task->comm.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/exec.c             |   23 ++++++++++++++++++++---
+ 25-akpm/fs/proc/array.c       |   11 ++++++++---
+ 25-akpm/include/linux/sched.h |    7 +++++--
+ 3 files changed, 33 insertions(+), 8 deletions(-)
+
+diff -puN fs/exec.c~procfs-taskname-locking fs/exec.c
+--- 25/fs/exec.c~procfs-taskname-locking	Mon Aug  9 14:36:17 2004
++++ 25-akpm/fs/exec.c	Mon Aug  9 14:36:17 2004
+@@ -786,11 +786,27 @@ static inline void flush_old_files(struc
+ 	spin_unlock(&files->file_lock);
+ }
+ 
++void get_task_comm(char *buf, struct task_struct *tsk)
++{
++	/* buf must be at least sizeof(tsk->comm) in size */
++	task_lock(tsk);
++	memcpy(buf, tsk->comm, sizeof(tsk->comm));
++	task_unlock(tsk);
++}
++
++void set_task_comm(struct task_struct *tsk, char *buf)
++{
++	task_lock(tsk);
++	strlcpy(tsk->comm, buf, sizeof(tsk->comm));
++	task_unlock(tsk);
++}
++
+ int flush_old_exec(struct linux_binprm * bprm)
+ {
+ 	char * name;
+ 	int i, ch, retval;
+ 	struct files_struct *files;
++	char tcomm[sizeof(current->comm)];
+ 
+ 	/*
+ 	 * Make sure we have a private signal table and that
+@@ -831,10 +847,11 @@ int flush_old_exec(struct linux_binprm *
+ 		if (ch == '/')
+ 			i = 0;
+ 		else
+-			if (i < 15)
+-				current->comm[i++] = ch;
++			if (i < (sizeof(tcomm) - 1))
++				tcomm[i++] = ch;
+ 	}
+-	current->comm[i] = '\0';
++	tcomm[i] = '\0';
++	set_task_comm(current, tcomm);
+ 
+ 	flush_thread();
+ 
+diff -puN fs/proc/array.c~procfs-taskname-locking fs/proc/array.c
+--- 25/fs/proc/array.c~procfs-taskname-locking	Mon Aug  9 14:36:17 2004
++++ 25-akpm/fs/proc/array.c	Mon Aug  9 14:36:17 2004
+@@ -88,10 +88,13 @@ static inline char * task_name(struct ta
+ {
+ 	int i;
+ 	char * name;
++	char tcomm[sizeof(p->comm)];
++
++	get_task_comm(tcomm, p);
+ 
+ 	ADDBUF(buf, "Name:\t");
+-	name = p->comm;
+-	i = sizeof(p->comm);
++	name = tcomm;
++	i = sizeof(tcomm);
+ 	do {
+ 		unsigned char c = *name;
+ 		name++;
+@@ -309,6 +312,7 @@ int proc_pid_stat(struct task_struct *ta
+ 	int num_threads = 0;
+ 	struct mm_struct *mm;
+ 	unsigned long long start_time;
++	char tcomm[sizeof(task->comm)];
+ 
+ 	state = *get_task_state(task);
+ 	vsize = eip = esp = 0;
+@@ -325,6 +329,7 @@ int proc_pid_stat(struct task_struct *ta
+ 		up_read(&mm->mmap_sem);
+ 	}
+ 
++	get_task_comm(tcomm, task);
+ 	wchan = get_wchan(task);
+ 
+ 	sigemptyset(&sigign);
+@@ -362,7 +367,7 @@ int proc_pid_stat(struct task_struct *ta
+ %lu %lu %lu %lu %lu %ld %ld %ld %ld %d %ld %llu %lu %ld %lu %lu %lu %lu %lu \
+ %lu %lu %lu %lu %lu %lu %lu %lu %d %d %lu %lu\n",
+ 		task->pid,
+-		task->comm,
++		tcomm,
+ 		state,
+ 		ppid,
+ 		pgid,
+diff -puN include/linux/sched.h~procfs-taskname-locking include/linux/sched.h
+--- 25/include/linux/sched.h~procfs-taskname-locking	Mon Aug  9 14:36:17 2004
++++ 25-akpm/include/linux/sched.h	Mon Aug  9 14:37:29 2004
+@@ -887,6 +887,9 @@ extern int do_execve(char *, char __user
+ extern long do_fork(unsigned long, unsigned long, struct pt_regs *, unsigned long, int __user *, int __user *);
+ extern struct task_struct * copy_process(unsigned long, unsigned long, struct pt_regs *, unsigned long, int __user *, int __user *);
+ 
++extern void set_task_comm(struct task_struct *tsk, char *from);
++extern void get_task_comm(char *to, struct task_struct *tsk);
++
+ #ifdef CONFIG_SMP
+ extern void wait_task_inactive(task_t * p);
+ #else
+@@ -941,8 +944,8 @@ static inline int thread_group_empty(tas
+ extern void unhash_process(struct task_struct *p);
+ 
+ /*
+- * Protects ->fs, ->files, ->mm, ->ptrace, ->group_info and synchronises with
+- * wait4().
++ * Protects ->fs, ->files, ->mm, ->ptrace, ->group_info, ->comm and
++ * synchronises with wait4().
+  *
+  * Nests both inside and outside of read_lock(&tasklist_lock).
+  * It must not be nested with write_lock_irq(&tasklist_lock),
+_

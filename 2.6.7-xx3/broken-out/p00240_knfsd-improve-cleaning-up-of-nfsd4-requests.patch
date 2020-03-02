@@ -1,0 +1,166 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+Currently nfs4_arg->to_free keeps a list of void ptrs on which kfree is called
+when freeing the nfs4_arg.  This allows us to do cleanup on e.g.  xdr decode
+failures.  To allow more complicated objects to be freed (in particular,
+acls), we add a "void (*release)(void *)" to allow us to request something
+other than kfree be called when freeing.
+
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/nfsd/nfs4proc.c        |   15 --------
+ 25-akpm/fs/nfsd/nfs4xdr.c         |   68 ++++++++++++++++++++++++--------------
+ 25-akpm/include/linux/nfsd/xdr4.h |    2 +
+ 3 files changed, 46 insertions(+), 39 deletions(-)
+
+diff -puN fs/nfsd/nfs4proc.c~knfsd-improve-cleaning-up-of-nfsd4-requests fs/nfsd/nfs4proc.c
+--- 25/fs/nfsd/nfs4proc.c~knfsd-improve-cleaning-up-of-nfsd4-requests	2004-06-23 22:12:18.607838192 -0700
++++ 25-akpm/fs/nfsd/nfs4proc.c	2004-06-23 22:12:18.614837128 -0700
+@@ -983,20 +983,7 @@ encode_op:
+ 	}
+ 
+ out:
+-	if (args->ops != args->iops) {
+-		kfree(args->ops);
+-		args->ops = args->iops;
+-	}
+-	if (args->tmpp) {
+-		kfree(args->tmpp);
+-		args->tmpp = NULL;
+-	}
+-	while (args->to_free) {
+-		struct tmpbuf *tb = args->to_free;
+-		args->to_free = tb->next;
+-		kfree(tb->buf);
+-		kfree(tb);
+-	}
++	nfsd4_release_compoundargs(args);
+ 	if (current_fh)
+ 		fh_put(current_fh);
+ 	kfree(current_fh);
+diff -puN fs/nfsd/nfs4xdr.c~knfsd-improve-cleaning-up-of-nfsd4-requests fs/nfsd/nfs4xdr.c
+--- 25/fs/nfsd/nfs4xdr.c~knfsd-improve-cleaning-up-of-nfsd4-requests	2004-06-23 22:12:18.608838040 -0700
++++ 25-akpm/fs/nfsd/nfs4xdr.c	2004-06-23 22:12:18.616836824 -0700
+@@ -287,27 +287,40 @@ u32 *read_buf(struct nfsd4_compoundargs 
+ 	return p;
+ }
+ 
+-char *savemem(struct nfsd4_compoundargs *argp, u32 *p, int nbytes)
++static int
++defer_free(struct nfsd4_compoundargs *argp,
++		void (*release)(const void *), void *p)
+ {
+ 	struct tmpbuf *tb;
++
++	tb = kmalloc(sizeof(*tb), GFP_KERNEL);
++	if (!tb)
++		return -ENOMEM;
++	tb->buf = p;
++	tb->release = release;
++	tb->next = argp->to_free;
++	argp->to_free = tb;
++	return 0;
++}
++
++char *savemem(struct nfsd4_compoundargs *argp, u32 *p, int nbytes)
++{
++	void *new = NULL;
+ 	if (p == argp->tmp) {
+-		p = kmalloc(nbytes, GFP_KERNEL);
+-		if (!p) return NULL;
++		new = kmalloc(nbytes, GFP_KERNEL);
++		if (!new) return NULL;
++		p = new;
+ 		memcpy(p, argp->tmp, nbytes);
+ 	} else {
+ 		if (p != argp->tmpp)
+ 			BUG();
+ 		argp->tmpp = NULL;
+ 	}
+-	tb = kmalloc(sizeof(*tb), GFP_KERNEL);
+-	if (!tb) {
+-		kfree(p);
++	if (defer_free(argp, kfree, p)) {
++		kfree(new);
+ 		return NULL;
+-	}
+-	tb->buf = p;
+-	tb->next = argp->to_free;
+-	argp->to_free = tb;
+-	return (char*)p;
++	} else
++		return (char *)p;
+ }
+ 
+ 
+@@ -2461,6 +2474,24 @@ nfs4svc_encode_voidres(struct svc_rqst *
+         return xdr_ressize_check(rqstp, p);
+ }
+ 
++void nfsd4_release_compoundargs(struct nfsd4_compoundargs *args)
++{
++	if (args->ops != args->iops) {
++		kfree(args->ops);
++		args->ops = args->iops;
++	}
++	if (args->tmpp) {
++		kfree(args->tmpp);
++		args->tmpp = NULL;
++	}
++	while (args->to_free) {
++		struct tmpbuf *tb = args->to_free;
++		args->to_free = tb->next;
++		tb->release(tb->buf);
++		kfree(tb);
++	}
++}
++
+ int
+ nfs4svc_decode_compoundargs(struct svc_rqst *rqstp, u32 *p, struct nfsd4_compoundargs *args)
+ {
+@@ -2477,20 +2508,7 @@ nfs4svc_decode_compoundargs(struct svc_r
+ 
+ 	status = nfsd4_decode_compound(args);
+ 	if (status) {
+-		if (args->ops != args->iops) {
+-			kfree(args->ops);
+-			args->ops = args->iops;
+-		}
+-		if (args->tmpp) {
+-			kfree(args->tmpp);
+-			args->tmpp = NULL;
+-		}
+-		while (args->to_free) {
+-			struct tmpbuf *tb = args->to_free;
+-			args->to_free = tb->next;
+-			kfree(tb->buf);
+-			kfree(tb);
+-		}
++		nfsd4_release_compoundargs(args);
+ 	}
+ 	return !status;
+ }
+diff -puN include/linux/nfsd/xdr4.h~knfsd-improve-cleaning-up-of-nfsd4-requests include/linux/nfsd/xdr4.h
+--- 25/include/linux/nfsd/xdr4.h~knfsd-improve-cleaning-up-of-nfsd4-requests	2004-06-23 22:12:18.610837736 -0700
++++ 25-akpm/include/linux/nfsd/xdr4.h	2004-06-23 22:12:18.617836672 -0700
+@@ -378,6 +378,7 @@ struct nfsd4_compoundargs {
+ 	u32 *				tmpp;
+ 	struct tmpbuf {
+ 		struct tmpbuf *next;
++		void (*release)(const void *);
+ 		void *buf;
+ 	}				*to_free;
+ 
+@@ -449,6 +450,7 @@ extern int nfsd4_locku(struct svc_rqst *
+ extern int
+ nfsd4_release_lockowner(struct svc_rqst *rqstp,
+ 		struct nfsd4_release_lockowner *rlockowner);
++extern void nfsd4_release_compoundargs(struct nfsd4_compoundargs *);
+ #endif
+ 
+ /*
+_

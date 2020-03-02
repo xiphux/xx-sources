@@ -1,0 +1,443 @@
+
+From: James Morris <jmorris@redhat.com>
+
+] This patch updates the devpts xattr handler code to the generic xattr API,
+also adds a GPL notice, author and copyright details.
+
+Signed-off-by: James Morris <jmorris@redhat.com>
+Signed-off-by: Stephen Smalley <sds@epoch.ncsc.mil>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ /dev/null                          |  273 -------------------------------------
+ 25-akpm/fs/devpts/Makefile         |    1 
+ 25-akpm/fs/devpts/inode.c          |   34 ++--
+ 25-akpm/fs/devpts/xattr_security.c |   29 ++-
+ 4 files changed, 39 insertions(+), 298 deletions(-)
+
+diff -puN fs/devpts/inode.c~xattr-consolidation-v3-devpts fs/devpts/inode.c
+--- 25/fs/devpts/inode.c~xattr-consolidation-v3-devpts	2004-09-23 00:08:57.249372736 -0700
++++ 25-akpm/fs/devpts/inode.c	2004-09-23 00:08:57.259371216 -0700
+@@ -18,10 +18,28 @@
+ #include <linux/mount.h>
+ #include <linux/tty.h>
+ #include <linux/devpts_fs.h>
+-#include "xattr.h"
++#include <linux/xattr.h>
+ 
+ #define DEVPTS_SUPER_MAGIC 0x1cd1
+ 
++extern struct xattr_handler devpts_xattr_security_handler;
++
++static struct xattr_handler *devpts_xattr_handlers[] = {
++#ifdef CONFIG_DEVPTS_FS_SECURITY
++	&devpts_xattr_security_handler,
++#endif
++	NULL
++};
++
++struct inode_operations devpts_file_inode_operations = {
++#ifdef CONFIG_DEVPTS_FS_XATTR
++	.setxattr	= generic_setxattr,
++	.getxattr	= generic_getxattr,
++	.listxattr	= generic_listxattr,
++	.removexattr	= generic_removexattr,
++#endif
++};
++
+ static struct vfsmount *devpts_mnt;
+ static struct dentry *devpts_root;
+ 
+@@ -84,6 +102,7 @@ devpts_fill_super(struct super_block *s,
+ 	s->s_blocksize_bits = 10;
+ 	s->s_magic = DEVPTS_SUPER_MAGIC;
+ 	s->s_op = &devpts_sops;
++	s->s_xattr = devpts_xattr_handlers;
+ 
+ 	inode = new_inode(s);
+ 	if (!inode)
+@@ -134,13 +153,6 @@ static struct dentry *get_node(int num)
+ 	return lookup_one_len(s, root, sprintf(s, "%d", num));
+ }
+ 
+-static struct inode_operations devpts_file_inode_operations = {
+-	.setxattr	= devpts_setxattr,
+-	.getxattr	= devpts_getxattr,
+-	.listxattr	= devpts_listxattr,
+-	.removexattr	= devpts_removexattr,
+-};
+-
+ int devpts_pty_new(struct tty_struct *tty)
+ {
+ 	int number = tty->index;
+@@ -209,10 +221,7 @@ void devpts_pty_kill(int number)
+ 
+ static int __init init_devpts_fs(void)
+ {
+-	int err = init_devpts_xattr();
+-	if (err)
+-		return err;
+-	err = register_filesystem(&devpts_fs_type);
++	int err = register_filesystem(&devpts_fs_type);
+ 	if (!err) {
+ 		devpts_mnt = kern_mount(&devpts_fs_type);
+ 		if (IS_ERR(devpts_mnt))
+@@ -225,7 +234,6 @@ static void __exit exit_devpts_fs(void)
+ {
+ 	unregister_filesystem(&devpts_fs_type);
+ 	mntput(devpts_mnt);
+-	exit_devpts_xattr();
+ }
+ 
+ module_init(init_devpts_fs)
+diff -puN fs/devpts/Makefile~xattr-consolidation-v3-devpts fs/devpts/Makefile
+--- 25/fs/devpts/Makefile~xattr-consolidation-v3-devpts	2004-09-23 00:08:57.251372432 -0700
++++ 25-akpm/fs/devpts/Makefile	2004-09-23 00:08:57.259371216 -0700
+@@ -5,5 +5,4 @@
+ obj-$(CONFIG_UNIX98_PTYS)		+= devpts.o
+ 
+ devpts-$(CONFIG_UNIX98_PTYS)		:= inode.o
+-devpts-$(CONFIG_DEVPTS_FS_XATTR)	+= xattr.o 
+ devpts-$(CONFIG_DEVPTS_FS_SECURITY)	+= xattr_security.o
+diff -L fs/devpts/xattr.c -puN fs/devpts/xattr.c~xattr-consolidation-v3-devpts /dev/null
+--- 25/fs/devpts/xattr.c
++++ /dev/null	2003-09-15 06:40:47.000000000 -0700
+@@ -1,214 +0,0 @@
+-/*
+-  File: fs/devpts/xattr.c
+- 
+-  Derived from fs/ext3/xattr.c, changed in the following ways:
+-      drop everything related to persistent storage of EAs
+-      pass dentry rather than inode to internal methods
+-      only presently define a handler for security modules
+-*/
+-
+-#include <linux/init.h>
+-#include <linux/fs.h>
+-#include <linux/slab.h>
+-#include <linux/string.h>
+-#include <asm/semaphore.h>
+-#include "xattr.h"
+-
+-static struct devpts_xattr_handler *devpts_xattr_handlers[DEVPTS_XATTR_INDEX_MAX];
+-static rwlock_t devpts_handler_lock = RW_LOCK_UNLOCKED;
+-
+-int
+-devpts_xattr_register(int name_index, struct devpts_xattr_handler *handler)
+-{
+-	int error = -EINVAL;
+-
+-	if (name_index > 0 && name_index <= DEVPTS_XATTR_INDEX_MAX) {
+-		write_lock(&devpts_handler_lock);
+-		if (!devpts_xattr_handlers[name_index-1]) {
+-			devpts_xattr_handlers[name_index-1] = handler;
+-			error = 0;
+-		}
+-		write_unlock(&devpts_handler_lock);
+-	}
+-	return error;
+-}
+-
+-void
+-devpts_xattr_unregister(int name_index, struct devpts_xattr_handler *handler)
+-{
+-	if (name_index > 0 || name_index <= DEVPTS_XATTR_INDEX_MAX) {
+-		write_lock(&devpts_handler_lock);
+-		devpts_xattr_handlers[name_index-1] = NULL;
+-		write_unlock(&devpts_handler_lock);
+-	}
+-}
+-
+-static inline const char *
+-strcmp_prefix(const char *a, const char *a_prefix)
+-{
+-	while (*a_prefix && *a == *a_prefix) {
+-		a++;
+-		a_prefix++;
+-	}
+-	return *a_prefix ? NULL : a;
+-}
+-
+-/*
+- * Decode the extended attribute name, and translate it into
+- * the name_index and name suffix.
+- */
+-static inline struct devpts_xattr_handler *
+-devpts_xattr_resolve_name(const char **name)
+-{
+-	struct devpts_xattr_handler *handler = NULL;
+-	int i;
+-
+-	if (!*name)
+-		return NULL;
+-	read_lock(&devpts_handler_lock);
+-	for (i=0; i<DEVPTS_XATTR_INDEX_MAX; i++) {
+-		if (devpts_xattr_handlers[i]) {
+-			const char *n = strcmp_prefix(*name,
+-				devpts_xattr_handlers[i]->prefix);
+-			if (n) {
+-				handler = devpts_xattr_handlers[i];
+-				*name = n;
+-				break;
+-			}
+-		}
+-	}
+-	read_unlock(&devpts_handler_lock);
+-	return handler;
+-}
+-
+-static inline struct devpts_xattr_handler *
+-devpts_xattr_handler(int name_index)
+-{
+-	struct devpts_xattr_handler *handler = NULL;
+-	if (name_index > 0 && name_index <= DEVPTS_XATTR_INDEX_MAX) {
+-		read_lock(&devpts_handler_lock);
+-		handler = devpts_xattr_handlers[name_index-1];
+-		read_unlock(&devpts_handler_lock);
+-	}
+-	return handler;
+-}
+-
+-/*
+- * Inode operation getxattr()
+- *
+- * dentry->d_inode->i_sem down
+- */
+-ssize_t
+-devpts_getxattr(struct dentry *dentry, const char *name,
+-	      void *buffer, size_t size)
+-{
+-	struct devpts_xattr_handler *handler;
+-
+-	handler = devpts_xattr_resolve_name(&name);
+-	if (!handler)
+-		return -EOPNOTSUPP;
+-	return handler->get(dentry, name, buffer, size);
+-}
+-
+-/*
+- * Inode operation listxattr()
+- *
+- * dentry->d_inode->i_sem down
+- */
+-ssize_t
+-devpts_listxattr(struct dentry *dentry, char *buffer, size_t buffer_size)
+-{
+-	struct devpts_xattr_handler *handler = NULL;
+-	int i, error = 0;
+-	unsigned int size = 0;
+-	char *buf;
+-
+-	read_lock(&devpts_handler_lock);
+-
+-	for (i=0; i<DEVPTS_XATTR_INDEX_MAX; i++) {
+-		handler = devpts_xattr_handlers[i];
+-		if (handler)
+-			size += handler->list(dentry, NULL);
+-	}
+-
+-	if (!buffer) {
+-		error = size;
+-		goto out;
+-	} else {
+-		error = -ERANGE;
+-		if (size > buffer_size)
+-			goto out;
+-	}
+-
+-	buf = buffer;
+-	for (i=0; i<DEVPTS_XATTR_INDEX_MAX; i++) {
+-		handler = devpts_xattr_handlers[i];
+-		if (handler)
+-			buf += handler->list(dentry, buf);
+-	}
+-	error = size;
+-
+-out:
+-	read_unlock(&devpts_handler_lock);
+-	return size;
+-}
+-
+-/*
+- * Inode operation setxattr()
+- *
+- * dentry->d_inode->i_sem down
+- */
+-int
+-devpts_setxattr(struct dentry *dentry, const char *name,
+-	      const void *value, size_t size, int flags)
+-{
+-	struct devpts_xattr_handler *handler;
+-
+-	if (size == 0)
+-		value = "";  /* empty EA, do not remove */
+-	handler = devpts_xattr_resolve_name(&name);
+-	if (!handler)
+-		return -EOPNOTSUPP;
+-	return handler->set(dentry, name, value, size, flags);
+-}
+-
+-/*
+- * Inode operation removexattr()
+- *
+- * dentry->d_inode->i_sem down
+- */
+-int
+-devpts_removexattr(struct dentry *dentry, const char *name)
+-{
+-	struct devpts_xattr_handler *handler;
+-
+-	handler = devpts_xattr_resolve_name(&name);
+-	if (!handler)
+-		return -EOPNOTSUPP;
+-	return handler->set(dentry, name, NULL, 0, XATTR_REPLACE);
+-}
+-
+-int __init
+-init_devpts_xattr(void)
+-{
+-#ifdef CONFIG_DEVPTS_FS_SECURITY	
+-	int	err;
+-
+-	err = devpts_xattr_register(DEVPTS_XATTR_INDEX_SECURITY,
+-				    &devpts_xattr_security_handler);
+-	if (err)
+-		return err;
+-#endif
+-
+-	return 0;
+-}
+-
+-void
+-exit_devpts_xattr(void)
+-{
+-#ifdef CONFIG_DEVPTS_FS_SECURITY	
+-	devpts_xattr_unregister(DEVPTS_XATTR_INDEX_SECURITY,
+-				&devpts_xattr_security_handler);
+-#endif
+-
+-}
+diff -L fs/devpts/xattr.h -puN fs/devpts/xattr.h~xattr-consolidation-v3-devpts /dev/null
+--- 25/fs/devpts/xattr.h
++++ /dev/null	2003-09-15 06:40:47.000000000 -0700
+@@ -1,59 +0,0 @@
+-/*
+-  File: fs/devpts/xattr.h
+- 
+-  Derived from fs/ext3/xattr.h, changed in the following ways:
+-      drop everything related to persistent storage of EAs
+-      pass dentry rather than inode to internal methods
+-      only presently define a handler for security modules
+-*/
+-
+-#include <linux/config.h>
+-#include <linux/xattr.h>
+-
+-/* Name indexes */
+-#define DEVPTS_XATTR_INDEX_MAX			10
+-#define DEVPTS_XATTR_INDEX_SECURITY	        1
+-
+-# ifdef CONFIG_DEVPTS_FS_XATTR
+-
+-struct devpts_xattr_handler {
+-	char *prefix;
+-	size_t (*list)(struct dentry *dentry, char *buffer);
+-	int (*get)(struct dentry *dentry, const char *name, void *buffer,
+-		   size_t size);
+-	int (*set)(struct dentry *dentry, const char *name, const void *buffer,
+-		   size_t size, int flags);
+-};
+-
+-extern int devpts_xattr_register(int, struct devpts_xattr_handler *);
+-extern void devpts_xattr_unregister(int, struct devpts_xattr_handler *);
+-
+-extern int devpts_setxattr(struct dentry *, const char *, const void *, size_t, int);
+-extern ssize_t devpts_getxattr(struct dentry *, const char *, void *, size_t);
+-extern ssize_t devpts_listxattr(struct dentry *, char *, size_t);
+-extern int devpts_removexattr(struct dentry *, const char *);
+-
+-extern int init_devpts_xattr(void);
+-extern void exit_devpts_xattr(void);
+-
+-# else  /* CONFIG_DEVPTS_FS_XATTR */
+-#  define devpts_setxattr		NULL
+-#  define devpts_getxattr		NULL
+-#  define devpts_listxattr	NULL
+-#  define devpts_removexattr	NULL
+-
+-static inline int
+-init_devpts_xattr(void)
+-{
+-	return 0;
+-}
+-
+-static inline void
+-exit_devpts_xattr(void)
+-{
+-}
+-
+-# endif  /* CONFIG_DEVPTS_FS_XATTR */
+-
+-extern struct devpts_xattr_handler devpts_xattr_security_handler;
+-
+diff -puN fs/devpts/xattr_security.c~xattr-consolidation-v3-devpts fs/devpts/xattr_security.c
+--- 25/fs/devpts/xattr_security.c~xattr-consolidation-v3-devpts	2004-09-23 00:08:57.255371824 -0700
++++ 25-akpm/fs/devpts/xattr_security.c	2004-09-23 00:08:57.261370912 -0700
+@@ -1,38 +1,45 @@
+ /*
+- * File: fs/devpts/xattr_security.c
++ * Security xattr support for devpts.
++ *
++ * Author: Stephen Smalley <sds@epoch.ncsc.mil>
++ * Copyright (c) 2004 Red Hat, Inc., James Morris <jmorris@redhat.com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the Free
++ * Software Foundation; either version 2 of the License, or (at your option)
++ * any later version.
+  */
+-
+-#include <linux/module.h>
+ #include <linux/string.h>
+ #include <linux/fs.h>
+ #include <linux/security.h>
+-#include "xattr.h"
++#include <linux/xattr.h>
+ 
+ static size_t
+-devpts_xattr_security_list(struct dentry *dentry, char *buffer)
++devpts_xattr_security_list(struct inode *inode, char *list, size_t list_len,
++			   const char *name, size_t name_len)
+ {
+-	return security_inode_listsecurity(dentry, buffer);
++	return security_inode_listsecurity(inode, list, list_len);
+ }
+ 
+ static int
+-devpts_xattr_security_get(struct dentry *dentry, const char *name,
++devpts_xattr_security_get(struct inode *inode, const char *name,
+ 			  void *buffer, size_t size)
+ {
+ 	if (strcmp(name, "") == 0)
+ 		return -EINVAL;
+-	return security_inode_getsecurity(dentry, name, buffer, size);
++	return security_inode_getsecurity(inode, name, buffer, size);
+ }
+ 
+ static int
+-devpts_xattr_security_set(struct dentry *dentry, const char *name,
++devpts_xattr_security_set(struct inode *inode, const char *name,
+ 			  const void *value, size_t size, int flags)
+ {
+ 	if (strcmp(name, "") == 0)
+ 		return -EINVAL;
+-	return security_inode_setsecurity(dentry, name, value, size, flags);
++	return security_inode_setsecurity(inode, name, value, size, flags);
+ }
+ 
+-struct devpts_xattr_handler devpts_xattr_security_handler = {
++struct xattr_handler devpts_xattr_security_handler = {
+ 	.prefix	= XATTR_SECURITY_PREFIX,
+ 	.list	= devpts_xattr_security_list,
+ 	.get	= devpts_xattr_security_get,
+_

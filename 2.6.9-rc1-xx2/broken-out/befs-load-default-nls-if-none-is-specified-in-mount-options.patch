@@ -1,0 +1,34 @@
+
+From: <vegarwa@online.no>
+
+Makes the BeOS File Systen driver load the default nls if none is specified
+in the "iocharset" mount option.
+
+Signed-off-by: Vegard Wærp <vegarwa@online.no>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/befs/linuxvfs.c |    8 ++++++--
+ 1 files changed, 6 insertions(+), 2 deletions(-)
+
+diff -puN fs/befs/linuxvfs.c~befs-load-default-nls-if-none-is-specified-in-mount-options fs/befs/linuxvfs.c
+--- 25/fs/befs/linuxvfs.c~befs-load-default-nls-if-none-is-specified-in-mount-options	2004-08-30 00:11:42.125094488 -0700
++++ 25-akpm/fs/befs/linuxvfs.c	2004-08-30 00:11:55.895001144 -0700
+@@ -857,10 +857,14 @@ befs_fill_super(struct super_block *sb, 
+ 		befs_sb->nls = load_nls(befs_sb->mount_opts.iocharset);
+ 		if (!befs_sb->nls) {
+ 			befs_warning(sb, "Cannot load nls %s"
+-				     "loding default nls",
+-				     befs_sb->mount_opts.iocharset);
++					" loading default nls",
++					befs_sb->mount_opts.iocharset);
+ 			befs_sb->nls = load_nls_default();
+ 		}
++	/* load default nls if none is specified  in mount options */
++	} else {
++		befs_debug(sb, "Loading default nls");
++		befs_sb->nls = load_nls_default();
+ 	}
+ 
+ 	return 0;
+_

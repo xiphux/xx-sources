@@ -1,0 +1,53 @@
+
+From: Neil Brown <neilb@cse.unsw.edu.au>
+
+Make sure the right errno is return from a readahead error in multipath
+
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Index: xx-sources-current/drivers/md/multipath.c
+===================================================================
+--- xx-sources-current.orig/drivers/md/multipath.c	2004-08-10 21:37:05.936298832 -0400
++++ xx-sources-current/drivers/md/multipath.c	2004-08-10 21:37:49.329702032 -0400
+@@ -99,12 +99,12 @@
+  * operation and are ready to return a success/failure code to the buffer
+  * cache layer.
+  */
+-static void multipath_end_bh_io (struct multipath_bh *mp_bh, int uptodate)
++static void multipath_end_bh_io (struct multipath_bh *mp_bh, int err)
+ {
+ 	struct bio *bio = mp_bh->master_bio;
+ 	multipath_conf_t *conf = mddev_to_conf(mp_bh->mddev);
+ 
+-	bio_endio(bio, bio->bi_size, uptodate ? 0 : -EIO);
++	bio_endio(bio, bio->bi_size, err);
+ 	mempool_free(mp_bh, conf->pool);
+ }
+ 
+@@ -119,7 +119,7 @@
+ 		return 1;
+ 
+ 	if (uptodate)
+-		multipath_end_bh_io(mp_bh, uptodate);
++		multipath_end_bh_io(mp_bh, 0);
+ 	else if (!bio_rw_ahead(bio)) {
+ 		/*
+ 		 * oops, IO error:
+@@ -131,7 +131,7 @@
+ 		       (unsigned long long)bio->bi_sector);
+ 		multipath_reschedule_retry(mp_bh);
+ 	} else
+-		multipath_end_bh_io(mp_bh, 0);
++		multipath_end_bh_io(mp_bh, error);
+ 	rdev_dec_pending(rdev, conf->mddev);
+ 	return 0;
+ }
+@@ -402,7 +402,7 @@
+ 				" error for block %llu\n",
+ 				bdevname(bio->bi_bdev,b),
+ 				(unsigned long long)bio->bi_sector);
+-			multipath_end_bh_io(mp_bh, 0);
++			multipath_end_bh_io(mp_bh, -EIO);
+ 		} else {
+ 			printk(KERN_ERR "multipath: %s: redirecting sector %llu"
+ 				" to another IO path\n",

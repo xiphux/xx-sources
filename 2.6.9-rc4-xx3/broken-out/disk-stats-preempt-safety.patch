@@ -1,0 +1,125 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+The per-cpu disk stats are being updated in a non-preempt-safe manner in a
+couple of places.
+
+The patch introduces introduces preempt and non-preempt versions of the
+statistics code and updates the block code to use the appropriate ones.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/ll_rw_blk.c |   20 ++++++++++----------
+ 25-akpm/include/linux/genhd.h     |   27 +++++++++++++++++++++------
+ 2 files changed, 31 insertions(+), 16 deletions(-)
+
+diff -puN drivers/block/ll_rw_blk.c~disk-stats-preempt-safety drivers/block/ll_rw_blk.c
+--- 25/drivers/block/ll_rw_blk.c~disk-stats-preempt-safety	2004-09-30 22:37:31.224003448 -0700
++++ 25-akpm/drivers/block/ll_rw_blk.c	2004-09-30 22:37:31.231002384 -0700
+@@ -2059,13 +2059,13 @@ void drive_stat_acct(struct request *rq,
+ 		return;
+ 
+ 	if (rw == READ) {
+-		disk_stat_add(rq->rq_disk, read_sectors, nr_sectors);
++		__disk_stat_add(rq->rq_disk, read_sectors, nr_sectors);
+ 		if (!new_io)
+-			disk_stat_inc(rq->rq_disk, read_merges);
++			__disk_stat_inc(rq->rq_disk, read_merges);
+ 	} else if (rw == WRITE) {
+-		disk_stat_add(rq->rq_disk, write_sectors, nr_sectors);
++		__disk_stat_add(rq->rq_disk, write_sectors, nr_sectors);
+ 		if (!new_io)
+-			disk_stat_inc(rq->rq_disk, write_merges);
++			__disk_stat_inc(rq->rq_disk, write_merges);
+ 	}
+ 	if (new_io) {
+ 		disk_round_stats(rq->rq_disk);
+@@ -2111,12 +2111,12 @@ void disk_round_stats(struct gendisk *di
+ {
+ 	unsigned long now = jiffies;
+ 
+-	disk_stat_add(disk, time_in_queue, 
++	__disk_stat_add(disk, time_in_queue,
+ 			disk->in_flight * (now - disk->stamp));
+ 	disk->stamp = now;
+ 
+ 	if (disk->in_flight)
+-		disk_stat_add(disk, io_ticks, (now - disk->stamp_idle));
++		__disk_stat_add(disk, io_ticks, (now - disk->stamp_idle));
+ 	disk->stamp_idle = now;
+ }
+ 
+@@ -2983,12 +2983,12 @@ void end_that_request_last(struct reques
+ 		unsigned long duration = jiffies - req->start_time;
+ 		switch (rq_data_dir(req)) {
+ 		    case WRITE:
+-			disk_stat_inc(disk, writes);
+-			disk_stat_add(disk, write_ticks, duration);
++			__disk_stat_inc(disk, writes);
++			__disk_stat_add(disk, write_ticks, duration);
+ 			break;
+ 		    case READ:
+-			disk_stat_inc(disk, reads);
+-			disk_stat_add(disk, read_ticks, duration);
++			__disk_stat_inc(disk, reads);
++			__disk_stat_add(disk, read_ticks, duration);
+ 			break;
+ 		}
+ 		disk_round_stats(disk);
+diff -puN include/linux/genhd.h~disk-stats-preempt-safety include/linux/genhd.h
+--- 25/include/linux/genhd.h~disk-stats-preempt-safety	2004-09-30 22:37:31.226003144 -0700
++++ 25-akpm/include/linux/genhd.h	2004-09-30 22:37:31.232002232 -0700
+@@ -112,13 +112,14 @@ struct gendisk {
+ 
+ /* 
+  * Macros to operate on percpu disk statistics:
+- * Since writes to disk_stats are serialised through the queue_lock,
+- * smp_processor_id() should be enough to get to the per_cpu versions
+- * of statistics counters
++ *
++ * The __ variants should only be called in critical sections. The full
++ * variants disable/enable preemption.
+  */
+ #ifdef	CONFIG_SMP
+-#define disk_stat_add(gendiskp, field, addnd) 	\
++#define __disk_stat_add(gendiskp, field, addnd) 	\
+ 	(per_cpu_ptr(gendiskp->dkstats, smp_processor_id())->field += addnd)
++
+ #define disk_stat_read(gendiskp, field)					\
+ ({									\
+ 	typeof(gendiskp->dkstats->field) res = 0;			\
+@@ -142,7 +143,8 @@ static inline void disk_stat_set_all(str
+ }		
+ 				
+ #else
+-#define disk_stat_add(gendiskp, field, addnd) (gendiskp->dkstats.field += addnd)
++#define __disk_stat_add(gendiskp, field, addnd) \
++				(gendiskp->dkstats.field += addnd)
+ #define disk_stat_read(gendiskp, field)	(gendiskp->dkstats.field)
+ 
+ static inline void disk_stat_set_all(struct gendisk *gendiskp, int value)	{
+@@ -150,8 +152,21 @@ static inline void disk_stat_set_all(str
+ }
+ #endif
+ 
+-#define disk_stat_inc(gendiskp, field) disk_stat_add(gendiskp, field, 1)
++#define disk_stat_add(gendiskp, field, addnd)			\
++	do {							\
++		preempt_disable();				\
++		__disk_stat_add(gendiskp, field, addnd);	\
++		preempt_enable();				\
++	} while (0)
++
++#define __disk_stat_dec(gendiskp, field) __disk_stat_add(gendiskp, field, -1)
+ #define disk_stat_dec(gendiskp, field) disk_stat_add(gendiskp, field, -1)
++
++#define __disk_stat_inc(gendiskp, field) __disk_stat_add(gendiskp, field, 1)
++#define disk_stat_inc(gendiskp, field) disk_stat_add(gendiskp, field, 1)
++
++#define __disk_stat_sub(gendiskp, field, subnd) \
++		__disk_stat_add(gendiskp, field, -subnd)
+ #define disk_stat_sub(gendiskp, field, subnd) \
+ 		disk_stat_add(gendiskp, field, -subnd)
+ 
+_

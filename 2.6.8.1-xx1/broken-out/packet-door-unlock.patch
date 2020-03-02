@@ -1,0 +1,41 @@
+
+From: Peter Osterlund <petero2@telia.com>
+
+The control-pktcdvd-with-an-auxiliary-character-device patch introduced a
+door locking bug.
+
+    pktsetup, mount, umount -> door remains locked.
+
+The problem is that pktsetup opens the cdrom device in non-blocking mode,
+which doesn't lock the door.  mount then opens the cdrom device again in
+blocking mode, which does lock the door.  umount closes the blocking mode
+open, but the door remains locked, because cdrom.c:cdrom_release() only
+unlocks the door on the last release, it doesn't care that the only
+remaining open is non-blocking.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+DESC
+pkt_lock_door() warning fix
+EDESC
+
+drivers/block/pktcdvd.c: In function `pkt_generic_packet':
+drivers/block/pktcdvd.c:307: warning: implicit declaration of function `pkt_lock_door'
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/pktcdvd.c |    2 ++
+ 1 files changed, 2 insertions(+)
+
+diff -puN drivers/block/pktcdvd.c~packet-door-unlock drivers/block/pktcdvd.c
+--- 25/drivers/block/pktcdvd.c~packet-door-unlock	Wed Aug  4 15:50:59 2004
++++ 25-akpm/drivers/block/pktcdvd.c	Wed Aug  4 15:50:59 2004
+@@ -324,6 +324,8 @@ static int pkt_generic_packet(struct pkt
+ 		return -ENXIO;
+ 	}
+ 
++	pkt_lock_door(pd, 0);
++
+ 	q = bdev_get_queue(pd->bdev);
+ 
+ 	rq = blk_get_request(q, (cgc->data_direction == CGC_DATA_WRITE) ? WRITE : READ,
+_

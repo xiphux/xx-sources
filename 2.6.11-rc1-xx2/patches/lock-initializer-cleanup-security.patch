@@ -1,0 +1,103 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/security/keys/key.c            |    4 ++--
+ 25-akpm/security/keys/keyring.c        |    2 +-
+ 25-akpm/security/selinux/avc.c         |    4 ++--
+ 25-akpm/security/selinux/hooks.c       |    2 +-
+ 25-akpm/security/selinux/netif.c       |    2 +-
+ 25-akpm/security/selinux/ss/services.c |    2 +-
+ 6 files changed, 8 insertions(+), 8 deletions(-)
+
+diff -puN security/keys/key.c~lock-initializer-cleanup-security security/keys/key.c
+--- 25/security/keys/key.c~lock-initializer-cleanup-security	Wed Jan 12 16:54:23 2005
++++ 25-akpm/security/keys/key.c	Wed Jan 12 16:54:23 2005
+@@ -20,10 +20,10 @@
+ static kmem_cache_t	*key_jar;
+ static key_serial_t	key_serial_next = 3;
+ struct rb_root		key_serial_tree; /* tree of keys indexed by serial */
+-spinlock_t		key_serial_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(key_serial_lock);
+ 
+ struct rb_root	key_user_tree; /* tree of quota records indexed by UID */
+-spinlock_t	key_user_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(key_user_lock);
+ 
+ static LIST_HEAD(key_types_list);
+ static DECLARE_RWSEM(key_types_sem);
+diff -puN security/keys/keyring.c~lock-initializer-cleanup-security security/keys/keyring.c
+--- 25/security/keys/keyring.c~lock-initializer-cleanup-security	Wed Jan 12 16:54:23 2005
++++ 25-akpm/security/keys/keyring.c	Wed Jan 12 16:54:23 2005
+@@ -30,7 +30,7 @@
+ #define KEYRING_NAME_HASH_SIZE	(1 << 5)
+ 
+ static struct list_head	keyring_name_hash[KEYRING_NAME_HASH_SIZE];
+-static rwlock_t		keyring_name_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(keyring_name_lock);
+ 
+ static inline unsigned keyring_hash(const char *desc)
+ {
+diff -puN security/selinux/avc.c~lock-initializer-cleanup-security security/selinux/avc.c
+--- 25/security/selinux/avc.c~lock-initializer-cleanup-security	Wed Jan 12 16:54:23 2005
++++ 25-akpm/security/selinux/avc.c	Wed Jan 12 16:54:23 2005
+@@ -227,7 +227,7 @@ void __init avc_init(void)
+ 
+ 	for (i = 0; i < AVC_CACHE_SLOTS; i++) {
+ 		INIT_LIST_HEAD(&avc_cache.slots[i]);
+-		avc_cache.slots_lock[i] = SPIN_LOCK_UNLOCKED;
++		spin_lock_init(&avc_cache.slots_lock[i]);
+ 	}
+ 	atomic_set(&avc_cache.active_nodes, 0);
+ 	atomic_set(&avc_cache.lru_hint, 0);
+@@ -415,7 +415,7 @@ out:
+ static int avc_latest_notif_update(int seqno, int is_insert)
+ {
+ 	int ret = 0;
+-	static spinlock_t notif_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(notif_lock);
+ 	unsigned long flag;
+ 
+ 	spin_lock_irqsave(&notif_lock, flag);
+diff -puN security/selinux/hooks.c~lock-initializer-cleanup-security security/selinux/hooks.c
+--- 25/security/selinux/hooks.c~lock-initializer-cleanup-security	Wed Jan 12 16:54:23 2005
++++ 25-akpm/security/selinux/hooks.c	Wed Jan 12 16:54:23 2005
+@@ -110,7 +110,7 @@ static struct security_operations *secon
+ /* Lists of inode and superblock security structures initialized
+    before the policy was loaded. */
+ static LIST_HEAD(superblock_security_head);
+-static spinlock_t sb_security_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(sb_security_lock);
+ 
+ /* Allocate and free functions for each kind of security blob. */
+ 
+diff -puN security/selinux/netif.c~lock-initializer-cleanup-security security/selinux/netif.c
+--- 25/security/selinux/netif.c~lock-initializer-cleanup-security	Wed Jan 12 16:54:23 2005
++++ 25-akpm/security/selinux/netif.c	Wed Jan 12 16:54:23 2005
+@@ -45,7 +45,7 @@ struct sel_netif
+ 
+ static u32 sel_netif_total;
+ static LIST_HEAD(sel_netif_list);
+-static spinlock_t sel_netif_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(sel_netif_lock);
+ static struct list_head sel_netif_hash[SEL_NETIF_HASH_SIZE];
+ 
+ static inline u32 sel_netif_hasfn(struct net_device *dev)
+diff -puN security/selinux/ss/services.c~lock-initializer-cleanup-security security/selinux/ss/services.c
+--- 25/security/selinux/ss/services.c~lock-initializer-cleanup-security	Wed Jan 12 16:54:23 2005
++++ 25-akpm/security/selinux/ss/services.c	Wed Jan 12 16:54:23 2005
+@@ -42,7 +42,7 @@
+ extern void selnl_notify_policyload(u32 seqno);
+ extern int policydb_loaded_version;
+ 
+-static rwlock_t policy_rwlock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(policy_rwlock);
+ #define POLICY_RDLOCK read_lock(&policy_rwlock)
+ #define POLICY_WRLOCK write_lock_irq(&policy_rwlock)
+ #define POLICY_RDUNLOCK read_unlock(&policy_rwlock)
+_

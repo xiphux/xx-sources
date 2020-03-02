@@ -1,0 +1,39 @@
+
+From: Andreas Gruenbacher <agruen@suse.de>
+
+When building external modules, MODVERDIR is relative to the external
+module instead of in the kernel source tree.  Use the MODVERDIR environment
+variable instead of the hard-coded path in modpost.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/scripts/mod/sumversion.c |    8 ++++----
+ 1 files changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN scripts/mod/sumversion.c~replace-hard-coded-modverdir-in-modpost scripts/mod/sumversion.c
+--- 25/scripts/mod/sumversion.c~replace-hard-coded-modverdir-in-modpost	Thu Sep 16 14:54:40 2004
++++ 25-akpm/scripts/mod/sumversion.c	Thu Sep 16 14:54:40 2004
+@@ -416,7 +416,8 @@ static int get_version(const char *modna
+ 	struct md4_ctx md;
+ 	char *sources, *end, *fname;
+ 	const char *basename;
+-	char filelist[sizeof(".tmp_versions/%s.mod") + strlen(modname)];
++	char filelist[strlen(getenv("MODVERDIR")) + strlen("/") +
++		      strlen(modname) - strlen(".o") + strlen(".mod") + 1 ];
+ 
+ 	/* Source files for module are in .tmp_versions/modname.mod,
+ 	   after the first line. */
+@@ -424,9 +425,8 @@ static int get_version(const char *modna
+ 		basename = strrchr(modname, '/') + 1;
+ 	else
+ 		basename = modname;
+-	sprintf(filelist, ".tmp_versions/%s", basename);
+-	/* Truncate .o, add .mod */
+-	strcpy(filelist + strlen(filelist)-2, ".mod");
++	sprintf(filelist, "%s/%.*s.mod", getenv("MODVERDIR"),
++		(int) strlen(basename) - 2, basename);
+ 
+ 	file = grab_file(filelist, &len);
+ 	if (!file) {
+_

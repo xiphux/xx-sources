@@ -1,0 +1,1615 @@
+---
+
+ linux-2.6.7-rc3-xx1-xiphux/arch/i386/Kconfig         |   75 ++
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/init_task.h |    7 
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/sched.h     |   22 
+ linux-2.6.7-rc3-xx1-xiphux/kernel/sched.c            |  661 ++++++++++++++++++-
+ 4 files changed, 733 insertions(+), 32 deletions(-)
+
+diff -puN include/linux/init_task.h~spa-v0.1 include/linux/init_task.h
+--- linux-2.6.7-rc3-xx1/include/linux/init_task.h~spa-v0.1	2004-06-10 17:18:08.000000000 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/init_task.h	2004-06-10 22:19:37.639456456 -0400
+@@ -64,8 +64,15 @@ extern struct group_info init_groups;
+  *  INIT_TASK is used to set up the first task table, touch at
+  * your own risk!. Base=0, limit=0x1fffff (=2MB)
+  */
++
++#ifdef CONFIG_SPA_STAIRCASE
++#define SCHED_PRIO
++#else
+ #define SCHED_PRIO .prio = MAX_PRIO-20,
++#endif
++
+ #define SCHED_STATIC_PRIO .static_prio = MAX_PRIO-20,
++
+ #define SCHED_TIME_SLICE .time_slice = HZ,
+ 
+ #define INIT_TASK(tsk)	\
+diff -puN include/linux/sched.h~spa-v0.1 include/linux/sched.h
+--- linux-2.6.7-rc3-xx1/include/linux/sched.h~spa-v0.1	2004-06-10 17:18:08.000000000 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/sched.h	2004-06-10 22:19:37.770436544 -0400
+@@ -313,7 +313,11 @@ struct signal_struct {
+ 
+ #define MAX_PRIO		(MAX_RT_PRIO + 40)
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++#define rt_task(p)		((p)->policy != SCHED_NORMAL)
++#else
+ #define rt_task(p)		((p)->prio < MAX_RT_PRIO)
++#endif
+ 
+ /*
+  * Some day this will be a full-fledged user tracking system..
+@@ -336,7 +340,9 @@ extern struct user_struct *find_user(uid
+ extern struct user_struct root_user;
+ #define INIT_USER (&root_user)
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ typedef struct prio_array prio_array_t;
++#endif
+ struct backing_dev_info;
+ struct reclaim_state;
+ 
+@@ -406,9 +412,14 @@ struct task_struct {
+ 
+ 	int lock_depth;		/* Lock depth */
+ 
+-	int prio, static_prio;
++#ifndef CONFIG_SPA_STAIRCASE
++	int prio;
++#endif
++	int static_prio;
+ 	struct list_head run_list;
++#ifndef CONFIG_SPA_STAIRCASE
+ 	prio_array_t *array;
++#endif
+ 
+ 	unsigned long sleep_avg;
+ 	long interactive_credit;
+@@ -417,7 +428,10 @@ struct task_struct {
+ 
+ 	unsigned long policy;
+ 	cpumask_t cpus_allowed;
+-	unsigned int time_slice, first_time_slice;
++	unsigned int time_slice;
++#ifndef CONFIG_SPA_STAIRCASE
++	unsigned int first_time_slice;
++#endif
+ 
+ 	struct list_head tasks;
+ 	struct list_head ptrace_children;
+@@ -792,7 +806,11 @@ extern void FASTCALL(wake_up_forked_proc
+  }
+ #endif
+ extern void FASTCALL(sched_fork(task_t * p));
++#ifdef CONFIG_SPA_STAIRCASE
+++static inline void sched_exit(task_t * p) {}
++#else
+ extern void FASTCALL(sched_exit(task_t * p));
++#endif
+ 
+ extern int in_group_p(gid_t);
+ extern int in_egroup_p(gid_t);
+diff -puN kernel/sched.c~spa-v0.1 kernel/sched.c
+--- linux-2.6.7-rc3-xx1/kernel/sched.c~spa-v0.1	2004-06-10 17:18:08.000000000 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/kernel/sched.c	2004-06-10 22:21:35.390555568 -0400
+@@ -16,6 +16,8 @@
+  *		by Davide Libenzi, preemptible kernel bits by Robert Love.
+  *  2003-09-03	Interactivity tuning by Con Kolivas.
+  *  2004-04-02	Scheduler domains code by Nick Piggin
++ *  2004-06-03	Single priority array by Peter Williams
++ * 		(Courtesy of Aurema Pty Ltd, www.aurema.com)
+  */
+ 
+ #include <linux/mm.h>
+@@ -47,11 +49,13 @@
+ 
+ #include <asm/unistd.h>
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ #ifdef CONFIG_NUMA
+ #define cpu_to_node_mask(cpu) node_to_cpumask(cpu_to_node(cpu))
+ #else
+ #define cpu_to_node_mask(cpu) (cpu_online_map)
+ #endif
++#endif
+ 
+ /*
+  * Convert user-nice values [ -20 ... 0 ... 19 ]
+@@ -70,8 +74,10 @@
+ #define USER_PRIO(p)		((p)-MAX_RT_PRIO)
+ #define TASK_USER_PRIO(p)	USER_PRIO((p)->static_prio)
+ #define MAX_USER_PRIO		(USER_PRIO(MAX_PRIO))
++#ifndef CONFIG_SPA_STAIRCASE
+ #define AVG_TIMESLICE	(MIN_TIMESLICE + ((MAX_TIMESLICE - MIN_TIMESLICE) *\
+ 			(MAX_PRIO-1-NICE_TO_PRIO(0))/(MAX_USER_PRIO - 1)))
++#endif
+ 
+ /*
+  * Some helpers for converting nanosecond timing to jiffy resolution
+@@ -86,17 +92,25 @@
+  * maximum timeslice is 200 msecs. Timeslices get refilled after
+  * they expire.
+  */
++#ifndef CONFIG_SPA_STAIRCASE
+ #define MIN_TIMESLICE		( 10 * HZ / 1000)
+ #define MAX_TIMESLICE		(200 * HZ / 1000)
++#endif
+ #define ON_RUNQUEUE_WEIGHT	 30
+ #define CHILD_PENALTY		 95
+ #define PARENT_PENALTY		100
++#ifndef CONFIG_SPA_STAIRCASE
+ #define EXIT_WEIGHT		  3
++#endif
+ #define PRIO_BONUS_RATIO	 25
+ #define MAX_BONUS		(MAX_USER_PRIO * PRIO_BONUS_RATIO / 100)
+ #define INTERACTIVE_DELTA	  2
++#ifdef CONFIG_SPA_STAIRCASE
++#define MAX_SLEEP_AVG		(TIME_SLICE_TICKS * MAX_BONUS)
++#else
+ #define MAX_SLEEP_AVG		(AVG_TIMESLICE * MAX_BONUS)
+ #define STARVATION_LIMIT	(MAX_SLEEP_AVG)
++#endif
+ #define NS_MAX_SLEEP_AVG	(JIFFIES_TO_NS(MAX_SLEEP_AVG))
+ #define CREDIT_LIMIT		100
+ 
+@@ -132,6 +146,7 @@
+ 	(NS_TO_JIFFIES((p)->sleep_avg) * MAX_BONUS / \
+ 		MAX_SLEEP_AVG)
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ #ifdef CONFIG_SMP
+ #define TIMESLICE_GRANULARITY(p)	(MIN_TIMESLICE * \
+ 		(1 << (((MAX_BONUS - CURRENT_BONUS(p)) ? : 1) - 1)) * \
+@@ -140,6 +155,7 @@
+ #define TIMESLICE_GRANULARITY(p)	(MIN_TIMESLICE * \
+ 		(1 << (((MAX_BONUS - CURRENT_BONUS(p)) ? : 1) - 1)))
+ #endif
++#endif
+ 
+ #define SCALE(v1,v1_max,v2_max) \
+ 	(v1) * (v2_max) / (v1_max)
+@@ -147,8 +163,10 @@
+ #define DELTA(p) \
+ 	(SCALE(TASK_NICE(p), 40, MAX_BONUS) + INTERACTIVE_DELTA)
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ #define TASK_INTERACTIVE(p) \
+ 	((p)->prio <= (p)->static_prio - DELTA(p))
++#endif
+ 
+ #define INTERACTIVE_SLEEP(p) \
+ 	(JIFFIES_TO_NS(MAX_SLEEP_AVG * \
+@@ -160,9 +178,27 @@
+ #define LOW_CREDIT(p) \
+ 	((p)->interactive_credit < -CREDIT_LIMIT)
+ 
++#ifndef CONFIG_SPA_STAIRCASE
++#define PRIO_PREEMPTS_CURR(p, rq) \
++	((p) < (rq)->current_prio_slot->prio)
++#else
+ #define TASK_PREEMPTS_CURR(p, rq) \
+ 	((p)->prio < (rq)->curr->prio)
++#endif
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++/*
++ * What "base time slice" for nice 0 and  "average time slice" evaluated to
++ */
++#define TIME_SLICE_MSECS 100
++#define TIME_SLICE_TICKS \
++	(((TIME_SLICE_MSECS * HZ) / 1000) ? ((TIME_SLICE_MSECS * HZ) / 1000) : 1)
++
++static inline unsigned int task_timeslice(const task_t *p)
++{
++	return TIME_SLICE_TICKS;
++}
++#else
+ /*
+  * BASE_TIMESLICE scales user-nice values [ -20 ... 19 ]
+  * to time slice values.
+@@ -182,6 +218,7 @@ static unsigned int task_timeslice(task_
+ {
+ 	return BASE_TIMESLICE(p);
+ }
++#endif
+ 
+ #define task_hot(p, now, sd) ((now) - (p)->timestamp < (sd)->cache_hot_time)
+ 
+@@ -189,15 +226,44 @@ static unsigned int task_timeslice(task_
+  * These are the runqueue data structures:
+  */
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++/*
++ * These are the runqueue data structures:
++ */
++#define IDLE_PRIO (MAX_PRIO + MAX_BONUS)
++
++/*
++ * Is the run queue idle?
++ */
++#define RUNQUEUE_IDLE(rq) ((rq)->curr == (rq)->idle)
++
++/*
++ * Control values for niceness
++ */
++#define PROSPECTIVE_BASE_PROM_INTERVAL ((TIME_SLICE_TICKS * 55) / 100)
++#if (PROSPECTIVE_BASE_PROM_INTERVAL > 0)
++#define BASE_PROM_INTERVAL PROSPECTIVE_BASE_PROM_INTERVAL
++#else
++#define BASE_PROM_INTERVAL TIME_SLICE_TICKS
++#endif
++#else
+ #define BITMAP_SIZE ((((MAX_PRIO+1+7)/8)+sizeof(long)-1)/sizeof(long))
++#endif
+ 
+ typedef struct runqueue runqueue_t;
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++struct prio_slot {
++	unsigned int prio;
++	struct list_head queue;
++};
++#else
+ struct prio_array {
+ 	unsigned int nr_active;
+ 	unsigned long bitmap[BITMAP_SIZE];
+ 	struct list_head queue[MAX_PRIO];
+ };
++#endif
+ 
+ /*
+  * This is the main, per-CPU runqueue data structure.
+@@ -218,13 +284,23 @@ struct runqueue {
+ 	unsigned long cpu_load;
+ #endif
+ 	unsigned long long nr_switches;
+-	unsigned long expired_timestamp, nr_uninterruptible;
++#ifndef CONFIG_SPA_STAIRCASE
++	unsigned long expired_timestamp;
++#endif
++	unsigned long nr_uninterruptible;
+ 	unsigned long long timestamp_last_tick;
+ 	task_t *curr, *idle;
+ 
+ 	struct mm_struct *prev_mm;
++#ifdef CONFIG_SPA_STAIRCASE
++	unsigned long bitmap[BITS_TO_LONGS(IDLE_PRIO+1)];
++	struct prio_slot queues[IDLE_PRIO + 1];
++	struct prio_slot *current_prio_slot;
++	unsigned long next_prom_due;
++#else
+ 	prio_array_t *active, *expired, arrays[2];
+ 	int best_expired_prio;
++#endif
+ 	atomic_t nr_iowait;
+ 
+ #ifdef CONFIG_SMP
+@@ -274,6 +350,15 @@ static DEFINE_PER_CPU(struct runqueue, r
+ # define task_running(rq, p)		((rq)->curr == (p))
+ #endif
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++static inline unsigned long get_prom_interval(const struct runqueue *rq)
++{
++	if (rq->nr_running < 2)
++		return BASE_PROM_INTERVAL;
++	return rq->nr_running * BASE_PROM_INTERVAL;
++}
++#endif
++
+ /*
+  * task_rq_lock - lock the runqueue a given task resides on and disable
+  * interrupts.  Note the ordering: we can safely lookup the task_rq without
+@@ -403,23 +488,64 @@ static inline void rq_unlock(runqueue_t 
+ 	spin_unlock_irq(&rq->lock);
+ }
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++static inline int task_queued(const task_t *task)
++{
++	return !list_empty(&task->run_list);
++}
++#endif
++
+ /*
+  * Adding/removing a task to/from a priority array:
+  */
+-static void dequeue_task(struct task_struct *p, prio_array_t *array)
++static void dequeue_task(struct task_struct *p
++#ifndef CONFIG_SPA_STAIRCASE
++		, prio_array_t *array
++#endif
++		)
+ {
++#ifdef CONFIG_SPA_STAIRCASE
++	/*
++	 * If p is the last task in this priority slot then slotp will be
++	 * a pointer to the head of the list in the sunqueue structure
++	 */
++	struct list_head *slotp = p->run_list.next;
++
++	/*
++	 * Initialize after removal from the list so that list_empty() works
++	 * as a means for testing whether the task is runnable
++	 */
++	list_del_init(&p->run_list);
++	if (list_empty(slotp))
++		__clear_bit(list_entry(slotp, struct prio_slot, queue)->prio, task_rq(p)->bitmap);
++#else
+ 	array->nr_active--;
+ 	list_del(&p->run_list);
+ 	if (list_empty(array->queue + p->prio))
+ 		__clear_bit(p->prio, array->bitmap);
++#endif
+ }
+ 
+-static void enqueue_task(struct task_struct *p, prio_array_t *array)
++static void enqueue_task(struct task_struct *p,
++#ifdef CONFIG_SPA_STAIRCASE
++		runqueue_t *rq
++#else
++		prio_array_t *array
++#endif
++#ifdef CONFIG_SPA_STAIRCASE
++		, int prio
++#endif
++		)
+ {
++#ifdef CONFIG_SPA_STAIRCASE
++	list_add_tail(&p->run_list, &rq->queues[prio].queue);
++	__set_bit(prio, rq->bitmap);
++#else
+ 	list_add_tail(&p->run_list, array->queue + p->prio);
+ 	__set_bit(p->prio, array->bitmap);
+ 	array->nr_active++;
+ 	p->array = array;
++#endif
+ }
+ 
+ /*
+@@ -427,12 +553,26 @@ static void enqueue_task(struct task_str
+  * remote queue so we want these tasks to show up at the head of the
+  * local queue:
+  */
+-static inline void enqueue_task_head(struct task_struct *p, prio_array_t *array)
++static inline void enqueue_task_head(struct task_struct *p,
++#ifdef CONFIG_SPA_STAIRCASE
++		runqueue_t *rq
++#else
++		prio_array_t *array
++#endif
++#ifdef CONFIG_SPA_STAIRCASE
++		, int prio
++#endif
++		)
+ {
++#ifdef CONFIG_SPA_STAIRCASE
++	list_add(&p->run_list, &rq->queues[prio].queue);
++	__set_bit(prio, rq->bitmap);
++#else
+ 	list_add(&p->run_list, array->queue + p->prio);
+ 	__set_bit(p->prio, array->bitmap);
+ 	array->nr_active++;
+ 	p->array = array;
++#endif
+ }
+ 
+ /*
+@@ -449,38 +589,74 @@ static inline void enqueue_task_head(str
+  *
+  * Both properties are important to certain workloads.
+  */
++#ifdef CONFIG_SPA_STAIRCASE
++static inline int effective_prio(const task_t *p)
++#else
+ static int effective_prio(task_t *p)
++#endif
+ {
++#ifndef CONFIG_SPA_STAIRCASE
+ 	int bonus, prio;
+-
++#endif
+ 	if (rt_task(p))
++#ifdef CONFIG_SPA_STAIRCASE
++		return (MAX_USER_RT_PRIO - 1) - p->rt_priority;
++#else
+ 		return p->prio;
++#endif
+ 
+-	bonus = CURRENT_BONUS(p) - MAX_BONUS / 2;
++#ifdef CONFIG_SPA_STAIRCASE
++	/*
++	 * Kernel tasks get the maximum bonus
++	 */
++	if (p->mm == NULL)
++		return p->static_prio;
+ 
++	return p->static_prio + MAX_BONUS - CURRENT_BONUS(p);
++#else
++	bonus = CURRENT_BONUS(p) - MAX_BONUS / 2;
+ 	prio = p->static_prio - bonus;
+ 	if (prio < MAX_RT_PRIO)
+ 		prio = MAX_RT_PRIO;
+ 	if (prio > MAX_PRIO-1)
+ 		prio = MAX_PRIO-1;
+ 	return prio;
++#endif
+ }
+ 
+ /*
+  * __activate_task - move a task to the runqueue.
+  */
+-static inline void __activate_task(task_t *p, runqueue_t *rq)
++static inline void __activate_task(task_t *p, runqueue_t *rq
++#ifdef CONFIG_SPA_STAIRCASE
++		, int prio
++#endif
++		)
+ {
++#ifdef CONFIG_SPA_STAIRCASE
++	p->time_slice = task_timeslice(p);
++	enqueue_task(p, rq, prio);
++#else
+ 	enqueue_task(p, rq->active);
++#endif
+ 	rq->nr_running++;
+ }
+ 
+ /*
+  * __activate_idle_task - move idle task to the _front_ of runqueue.
+  */
+-static inline void __activate_idle_task(task_t *p, runqueue_t *rq)
++static inline void __activate_idle_task(task_t *p, runqueue_t *rq
++#ifdef CONFIG_SPA_STAIRCASE
++		, int prio
++#endif
++		)
+ {
++#ifdef CONFIG_SPA_STAIRCASE
++	p->time_slice = task_timeslice(p);
++	enqueue_task_head(p, rq, prio);
++#else
+ 	enqueue_task_head(p, rq->active);
++#endif
+ 	rq->nr_running++;
+ }
+ 
+@@ -504,7 +680,12 @@ static void recalc_task_prio(task_t *p, 
+ 		if (p->mm && p->activated != -1 &&
+ 			sleep_time > INTERACTIVE_SLEEP(p)) {
+ 				p->sleep_avg = JIFFIES_TO_NS(MAX_SLEEP_AVG -
+-						AVG_TIMESLICE);
++#ifdef CONFIG_SPA_STAIRCASE
++						TIME_SLICE_TICKS
++#else
++						AVG_TIMESLICE
++#endif
++						);
+ 				if (!HIGH_CREDIT(p))
+ 					p->interactive_credit++;
+ 		} else {
+@@ -554,8 +735,9 @@ static void recalc_task_prio(task_t *p, 
+ 			}
+ 		}
+ 	}
+-
++#ifndef CONFIG_SPA_STAIRCASE
+ 	p->prio = effective_prio(p);
++#endif
+ }
+ 
+ /*
+@@ -564,10 +746,18 @@ static void recalc_task_prio(task_t *p, 
+  * Update all the scheduling statistics stuff. (sleep average
+  * calculation, priority modifiers, etc.)
+  */
+-static void activate_task(task_t *p, runqueue_t *rq, int local)
++static
++#ifdef CONFIG_SPA_STAIRCASE
++int
++#else
++void
++#endif
++activate_task(task_t *p, runqueue_t *rq, int local)
+ {
++#ifdef CONFIG_SPA_STAIRCASE
++	int prio;
++#endif
+ 	unsigned long long now;
+-
+ 	now = sched_clock();
+ #ifdef CONFIG_SMP
+ 	if (!local) {
+@@ -579,6 +769,9 @@ static void activate_task(task_t *p, run
+ #endif
+ 
+ 	recalc_task_prio(p, now);
++#ifdef CONFIG_SPA_STAIRCASE
++	prio = effective_prio(p);
++#endif
+ 
+ 	/*
+ 	 * This checks to make sure it's not an uninterruptible task
+@@ -603,8 +796,12 @@ static void activate_task(task_t *p, run
+ 		}
+ 	}
+ 	p->timestamp = now;
+-
++#ifdef CONFIG_SPA_STAIRCASE
++	__activate_task(p, rq, prio);
++	return prio;
++#else
+ 	__activate_task(p, rq);
++#endif
+ }
+ 
+ /*
+@@ -615,8 +812,12 @@ static void deactivate_task(struct task_
+ 	rq->nr_running--;
+ 	if (p->state == TASK_UNINTERRUPTIBLE)
+ 		rq->nr_uninterruptible++;
++#ifdef CONFIG_SPA_STAIRCASE
++	dequeue_task(p);
++#else
+ 	dequeue_task(p, p->array);
+ 	p->array = NULL;
++#endif
+ }
+ 
+ /*
+@@ -689,7 +890,13 @@ static int migrate_task(task_t *p, int d
+ 	 * If the task is not on a runqueue (and not running), then
+ 	 * it is sufficient to simply update the task's cpu field.
+ 	 */
+-	if (!p->array && !task_running(rq, p)) {
++	if (
++#ifdef CONFIG_SPA_STAIRCASE
++			!task_queued(p)
++#else
++			!p->array
++#endif
++			&& !task_running(rq, p)) {
+ 		set_task_cpu(p, dest_cpu);
+ 		return 0;
+ 	}
+@@ -720,7 +927,12 @@ void wait_task_inactive(task_t * p)
+ repeat:
+ 	rq = task_rq_lock(p, &flags);
+ 	/* Must be off runqueue entirely, not preempted. */
+-	if (unlikely(p->array)) {
++#ifdef CONFIG_SPA_STAIRCASE
++	if (unlikely(task_queued(p)))
++#else
++	if (unlikely(p->array))
++#endif
++	{
+ 		/* If it's preempted, we yield.  It could be a while. */
+ 		preempted = !task_running(rq, p);
+ 		task_rq_unlock(rq, &flags);
+@@ -838,6 +1050,9 @@ static int try_to_wake_up(task_t * p, un
+ 	unsigned long flags;
+ 	long old_state;
+ 	runqueue_t *rq;
++#ifdef CONFIG_SPA_STAIRCASE
++	int prio;
++#endif
+ #ifdef CONFIG_SMP
+ 	unsigned long load, this_load;
+ 	struct sched_domain *sd;
+@@ -849,7 +1064,11 @@ static int try_to_wake_up(task_t * p, un
+ 	if (!(old_state & state))
+ 		goto out;
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++	if (task_queued(p))
++#else
+ 	if (p->array)
++#endif
+ 		goto out_running;
+ 
+ 	cpu = task_cpu(p);
+@@ -944,7 +1163,11 @@ out_set_cpu:
+ 		old_state = p->state;
+ 		if (!(old_state & state))
+ 			goto out;
++#ifdef CONFIG_SPA_STAIRCASE
++		if (task_queued(p))
++#else
+ 		if (p->array)
++#endif
+ 			goto out_running;
+ 
+ 		this_cpu = smp_processor_id();
+@@ -970,9 +1193,17 @@ out_activate:
+ 	 * the waker guarantees that the freshly woken up task is going
+ 	 * to be considered on this CPU.)
+ 	 */
++#ifdef CONFIG_SPA_STAIRCASE
++	prio = activate_task(p, rq, cpu == this_cpu);
++#else
+ 	activate_task(p, rq, cpu == this_cpu);
++#endif
+ 	if (!sync || cpu != this_cpu) {
++#ifdef CONFIG_SPA_STAIRCASE
++		if (PRIO_PREEMPTS_CURR(prio, rq))
++#else
+ 		if (TASK_PREEMPTS_CURR(p, rq))
++#endif
+ 			resched_task(rq->curr);
+ 	}
+ 	success = 1;
+@@ -1012,7 +1243,9 @@ void fastcall sched_fork(task_t *p)
+ 	 */
+ 	p->state = TASK_RUNNING;
+ 	INIT_LIST_HEAD(&p->run_list);
++#ifndef CONFIG_SPA_STAIRCASE
+ 	p->array = NULL;
++#endif
+ 	spin_lock_init(&p->switch_lock);
+ #ifdef CONFIG_PREEMPT
+ 	/*
+@@ -1023,6 +1256,9 @@ void fastcall sched_fork(task_t *p)
+ 	 */
+ 	p->thread_info->preempt_count = 1;
+ #endif
++#ifdef CONFIG_SPA_STAIRCASE
++	p->time_slice = task_timeslice(p);
++#else
+ 	/*
+ 	 * Share the timeslice between parent and child, thus the
+ 	 * total amount of pending timeslices in the system doesn't change,
+@@ -1050,6 +1286,7 @@ void fastcall sched_fork(task_t *p)
+ 		preempt_enable();
+ 	} else
+ 		local_irq_enable();
++#endif
+ }
+ 
+ /*
+@@ -1077,22 +1314,38 @@ void fastcall wake_up_forked_process(tas
+ 		CHILD_PENALTY / 100 * MAX_SLEEP_AVG / MAX_BONUS);
+ 
+ 	p->interactive_credit = 0;
+-
++#ifndef CONFIG_SPA_STAIRCASE
+ 	p->prio = effective_prio(p);
++#endif
+ 	set_task_cpu(p, smp_processor_id());
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++	/*
++	 * Now that the idle task is back on the run queue we need extra care
++	 * to make sure that its one and only fork() doesn't end up in the idle
++	 * priority slot.  Just testing for empty run list is no longer adequate.
++	 */
++	if (unlikely(!task_queued(current) || RUNQUEUE_IDLE(rq)))
++		__activate_task(p, rq, effective_prio(p));
++#else
+ 	if (unlikely(!current->array))
+ 		__activate_task(p, rq);
++#endif
+ 	else {
++#ifndef CONFIG_SPA_STAIRCASE
+ 		p->prio = current->prio;
++#endif
+ 		list_add_tail(&p->run_list, &current->run_list);
++#ifndef CONFIG_SPA_STAIRCASE
+ 		p->array = current->array;
+ 		p->array->nr_active++;
++#endif
+ 		rq->nr_running++;
+ 	}
+ 	task_rq_unlock(rq, &flags);
+ }
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ /*
+  * Potentially available exiting-child timeslices are
+  * retrieved here - this way the parent does not get
+@@ -1125,6 +1378,7 @@ void fastcall sched_exit(task_t * p)
+ 		(EXIT_WEIGHT + 1);
+ 	task_rq_unlock(rq, &flags);
+ }
++#endif
+ 
+ /**
+  * finish_task_switch - clean up after a task-switch
+@@ -1300,7 +1554,11 @@ enum idle_type
+ /*
+  * find_idlest_cpu - find the least busy runqueue.
+  */
+-static int find_idlest_cpu(struct task_struct *p, int this_cpu,
++static int find_idlest_cpu(
++#ifdef CONFIG_SPA_STAIRCASE
++		const
++#endif
++		struct task_struct *p, int this_cpu,
+ 			   struct sched_domain *sd)
+ {
+ 	unsigned long load, min_load, this_load;
+@@ -1399,26 +1657,45 @@ lock_again:
+ 
+ 	p->interactive_credit = 0;
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ 	p->prio = effective_prio(p);
++#endif
+ 	set_task_cpu(p, cpu);
+ 
+ 	if (cpu == this_cpu) {
++#ifdef CONFIG_SPA_STAIRCASE
++		if (unlikely(!task_queued(current) || RUNQUEUE_IDLE(rq)))
++			__activate_task(p, rq, effective_prio(p));
++#else
+ 		if (unlikely(!current->array))
+ 			__activate_task(p, rq);
++#endif
+ 		else {
++#ifndef CONFIG_SPA_STAIRCASE
+ 			p->prio = current->prio;
++#endif
+ 			list_add_tail(&p->run_list, &current->run_list);
++#ifndef CONFIG_SPA_STAIRCASE
+ 			p->array = current->array;
+ 			p->array->nr_active++;
++#endif
+ 			rq->nr_running++;
+ 		}
+ 	} else {
++#ifdef CONFIG_SPA_STAIRCASE
++		int prio = effective_prio(p);
++#endif
+ 		schedstat_inc(sd, sbc_pushed);
+ 		/* Not the local CPU - must adjust timestamp */
+ 		p->timestamp = (p->timestamp - this_rq->timestamp_last_tick)
+ 					+ rq->timestamp_last_tick;
++#ifdef CONFIG_SPA_STAIRCASE
++		__activate_task(p, rq, prio);
++		if (PRIO_PREEMPTS_CURR(prio, rq))
++#else
+ 		__activate_task(p, rq);
+ 		if (TASK_PREEMPTS_CURR(p, rq))
++#endif
+ 			resched_task(rq->curr);
+ 	}
+ 
+@@ -1513,21 +1790,44 @@ static void double_lock_balance(runqueue
+  * Both runqueues must be locked.
+  */
+ static inline
+-void pull_task(runqueue_t *src_rq, prio_array_t *src_array, task_t *p,
+-	       runqueue_t *this_rq, prio_array_t *this_array, int this_cpu)
++void pull_task(runqueue_t *src_rq,
++#ifndef CONFIG_SPA_STAIRCASE
++		prio_array_t *src_array,
++#endif
++		task_t *p, runqueue_t *this_rq,
++#ifndef CONFIG_SPA_STAIRCASE
++		prio_array_t *this_array,
++#endif
++		int this_cpu
++#ifdef CONFIG_SPA_STAIRCASE
++		, int prio
++#endif
++		)
+ {
++#ifdef CONFIG_SPA_STAIRCASE
++	dequeue_task(p);
++#else
+ 	dequeue_task(p, src_array);
++#endif
+ 	src_rq->nr_running--;
+ 	set_task_cpu(p, this_cpu);
+ 	this_rq->nr_running++;
++#ifdef CONFIG_SPA_STAIRCASE
++	enqueue_task(p, this_rq, prio);
++#else
+ 	enqueue_task(p, this_array);
++#endif
+ 	p->timestamp = (p->timestamp - src_rq->timestamp_last_tick)
+ 				+ this_rq->timestamp_last_tick;
+ 	/*
+ 	 * Note that idle threads have a prio of MAX_PRIO, for this test
+ 	 * to be always true for them.
+ 	 */
++#ifdef CONFIG_SPA_STAIRCASE
++	if (PRIO_PREEMPTS_CURR(prio, this_rq))
++#else
+ 	if (TASK_PREEMPTS_CURR(p, this_rq))
++#endif
+ 		resched_task(this_rq->curr);
+ }
+ 
+@@ -1535,7 +1835,11 @@ void pull_task(runqueue_t *src_rq, prio_
+  * can_migrate_task - may task p from runqueue rq be migrated to this_cpu?
+  */
+ static inline
+-int can_migrate_task(task_t *p, runqueue_t *rq, int this_cpu,
++int can_migrate_task(
++#ifdef CONFIG_SPA_STAIRCASE
++		const
++#endif
++		task_t *p, runqueue_t *rq, int this_cpu,
+ 		     struct sched_domain *sd, enum idle_type idle)
+ {
+ 	/*
+@@ -1577,7 +1881,9 @@ static int move_tasks(runqueue_t *this_r
+ 		      unsigned long max_nr_move, struct sched_domain *sd,
+ 		      enum idle_type idle)
+ {
++#ifndef CONFIG_SPA_STAIRCASE
+ 	prio_array_t *array, *dst_array;
++#endif
+ 	struct list_head *head, *curr;
+ 	int idx, pulled = 0;
+ 	task_t *tmp;
+@@ -1585,6 +1891,7 @@ static int move_tasks(runqueue_t *this_r
+ 	if (max_nr_move <= 0 || busiest->nr_running <= 1)
+ 		goto out;
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ 	/*
+ 	 * We first consider expired tasks. Those will likely not be
+ 	 * executed in the near future, and they are most likely to
+@@ -1600,23 +1907,35 @@ static int move_tasks(runqueue_t *this_r
+ 	}
+ 
+ new_array:
++#endif
+ 	/* Start searching at priority 0: */
+ 	idx = 0;
+ skip_bitmap:
+ 	if (!idx)
++#ifdef CONFIG_SPA_STAIRCASE
++		idx = sched_find_first_bit(busiest->bitmap);
++#else
+ 		idx = sched_find_first_bit(array->bitmap);
++#endif
+ 	else
++#ifndef CONFIG_SPA_STAIRCASE
+ 		idx = find_next_bit(array->bitmap, MAX_PRIO, idx);
++#endif
+ 	if (idx >= MAX_PRIO) {
++#ifndef CONFIG_SPA_STAIRCASE
+ 		if (array == busiest->expired && busiest->active->nr_active) {
+ 			array = busiest->active;
+ 			dst_array = this_rq->active;
+ 			goto new_array;
+ 		}
++#endif
+ 		goto out;
+ 	}
+-
++#ifdef CONFIG_SPA_STAIRCASE
++	head = &busiest->queues[idx].queue;
++#else
+ 	head = array->queue + idx;
++#endif
+ 	curr = head->prev;
+ skip_queue:
+ 	tmp = list_entry(curr, task_t, run_list);
+@@ -1629,7 +1948,11 @@ skip_queue:
+ 		idx++;
+ 		goto skip_bitmap;
+ 	}
++#ifdef CONFIG_SPA_STAIRCASE
++	pull_task(busiest, tmp, this_rq, this_cpu, idx);
++#else
+ 	pull_task(busiest, array, tmp, this_rq, dst_array, this_cpu);
++#endif
+ 	pulled++;
+ 
+ 	/* We only want to steal up to the prescribed number of tasks. */
+@@ -1787,7 +2110,11 @@ out_balanced:
+ /*
+  * find_busiest_queue - find the busiest runqueue among the cpus in group.
+  */
+-static runqueue_t *find_busiest_queue(struct sched_group *group)
++static runqueue_t *find_busiest_queue(
++#ifdef CONFIG_SPA_STAIRCASE
++		const
++#endif
++		struct sched_group *group)
+ {
+ 	cpumask_t tmp;
+ 	unsigned long load, max_load = 0;
+@@ -2088,6 +2415,12 @@ static void rebalance_tick(int this_cpu,
+ 		}
+ 	}
+ }
++#ifdef CONFIG_SPA
++static inline int needs_idle_balance(const runqueue_t *rq)
++{
++	return rq->nr_running == 0;
++}
++#endif
+ #else
+ /*
+  * on UP we do not need to balance between CPUs:
+@@ -2098,6 +2431,12 @@ static inline void rebalance_tick(int cp
+ static inline void idle_balance(int cpu, runqueue_t *rq)
+ {
+ }
++#ifdef CONFIG_SPA_STAIRCASE
++static inline int needs_idle_balance(const runqueue_t *rq)
++{
++	return 0;
++}
++#endif
+ #endif
+ 
+ static inline int wake_priority_sleeper(runqueue_t *rq)
+@@ -2115,10 +2454,54 @@ static inline int wake_priority_sleeper(
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++/*
++ * Are promotions due?
++ */
++static inline int promotions_due(const runqueue_t *rq)
++{
++	return time_after_eq(jiffies, rq->next_prom_due);
++}
++
++/*
++ * Assume runqueue lock is NOT already held.
++ */
++static void do_promotions(runqueue_t *rq)
++{
++	int idx = MAX_RT_PRIO;
++
++	spin_lock(&rq->lock);
++	for (;;) {
++		int new_prio;
++		idx = find_next_bit(rq->bitmap, IDLE_PRIO, idx + 1);
++		if (idx > (IDLE_PRIO - 1))
++			break;
++
++		new_prio = idx - 1;
++		__list_splice(&rq->queues[idx].queue, rq->queues[new_prio].queue.prev);
++		INIT_LIST_HEAD(&rq->queues[idx].queue);
++		__clear_bit(idx, rq->bitmap);
++		__set_bit(new_prio, rq->bitmap);
++		/*
++		 * If promotion occurs from the slot
++		 * associated with rq->current_prio_slot then the
++		 * current task will be one of those promoted
++		 * so we should update rq->current_prio_slot
++		 * This will only be true for at most one slot.
++		 */
++		if (unlikely(idx == rq->current_prio_slot->prio))
++			rq->current_prio_slot = rq->queues + new_prio;
++	}
++	rq->next_prom_due = (jiffies + get_prom_interval(rq));
++	spin_unlock(&rq->lock);
++}
++#endif
++
+ DEFINE_PER_CPU(struct kernel_stat, kstat);
+ 
+ EXPORT_PER_CPU_SYMBOL(kstat);
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ /*
+  * We place interactive tasks back into the active array, if possible.
+  *
+@@ -2134,6 +2517,7 @@ EXPORT_PER_CPU_SYMBOL(kstat);
+ 		(jiffies - (rq)->expired_timestamp >= \
+ 			STARVATION_LIMIT * ((rq)->nr_running) + 1))) || \
+ 			((rq)->curr->static_prio > (rq)->best_expired_prio))
++#endif
+ 
+ /*
+  * This function gets called by the timer code, with HZ frequency.
+@@ -2179,11 +2563,13 @@ void scheduler_tick(int user_ticks, int 
+ 		cpustat->user += user_ticks;
+ 	cpustat->system += sys_ticks;
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ 	/* Task might have expired already, but not scheduled off yet */
+ 	if (p->array != rq->active) {
+ 		set_tsk_need_resched(p);
+ 		goto out;
+ 	}
++#endif
+ 	spin_lock(&rq->lock);
+ 	/*
+ 	 * The task was running during this tick - update the
+@@ -2199,20 +2585,37 @@ void scheduler_tick(int user_ticks, int 
+ 		 */
+ 		if ((p->policy == SCHED_RR) && !--p->time_slice) {
+ 			p->time_slice = task_timeslice(p);
++#ifndef CONFIG_SPA_STAIRCASE
+ 			p->first_time_slice = 0;
++#endif
+ 			set_tsk_need_resched(p);
+ 
+ 			/* put it at the end of the queue: */
++#ifdef CONFIG_SPA_STAIRCASE
++			dequeue_task(p);
++			enqueue_task(p, rq, rq->current_prio_slot->prio);
++#else
+ 			dequeue_task(p, rq->active);
+ 			enqueue_task(p, rq->active);
++#endif
+ 		}
+ 		goto out_unlock;
+ 	}
+ 	if (!--p->time_slice) {
++#ifdef CONFIG_SPA_STAIRCASE
++		dequeue_task(p);
++#else
+ 		dequeue_task(p, rq->active);
++#endif
+ 		set_tsk_need_resched(p);
++#ifndef CONFIG_SPA_STAIRCASE
+ 		p->prio = effective_prio(p);
++#endif
+ 		p->time_slice = task_timeslice(p);
++#ifdef CONFIG_SPA_STAIRCASE
++		rq->current_prio_slot = rq->queues + effective_prio(p);
++		enqueue_task(p, rq, rq->current_prio_slot->prio);
++#else
+ 		p->first_time_slice = 0;
+ 
+ 		if (!rq->expired_timestamp)
+@@ -2250,11 +2653,23 @@ void scheduler_tick(int user_ticks, int 
+ 			p->prio = effective_prio(p);
+ 			enqueue_task(p, rq->active);
+ 		}
++#endif
+ 	}
+ out_unlock:
+ 	spin_unlock(&rq->lock);
+ out:
+ 	rebalance_tick(cpu, rq, NOT_IDLE);
++#ifdef CONFIG_SPA_STAIRCASE
++	if (unlikely(promotions_due(rq))) {
++		/*
++		 * If there's less than 2 SCHED_OTHER tasks defer the next promotion
++		 */
++		if ((rt_task(p) ? rq->nr_running - 1 : rq->nr_running) < 2)
++			rq->next_prom_due = (jiffies + get_prom_interval(rq));
++		else
++			do_promotions(rq);
++	}
++#endif
+ }
+ 
+ #ifdef CONFIG_SCHED_SMT
+@@ -2350,11 +2765,16 @@ asmlinkage void __sched schedule(void)
+ 	long *switch_count;
+ 	task_t *prev, *next;
+ 	runqueue_t *rq;
++#ifndef CONFIG_SPA_STAIRCASE
+ 	prio_array_t *array;
+ 	struct list_head *queue;
++#endif
+ 	unsigned long long now;
+ 	unsigned long run_time;
+-	int cpu, idx;
++	int cpu;
++#ifndef CONFIG_SPA_STAIRCASE
++	int idx;
++#endif
+ 
+ 	/*
+ 	 * Test if we are atomic.  Since do_exit() needs to call into
+@@ -2405,9 +2825,15 @@ need_resched:
+ 			deactivate_task(prev, rq);
+ 	}
+ 
+-	cpu = smp_processor_id();
+-	if (unlikely(!rq->nr_running)) {
++	icpu = smp_processor_id();
++#ifdef CONFIG_SPA_STAIRCASE
++	if (unlikely(needs_idle_balance(rq)))
++#else
++	if (unlikely(!rq->nr_running))
++#endif
++	{
+ 		idle_balance(cpu, rq);
++#ifndef CONFIG_SPA_STAIRCASE
+ 		if (!rq->nr_running) {
+ 			next = rq->idle;
+ 			rq->expired_timestamp = 0;
+@@ -2415,8 +2841,17 @@ need_resched:
+  			schedstat_inc(rq, sched_idle);
+ 			goto switch_tasks;
+ 		}
++#endif
+ 	}
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++	rq->current_prio_slot = rq->queues + sched_find_first_bit(rq->bitmap);
++	next = list_entry(rq->current_prio_slot->queue.next, task_t, run_list);
++	if (next == rq->idle) {
++		wake_sleeping_dependent(cpu, rq);
++		goto switch_tasks;
++	}
++#else
+ 	array = rq->active;
+ 	if (unlikely(!array->nr_active)) {
+ 		/*
+@@ -2429,12 +2864,18 @@ need_resched:
+ 		rq->expired_timestamp = 0;
+ 		rq->best_expired_prio = MAX_PRIO;
+ 	}
++#endif
+ 
++#ifndef CONFIG_SPA_STAIRCASE
+ 	idx = sched_find_first_bit(array->bitmap);
+ 	queue = array->queue + idx;
+ 	next = list_entry(queue->next, task_t, run_list);
++#endif
+ 
+ 	if (dependent_sleeper(cpu, rq, next)) {
++#ifdef CONFIG_SPA_STAIRCASE
++		rq->current_prio_slot = rq->queues + IDLE_PRIO;
++#endif
+ 		next = rq->idle;
+ 		goto switch_tasks;
+ 	}
+@@ -2445,10 +2886,14 @@ need_resched:
+ 		if (next->activated == 1)
+ 			delta = delta * (ON_RUNQUEUE_WEIGHT * 128 / 100) / 128;
+ 
++#ifdef CONFIG_SPA_STAIRCASE
+ 		array = next->array;
+ 		dequeue_task(next, array);
++#endif
+ 		recalc_task_prio(next, next->timestamp + delta);
++#ifndef CONFIG_SPA_STAIRCASE
+ 		enqueue_task(next, array);
++#endif
+ 	}
+ 	next->activated = 0;
+ switch_tasks:
+@@ -2727,9 +3172,16 @@ EXPORT_SYMBOL(sleep_on_timeout);
+ void set_user_nice(task_t *p, long nice)
+ {
+ 	unsigned long flags;
++#ifndef CONFIG_SPA_STAIRCASE
+ 	prio_array_t *array;
++#endif
+ 	runqueue_t *rq;
+-	int old_prio, new_prio, delta;
++	int delta;
++#ifdef CONFIG_SPA_STAIRCASE
++	int queued;
++#else
++	int old_prio, new_prio;
++#endif
+ 
+ 	if (TASK_NICE(p) == nice || nice < -20 || nice > 19)
+ 		return;
+@@ -2744,6 +3196,12 @@ void set_user_nice(task_t *p, long nice)
+ 	 * it wont have any effect on scheduling until the task is
+ 	 * not SCHED_NORMAL:
+ 	 */
++#ifdef CONFIG_SPA_STAIRCASE
++	if ((queued = (!rt_task(p) && task_queued(p))))
++		dequeue_task(p);
++
++	delta = PRIO_TO_NICE(p->static_prio) - nice;
++#else
+ 	if (rt_task(p)) {
+ 		p->static_prio = NICE_TO_PRIO(nice);
+ 		goto out_unlock;
+@@ -2755,19 +3213,40 @@ void set_user_nice(task_t *p, long nice)
+ 	old_prio = p->prio;
+ 	new_prio = NICE_TO_PRIO(nice);
+ 	delta = new_prio - old_prio;
++#endif
+ 	p->static_prio = NICE_TO_PRIO(nice);
++#ifndef CONFIG_SPA_STAIRCASE
+ 	p->prio += delta;
++#endif
+ 
+-	if (array) {
++#ifdef CONFIG_SPA_STAIRCASE
++	if (queued)
++#else
++	if (array)
++#endif
++	{
++#ifdef CONFIG_SPA_STAIRCASE
++		int new_prio = effective_prio(p);
++		enqueue_task(p, rq, new_prio);
++		if (task_running(rq, p))
++			rq->current_prio_slot = rq->queues + new_prio;
++#else
+ 		enqueue_task(p, array);
++#endif
+ 		/*
+ 		 * If the task increased its priority or is running and
+ 		 * lowered its priority, then reschedule its CPU:
+ 		 */
++#ifdef CONFIG_SPA_STAIRCASE
++		if ((delta > 0) || ((delta < 0) && task_running(rq, p)))
++#else
+ 		if (delta < 0 || (delta > 0 && task_running(rq, p)))
++#endif
+ 			resched_task(rq->curr);
+ 	}
++#ifndef CONFIG_SPA_STAIRCASE
+ out_unlock:
++#endif
+ 	task_rq_unlock(rq, &flags);
+ }
+ 
+@@ -2834,7 +3313,11 @@ asmlinkage long sys_nice(int increment)
+  */
+ int task_prio(task_t *p)
+ {
++#ifdef CONFIG_SPA_STAIRCASE
++	return effective_prio(p) - MAX_RT_PRIO;
++#else
+ 	return p->prio - MAX_RT_PRIO;
++#endif
+ }
+ 
+ /**
+@@ -2871,13 +3354,19 @@ static inline task_t *find_process_by_pi
+ /* Actually do priority change: must hold rq lock. */
+ static void __setscheduler(struct task_struct *p, int policy, int prio)
+ {
++#ifdef CONFIG_SPA_STAIRCASE
++	BUG_ON(task_queued(p));
++#else
+ 	BUG_ON(p->array);
++#endif
+ 	p->policy = policy;
+ 	p->rt_priority = prio;
++#ifndef CONFIG_SPA_STAIRCASE
+ 	if (policy != SCHED_NORMAL)
+ 		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
+ 	else
+ 		p->prio = p->static_prio;
++#endif
+ }
+ 
+ /*
+@@ -2887,8 +3376,12 @@ static int setscheduler(pid_t pid, int p
+ {
+ 	struct sched_param lp;
+ 	int retval = -EINVAL;
++#ifdef CONFIG_SPA_STAIRCASE
++	int queued;
++#else
+ 	int oldprio;
+ 	prio_array_t *array;
++#endif
+ 	unsigned long flags;
+ 	runqueue_t *rq;
+ 	task_t *p;
+@@ -2948,24 +3441,48 @@ static int setscheduler(pid_t pid, int p
+ 	if (retval)
+ 		goto out_unlock;
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++	if ((queued = task_queued(p)))
++#else
+ 	array = p->array;
+ 	if (array)
++#endif
+ 		deactivate_task(p, task_rq(p));
+ 	retval = 0;
++#ifndef CONFIG_SPA_STAIRCASE
+ 	oldprio = p->prio;
++#endif
+ 	__setscheduler(p, policy, lp.sched_priority);
+-	if (array) {
++#ifdef CONFIG_SPA_STAIRCASE
++	if (queued)
++#else
++	if (array)
++#endif
++	{
++#ifdef CONFIG_SPA_STAIRCASE
++		int prio = effective_prio(p);
++		__activate_task(p, task_rq(p), prio);
++#else
+ 		__activate_task(p, task_rq(p));
++#endif
+ 		/*
+ 		 * Reschedule if we are currently running on this runqueue and
+ 		 * our priority decreased, or if we are not currently running on
+ 		 * this runqueue and our priority is higher than the current's
+ 		 */
++#ifdef CONFIG_SPA_STAIRCASE
++		if (PRIO_PREEMPTS_CURR(prio, rq))
++#else
+ 		if (task_running(rq, p)) {
+ 			if (p->prio > oldprio)
+ 				resched_task(rq->curr);
+ 		} else if (TASK_PREEMPTS_CURR(p, rq))
++#endif
+ 			resched_task(rq->curr);
++#ifdef CONFIG_SPA_STAIRCASE
++		if (task_running(rq, p))
++			rq->current_prio_slot = rq->queues + prio;
++#endif
+ 	}
+ 
+ out_unlock:
+@@ -3179,8 +3696,10 @@ out_unlock:
+ asmlinkage long sys_sched_yield(void)
+ {
+ 	runqueue_t *rq = this_rq_lock();
++#ifndef CONFIG_SPA_STAIRCASE
+ 	prio_array_t *array = current->array;
+ 	prio_array_t *target = rq->expired;
++#endif
+ 
+ 	schedstat_inc(rq, yld_cnt);
+ 	/*
+@@ -3190,11 +3709,25 @@ asmlinkage long sys_sched_yield(void)
+ 	 * (special rule: RT tasks will just roundrobin in the active
+ 	 *  array.)
+ 	 */
++#ifdef CONFIG_SPA_STAIRCASE
++	if (likely(!rt_task(current))) {
++		/* If there's other tasks on this CPU make sure that as many of
++		 * them as possible/judicious get some CPU before this task
++		 */
++		dequeue_task(current);
++		rq->current_prio_slot = rq->queues + (IDLE_PRIO - 1);
++		enqueue_task(current, rq, rq->current_prio_slot->prio);
++	} else {
++		list_del_init(&current->run_list);
++		list_add_tail(&current->run_list, &rq->current_prio_slot->queue);
++	}
++#else
+ 	if (unlikely(rt_task(current)))
+ 		target = rq->active;
+ 
+ 	dequeue_task(current, array);
+ 	enqueue_task(current, target);
++#endif
+ 
+ 	/*
+ 	 * Since we are going to call schedule() anyway, there's
+@@ -3451,10 +3984,31 @@ void __devinit init_idle(task_t *idle, i
+ 
+ 	idle_rq->curr = idle_rq->idle = idle;
+ 	deactivate_task(idle, rq);
++#ifdef CONFIG_SPA_STAIRCASE
++	/*
++	 * Setting "activated" to zero will reduce testing required in schedule()
++	 */
++	idle->activated = 0;
++	/*
++	 * Should be no need to initialise other EBS fields as they shouldn't be used
++	 */
++#else
+ 	idle->array = NULL;
+ 	idle->prio = MAX_PRIO;
++#endif
+ 	idle->state = TASK_RUNNING;
+ 	set_task_cpu(idle, cpu);
++#ifdef CONFIG_SPA_STAIRCASE
++	/*
++	 * Putting the idle process onto a run queue simplifies the selection of
++	 * the next task to run in schedule().
++	 */
++	list_add_tail(&idle->run_list, &idle_rq->queues[IDLE_PRIO].queue);
++	/*
++	 * The idle task is the current task on idle_rq
++	 */
++	idle_rq->current_prio_slot = idle_rq->queues + IDLE_PRIO;
++#endif
+ 	double_rq_unlock(idle_rq, rq);
+ 	set_tsk_need_resched(idle);
+ 	local_irq_restore(flags);
+@@ -3564,8 +4118,13 @@ static void __migrate_task(struct task_s
+ 	if (!cpu_isset(dest_cpu, p->cpus_allowed))
+ 		goto out;
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++	if (task_queued(p))
++#else
+ 	set_task_cpu(p, dest_cpu);
+-	if (p->array) {
++	if (p->array)
++#endif
++	{
+ 		/*
+ 		 * Sync timestamp with rq_dest's before activating.
+ 		 * The same thing could be achieved by doing this step
+@@ -3575,10 +4134,19 @@ static void __migrate_task(struct task_s
+ 		p->timestamp = p->timestamp - rq_src->timestamp_last_tick
+ 				+ rq_dest->timestamp_last_tick;
+ 		deactivate_task(p, rq_src);
++#ifdef CONFIG_SPA_STAIRCASE
++		set_task_cpu(p, dest_cpu);
++		if (PRIO_PREEMPTS_CURR(activate_task(p, rq_dest, 0), rq_dest))
++#else
+ 		activate_task(p, rq_dest, 0);
+ 		if (TASK_PREEMPTS_CURR(p, rq_dest))
++#endif
+ 			resched_task(rq_dest->curr);
+ 	}
++#ifdef CONFIG_SPA_STAIRCASE
++	else
++		set_task_cpu(p, dest_cpu);
++#endif
+ 
+ out:
+ 	double_rq_unlock(rq_src, rq_dest);
+@@ -3725,9 +4293,16 @@ void sched_idle_next(void)
+ 	 */
+ 	spin_lock_irqsave(&rq->lock, flags);
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++	dequeue_task(p);
++	__setscheduler(p, SCHED_FIFO, MAX_RT_PRIO-1);
++	enqueue_task_head(p, rq, 0);
++	rq->nr_running++;
++#else
+ 	__setscheduler(p, SCHED_FIFO, MAX_RT_PRIO-1);
+ 	/* Add idle task to _front_ of it's priority queue */
+ 	__activate_idle_task(p, rq);
++#endif
+ 
+ 	spin_unlock_irqrestore(&rq->lock, flags);
+ }
+@@ -3776,8 +4351,15 @@ static int migration_call(struct notifie
+ 		/* Idle task back to normal (off runqueue, low prio) */
+ 		rq = task_rq_lock(rq->idle, &flags);
+ 		deactivate_task(rq->idle, rq);
++#ifdef CONFIG_SPA_STAIRCASE
++		rq->idle->static_prio = IDLE_PRIO;
++#else
+ 		rq->idle->static_prio = MAX_PRIO;
++#endif
+ 		__setscheduler(rq->idle, SCHED_NORMAL, 0);
++#ifdef CONFIG_SPA_STAIRCASE
++		enqueue_task(rq->idle, rq, IDLE_PRIO);
++#endif
+ 		task_rq_unlock(rq, &flags);
+  		BUG_ON(rq->nr_running != 0);
+ 
+@@ -4086,7 +4668,10 @@ int in_sched_functions(unsigned long add
+ void __init sched_init(void)
+ {
+ 	runqueue_t *rq;
+-	int i, j, k;
++	int i, j;
++#ifndef CONFIG_SPA_STAIRCASE
++	int k;
++#endif
+ 
+ #ifdef CONFIG_SMP
+ 	/* Set up an initial dummy domain for early boot */
+@@ -4106,13 +4691,17 @@ void __init sched_init(void)
+ #endif
+ 
+ 	for (i = 0; i < NR_CPUS; i++) {
++#ifndef CONFIG_SPA_STAIRCASE
+ 		prio_array_t *array;
++#endif
+ 
+ 		rq = cpu_rq(i);
+ 		spin_lock_init(&rq->lock);
++#ifndef CONFIG_SPA_STAIRCASE
+ 		rq->active = rq->arrays;
+ 		rq->expired = rq->arrays + 1;
+ 		rq->best_expired_prio = MAX_PRIO;
++#endif
+ 
+ #ifdef CONFIG_SMP
+ 		rq->sd = &sched_domain_init;
+@@ -4124,6 +4713,17 @@ void __init sched_init(void)
+ #endif
+ 		atomic_set(&rq->nr_iowait, 0);
+ 
++#ifdef CONFIG_SPA_STAIRCASE
++		for (j = 0; j <= IDLE_PRIO; j++) {
++			rq->queues[j].prio = j;
++			INIT_LIST_HEAD(&rq->queues[j].queue);
++		}
++		memset(rq->bitmap, 0, BITS_TO_LONGS(IDLE_PRIO+1)*sizeof(long));
++		// delimiter for bitsearch
++		__set_bit(IDLE_PRIO, rq->bitmap);
++		rq->current_prio_slot = rq->queues + (IDLE_PRIO - 20);
++		rq->next_prom_due = (jiffies + get_prom_interval(rq));
++#else
+ 		for (j = 0; j < 2; j++) {
+ 			array = rq->arrays + j;
+ 			for (k = 0; k < MAX_PRIO; k++) {
+@@ -4133,6 +4733,7 @@ void __init sched_init(void)
+ 			// delimiter for bitsearch
+ 			__set_bit(MAX_PRIO, array->bitmap);
+ 		}
++#endif
+ 	}
+ 	/*
+ 	 * We have to do a little magic to get the first
+diff -puN arch/i386/Kconfig~spa-v0.1 arch/i386/Kconfig
+--- linux-2.6.7-rc3-xx1/arch/i386/Kconfig~spa-v0.1	2004-06-10 17:18:08.000000000 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/arch/i386/Kconfig	2004-06-10 22:19:37.653454328 -0400
+@@ -1569,3 +1569,78 @@ config PC
+ 	bool
+ 	depends on X86 && !EMBEDDED
+ 	default y
++
++menu "Extra options"
++
++choice
++	prompt "Process scheduling policy"
++	default SCHED_NONE
++	depends on EXPERIMENTAL
++	help
++	  Different people have written alternate implementations of
++	  the kernel's scheduler code.  Each implementation is different
++	  and has its own pros and cons.  This will allow you to choose
++	  between different scheduling policies.
++
++config SCHED_NONE
++	bool "Default"
++	help
++	  This is the default scheduler as is included in the -mm kernels.
++	  It contains the sched domains code by Nick Piggin and some tweaks
++	  to the scheduling code, but no significant changes.
++
++config SPA_STAIRCASE
++	bool "Staircase-SPA hybrid"
++	help
++	  This is a hybrid scheduler.  It's an amalgamation of the
++	  Staircase scheduler by Con Kolivas and the Single CPU
++	  Priority Array (SPA) scheduler by Peter Williams.
++
++	  The two different schedulers had many similarities in their
++	  architectures, and so were able to be merged to get the best
++	  of both worlds.
++
++	  The SPA scheduler is an effort to simplify the workings of
++	  the kernel scheduler.  In the original scheduler, tasks
++	  switched back and forth between two arrays: an active array,
++	  and an expired array.  A task that is using / will use its
++	  timeslice is in the active array, and once it does, it
++	  "expires" to the expired array.  There are many other factors
++	  involved to determine a task's effective priority - interactivity,
++	  credit, etc.  And there are special rules; for example, real-time
++	  tasks never expire to the expired array, they just get requeued
++	  in the active array.
++	  In the SPA scheduler, however, there is only a single priority
++	  array that all tasks remain in.  The task's position in the
++	  list is adjusted with various "bonuses" - interactivity,
++	  throughput, etc.  So, for example, a higher priority task will
++	  be put closer to the front of the priority array, and so will
++	  be run sooner.
++
++	  The staircase scheduler operates on a similar principle to the
++	  SPA scheduler.  Like SPA, it has only one priority array that
++	  tasks will remain in.  The difference is in how the "bonuses"
++	  are calculated.  Every task starts with a certain "deadline,"
++	  or "burst" as it's called in newer versions.  The deadline
++	  is used to calculate how large a timeslice the task will get.
++	  A task will be first activated with a relatively high deadline,
++	  and therefore get large timeslices.  However, each time it uses
++	  its timeslice and is requeued, its deadline is decreased.  So
++	  on the next run, it will get a smaller timeslice than before.
++	  And likewise, its timeslice will keep "stepping down" each
++	  requeue - like a staircase.  And, of course, there are other
++	  factors used in calculation.  For example, the actual timeslice
++	  size is scaled according to priority.  Also, the task has a
++	  maximum deadline based on its priority.  So a task with a certain
++	  priority will only be able to go so high on the staircase.
++	  Another task with a higher priority will also have a limit on the
++	  staircase, but its best deadline will be higher than the other
++	  task's.  Tasks will also regain deadline due to bonuses.
++
++
++
++
++
++endchoice
++
++endmenu
+
+_

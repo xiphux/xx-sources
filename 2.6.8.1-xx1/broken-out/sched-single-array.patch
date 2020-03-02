@@ -1,0 +1,36 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+This very simple patch temporarily turns off the array-switching within the
+current scheduler.
+
+This yields an unfair scheduler (higher-prio CPU loops can starve lower-prio
+CPU loops indefinitely), but it gives us most of the benefits of a single
+array and gives us a chance to test the effects in isolation.
+
+It would be nice if people could test: basic interactivity and various
+SMP/NUMA workloads such as SDET.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/sched.c |    6 +++++-
+ 1 files changed, 5 insertions(+), 1 deletion(-)
+
+diff -puN kernel/sched.c~sched-single-array kernel/sched.c
+--- 25/kernel/sched.c~sched-single-array	2004-08-06 02:53:01.127320168 -0700
++++ 25-akpm/kernel/sched.c	2004-08-06 03:12:16.015750440 -0700
+@@ -2448,7 +2448,11 @@ void scheduler_tick(int user_ticks, int 
+ 
+ 		if (!rq->expired_timestamp)
+ 			rq->expired_timestamp = jiffies;
+-		if (!TASK_INTERACTIVE(p) || EXPIRED_STARVING(rq)) {
++		/*
++		 * Disable array switching temporarily to investigate
++		 * the effects (note that this doesnt guarantee fairness):
++		 */
++		if (0 && (!TASK_INTERACTIVE(p) || EXPIRED_STARVING(rq))) {
+ 			enqueue_task(p, rq->expired);
+ 			if (p->static_prio < rq->best_expired_prio)
+ 				rq->best_expired_prio = p->static_prio;
+_

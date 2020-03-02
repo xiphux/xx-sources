@@ -1,0 +1,154 @@
+
+From: "Shai Fultheim" <shai@scalex86.org>
+
+Use the percpu infrastructure rather than open-coded array[NR_CPUS].
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/cpu/common.c |    2 +-
+ 25-akpm/arch/i386/kernel/init_task.c  |    7 ++-----
+ 25-akpm/arch/i386/kernel/ioport.c     |    2 +-
+ 25-akpm/arch/i386/kernel/process.c    |    4 ++--
+ 25-akpm/arch/i386/kernel/sysenter.c   |    2 +-
+ 25-akpm/arch/i386/kernel/vm86.c       |    4 ++--
+ 25-akpm/arch/i386/power/cpu.c         |    2 +-
+ 25-akpm/include/asm-i386/processor.h  |    4 ++--
+ 8 files changed, 12 insertions(+), 15 deletions(-)
+
+diff -puN arch/i386/kernel/cpu/common.c~per_cpu-per_cpu-init_tss arch/i386/kernel/cpu/common.c
+--- 25/arch/i386/kernel/cpu/common.c~per_cpu-per_cpu-init_tss	2004-07-27 23:36:31.006227984 -0700
++++ 25-akpm/arch/i386/kernel/cpu/common.c	2004-07-27 23:36:31.031224184 -0700
+@@ -506,7 +506,7 @@ void __init early_cpu_init(void)
+ void __init cpu_init (void)
+ {
+ 	int cpu = smp_processor_id();
+-	struct tss_struct * t = init_tss + cpu;
++	struct tss_struct * t = &per_cpu(init_tss, cpu);
+ 	struct thread_struct *thread = &current->thread;
+ 
+ 	if (test_and_set_bit(cpu, &cpu_initialized)) {
+diff -puN arch/i386/kernel/init_task.c~per_cpu-per_cpu-init_tss arch/i386/kernel/init_task.c
+--- 25/arch/i386/kernel/init_task.c~per_cpu-per_cpu-init_tss	2004-07-27 23:36:31.009227528 -0700
++++ 25-akpm/arch/i386/kernel/init_task.c	2004-07-27 23:36:31.032224032 -0700
+@@ -40,10 +40,7 @@ EXPORT_SYMBOL(init_task);
+ 
+ /*
+  * per-CPU TSS segments. Threads are completely 'soft' on Linux,
+- * no more per-task TSS's. The TSS size is kept cacheline-aligned
+- * so they are allowed to end up in the .data.cacheline_aligned
+- * section. Since TSS's are completely CPU-local, we want them
+- * on exact cacheline boundaries, to eliminate cacheline ping-pong.
++ * no more per-task TSS's.
+  */ 
+-struct tss_struct init_tss[NR_CPUS] __cacheline_aligned = { [0 ... NR_CPUS-1] = INIT_TSS };
++DEFINE_PER_CPU(struct tss_struct, init_tss) ____cacheline_maxaligned_in_smp = INIT_TSS;
+ 
+diff -puN arch/i386/kernel/ioport.c~per_cpu-per_cpu-init_tss arch/i386/kernel/ioport.c
+--- 25/arch/i386/kernel/ioport.c~per_cpu-per_cpu-init_tss	2004-07-27 23:36:31.012227072 -0700
++++ 25-akpm/arch/i386/kernel/ioport.c	2004-07-27 23:36:31.033223880 -0700
+@@ -83,7 +83,7 @@ asmlinkage long sys_ioperm(unsigned long
+ 	 * do it in the per-thread copy and in the TSS ...
+ 	 */
+ 	set_bitmap(t->io_bitmap_ptr, from, num, !turn_on);
+-	tss = init_tss + get_cpu();
++	tss = &per_cpu(init_tss, get_cpu());
+ 	if (tss->io_bitmap_base == IO_BITMAP_OFFSET) { /* already active? */
+ 		set_bitmap(tss->io_bitmap, from, num, !turn_on);
+ 	} else {
+diff -puN arch/i386/kernel/process.c~per_cpu-per_cpu-init_tss arch/i386/kernel/process.c
+--- 25/arch/i386/kernel/process.c~per_cpu-per_cpu-init_tss	2004-07-27 23:36:31.015226616 -0700
++++ 25-akpm/arch/i386/kernel/process.c	2004-07-27 23:36:31.033223880 -0700
+@@ -299,7 +299,7 @@ void exit_thread(void)
+ 	/* The process may have allocated an io port bitmap... nuke it. */
+ 	if (unlikely(NULL != tsk->thread.io_bitmap_ptr)) {
+ 		int cpu = get_cpu();
+-		struct tss_struct *tss = init_tss + cpu;
++		struct tss_struct *tss = &per_cpu(init_tss, cpu);
+ 		kfree(tsk->thread.io_bitmap_ptr);
+ 		tsk->thread.io_bitmap_ptr = NULL;
+ 		tss->io_bitmap_base = INVALID_IO_BITMAP_OFFSET;
+@@ -511,7 +511,7 @@ struct task_struct fastcall * __switch_t
+ 	struct thread_struct *prev = &prev_p->thread,
+ 				 *next = &next_p->thread;
+ 	int cpu = smp_processor_id();
+-	struct tss_struct *tss = init_tss + cpu;
++	struct tss_struct *tss = &per_cpu(init_tss, cpu);
+ 
+ 	/* never put a printk in __switch_to... printk() calls wake_up*() indirectly */
+ 
+diff -puN arch/i386/kernel/sysenter.c~per_cpu-per_cpu-init_tss arch/i386/kernel/sysenter.c
+--- 25/arch/i386/kernel/sysenter.c~per_cpu-per_cpu-init_tss	2004-07-27 23:36:31.018226160 -0700
++++ 25-akpm/arch/i386/kernel/sysenter.c	2004-07-27 23:36:31.034223728 -0700
+@@ -24,7 +24,7 @@ extern asmlinkage void sysenter_entry(vo
+ void enable_sep_cpu(void *info)
+ {
+ 	int cpu = get_cpu();
+-	struct tss_struct *tss = init_tss + cpu;
++	struct tss_struct *tss = &per_cpu(init_tss, cpu);
+ 
+ 	tss->ss1 = __KERNEL_CS;
+ 	tss->esp1 = sizeof(struct tss_struct) + (unsigned long) tss;
+diff -puN arch/i386/kernel/vm86.c~per_cpu-per_cpu-init_tss arch/i386/kernel/vm86.c
+--- 25/arch/i386/kernel/vm86.c~per_cpu-per_cpu-init_tss	2004-07-27 23:36:31.021225704 -0700
++++ 25-akpm/arch/i386/kernel/vm86.c	2004-07-27 23:36:31.035223576 -0700
+@@ -121,7 +121,7 @@ struct pt_regs * fastcall save_v86_state
+ 		do_exit(SIGSEGV);
+ 	}
+ 
+-	tss = init_tss + get_cpu();
++	tss = &per_cpu(init_tss, get_cpu());
+ 	current->thread.esp0 = current->thread.saved_esp0;
+ 	current->thread.sysenter_cs = __KERNEL_CS;
+ 	load_esp0(tss, &current->thread);
+@@ -303,7 +303,7 @@ static void do_sys_vm86(struct kernel_vm
+ 	asm volatile("movl %%fs,%0":"=m" (tsk->thread.saved_fs));
+ 	asm volatile("movl %%gs,%0":"=m" (tsk->thread.saved_gs));
+ 
+-	tss = init_tss + get_cpu();
++	tss = &per_cpu(init_tss, get_cpu());
+ 	tsk->thread.esp0 = (unsigned long) &info->VM86_TSS_ESP0;
+ 	if (cpu_has_sep)
+ 		tsk->thread.sysenter_cs = 0;
+diff -puN arch/i386/power/cpu.c~per_cpu-per_cpu-init_tss arch/i386/power/cpu.c
+--- 25/arch/i386/power/cpu.c~per_cpu-per_cpu-init_tss	2004-07-27 23:36:31.024225248 -0700
++++ 25-akpm/arch/i386/power/cpu.c	2004-07-27 23:36:31.035223576 -0700
+@@ -83,7 +83,7 @@ do_fpu_end(void)
+ static void fix_processor_context(void)
+ {
+ 	int cpu = smp_processor_id();
+-	struct tss_struct * t = init_tss + cpu;
++	struct tss_struct * t = &per_cpu(init_tss, cpu);
+ 
+ 	set_tss_desc(cpu,t);	/* This just modifies memory; should not be necessary. But... This is necessary, because 386 hardware has concept of busy TSS or some similar stupidity. */
+         per_cpu(cpu_gdt_table, cpu)[GDT_ENTRY_TSS].b &= 0xfffffdff;
+diff -puN include/asm-i386/processor.h~per_cpu-per_cpu-init_tss include/asm-i386/processor.h
+--- 25/include/asm-i386/processor.h~per_cpu-per_cpu-init_tss	2004-07-27 23:36:31.026224944 -0700
++++ 25-akpm/include/asm-i386/processor.h	2004-07-27 23:36:31.036223424 -0700
+@@ -19,6 +19,7 @@
+ #include <linux/cache.h>
+ #include <linux/config.h>
+ #include <linux/threads.h>
++#include <asm/percpu.h>
+ 
+ /* flag for disabling the tsc */
+ extern int tsc_disable;
+@@ -84,8 +85,8 @@ struct cpuinfo_x86 {
+ 
+ extern struct cpuinfo_x86 boot_cpu_data;
+ extern struct cpuinfo_x86 new_cpu_data;
+-extern struct tss_struct init_tss[NR_CPUS];
+ extern struct tss_struct doublefault_tss;
++DECLARE_PER_CPU(struct tss_struct, init_tss);
+ 
+ #ifdef CONFIG_SMP
+ extern struct cpuinfo_x86 cpu_data[];
+@@ -443,7 +444,6 @@ struct thread_struct {
+ #define INIT_TSS  {							\
+ 	.esp0		= sizeof(init_stack) + (long)&init_stack,	\
+ 	.ss0		= __KERNEL_DS,					\
+-	.esp1		= sizeof(init_tss[0]) + (long)&init_tss[0],	\
+ 	.ss1		= __KERNEL_CS,					\
+ 	.ldt		= GDT_ENTRY_LDT,				\
+ 	.io_bitmap_base	= INVALID_IO_BITMAP_OFFSET,			\
+_

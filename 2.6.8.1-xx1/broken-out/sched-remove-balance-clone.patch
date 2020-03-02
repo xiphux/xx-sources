@@ -1,0 +1,92 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+This removes balance on clone capability altogether.  I told Andi we wouldn't
+remove it yet, but provided it is in a single small patch, he mightn't get too
+upset.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/sched.h |   11 +++++------
+ 25-akpm/kernel/fork.c         |    2 +-
+ 25-akpm/kernel/sched.c        |   24 ++----------------------
+ 3 files changed, 8 insertions(+), 29 deletions(-)
+
+diff -puN include/linux/sched.h~sched-remove-balance-clone include/linux/sched.h
+--- 25/include/linux/sched.h~sched-remove-balance-clone	2004-07-28 22:08:43.278451664 -0700
++++ 25-akpm/include/linux/sched.h	2004-07-28 22:08:43.287450296 -0700
+@@ -569,11 +569,10 @@ do { if (atomic_dec_and_test(&(tsk)->usa
+ 
+ #define SD_BALANCE_NEWIDLE	1	/* Balance when about to become idle */
+ #define SD_BALANCE_EXEC		2	/* Balance on exec */
+-#define SD_BALANCE_CLONE	4	/* Balance on clone */
+-#define SD_WAKE_IDLE		8	/* Wake to idle CPU on task wakeup */
+-#define SD_WAKE_AFFINE		16	/* Wake task to waking CPU */
+-#define SD_WAKE_BALANCE		32	/* Perform balancing at task wakeup */
+-#define SD_SHARE_CPUPOWER	64	/* Domain members share cpu power */
++#define SD_WAKE_IDLE		4	/* Wake to idle CPU on task wakeup */
++#define SD_WAKE_AFFINE		8	/* Wake task to waking CPU */
++#define SD_WAKE_BALANCE		16	/* Perform balancing at task wakeup */
++#define SD_SHARE_CPUPOWER	32	/* Domain members share cpu power */
+ 
+ struct sched_group {
+ 	struct sched_group *next;	/* Must be a circular list */
+@@ -754,7 +753,7 @@ extern void FASTCALL(wake_up_new_task(st
+ #else
+  static inline void kick_process(struct task_struct *tsk) { }
+ #endif
+-extern void FASTCALL(sched_fork(task_t * p, unsigned long clone_flags));
++extern void FASTCALL(sched_fork(task_t * p));
+ extern void FASTCALL(sched_exit(task_t * p));
+ 
+ extern int in_group_p(gid_t);
+diff -puN kernel/fork.c~sched-remove-balance-clone kernel/fork.c
+--- 25/kernel/fork.c~sched-remove-balance-clone	2004-07-28 22:08:43.280451360 -0700
++++ 25-akpm/kernel/fork.c	2004-07-28 22:08:43.288450144 -0700
+@@ -1029,7 +1029,7 @@ struct task_struct *copy_process(unsigne
+ 	p->pdeath_signal = 0;
+ 
+ 	/* Perform scheduler related setup */
+-	sched_fork(p, clone_flags);
++	sched_fork(p);
+ 
+ 	/*
+ 	 * Ok, make it visible to the rest of the system.
+diff -puN kernel/sched.c~sched-remove-balance-clone kernel/sched.c
+--- 25/kernel/sched.c~sched-remove-balance-clone	2004-07-28 22:08:43.282451056 -0700
++++ 25-akpm/kernel/sched.c	2004-07-28 22:08:43.291449688 -0700
+@@ -875,30 +875,10 @@ static int find_idlest_cpu(struct task_s
+  * Perform scheduler related setup for a newly forked process p.
+  * p is forked by current. The cpu hotplug lock is held.
+  */
+-void fastcall sched_fork(task_t *p, unsigned long clone_flags)
++void fastcall sched_fork(task_t *p)
+ {
+-	int cpu;
+-#ifdef CONFIG_SMP
+-	struct sched_domain *tmp, *sd = NULL;
+-	preempt_disable();
+-	cpu = smp_processor_id();
++	int cpu = smp_processor_id();
+ 
+-	if ((clone_flags & (CLONE_VM|CLONE_VFORK)) == CLONE_VM) {
+-		/*
+-		 * New thread that is not a vfork.
+-		 * Find the largest domain that this CPU is part of that
+-		 * is willing to balance on clone:
+-		 */
+-		for_each_domain(cpu, tmp)
+-			if (tmp->flags & SD_BALANCE_CLONE)
+-				sd = tmp;
+-		if (sd)
+-			cpu = find_idlest_cpu(p, cpu, sd);
+-	}
+-	preempt_enable();
+-#else
+-	cpu = smp_processor_id();
+-#endif
+ 	/*
+ 	 * The task hasn't been attached yet, so cpus_allowed mask cannot
+ 	 * change. The cpus_allowed mask of the parent may have changed
+_

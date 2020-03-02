@@ -1,0 +1,44 @@
+
+From: Prasanna Meda <pmeda@akamai.com>
+
+Fourth version:
+Fixed duplicate entries. Thanks to Jeremy Fitzhardinge for reporting, and help in testing
+with valgrind and dd.
+
+Signed-off-by: Prasanna Meda <pmeda@akamai.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/proc/task_mmu.c |    7 ++++---
+ fs/seq_file.c              |    0 
+ include/linux/seq_file.h   |    0 
+ 3 files changed, 4 insertions(+), 3 deletions(-)
+
+diff -puN fs/proc/task_mmu.c~speedup-proc-pid-maps-fix-fix-fix fs/proc/task_mmu.c
+--- 25/fs/proc/task_mmu.c~speedup-proc-pid-maps-fix-fix-fix	2005-01-09 23:58:35.356089136 -0800
++++ 25-akpm/fs/proc/task_mmu.c	2005-01-09 23:58:35.362088224 -0800
+@@ -148,8 +148,9 @@ static void *m_start(struct seq_file *m,
+ 
+ 	/*
+ 	 * Check the map index is within the range and do
+-	 * sequential scan until f_pos.
++	 * sequential scan until m_index.
+ 	 */
++	map = NULL;
+ 	if ((unsigned long)l < mm->map_count) {
+ 		map = mm->mmap;
+ 		while (l-- && map)
+@@ -191,8 +192,8 @@ static void *m_next(struct seq_file *m, 
+ 	struct vm_area_struct *tail_map = get_gate_vma(task);
+ 
+ 	(*pos)++;
+-	if (map && map->vm_next) {
+-		m->version = (map != tail_map)? map->vm_start: -1UL;
++	if (map && (map != tail_map) && map->vm_next) {
++		m->version = map->vm_next->vm_start;
+ 		return map->vm_next;
+ 	}
+ 	m_stop(m, v);
+diff -puN fs/seq_file.c~speedup-proc-pid-maps-fix-fix-fix fs/seq_file.c
+diff -puN include/linux/seq_file.h~speedup-proc-pid-maps-fix-fix-fix include/linux/seq_file.h
+_

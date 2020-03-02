@@ -1,0 +1,378 @@
+
+From: "Antonino A. Daplas" <adaplas@hotpop.com>
+
+Swsusp turns off the display when a power-management-enabled framebuffer
+driver is used.  According to Nigel Cunningham <ncunningham@linuxmail.org>,
+the fix may involve the following:
+
+"...I thought the best approach would be to use device classes to find the
+struct dev for the frame buffer driver, and then use the same code I use for
+storage devices to avoid suspending the frame buffer until later..."
+
+Changes:
+
+- pass info->device to class_simple_device_add()
+- add struct device *device to struct fb_info
+- store struct device in framebuffer_alloc()
+- for drivers not using framebuffer_alloc(), store the struct during
+  initalization
+- port i810fb and rivafb to use framebuffer_alloc()
+
+Signed-off-by: Antonino Daplas <adaplas@pol.net>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/video/aty/atyfb_base.c       |    2 
+ 25-akpm/drivers/video/chipsfb.c              |    2 
+ 25-akpm/drivers/video/cyber2000fb.c          |    2 
+ 25-akpm/drivers/video/fbmem.c                |    3 -
+ 25-akpm/drivers/video/fbsysfs.c              |    2 
+ 25-akpm/drivers/video/i810/i810_main.c       |   71 +++++++++++----------------
+ 25-akpm/drivers/video/igafb.c                |    1 
+ 25-akpm/drivers/video/imsttfb.c              |    1 
+ 25-akpm/drivers/video/kyro/fbdev.c           |    1 
+ 25-akpm/drivers/video/matrox/matroxfb_base.c |    1 
+ 25-akpm/drivers/video/pvr2fb.c               |    1 
+ 25-akpm/drivers/video/radeonfb.c             |    2 
+ 25-akpm/drivers/video/riva/fbdev.c           |   22 ++------
+ 25-akpm/drivers/video/sstfb.c                |    1 
+ 25-akpm/drivers/video/tgafb.c                |    1 
+ 25-akpm/drivers/video/tridentfb.c            |    1 
+ 25-akpm/include/linux/fb.h                   |    1 
+ 17 files changed, 56 insertions(+), 59 deletions(-)
+
+diff -puN drivers/video/aty/atyfb_base.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/aty/atyfb_base.c
+--- 25/drivers/video/aty/atyfb_base.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.630566496 -0700
++++ 25-akpm/drivers/video/aty/atyfb_base.c	2004-09-30 22:36:54.663561480 -0700
+@@ -1974,7 +1974,7 @@ int __init atyfb_do_init(void)
+ 
+ 			info->fix = atyfb_fix;
+ 			info->par = default_par;
+-
++			info->device = &pdev->dev;
+ #ifdef __sparc__
+ 			/*
+ 			 * Map memory-mapped registers.
+diff -puN drivers/video/chipsfb.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/chipsfb.c
+--- 25/drivers/video/chipsfb.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.632566192 -0700
++++ 25-akpm/drivers/video/chipsfb.c	2004-09-30 22:36:54.663561480 -0700
+@@ -416,7 +416,7 @@ chipsfb_pci_init(struct pci_dev *dp, con
+ 		release_mem_region(addr, size);
+ 		return -ENOMEM;
+ 	}
+-
++	p->device = &dp->dev;
+ 	init_chips(p, addr);
+ 
+ #ifdef CONFIG_PMAC_PBOOK
+diff -puN drivers/video/cyber2000fb.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/cyber2000fb.c
+--- 25/drivers/video/cyber2000fb.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.633566040 -0700
++++ 25-akpm/drivers/video/cyber2000fb.c	2004-09-30 22:36:54.665561176 -0700
+@@ -1399,6 +1399,8 @@ static int __devinit cyberpro_common_pro
+ 		cfb->fb.var.xres, cfb->fb.var.yres,
+ 		h_sync / 1000, h_sync % 1000, v_sync);
+ 
++	if (cfb->dev)
++		cfb->fb.device = &cfb->dev->dev;
+ 	err = register_framebuffer(&cfb->fb);
+ 
+ failed:
+diff -puN drivers/video/fbmem.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/fbmem.c
+--- 25/drivers/video/fbmem.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.635565736 -0700
++++ 25-akpm/drivers/video/fbmem.c	2004-09-30 22:36:54.666561024 -0700
+@@ -1141,7 +1141,8 @@ register_framebuffer(struct fb_info *fb_
+ 			break;
+ 	fb_info->node = i;
+ 
+-	c = class_simple_device_add(fb_class, MKDEV(FB_MAJOR, i), NULL, "fb%d", i);
++	c = class_simple_device_add(fb_class, MKDEV(FB_MAJOR, i),
++				    fb_info->device, "fb%d", i);
+ 	if (IS_ERR(c)) {
+ 		/* Not fatal */
+ 		printk(KERN_WARNING "Unable to create class_device for framebuffer %d; errno = %ld\n", i, PTR_ERR(c));
+diff -puN drivers/video/fbsysfs.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/fbsysfs.c
+--- 25/drivers/video/fbsysfs.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.637565432 -0700
++++ 25-akpm/drivers/video/fbsysfs.c	2004-09-30 22:36:54.666561024 -0700
+@@ -51,6 +51,8 @@ struct fb_info *framebuffer_alloc(size_t
+ 	if (size)
+ 		info->par = p + fb_info_size;
+ 
++	info->device = dev;
++
+ 	return info;
+ #undef PADDING
+ #undef BYTES_PER_LONG
+diff -puN drivers/video/i810/i810_main.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/i810/i810_main.c
+--- 25/drivers/video/i810/i810_main.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.638565280 -0700
++++ 25-akpm/drivers/video/i810/i810_main.c	2004-09-30 22:36:54.668560720 -0700
+@@ -1855,20 +1855,13 @@ static int __devinit i810fb_init_pci (st
+ 	int i, err = -1, vfreq, hfreq, pixclock;
+ 
+ 	i = 0;
+-	if (!(info = kmalloc(sizeof(struct fb_info), GFP_KERNEL))) {
+-		i810fb_release_resource(info, par);
+-		return -ENOMEM;
+-	}
+-	memset(info, 0, sizeof(struct fb_info));
+ 
+-	if(!(par = kmalloc(sizeof(struct i810fb_par), GFP_KERNEL))) {
+-		i810fb_release_resource(info, par);
++	info = framebuffer_alloc(sizeof(struct i810fb_par), &dev->dev);
++	if (!info)
+ 		return -ENOMEM;
+-	}
+-	memset(par, 0, sizeof(struct i810fb_par));
+ 
++	par = (struct i810fb_par *) info->par;
+ 	par->dev = dev;
+-	info->par = par;
+ 
+ 	if (!(info->pixmap.addr = kmalloc(64*1024, GFP_KERNEL))) {
+ 		i810fb_release_resource(info, par);
+@@ -1941,38 +1934,36 @@ static int __devinit i810fb_init_pci (st
+ static void i810fb_release_resource(struct fb_info *info, 
+ 				    struct i810fb_par *par)
+ {
+-	if (par) {
+-		unset_mtrr(par);
+-		if (par->drm_agp) {
+-			drm_agp_t *agp = par->drm_agp;
+-			struct gtt_data *gtt = &par->i810_gtt;
+-
+-			if (par->i810_gtt.i810_cursor_memory) 
+-				agp->free_memory(gtt->i810_cursor_memory);
+-			if (par->i810_gtt.i810_fb_memory) 
+-				agp->free_memory(gtt->i810_fb_memory);
+-
+-			inter_module_put("drm_agp");
+-			par->drm_agp = NULL;
+-		}
+-
+-		if (par->mmio_start_virtual) 
+-			iounmap(par->mmio_start_virtual);
+-		if (par->aperture.virtual) 
+-			iounmap(par->aperture.virtual);
+-
+-		if (par->res_flags & FRAMEBUFFER_REQ)
+-			release_mem_region(par->aperture.physical, 
+-					   par->aperture.size);
+-		if (par->res_flags & MMIO_REQ)
+-			release_mem_region(par->mmio_start_phys, MMIO_SIZE);
++	unset_mtrr(par);
++	if (par->drm_agp) {
++		drm_agp_t *agp = par->drm_agp;
++		struct gtt_data *gtt = &par->i810_gtt;
++
++		if (par->i810_gtt.i810_cursor_memory)
++			agp->free_memory(gtt->i810_cursor_memory);
++		if (par->i810_gtt.i810_fb_memory)
++			agp->free_memory(gtt->i810_fb_memory);
++
++		inter_module_put("drm_agp");
++		par->drm_agp = NULL;
++	}
++
++	if (par->mmio_start_virtual)
++		iounmap(par->mmio_start_virtual);
++	if (par->aperture.virtual)
++		iounmap(par->aperture.virtual);
++
++	if (par->res_flags & FRAMEBUFFER_REQ)
++		release_mem_region(par->aperture.physical,
++				   par->aperture.size);
++	if (par->res_flags & MMIO_REQ)
++		release_mem_region(par->mmio_start_phys, MMIO_SIZE);
+ 
+-		if (par->res_flags & PCI_DEVICE_ENABLED)
+-			pci_disable_device(par->dev); 
++	if (par->res_flags & PCI_DEVICE_ENABLED)
++		pci_disable_device(par->dev);
++
++	framebuffer_release(info);
+ 
+-		kfree(par);
+-	}
+-	kfree(info);
+ }
+ 
+ static void __exit i810fb_remove_pci(struct pci_dev *dev)
+diff -puN drivers/video/igafb.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/igafb.c
+--- 25/drivers/video/igafb.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.640564976 -0700
++++ 25-akpm/drivers/video/igafb.c	2004-09-30 22:36:54.669560568 -0700
+@@ -531,6 +531,7 @@ int __init igafb_init(void)
+ 	info->var = default_var;
+ 	info->fix = igafb_fix;
+ 	info->pseudo_palette = (void *)(par + 1);
++	info->device = &pdev->dev;
+ 
+ 	if (!iga_init(info, par)) {
+ 		iounmap((void *)par->io_base);
+diff -puN drivers/video/imsttfb.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/imsttfb.c
+--- 25/drivers/video/imsttfb.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.642564672 -0700
++++ 25-akpm/drivers/video/imsttfb.c	2004-09-30 22:36:54.670560416 -0700
+@@ -1524,6 +1524,7 @@ imsttfb_probe(struct pci_dev *pdev, cons
+ 	par->cmap_regs = (__u8 *)ioremap(addr + 0x840000, 0x1000);
+ 	info->par = par;
+ 	info->pseudo_palette = (void *) (par + 1);
++	info->device = &pdev->dev;
+ 	init_imstt(info);
+ 
+ 	pci_set_drvdata(pdev, info);
+diff -puN drivers/video/kyro/fbdev.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/kyro/fbdev.c
+--- 25/drivers/video/kyro/fbdev.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.643564520 -0700
++++ 25-akpm/drivers/video/kyro/fbdev.c	2004-09-30 22:36:54.671560264 -0700
+@@ -735,6 +735,7 @@ static int __devinit kyrofb_probe(struct
+ 
+ 	fb_memset(info->screen_base, 0, size);
+ 
++	info->device = &pdev->dev;
+ 	if (register_framebuffer(info) < 0)
+ 		goto out_unmap;
+ 
+diff -puN drivers/video/matrox/matroxfb_base.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/matrox/matroxfb_base.c
+--- 25/drivers/video/matrox/matroxfb_base.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.645564216 -0700
++++ 25-akpm/drivers/video/matrox/matroxfb_base.c	2004-09-30 22:36:54.673559960 -0700
+@@ -1864,6 +1864,7 @@ static int initMatrox2(WPMINFO struct bo
+ /* We do not have to set currcon to 0... register_framebuffer do it for us on first console
+  * and we do not want currcon == 0 for subsequent framebuffers */
+ 
++	ACCESS_FBINFO(fbcon).device = &ACCESS_FBINFO(pcidev)->dev;
+ 	if (register_framebuffer(&ACCESS_FBINFO(fbcon)) < 0) {
+ 		goto failVideoIO;
+ 	}
+diff -puN drivers/video/pvr2fb.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/pvr2fb.c
+--- 25/drivers/video/pvr2fb.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.647563912 -0700
++++ 25-akpm/drivers/video/pvr2fb.c	2004-09-30 22:36:54.674559808 -0700
+@@ -939,6 +939,7 @@ static int __devinit pvr2fb_pci_probe(st
+ 
+ 	pvr2_fix.mmio_start	= pci_resource_start(pdev, 1);
+ 	pvr2_fix.mmio_len	= pci_resource_len(pdev, 1);
++	fbinfo->device = &pdev->dev;
+ 
+ 	return pvr2fb_common_init();
+ }
+diff -puN drivers/video/radeonfb.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/radeonfb.c
+--- 25/drivers/video/radeonfb.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.649563608 -0700
++++ 25-akpm/drivers/video/radeonfb.c	2004-09-30 22:36:54.676559504 -0700
+@@ -3040,7 +3040,7 @@ static int radeonfb_pci_register (struct
+ 	pci_set_drvdata(pdev, rinfo);
+ 	rinfo->next = board_list;
+ 	board_list = rinfo;
+-
++	((struct fb_info *) rinfo)->device = &pdev->dev;
+ 	if (register_framebuffer ((struct fb_info *) rinfo) < 0) {
+ 		printk ("radeonfb: could not register framebuffer\n");
+ 		iounmap(rinfo->fb_base);
+diff -puN drivers/video/riva/fbdev.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/riva/fbdev.c
+--- 25/drivers/video/riva/fbdev.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.651563304 -0700
++++ 25-akpm/drivers/video/riva/fbdev.c	2004-09-30 22:36:54.679559048 -0700
+@@ -1858,21 +1858,17 @@ static int __devinit rivafb_probe(struct
+ 	NVTRACE_ENTER();
+ 	assert(pd != NULL);
+ 
+-	info = kmalloc(sizeof(struct fb_info), GFP_KERNEL);
++	info = framebuffer_alloc(sizeof(struct riva_par), &pd->dev);
++
+ 	if (!info)
+ 		goto err_out;
+ 
+-	default_par = kmalloc(sizeof(struct riva_par), GFP_KERNEL);
+-	if (!default_par)
+-		goto err_out_kfree;
+-
+-	memset(info, 0, sizeof(struct fb_info));
+-	memset(default_par, 0, sizeof(struct riva_par));
++	default_par = (struct riva_par *) info->par;
+ 	default_par->pdev = pd;
+ 
+ 	info->pixmap.addr = kmalloc(64 * 1024, GFP_KERNEL);
+ 	if (info->pixmap.addr == NULL)
+-		goto err_out_kfree1;
++		goto err_out_kfree;
+ 	memset(info->pixmap.addr, 0, 64 * 1024);
+ 
+ 	if (pci_enable_device(pd)) {
+@@ -1896,7 +1892,7 @@ static int __devinit rivafb_probe(struct
+ 
+ 	if(default_par->riva.Architecture == 0) {
+ 		printk(KERN_ERR PFX "unknown NV_ARCH\n");
+-		goto err_out_kfree1;
++		goto err_out_free_base0;
+ 	}
+ 	if(default_par->riva.Architecture == NV_ARCH_10 ||
+ 	   default_par->riva.Architecture == NV_ARCH_20 ||
+@@ -2001,7 +1997,6 @@ static int __devinit rivafb_probe(struct
+ 	fb_destroy_modedb(info->monspecs.modedb);
+ 	info->monspecs.modedb_len = 0;
+ 	info->monspecs.modedb = NULL;
+-
+ 	if (register_framebuffer(info) < 0) {
+ 		printk(KERN_ERR PFX
+ 			"error registering riva framebuffer\n");
+@@ -2040,10 +2035,8 @@ err_out_request:
+ 	pci_disable_device(pd);
+ err_out_enable:
+ 	kfree(info->pixmap.addr);
+-err_out_kfree1:
+-	kfree(default_par);
+ err_out_kfree:
+-	kfree(info);
++	framebuffer_release(info);
+ err_out:
+ 	return -ENODEV;
+ }
+@@ -2077,8 +2070,7 @@ static void __exit rivafb_remove(struct 
+ 	pci_release_regions(pd);
+ 	pci_disable_device(pd);
+ 	kfree(info->pixmap.addr);
+-	kfree(par);
+-	kfree(info);
++	framebuffer_release(info);
+ 	pci_set_drvdata(pd, NULL);
+ 	NVTRACE_LEAVE();
+ }
+diff -puN drivers/video/sstfb.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/sstfb.c
+--- 25/drivers/video/sstfb.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.653563000 -0700
++++ 25-akpm/drivers/video/sstfb.c	2004-09-30 22:36:54.680558896 -0700
+@@ -1507,6 +1507,7 @@ static int __devinit sstfb_probe(struct 
+ 	fb_alloc_cmap(&info->cmap, 256, 0);
+ 
+ 	/* register fb */
++	info->device = &pdev->dev;
+ 	if (register_framebuffer(info) < 0) {
+ 		eprintk("can't register framebuffer.\n");
+ 		goto fail;
+diff -puN drivers/video/tgafb.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/tgafb.c
+--- 25/drivers/video/tgafb.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.654562848 -0700
++++ 25-akpm/drivers/video/tgafb.c	2004-09-30 22:36:54.681558744 -0700
+@@ -1454,6 +1454,7 @@ tgafb_pci_register(struct pci_dev *pdev,
+ 	tgafb_set_par(&all->info);
+ 	tgafb_init_fix(&all->info);
+ 
++	all->info.device = &pdev->dev;
+ 	if (register_framebuffer(&all->info) < 0) {
+ 		printk(KERN_ERR "tgafb: Could not register framebuffer\n");
+ 		ret = -EINVAL;
+diff -puN drivers/video/tridentfb.c~fbdev-pass-struct-device-to-class_simple_device_add drivers/video/tridentfb.c
+--- 25/drivers/video/tridentfb.c~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.655562696 -0700
++++ 25-akpm/drivers/video/tridentfb.c	2004-09-30 22:36:54.682558592 -0700
+@@ -1164,6 +1164,7 @@ static int __devinit trident_pci_probe(s
+ 		default_var.accel_flags &= ~FB_ACCELF_TEXT;
+ 	default_var.activate |= FB_ACTIVATE_NOW;
+ 	fb_info.var = default_var;
++	fb_info.device = &dev->dev;
+ 	if (register_framebuffer(&fb_info) < 0) {
+ 		output("Could not register Trident framebuffer\n");
+ 		return -EINVAL;
+diff -puN include/linux/fb.h~fbdev-pass-struct-device-to-class_simple_device_add include/linux/fb.h
+--- 25/include/linux/fb.h~fbdev-pass-struct-device-to-class_simple_device_add	2004-09-30 22:36:54.657562392 -0700
++++ 25-akpm/include/linux/fb.h	2004-09-30 22:36:54.683558440 -0700
+@@ -601,6 +601,7 @@ struct fb_info {
+ 	struct fb_cmap cmap;		/* Current cmap */
+ 	struct list_head modelist;      /* mode list */
+ 	struct fb_ops *fbops;
++	struct device *device;
+ 	char __iomem *screen_base;	/* Virtual address */
+ 	unsigned long screen_size;	/* Amount of ioremapped VRAM or 0 */ 
+ 	int currcon;			/* Current VC. */
+_

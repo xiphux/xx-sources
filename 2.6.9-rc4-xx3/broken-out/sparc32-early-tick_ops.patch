@@ -1,0 +1,36 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+The zaphod scheduler likes to call scheduler_tick() before time_init(). 
+sparc32 oopses.
+
+Perhaps a scheduler bug, but this robustifies things.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/sparc64/kernel/time.c |   11 ++++++++++-
+ 1 files changed, 10 insertions(+), 1 deletion(-)
+
+diff -puN arch/sparc64/kernel/time.c~sparc32-early-tick_ops arch/sparc64/kernel/time.c
+--- 25/arch/sparc64/kernel/time.c~sparc32-early-tick_ops	2004-09-23 00:13:31.438689624 -0700
++++ 25-akpm/arch/sparc64/kernel/time.c	2004-09-23 00:13:31.442689016 -0700
+@@ -64,7 +64,16 @@ static unsigned long mstk48t59_regs = 0U
+ 
+ static int set_rtc_mmss(unsigned long);
+ 
+-struct sparc64_tick_ops *tick_ops;
++static __init unsigned long dummy_get_tick(void)
++{
++	return 0;
++}
++
++static __initdata struct sparc64_tick_ops dummy_tick_ops = {
++	.get_tick	= dummy_get_tick,
++};
++
++struct sparc64_tick_ops *tick_ops = &dummy_tick_ops;
+ 
+ #define TICK_PRIV_BIT	(1UL << 63)
+ 
+_

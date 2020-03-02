@@ -1,0 +1,27 @@
+
+
+On some code paths this code is playing with per-cpu data with preemption
+enabled.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/net/neighbour.h |    5 ++++-
+ 1 files changed, 4 insertions(+), 1 deletion(-)
+
+diff -puN include/net/neighbour.h~neigh_stat-preempt-fix include/net/neighbour.h
+--- 25/include/net/neighbour.h~neigh_stat-preempt-fix	2004-10-03 00:47:17.044679136 -0700
++++ 25-akpm/include/net/neighbour.h	2004-10-03 00:47:47.555040856 -0700
+@@ -112,7 +112,10 @@ struct neigh_statistics
+ };
+ 
+ #define NEIGH_CACHE_STAT_INC(tbl, field)				\
+-		(per_cpu_ptr((tbl)->stats, smp_processor_id())->field++)
++	do {								\
++		(per_cpu_ptr((tbl)->stats, get_cpu())->field)++;	\
++		put_cpu();						\
++	} while (0)
+ 
+ struct neighbour
+ {
+_

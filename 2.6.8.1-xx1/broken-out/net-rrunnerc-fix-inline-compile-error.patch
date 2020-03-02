@@ -1,0 +1,124 @@
+
+From: Adrian Bunk <bunk@fs.tum.de>
+
+  CC      drivers/net/rrunner.o
+drivers/net/rrunner.c: In function `rr_timer':
+drivers/net/rrunner.h:846: sorry, unimplemented: inlining failed in call 
+to 'rr_raz_tx': function body not available
+drivers/net/rrunner.c:1155: sorry, unimplemented: called from here
+drivers/net/rrunner.h:847: sorry, unimplemented: inlining failed in call 
+to 'rr_raz_rx': function body not available
+drivers/net/rrunner.c:1156: sorry, unimplemented: called from here
+make[2]: *** [drivers/net/rrunner.o] Error 1
+
+Signed-off-by: Adrian Bunk <bunk@fs.tum.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/rrunner.c |   86 +++++++++++++++++++++---------------------
+ 1 files changed, 43 insertions(+), 43 deletions(-)
+
+diff -puN drivers/net/rrunner.c~net-rrunnerc-fix-inline-compile-error drivers/net/rrunner.c
+--- 25/drivers/net/rrunner.c~net-rrunnerc-fix-inline-compile-error	Thu Jul 29 14:59:48 2004
++++ 25-akpm/drivers/net/rrunner.c	Thu Jul 29 14:59:48 2004
+@@ -1139,6 +1139,49 @@ static irqreturn_t rr_interrupt(int irq,
+ 	return IRQ_HANDLED;
+ }
+ 
++static inline void rr_raz_tx(struct rr_private *rrpriv,
++			     struct net_device *dev)
++{
++	int i;
++
++	for (i = 0; i < TX_RING_ENTRIES; i++) {
++		struct sk_buff *skb = rrpriv->tx_skbuff[i];
++
++		if (skb) {
++			struct tx_desc *desc = &(rrpriv->tx_ring[i]);
++
++	        	pci_unmap_single(rrpriv->pci_dev, desc->addr.addrlo,
++				skb->len, PCI_DMA_TODEVICE);
++			desc->size = 0;
++			set_rraddr(&desc->addr, 0);
++			dev_kfree_skb(skb);
++			rrpriv->tx_skbuff[i] = NULL;
++		}
++	}
++}
++
++
++static inline void rr_raz_rx(struct rr_private *rrpriv,
++			     struct net_device *dev)
++{
++	int i;
++
++	for (i = 0; i < RX_RING_ENTRIES; i++) {
++		struct sk_buff *skb = rrpriv->rx_skbuff[i];
++
++		if (skb) {
++			struct rx_desc *desc = &(rrpriv->rx_ring[i]);
++
++	        	pci_unmap_single(rrpriv->pci_dev, desc->addr.addrlo,
++				dev->mtu + HIPPI_HLEN, PCI_DMA_FROMDEVICE);
++			desc->size = 0;
++			set_rraddr(&desc->addr, 0);
++			dev_kfree_skb(skb);
++			rrpriv->rx_skbuff[i] = NULL;
++		}
++	}
++}
++
+ static void rr_timer(unsigned long data)
+ {
+ 	struct net_device *dev = (struct net_device *)data;
+@@ -1254,49 +1297,6 @@ static int rr_open(struct net_device *de
+ }
+ 
+ 
+-static inline void rr_raz_tx(struct rr_private *rrpriv, 
+-			     struct net_device *dev)
+-{
+-	int i;
+-
+-	for (i = 0; i < TX_RING_ENTRIES; i++) {
+-		struct sk_buff *skb = rrpriv->tx_skbuff[i];
+-
+-		if (skb) {
+-			struct tx_desc *desc = &(rrpriv->tx_ring[i]);
+-
+-	        	pci_unmap_single(rrpriv->pci_dev, desc->addr.addrlo, 
+-				skb->len, PCI_DMA_TODEVICE);
+-			desc->size = 0;
+-			set_rraddr(&desc->addr, 0);
+-			dev_kfree_skb(skb);
+-			rrpriv->tx_skbuff[i] = NULL;
+-		}
+-	}
+-}
+-
+-
+-static inline void rr_raz_rx(struct rr_private *rrpriv, 
+-			     struct net_device *dev)
+-{
+-	int i;
+-
+-	for (i = 0; i < RX_RING_ENTRIES; i++) {
+-		struct sk_buff *skb = rrpriv->rx_skbuff[i];
+-
+-		if (skb) {
+-			struct rx_desc *desc = &(rrpriv->rx_ring[i]);
+-
+-	        	pci_unmap_single(rrpriv->pci_dev, desc->addr.addrlo, 
+-				dev->mtu + HIPPI_HLEN, PCI_DMA_FROMDEVICE);
+-			desc->size = 0;
+-			set_rraddr(&desc->addr, 0);
+-			dev_kfree_skb(skb);
+-			rrpriv->rx_skbuff[i] = NULL;
+-		}
+-	}
+-}
+-
+ static void rr_dump(struct net_device *dev)
+ {
+ 	struct rr_private *rrpriv;
+_

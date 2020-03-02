@@ -1,0 +1,85 @@
+
+From: Mikael Pettersson <mikpe@csd.uu.se>
+
+This patch fixes an AMD K8-specific problem with perfctr's x86
+micro-benchmarking code.  Due to lack of serialisation in K8's RDTSC, the
+"empty loop" benchmark can appear to take longer than "loop of cheap
+operation" benchmarks, causing their per- operation costs to be way off
+(negative differences divided by number of operations).  The workaround
+(from AMD's manuals and the x86-64 arch code) is to run CPUID before RDTSC.
+
+Signed-off-by: Mikael Pettersson <mikpe@csd.uu.se>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Index: xx-sources/drivers/perfctr/x86_tests.c
+===================================================================
+--- xx-sources.orig/drivers/perfctr/x86_tests.c	2004-08-12 04:55:13.912586416 -0400
++++ xx-sources/drivers/perfctr/x86_tests.c	2004-08-12 04:55:21.617415104 -0400
+@@ -49,6 +49,15 @@
+ #define apic_write(reg,vector)			do{}while(0)
+ #endif
+ 
++#if !defined(__x86_64__)
++/* Avoid speculative execution by the CPU */
++extern inline void sync_core(void)
++{
++	int tmp;
++	asm volatile("cpuid" : "=a" (tmp) : "0" (1) : "ebx","ecx","edx","memory");
++}
++#endif
++
+ static void __init do_rdpmc(unsigned pmc, unsigned unused2)
+ {
+ 	unsigned i;
+@@ -107,6 +116,21 @@
+ 	}
+ }
+ 
++static void __init do_sync_core(unsigned unused1, unsigned unused2)
++{
++	unsigned i;
++	for(i = 0; i < NITER/8; ++i) {
++		sync_core();
++		sync_core();
++		sync_core();
++		sync_core();
++		sync_core();
++		sync_core();
++		sync_core();
++		sync_core();
++	}
++}
++
+ static void __init do_empty_loop(unsigned unused1, unsigned unused2)
+ {
+ 	unsigned i;
+@@ -118,8 +142,10 @@
+ 			   unsigned arg1, unsigned arg2)
+ {
+ 	unsigned start, dummy, stop;
++	sync_core();
+ 	rdtsc(start, dummy);
+ 	(*doit)(arg1, arg2);	/* should take < 2^32 cycles to complete */
++	sync_core();
+ 	rdtsc(stop, dummy);
+ 	return stop - start;
+ }
+@@ -143,8 +169,8 @@
+ 		  unsigned msr_cccr, unsigned cccr_val)
+ {
+ 	int i;
+-	unsigned int loop, ticks[12];
+-	const char *name[12];
++	unsigned int loop, ticks[13];
++	const char *name[13];
+ 
+ 	if (msr_evntsel0)
+ 		wrmsr(msr_evntsel0, 0, 0);
+@@ -177,6 +203,8 @@
+ 	name[11] = "write LVTPC";
+ 	ticks[11] = (perfctr_info.cpu_features & PERFCTR_FEATURE_PCINT)
+ 		? run(do_wrlvtpc, APIC_DM_NMI|APIC_LVT_MASKED, 0) : 0;
++	name[12] = "sync_core";
++	ticks[12] = run(do_sync_core, 0, 0);
+ 
+ 	loop = run(do_empty_loop, 0, 0);
+ 

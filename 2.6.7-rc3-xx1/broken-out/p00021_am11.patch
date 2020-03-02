@@ -1,0 +1,141 @@
+---
+
+ linux-2.6.7-rc1-xx1-xiphux/arch/i386/Kconfig      |   11 ++++
+ linux-2.6.7-rc1-xx1-xiphux/include/linux/swap.h   |    1 
+ linux-2.6.7-rc1-xx1-xiphux/include/linux/sysctl.h |    1 
+ linux-2.6.7-rc1-xx1-xiphux/kernel/sysctl.c        |    8 +++
+ linux-2.6.7-rc1-xx1-xiphux/mm/vmscan.c            |   54 ++++++++++++++++++++++
+ 5 files changed, 75 insertions(+)
+
+diff -puN include/linux/swap.h~am11 include/linux/swap.h
+--- linux-2.6.7-rc1-xx1/include/linux/swap.h~am11	2004-06-02 14:40:50.699680256 -0400
++++ linux-2.6.7-rc1-xx1-xiphux/include/linux/swap.h	2004-06-02 14:41:18.019527008 -0400
+@@ -179,6 +179,7 @@ do {					\
+ extern int try_to_free_pages(struct zone **, unsigned int, unsigned int);
+ extern int shrink_all_memory(int);
+ extern int vm_mapped_page_cost;
++extern int auto_swappiness;
+ 
+ #ifdef CONFIG_MMU
+ /* linux/mm/shmem.c */
+diff -puN include/linux/sysctl.h~am11 include/linux/sysctl.h
+--- linux-2.6.7-rc1-xx1/include/linux/sysctl.h~am11	2004-06-02 14:40:50.701679952 -0400
++++ linux-2.6.7-rc1-xx1-xiphux/include/linux/sysctl.h	2004-06-02 14:40:50.878653048 -0400
+@@ -164,6 +164,7 @@ enum
+ 	VM_LAPTOP_MODE=23,	/* vm laptop mode */
+ 	VM_BLOCK_DUMP=24,	/* block dump mode */
+ 	VM_HUGETLB_GROUP=25,	/* permitted hugetlb group */
++	VM_AUTO_SWAPPINESS=26,	/* Make vm_swappiness autoregulated */
+ };
+ 
+ 
+diff -puN kernel/sysctl.c~am11 kernel/sysctl.c
+--- linux-2.6.7-rc1-xx1/kernel/sysctl.c~am11	2004-06-02 14:40:50.707679040 -0400
++++ linux-2.6.7-rc1-xx1-xiphux/kernel/sysctl.c	2004-06-02 14:40:50.881652592 -0400
+@@ -710,6 +710,14 @@ static ctl_table vm_table[] = {
+ 		.extra1		= &one,
+ 		.extra2		= &one_hundred,
+ 	},
++	{
++		.ctl_name	= VM_AUTO_SWAPPINESS,
++		.procname	= "autoswappiness",
++		.data		= &auto_swappiness,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
+ #ifdef CONFIG_HUGETLB_PAGE
+ 	 {
+ 		.ctl_name	= VM_HUGETLB_PAGES,
+diff -puN mm/vmscan.c~am11 mm/vmscan.c
+--- linux-2.6.7-rc1-xx1/mm/vmscan.c~am11	2004-06-02 14:40:50.870654264 -0400
++++ linux-2.6.7-rc1-xx1-xiphux/mm/vmscan.c	2004-06-02 14:42:40.121045680 -0400
+@@ -42,6 +42,11 @@
+  * From 1 .. 100.  Higher means less swappy.
+  */
+ int vm_mapped_page_cost = 32;
++#ifdef CONFIG_VM_AUTOSWAPPINESS
++int auto_swappiness = 1;
++#else
++int auto_swappiness = 0;
++#endif
+ 
+ #define lru_to_page(_head) (list_entry((_head)->prev, struct page, lru))
+ 
+@@ -678,6 +683,55 @@ shrink_active_list(struct zone *zone, st
+ 		page = lru_to_page(&l_hold);
+ 		list_del(&page->lru);
+ 
++	if (auto_swappiness) {
++#ifdef CONFIG_SWAP
++		int app_percent;
++		struct sysinfo i;
++
++		si_swapinfo(&i);
++
++		if (likely(i.totalswap >= 100)) {
++			int swap_centile;
++
++			/*
++			 * app_percent is the percentage of physical ram used
++			 * by application pages.
++			 */
++			si_meminfo(&i);
++			app_percent = 100 - ((i.freeram + get_page_cache_size() -
++				swapper_space.nrpages) / (i.totalram / 100));
++
++			/*
++			 * swap_centile is the percentage of the last (sizeof physical
++			 * ram) of swap free.
++			 */
++			swap_centile = i.freeswap /
++				(min(i.totalswap, i.totalram) / 100);
++
++			/*
++			 * Autoregulate vm_swappiness to be equal to the lowest of
++			 * app_percent and swap_centile. -ck
++			 *
++			 * Originally, higher meant more swappy, but Nick changed it
++			 * so higher means less swappy.  So we need to invert this
++			 * value. -xx
++			 */
++			int cost = 100 - min(app_percent, swap_centile);
++
++			/*
++			 * The scale originally ran from 0-100, but Nick changed
++			 * it to 1-100.  So we need a check to prevent a zero
++			 * causing major breakage. -xx
++			 */
++			if (cost < 1)
++				vm_mapped_page_cost = 1;
++			else
++				vm_mapped_page_cost = cost;
++		} else
++			vm_mapped_page_cost = 100;
++#endif
++	}
++
+ 		/*
+ 		 * FIXME: need to consider page_count(page) here if/when we
+ 		 * reap orphaned pages via the LRU (Daniel's locking stuff)
+diff -puN arch/i386/Kconfig~am11 arch/i386/Kconfig
+--- linux-2.6.7-rc1-xx1/arch/i386/Kconfig~am11	2004-06-02 14:40:50.872653960 -0400
++++ linux-2.6.7-rc1-xx1-xiphux/arch/i386/Kconfig	2004-06-02 14:40:50.888651528 -0400
+@@ -1623,4 +1623,15 @@ config ELV_SELECT
+ 
+ endchoice
+ 
++config VM_AUTOSWAPPINESS
++	bool "Autoregulating swappiness"
++	default y
++	help
++	  This is a change to the vm code by Con Kolivas.  The machine
++	  will auto-adjust its swappiness setting.
++
++	  Note that this code is built into the kernel.  The only thing
++	  this does is set whether autoswappiness defaults to on or off
++	  when the machine boots.
++
+ endmenu
+
+_

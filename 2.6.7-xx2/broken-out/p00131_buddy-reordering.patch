@@ -1,0 +1,78 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+Based on Arjan van de Ven's idea, with guidance and testing from James
+Bottomley.
+
+The physical ordering of pages delivered to the IO subsystem is strongly
+related to the order in which fragments are subdivided from larger blocks
+of memory tracked by the page allocator.
+
+Consider a single MAX_ORDER block of memory in isolation acted on by a
+sequence of order 0 allocations in an otherwise empty buddy system. 
+Subdividing the block beginning at the highest addresses will yield all the
+pages of the block in reverse, and subdividing the block begining at the
+lowest addresses will yield all the pages of the block in physical address
+order.
+
+Empirical tests demonstrate this ordering is preserved, and that changing
+the order of subdivision so that the lowest page is split off first
+resolves the sglist merging difficulties encountered by driver authors at
+Adaptec and others in James Bottomley's testing.
+
+James found that before this patch, there were 40 merges out of about 32K
+segments.  Afterward, there were 24007 merges out of 19513 segments, for a
+merge rate of about 55%.  Merges of 128 segments, the maximum allowed, were
+observed afterward, where beforehand they never occurred.  It also improves
+dbench on my workstation and works fine there.
+
+Signed-off-by: William Lee Irwin III <wli@holomorphy.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/page_alloc.c |   22 +++++++++++++++++-----
+ 1 files changed, 17 insertions(+), 5 deletions(-)
+
+diff -puN mm/page_alloc.c~buddy-reordering mm/page_alloc.c
+--- 25/mm/page_alloc.c~buddy-reordering	2004-06-19 14:03:44.967374864 -0700
++++ 25-akpm/mm/page_alloc.c	2004-06-19 14:03:44.972374104 -0700
+@@ -293,6 +293,20 @@ void __free_pages_ok(struct page *page, 
+ #define MARK_USED(index, order, area) \
+ 	__change_bit((index) >> (1+(order)), (area)->map)
+ 
++/*
++ * The order of subdivision here is critical for the IO subsystem.
++ * Please do not alter this order without good reasons and regression
++ * testing. Specifically, as large blocks of memory are subdivided,
++ * the order in which smaller blocks are delivered depends on the order
++ * they're subdivided in this function. This is the primary factor
++ * influencing the order in which pages are delivered to the IO
++ * subsystem according to empirical testing, and this is also justified
++ * by considering the behavior of a buddy system containing a single
++ * large block of memory acted on by a series of small allocations.
++ * This behavior is a critical factor in sglist merging's success.
++ *
++ * -- wli
++ */
+ static inline struct page *
+ expand(struct zone *zone, struct page *page,
+ 	 unsigned long index, int low, int high, struct free_area *area)
+@@ -300,14 +314,12 @@ expand(struct zone *zone, struct page *p
+ 	unsigned long size = 1 << high;
+ 
+ 	while (high > low) {
+-		BUG_ON(bad_range(zone, page));
+ 		area--;
+ 		high--;
+ 		size >>= 1;
+-		list_add(&page->lru, &area->free_list);
+-		MARK_USED(index, high, area);
+-		index += size;
+-		page += size;
++		BUG_ON(bad_range(zone, &page[size]));
++		list_add(&page[size].lru, &area->free_list);
++		MARK_USED(index + size, high, area);
+ 	}
+ 	return page;
+ }
+_

@@ -1,0 +1,933 @@
+
+From: Nick Piggin <piggin@cyberone.com.au>
+
+
+OK, a new patch. Includes everyone's suggestions. If anyone wants to
+be removed from the CC list please email me privately.
+
+DESC
+must fix list update
+EDESC
+From: Nick Piggin <piggin@cyberone.com.au>
+
+Here are a few changes for mm4. There are IPSEC and NFS items which
+I think might be fixed but I'm not quite sure. Probably others as well.
+Are the psmouse problems fixed? Are all the drivers (video, irda, etc)
+really must fix items?
+
+DESC
+mustfix update
+EDESC
+From: Nick Piggin <piggin@cyberone.com.au>
+
+
+
+
+---
+
+ 25-akpm/Documentation/must-fix.txt   |  289 ++++++++++++++++
+ 25-akpm/Documentation/should-fix.txt |  603 +++++++++++++++++++++++++++++++++++
+ 2 files changed, 892 insertions(+)
+
+diff -puN /dev/null Documentation/must-fix.txt
+--- /dev/null	Thu Apr 11 07:25:15 2002
++++ 25-akpm/Documentation/must-fix.txt	Mon May 17 17:16:30 2004
+@@ -0,0 +1,289 @@
++
++Must-fix bugs
++=============
++
++drivers/char/
++~~~~~~~~~~~~~
++
++o TTY locking is broken.
++
++  o see FIXME in do_tty_hangup().  This causes ppp BUGs in local_bh_enable()
++
++  o Other problems: aviro, dipankar, Alan have details.
++
++  o somebody will have to document the tty driver and ldisc API
++
++drivers/tty
++~~~~~~~~~~~
++
++o viro: tty_driver refcounting, tty/misc/upper levels of sound still not
++  completely fixed.
++
++drivers/block/
++~~~~~~~~~~~~~~
++
++o loop.c: Concurrent write access on block devices might cause a deadlock
++  of the complete system. See:
++  http://marc.theaimsgroup.com/?l=linux-kernel&m=106275365925769&w==
++  http://bugzilla.kernel.org/show_bug.cgi?id=1198
++  Thread of possible fix:
++  http://www.kerneli.org/pipermail/cryptoapi-devel/2003-October/000676.html
++
++  (Fruhwirth Clemens)
++
++o ideraid hasn't been ported to 2.5 at all yet.
++
++  We need to understand whether the proposed BIO split code will suffice
++  for this.
++
++drivers/input/
++~~~~~~~~~~~~~~
++
++o rmk: unconverted keyboard/mouse drivers (there's a deadline of 2.6.0
++  currently on these remaining in my/Linus' tree.)
++
++o viro: large absence of locking.
++
++o viro: parport is nearly as bad as that and there the code is more hairy.
++  IMO parport is more of "figure out what API changes are needed for its
++  users, get them done ASAP, then fix generic layer at leisure"
++
++o (Albert Cahalan) Lots of people (check Google) get this message from the
++  kernel:
++
++  psmouse.c: Lost synchronization, throwing 2 bytes away.
++
++  (the number of bytes will be 1, 2, or 3)
++
++  At work, I get it when there is heavy NFS traffic.  The mouse goes crazy,
++  jumping around and doing random cut-and-paste all over everything.  This
++  is with a decently fast and modern PC.
++
++o There seem to be too many reports of keyboards and mice failing or acting
++  strangely.
++
++
++drivers/misc/
++~~~~~~~~~~~~~
++
++o rmk: UCB1[23]00 drivers, currently sitting in drivers/misc in the ARM
++  tree.  (touchscreen, audio, gpio, type device.)
++
++  These need to be moved out of drivers/misc/ and into real places
++
++o viro: actually, misc.c has a good chance to die.  With cdev-cidr that's
++  trivial.
++
++drivers/net/
++~~~~~~~~~~~~
++
++drivers/net/irda/
++~~~~~~~~~~~~~~~~~
++
++o dongle drivers need to be converted to sir-dev
++
++o irport need to be converted to sir-kthread
++
++o new drivers (irtty-sir/smsc-ircc2/donauboe) need more testing
++
++o rmk: Refuse IrDA initialisation if sizeof(structures) is incorrect (I'm
++  not sure if we still need this; I think gcc 2.95.3 on ARM shows this
++  problem though.)
++
++drivers/pci/
++~~~~~~~~~~~~
++
++o alan: Some cardbus crashes the system
++
++  (bugzilla, please?)
++
++drivers/pcmcia/
++~~~~~~~~~~~~~~~
++
++o alan: This is a locking disaster.
++
++  (rmk, brodo: in progress)
++
++drivers/pld/
++~~~~~~~~~~~~
++
++o rmk: EPXA (ARM platform) PLD hotswap drivers (drivers/pld)
++
++  (rmk: will work out what to do here.  maybe drivers/arm/)
++
++drivers/video/
++~~~~~~~~~~~~~~
++
++o Lots of drivers don't compile, others do but don't work.
++
++drivers/scsi/
++~~~~~~~~~~~~~
++
++o Convert am53c974, dpt_i2o, initio and pci2220i to DMA-mapping
++
++o Make inia100, cpqfc, pci2000 and dc390t compile
++
++o Convert
++
++   wd33c99 based: a2091 a3000 gpv11 mvme174 sgiwd93
++
++   53c7xx based: amiga7xxx bvme6000 mvme16x initio am53c974 pci2000
++   pci2220i dc390t
++
++  To new error handling
++
++  It also might be possible to shift the 53c7xx based drivers over to
++  53c700 which does the new EH stuff, but I don't have the hardware to check
++  such a shift.
++
++  For the non-compiling stuff, I've probably missed a few that just aren't
++  compilable on my platforms, so any updates would be welcome.  Also, are
++  some of our non-compiling or unconverted drivers obsolete?
++
++fs/
++~~~
++
++o AIO/direct-IO writes can race with truncate and wreck filesystems.
++  (Badari has a patch)
++
++o viro: fs/char_dev.c needs removal of aeb stuff and merge of cdev-cidr.
++  In progress.
++
++o forward-port sct's O_DIRECT fixes (Badari has a patch)
++
++o viro: there is some generic stuff for namei/namespace/super, but that's a
++  slow-merge and can go in 2.6 just fine
++
++o andi: also soft needs to be fixed - there are quite a lot of
++  uninterruptible waits in sunrpc/nfs
++
++o trond: NFS has a mmap-versus-truncate problem
++
++kernel/sched.c
++~~~~~~~~~~~~~~
++
++o Starvation, general interactivity need close monitoring.
++
++o SMT aware scheduler (Ingo, Rusty, Nick have implementations)
++
++kernel/
++~~~~~~~
++
++o Alan: 32bit uid support is *still* broken for process accounting.
++
++  Create a 32bit uid, turn accounting on.  Shock horror it doesn't work
++  because the field is 16bit.  We need an acct structure flag day for 2.6
++  IMHO
++
++  (alan has patch)
++
++o viro: core sysctl code is racy.  And its interaction wiuth sysfs
++
++o (ingo) rwsems (on x86) are limited to 32766 waiting processes.  This
++  means that setting pid_max to above 32K is unsafe :-(
++
++  An option is to use CONFIG_RWSEM_GENERIC_SPINLOCK variant all the time,
++  for all archs, and not inline any part of the ops.
++
++lib/kobject.c
++~~~~~~~~~~~~~
++
++o kobject refcounting (comments from Al Viro):
++
++  _anything_ can grab a temporary reference to kobject.  IOW, if kobject is
++  embedded into something that could be freed - it _MUST_ have a destructor
++  and that destructor _MUST_ be the destructor for containing object.
++
++  Any violation of the above (and we already have a bunch of those) is a
++  user-triggerable memory corruption.
++
++  We can tolerate it for a while in 2.5 (e.g.  during work on susbsystem we
++  can decide to switch to that way of handling objects and have subsystem
++  vulnerable for a while), but all such windows must be closed before 2.6
++  and during 2.6 we can't open them at all.
++
++o All block drivers which control multiple gendisks with a single
++  request_queue are broken, due to one-to-one assumptions in the request
++  queue sysfs hookup.
++
++mm/
++~~~
++
++o GFP_DMA32 (or something like that).  Lots of ideas.  jejb, zaitcev,
++  willy, arjan, wli.
++
++  Specifically, 64-bit systems need to be able to enforce 32-bit addressing
++  limits for device metadata like network cards' ring buffers and SCSI
++  command descriptors.
++
++o access_process_vm() doesn't flush right.  We probably need new flushing
++  primitives to do this (davem?)
++
++
++modules
++~~~~~~~
++
++  (Rusty)
++
++net/
++~~~~
++
++  (davem)
++
++o UDP apps can in theory deadlock, because the ip_append_data path can end
++  up sleeping while the socket lock is held.
++
++  It is OK to sleep with the socket held held, normally.  But in this case
++  the sleep happens while waiting for socket memory/space to become
++  available, if another context needs to take the socket lock to free up the
++  space we could hang.
++
++  I sent a rough patch on how to fix this to Alexey, and he is analyzing
++  the situation.  I expect a final fix from him next week or so.
++
++o Semantics for IPSEC during operations such as TCP connect suck currently.
++
++  When we first try to connect to a destination, we may need to ask the
++  IPSEC key management daemon to resolve the IPSEC routes for us.  For the
++  purposes of what the kernel needs to do, you can think of it like ARP.  We
++  can't send the packet out properly until we resolve the path.
++
++  What happens now for IPSEC is basically this:
++
++  O_NONBLOCK: returns -EAGAIN over and over until route is resolved
++
++  !O_NONBLOCK: Sleeps until route is resolved
++
++  These semantics are total crap.  The solution, which Alexey is working
++  on, is to allow incomplete routes to exist.  These "incomplete" routes
++  merely put the packet onto a "resolution queue", and once the key manager
++  does it's thing we finish the output of the packet.  This is precisely how
++  ARP works.
++
++  I don't know when Alexey will be done with this.
++
++net/*/netfilter/
++~~~~~~~~~~~~~~~~
++
++  (Rusty)
++
++sound/
++~~~~~~
++
++global
++~~~~~~
++
++o viro: 64-bit dev_t (not a mustfix for 2.6.0). 32-bit dev_t is done, 64-bit
++  means extra work on nfsd/raid/etc.
++
++o alan: Forward port 2.4 fixes
++  - Chris Wright: Security fixes including execve holes, execve vs proc races
++
++o There are about 60 or 70 security related checks that need doing
++  (copy_user etc) from Stanford tools.  (badari is looking into this, and
++  hollisb)
++
++o A couple of hundred real looking bugzilla bugs
++
++o viro: cdev rework. Mostly done.
++
+diff -puN /dev/null Documentation/should-fix.txt
+--- /dev/null	Thu Apr 11 07:25:15 2002
++++ 25-akpm/Documentation/should-fix.txt	Mon May 17 17:16:30 2004
+@@ -0,0 +1,603 @@
++Not-ready features and speedups
++===============================
++
++Legend:
++
++PRI1:	We're totally lame if this doesn't get in
++PRI2:	Would be nice
++PRI3:	Not very important
++
++drivers/block/
++~~~~~~~~~~~~~~
++
++o viro: paride drivers need a big cleanup. Partially done, but ATAPI drivers
++  need serious work and bug fixing.
++
++  PRI2
++
++drivers/char/rtc/
++~~~~~~~~~~~~~~~~~
++
++o rmk, trini: add support for alarms to the existing generic rtc driver.
++
++  PRI2
++
++console drivers
++~~~~~~~~~~~~~~~
++  (Pavel Machek <pavel@ucw.cz>)
++
++o There are few must-fix bugs in cursor handling.
++
++o Play with gpm selection for a while and your cursor gets corrupted with
++  random dots. Ouch.
++
++device mapper
++~~~~~~~~~~~~~
++
++o ioctl interface cleanup patch is ready (redo the structure layouts)
++
++  PRI1
++
++o A port of the 2.4 snapshot and mirror targets is in progress
++
++  PRI1
++
++o the fs interface to dm needs to be redone.  gregkh was going to work on
++  this.  viro is interested in seeing work thus-far.
++
++  PRI2
++
++drivers/net/wireless/
++~~~~~~~~~~~~~~~~~~~~~
++
++  (Jean Tourrilhes <jt@bougret.hpl.hp.com>)
++
++o get latest orinoco changes from David.
++
++  PRI1
++
++o get the latest airo.c fixes from CVS.  This will hopefully fix problems
++  people have reported on the LKML.
++
++  PRI1
++
++o get HostAP driver in the kernel.  No consolidation of the 802.11
++  management across driver can happen until this one is in (which is probably
++  2.7.X material).  I think Jouni is mostly ready but didn't find time for
++  it.
++
++  PRI2
++
++o get more wireless drivers into the kernel.  The most "integrable" drivers
++  at this point seem the NWN driver, Pavel's Spectrum driver and the Atmel
++  driver.
++
++  PRI1
++
++o The last two drivers mentioned above are held up by firmware issues (see
++  flamewar on LKML a few days ago).  So maybe fixing those firmware issues
++  should be a requirement for 2.6.X, because we can expect more wireless
++  devices to need firmware upload at startup coming to market.
++
++  (in progress?)
++
++  PRI1
++
++drivers/usb/gadget/
++~~~~~~~~~~~~~~~~~~~
++
++o rmk: SA11xx USB client/gadget code (David B has been doing some work on
++  this, and keeps trying to prod me, but unfortunately I haven't had the time
++  to look at his work, sorry David.)
++
++  PRI3
++
++fs/
++~~~
++
++o ext3 and ext2 block allocators have serious failure modes - interleaved
++  allocations.
++
++  PRI3
++
++o Integrate Chris Mason's 2.4 reiserfs ordered data and data journaling
++  patches.  They make reiserfs a lot safer.
++
++  Ordered: PRI2
++  data journalled: PRI3
++
++o (Trond:) Yes: I'm still working on an atomic "open()", i.e.  one
++           where we short-circuit the usual VFS path_walk() + lookup() +
++           permission() + create() + ....  bullsh*t...
++
++           I have several reasons for wanting to do this (all of
++           them related to NFS of course, but much of the reasoning applies
++           to *all* networked file systems).
++
++   1) The above sequence is simply not atomic on *any* networked
++      filesystem.
++
++   2) It introduces a sh*tload of completely unnecessary RPC calls (why
++      do a 'permission' RPC call when the server is in *any* case going to
++      tell you whether or not this operations is allowed.  Why do a
++      'lookup()' when the 'create()' call can be made to tell you whether or
++      not a file already exists).
++
++   3) It is incompatible with some operations: the current create()
++      doesn't pass an 'EXCLUSIVE' flag down to the filesystems.
++
++   4) (NFS specific?) open() has very different cache consistency
++      requirements when compared to most other VFS operations.
++
++   I'd very much like for something like Peter Braam's 'lookup with
++   intent' or (better yet) for a proper dentry->open() to be integrated with
++   path_walk()/open_namei().  I'm still working on the latter (Peter has
++   already completed the lookup with intent stuff).
++
++   (All this is in progress, see http://www.fys.uio.no/~trondmy/src)
++
++   (Is awaiting Pater Braam's intent patches.  Applicable to CIFS)
++
++   PRI2 (?)
++
++o viro: convert more filesystems to use lib/parser.c for options.
++
++  PRI2
++
++o aio: fs IO isn't async at present.  suparna has restart patches, they're
++  in -mm.  Need to get Ben to review/comment.
++
++  PRI1.
++
++o drepper: various filesystems use ->pid wrongly
++
++  PRI1
++
++o hch: devfs: there's a fundamental lookup vs devfsd race that's only
++  fixable by introducing a lookup vs devfs deadlock.  I can't see how this is
++  fixable without getting rid of the current devfsd design.  Mandrake seems
++  to have a workaround for this so this is at least not triggered so easily,
++  but that's not what I'd consider a fix..
++
++  PRI2
++
++kernel/
++~~~~~~~
++
++o rusty: Zippel's Reference count simplification.  Tricky code, but cuts
++  about 120 lines from module.c.  Patch exists, needs stressing.
++
++  PRI3
++
++o rusty: Fix module-failed-init races by starting module "disabled".  Patch
++  exists, requires some subsystems (ie.  add_partition) to explicitly say
++  "make module live now".  Without patch we are no worse off than 2.4 etc.
++
++  PRI1
++
++o Integrate userspace irq balancing daemon.
++
++  PRI2
++
++o kexec.  Seems to work, was in -mm.
++
++  PRI3
++
++o rmk: lib/inflate.c must not use static variables (causes these to be
++  referenced via GOTOFF relocations in PIC decompressor.  We have a PIC
++  decompressor to avoid having to hard code a per platform zImage link
++  address into the makefiles.)
++
++  PRI2
++
++o klibc merge?
++
++  PRI2
++
++mm/
++~~~
++
++o dropbehind for large files
++
++  PRI2
++
++net/
++~~~~
++
++  (davem)
++
++o Real serious use of IPSEC is hampered by lack of MPLS support.  MPLS is a
++  switching technology that works by switching based upon fixed length labels
++  prepended to packets.  Many people use this and IPSEC to implement VPNs
++  over public networks, it is also used for things like traffic engineering.
++
++  A good reference site is:
++
++	http://www.mplsrc.com/
++
++  Anyways, an existing (crappy) implementation exists.  I've almost
++  completed a rewrite, I should have something in the tree next week.
++
++  PRI1
++
++o Sometimes we generate IP fragments when it truly isn't necessary.
++
++  The way IP fragmentation is specified, each fragment must be modulo 8
++  bytes in length.  So suppose the device has an MTU that is not 0 modulo 8,
++  ethernet even classifies in this way.  1500 == (8 * 187) + 4
++
++  Our IP fragmenting engine can fragment on packets that are sized within
++  the last modulo 8 bytes of the MTU.  This happens in obscure cases, but it
++  does happen.
++
++  I've proposed a fix to Alexey, whereby very late in the output path we
++  check the packet, if we fragmented but the data length would fit into the
++  MTU we unfragment the packet.
++
++  This is low priority, because technically it creates suboptimal behavior
++  rather than mis-operation.
++
++  PRI1
++
++net/*/netfilter/
++~~~~~~~~~~~~~~~~
++
++o Lots of misc. cleanups, which are happening slowly.
++
++  PRI2
++
++power management
++~~~~~~~~~~~~~~~~
++
++o Pat and Pavel disagree over swsusp. Need to sort that out.
++
++  PRI2
++
++o Frame buffer restore codepaths (that requires some deep PCI magic)
++
++  PRI2
++
++o XFree86 hooks
++
++  PRI2
++
++o AGP restoration
++
++  PRI2
++
++o DRI restoration
++
++  (davej/Alan: not super-critical, can crash laptop on restore.  davej
++  looking into it.)
++
++  PRI2
++
++o IDE suspend/resume without races (Ben is looking at this a little)
++
++  PRI2
++
++o Pat: There are already CPU device structures; MTRRs should be a
++  dynamically registered interface of CPUs, which implies there needs
++  to be some other glue to know that there are MTRRs that need to be
++  saved/restored.
++
++  PRI1
++
++global
++~~~~~~
++
++o We need a kernel side API for reporting error events to userspace (could
++  be async to 2.6 itself)
++
++  (Prototype core based on netlink exists)
++
++  PRI2
++
++o Kai: Introduce a sane, easy and standard way to build external modules
++  - make clean and make modules_install are both broken
++
++  PRI2
++
++drivers
++~~~~~~~
++
++o Alan: Cardbus/PCMCIA requires all Russell's stuff is merged to do
++  multiheader right and so on
++
++  PRI1
++
++drivers/acpi/
++~~~~~~~~~~~~~
++
++o Fix acpi for all newer IBM Thinkpads see
++  http://bugme.osdl.org/show_bug.cgi?id=1038 for more information
++
++o alan: VIA APIC stuff is one bit of this, there are also some other
++  reports that were caused by ACPI not setting level v edge trigger some
++  times
++
++  PRI1
++
++o mochel: it seems the acpi irq routing code could use a serious rewrite.
++
++  grover: The problem is the ACPI irq routing code is trying to piggyback
++  on the existing MPS-specific data structures, and it's generally a hack.
++  So yes mochel is right, but it is also purging MPS-ities from common code
++  as well.  I've done some preliminary work in this area and it doesn't seem
++  to break anything (yet) but a rewrite in this area imho should not be
++  rushed out the door.  And, I think the above bugs can be fixed w/o the
++  rewrite.
++
++  PRI2
++
++o mochel: ACPI suspend doesn't work.  Important, not cricital.  Pat is
++  working it.
++
++  PRI2
++
++drivers/block/
++~~~~~~~~~~~~~~
++
++o Floppy is almost unusably buggy still
++
++  akpm: we need more people to test & report.
++
++  alan: "Floppy has worked for me since the patches that went in 2.5.69-ac
++  and I think -bk somewhere"
++
++  PRI1
++
++drivers/char/
++~~~~~~~~~~~~~
++
++
++drivers/ide/
++~~~~~~~~~~~~
++
++  (Alan)
++
++o IDE PIO has occasional unexplained PIO disk eating reports
++
++  PRI1
++
++o IDE has multiple zillions of races/hangs in 2.5 still
++
++  PRI1
++
++o IDE scsi needs rewriting
++
++  PRI2
++
++o IDE needs significant reworking to handle Simplex right
++
++  PRI2
++
++o IDE hotplug handling for 2.5 is completely broken still
++
++  PRI2
++
++o There are lots of other IDE bugs that wont go away until the taskfile
++  stuff is included, the locking bugs that allow any user to hang the IDE
++  layer in 2.5, and some other updates are forward ported.  (esp.  HPT372N).
++
++  PRI1
++
++drivers/isdn/
++~~~~~~~~~~~~~
++
++  (Kai, rmk)
++
++o isdn_tty locking is completely broken (cli() and friends)
++
++  PRI2
++
++o fix other drivers
++
++  PRI2
++
++o lots more cleanups, adaption to recent APIs etc
++
++  PRI3
++
++o fixup tty-based ISDN drivers which provide TIOCM* ioctls (see my recent
++  3-set patch for serial stuff)
++
++  Alternatively, we could re-introduce the fallback to driver ioctl parsing
++  for these if not enough drivers get updated.
++
++  PRI3
++
++drivers/net/
++~~~~~~~~~~~~
++
++o davej: Either Wireless network drivers or PCMCIA broke somewhen.  A
++  configuration that worked fine under 2.4 doesn't receive any packets.  Need
++  to look into this more to make sure I don't have any misconfiguration that
++  just 'happened to work' under 2.4
++
++  PRI1
++
++drivers/scsi/
++~~~~~~~~~~~~~
++
++o jejb: qlogic -
++
++  o Merge the feral driver.  It covers all qlogic chips: 1020 all the way
++    up to 23xxx. http://linux-scsi.bkbits.net/scsi-isp-2.5
++
++  o qla2xxx: only for FC chips.  Has significant build issues.  hch
++    promises to send me a "must fix" list for this.
++    http://linux-scsi.bkbits.net/scsi-qla2xxx-2.5
++
++  PRI2
++
++o hch, Mike Anderson, Badari Pulavarty: scsi locking issues
++
++  o there are lots of members of struct Scsi_Host/scsi_device/scsi_cmnd
++    with very unclear locking, many of them probably want to become
++    atomic_t's or bitmaps (for the 1bit bitfields).
++
++  o there's lots of volatile abuse in the scsi code that needs to be
++    thought about.
++
++  o there's some global variables incremented without any locks
++
++  PRI2
++
++sound/
++~~~~~~
++
++o rmk: several OSS drivers for SA11xx-based hardware in need of
++  ALSA-ification and L3 bus support code for these.
++
++o rmk: linux/sound/drivers/mpu401/mpu401.c and
++  linux/sound/drivers/virmidi.c complained about 'errno' at some time in the
++  past, need to confirm whether this is still a problem.
++
++o rmk: need to complete ALSA-ification of the WaveArtist driver for both
++  NetWinder and other stuff (there's some fairly fundamental differences in
++  the way the mixer needs to be handled for the NetWinder.)
++
++  (Issues with forward-porting 2.4 bugfixes.)
++  (Killing off OSS is 2.7 material)
++
++PRI2
++
++arch/i386/
++~~~~~~~~~~
++
++o davej: PAT support (for mtrr exhaustion w/ AGP)
++
++  PRI2
++
++o 2.5.x won't boot on some 440GX
++
++  alan: Problem understood now, feasible fix in 2.4/2.4-ac.  (440GX has two
++  IRQ routers, we use the $PIR table with the PIIX, but the 440GX doesnt use
++  the PIIX for its IRQ routing).  Fall back to BIOS for 440GX works and Intel
++  concurs.
++
++  PRI1
++
++o 2.5.x doesn't handle VIA APIC right yet.
++
++  1. We must write the PCI_INTERRUPT_LINE
++
++  2. We have quirk handlers that seem to trash it.
++
++  PRI1
++
++o ECC driver questions are not yet sorted (DaveJ is working on this) (Dan
++  Hollis)
++
++  alan: ECC - I have some test bits from Dan's stuff - they need no kernel
++  core changes for most platforms.  That means we can treat it as a random
++  driver merge.
++
++  PRI3
++
++o alan: 2.4 has some fixes for tsc handling bugs.  One where some bioses in
++  SMM mode mess up our toggle on the time high/low or mangle the counter and
++  one where a few chips need religious use of _p for timer access and we
++  don't do that.  This is forward porting little bits of fixup.
++
++  ACPI HZ stuff we can't trap - a lot of ACPI is implemented as outb's
++  triggering SMM traps
++
++  PRI1
++
++arch/x86_64/
++~~~~~~~~~~~~
++
++  (Andi)
++
++o time handling is broken. Need to move up 2.4 time.c code.
++
++  PRI1
++
++o NMI watchdog seems to tick too fast
++
++  PRI2
++
++o need to coredump 64bit vsyscall code with dwarf2
++
++  PRI2
++
++o move 64bit signal trampolines into vsyscall code and add dwarf2 for it.
++  (in progress)
++
++  PRI1
++
++o describe kernel assembly with dwarf2 annotations for kgdb
++
++  PRI3
++
++arch/alpha/
++~~~~~~~~~~~
++
++o rth: Ptrace writes are broken.  This means we can't (reliably) set
++  breakpoints or modify variables from gdb.
++
++  PRI1
++
++arch/arm/
++~~~~~~~~~
++
++o rmk: missing raw keyboard translation tables for all ARM machines.
++  Haven't even looked into this at all.  This could be messy since there
++  isn't an ARM architecture standard.  I'm presently hoping that it won't be
++  an issue.  If it does, I guess we'll see drivers/char/keyboard.c explode.
++
++  PRI2
++
++arch/others/
++~~~~~~~~~~~~
++
++o SH needs resyncing, as do some other ports. SH64 needs merging.
++  No impact on mainstream platforms hopefully.
++
++  PRI2
++
++arch/s390/
++~~~~~~~~~
++
++o A nastly memory management problem causes random crashes.  These appear
++  to be fixed/hidden by the objrmap patch, more investigation is needed.
++
++  PRI1
++
++drivers/s390/
++~~~~~~~~~~~~~
++
++o Early userspace and 64 bit dev_t will allow the removal of most of
++  dasd_devmap.c and dasd_genhd.c.
++
++  PRI2
++
++o The 3270 console driver needs to be replaced with a working one
++  (prototype is there, needs to be finished).
++
++  PRI2
++
++o Minor interface changes are pending in cio/ when the z990 machines are
++  out.
++
++  PRI2
++
++o Jan Glauber is working on a fix for the timer issues related to running
++  on virtualized CPUs (wall-clock vs.  cpu time).
++
++  PRI1
++
++o a block device driver for ramdisks shared among virtual machines
++
++  PRI3
++
++o driver for crypto hardware
++
++  PRI3
++
++o 'claw' network device driver
++
++  PRI3
++
+
+_

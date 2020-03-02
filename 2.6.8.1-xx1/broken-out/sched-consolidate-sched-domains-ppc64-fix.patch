@@ -1,0 +1,58 @@
+
+From: Matthew Dobson <colpatch@us.ibm.com>
+
+The attached patch is against 2.6.8-rc2-mm2, and removes Nick's conditional
+definition & population of cpu_sibling_map[] in favor of my unconditional
+ones.  This does not affect how cpu_sibling_map is used, just gives it
+broader scope.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc64/kernel/smp.c |   12 ------------
+ 25-akpm/include/asm-ppc64/smp.h |    3 ---
+ 2 files changed, 15 deletions(-)
+
+diff -puN arch/ppc64/kernel/smp.c~sched-consolidate-sched-domains-ppc64-fix arch/ppc64/kernel/smp.c
+--- 25/arch/ppc64/kernel/smp.c~sched-consolidate-sched-domains-ppc64-fix	Wed Aug  4 14:51:58 2004
++++ 25-akpm/arch/ppc64/kernel/smp.c	Wed Aug  4 14:51:58 2004
+@@ -55,9 +55,6 @@
+ #include <asm/rtas.h>
+ 
+ int smp_threads_ready;
+-#ifdef CONFIG_SCHED_SMT
+-cpumask_t cpu_sibling_map[NR_CPUS];
+-#endif
+ unsigned long cache_decay_ticks;
+ 
+ cpumask_t cpu_possible_map = CPU_MASK_NONE;
+@@ -445,15 +442,6 @@ static inline void look_for_more_cpus(vo
+ 	/* Make those cpus (which might appear later) possible too. */
+ 	for (i = 0; i < maxcpus; i++)
+ 		cpu_set(i, cpu_possible_map);
+-
+-#ifdef CONFIG_SCHED_SMT
+-	memset(cpu_sibling_map, 0, sizeof(cpu_sibling_map));
+-	for_each_cpu(i) {
+-		cpu_set(i, cpu_sibling_map[i]);
+-		if (cur_cpu_spec->cpu_features & CPU_FTR_SMT)
+-			cpu_set(i^1, cpu_sibling_map[i]);
+-	}
+-#endif
+ }
+ #else /* ... CONFIG_HOTPLUG_CPU */
+ static inline int __devinit smp_startup_cpu(unsigned int lcpu)
+diff -puN include/asm-ppc64/smp.h~sched-consolidate-sched-domains-ppc64-fix include/asm-ppc64/smp.h
+--- 25/include/asm-ppc64/smp.h~sched-consolidate-sched-domains-ppc64-fix	Wed Aug  4 14:51:58 2004
++++ 25-akpm/include/asm-ppc64/smp.h	Wed Aug  4 14:51:58 2004
+@@ -73,9 +73,6 @@ void smp_init_pSeries(void);
+ extern int __cpu_disable(void);
+ extern void __cpu_die(unsigned int cpu);
+ extern void cpu_die(void) __attribute__((noreturn));
+-#ifdef CONFIG_SCHED_SMT
+-extern cpumask_t cpu_sibling_map[NR_CPUS];
+-#endif
+ #endif /* !(CONFIG_SMP) */
+ 
+ #define get_hard_smp_processor_id(CPU) (paca[(CPU)].hw_cpu_id)
+_

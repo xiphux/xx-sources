@@ -1,0 +1,41 @@
+
+From: Vladimir Grouzdev <vladimir.grouzdev@Jaluna.COM>
+
+The xtime value may become incorrect when the update_wall_time(ticks)
+function is called with "ticks" > 1.  In such a case, the xtime variable is
+updated multiple times inside the loop but it is normalized only once
+outside of the loop.
+
+This bug was reported at:
+
+http://bugme.osdl.org/show_bug.cgi?id=3403
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/timer.c |   11 +++++------
+ 1 files changed, 5 insertions(+), 6 deletions(-)
+
+diff -puN kernel/timer.c~xtime-value-may-become-incorrect kernel/timer.c
+--- 25/kernel/timer.c~xtime-value-may-become-incorrect	Fri Oct  8 14:36:24 2004
++++ 25-akpm/kernel/timer.c	Fri Oct  8 14:37:20 2004
+@@ -790,13 +790,12 @@ static void update_wall_time(unsigned lo
+ 	do {
+ 		ticks--;
+ 		update_wall_time_one_tick();
++		if (xtime.tv_nsec >= 1000000000) {
++			xtime.tv_nsec -= 1000000000;
++			xtime.tv_sec++;
++			second_overflow();
++		}
+ 	} while (ticks);
+-
+-	if (xtime.tv_nsec >= 1000000000) {
+-	    xtime.tv_nsec -= 1000000000;
+-	    xtime.tv_sec++;
+-	    second_overflow();
+-	}
+ }
+ 
+ static inline void do_process_times(struct task_struct *p,
+_

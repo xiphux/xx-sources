@@ -1,0 +1,535 @@
+
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+For non-smp kernels the call to update_process_times is done in the
+do_timer function.  It is more consistent with smp kernels to move this
+call to the architecture file which calls do_timer.  
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/alpha/kernel/time.c                 |    3 +++
+ 25-akpm/arch/arm/kernel/time.c                   |    3 +++
+ 25-akpm/arch/arm26/kernel/time.c                 |    3 +++
+ 25-akpm/arch/cris/arch-v10/kernel/time.c         |    3 +++
+ 25-akpm/arch/h8300/kernel/time.c                 |    3 +++
+ 25-akpm/arch/ia64/kernel/time.c                  |    8 +-------
+ 25-akpm/arch/m68k/kernel/time.c                  |    3 +++
+ 25-akpm/arch/m68k/sun3/sun3ints.c                |    3 +++
+ 25-akpm/arch/m68knommu/kernel/time.c             |    3 +++
+ 25-akpm/arch/mips/au1000/common/time.c           |    9 +++++++++
+ 25-akpm/arch/mips/baget/time.c                   |    3 +++
+ 25-akpm/arch/mips/galileo-boards/ev96100/time.c  |    3 +++
+ 25-akpm/arch/mips/gt64120/common/time.c          |    3 +++
+ 25-akpm/arch/mips/kernel/time.c                  |    3 ---
+ 25-akpm/arch/mips/momentum/ocelot_g/gt-irq.c     |    3 +++
+ 25-akpm/arch/mips/sgi-ip27/ip27-timer.c          |    2 --
+ 25-akpm/arch/parisc/kernel/time.c                |    2 ++
+ 25-akpm/arch/ppc/kernel/time.c                   |    3 +++
+ 25-akpm/arch/ppc64/kernel/time.c                 |    3 +++
+ 25-akpm/arch/s390/kernel/time.c                  |    4 +++-
+ 25-akpm/arch/sh/kernel/time.c                    |    3 +++
+ 25-akpm/arch/sh64/kernel/time.c                  |    3 +++
+ 25-akpm/arch/sparc/kernel/pcic.c                 |    3 +++
+ 25-akpm/arch/sparc/kernel/time.c                 |    4 ++++
+ 25-akpm/arch/sparc64/kernel/time.c               |    1 +
+ 25-akpm/arch/um/kernel/time_kern.c               |    2 --
+ 25-akpm/arch/v850/kernel/time.c                  |    3 +++
+ 25-akpm/arch/x86_64/kernel/time.c                |    3 +++
+ 25-akpm/include/asm-arm/arch-clps711x/time.h     |    3 +++
+ 25-akpm/include/asm-arm/arch-integrator/time.h   |    3 +++
+ 25-akpm/include/asm-arm/arch-l7200/time.h        |    3 +++
+ 25-akpm/include/asm-i386/mach-default/do_timer.h |    3 +++
+ 25-akpm/include/asm-i386/mach-visws/do_timer.h   |    3 +++
+ 25-akpm/include/asm-i386/mach-voyager/do_timer.h |    3 +++
+ 25-akpm/kernel/timer.c                           |    5 -----
+ 35 files changed, 95 insertions(+), 20 deletions(-)
+
+diff -puN arch/alpha/kernel/time.c~cleanup-move-call-to-update_process_times arch/alpha/kernel/time.c
+--- 25/arch/alpha/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.760679416 -0700
++++ 25-akpm/arch/alpha/kernel/time.c	2004-10-05 01:48:17.833668320 -0700
+@@ -138,6 +138,9 @@ irqreturn_t timer_interrupt(int irq, voi
+ 
+ 	while (nticks > 0) {
+ 		do_timer(regs);
++#ifndef CONFIG_SMP
++		update_process_times(user_mode(regs));
++#endif
+ 		nticks--;
+ 	}
+ 
+diff -puN arch/arm26/kernel/time.c~cleanup-move-call-to-update_process_times arch/arm26/kernel/time.c
+--- 25/arch/arm26/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.761679264 -0700
++++ 25-akpm/arch/arm26/kernel/time.c	2004-10-05 01:48:17.833668320 -0700
+@@ -166,6 +166,9 @@ EXPORT_SYMBOL(do_settimeofday);
+ static irqreturn_t timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ {
+         do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+         do_set_rtc(); //FIME - EVERY timer IRQ?
+         profile_tick(CPU_PROFILING, regs);
+ 	return IRQ_HANDLED; //FIXME - is this right?
+diff -puN arch/arm/kernel/time.c~cleanup-move-call-to-update_process_times arch/arm/kernel/time.c
+--- 25/arch/arm/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.763678960 -0700
++++ 25-akpm/arch/arm/kernel/time.c	2004-10-05 01:48:17.834668168 -0700
+@@ -310,6 +310,9 @@ void timer_tick(struct pt_regs *regs)
+ 	do_leds();
+ 	do_set_rtc();
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ }
+ 
+ void (*init_arch_time)(void);
+diff -puN arch/cris/arch-v10/kernel/time.c~cleanup-move-call-to-update_process_times arch/cris/arch-v10/kernel/time.c
+--- 25/arch/cris/arch-v10/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.764678808 -0700
++++ 25-akpm/arch/cris/arch-v10/kernel/time.c	2004-10-05 01:48:17.834668168 -0700
+@@ -227,6 +227,9 @@ timer_interrupt(int irq, void *dev_id, s
+ 	/* call the real timer interrupt handler */
+ 
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ 	
+ 	/*
+ 	 * If we have an externally synchronized Linux clock, then update
+diff -puN arch/h8300/kernel/time.c~cleanup-move-call-to-update_process_times arch/h8300/kernel/time.c
+--- 25/arch/h8300/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.765678656 -0700
++++ 25-akpm/arch/h8300/kernel/time.c	2004-10-05 01:48:17.835668016 -0700
+@@ -46,6 +46,9 @@ static void timer_interrupt(int irq, voi
+ 	platform_timer_eoi();
+ 
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ 	profile_tick(CPU_PROFILING, regs);
+ }
+ 
+diff -puN arch/ia64/kernel/time.c~cleanup-move-call-to-update_process_times arch/ia64/kernel/time.c
+--- 25/arch/ia64/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.767678352 -0700
++++ 25-akpm/arch/ia64/kernel/time.c	2004-10-05 01:48:17.835668016 -0700
+@@ -67,14 +67,8 @@ timer_interrupt (int irq, void *dev_id, 
+ 	profile_tick(CPU_PROFILING, regs);
+ 
+ 	while (1) {
+-#ifdef CONFIG_SMP
+-		/*
+-		 * For UP, this is done in do_timer().  Weird, but
+-		 * fixing that would require updates to all
+-		 * platforms.
+-		 */
+ 		update_process_times(user_mode(regs));
+-#endif
++
+ 		new_itm += local_cpu_data->itm_delta;
+ 
+ 		if (smp_processor_id() == TIME_KEEPER_ID) {
+diff -puN arch/m68k/kernel/time.c~cleanup-move-call-to-update_process_times arch/m68k/kernel/time.c
+--- 25/arch/m68k/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.768678200 -0700
++++ 25-akpm/arch/m68k/kernel/time.c	2004-10-05 01:48:17.835668016 -0700
+@@ -45,6 +45,9 @@ static inline int set_rtc_mmss(unsigned 
+ static irqreturn_t timer_interrupt(int irq, void *dummy, struct pt_regs * regs)
+ {
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ 	profile_tick(CPU_PROFILING, regs);
+ 
+ #ifdef CONFIG_HEARTBEAT
+diff -puN arch/m68knommu/kernel/time.c~cleanup-move-call-to-update_process_times arch/m68knommu/kernel/time.c
+--- 25/arch/m68knommu/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.769678048 -0700
++++ 25-akpm/arch/m68knommu/kernel/time.c	2004-10-05 01:48:17.836667864 -0700
+@@ -57,6 +57,9 @@ static irqreturn_t timer_interrupt(int i
+ 	write_seqlock(&xtime_lock);
+ 
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ 	if (current->pid)
+ 		profile_tick(CPU_PROFILING, regs);
+ 
+diff -puN arch/m68k/sun3/sun3ints.c~cleanup-move-call-to-update_process_times arch/m68k/sun3/sun3ints.c
+--- 25/arch/m68k/sun3/sun3ints.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.771677744 -0700
++++ 25-akpm/arch/m68k/sun3/sun3ints.c	2004-10-05 01:48:17.836667864 -0700
+@@ -85,6 +85,9 @@ static irqreturn_t sun3_int5(int irq, vo
+ 	intersil_clear();
+ #endif
+         do_timer(fp);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(fp));
++#endif
+         if(!(kstat_cpu(0).irqs[SYS_IRQS + irq] % 20))
+                 sun3_leds(led_pattern[(kstat_cpu(0).irqs[SYS_IRQS+irq]%160)
+                 /20]);
+diff -puN arch/mips/au1000/common/time.c~cleanup-move-call-to-update_process_times arch/mips/au1000/common/time.c
+--- 25/arch/mips/au1000/common/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.772677592 -0700
++++ 25-akpm/arch/mips/au1000/common/time.c	2004-10-05 01:48:17.837667712 -0700
+@@ -99,6 +99,9 @@ void mips_timer_interrupt(struct pt_regs
+ 
+ 		kstat_this_cpu.irqs[irq]++;
+ 		do_timer(regs);
++#ifndef CONFIG_SMP
++		update_process_times(user_mode(regs));
++#endif
+ 		r4k_cur += r4k_offset;
+ 		ack_r4ktimer(r4k_cur);
+ 
+@@ -137,6 +140,9 @@ void counter0_irq(int irq, void *dev_id,
+ 
+ 	while (time_elapsed > 0) {
+ 		do_timer(regs);
++#ifndef CONFIG_SMP
++		update_process_times(user_mode(regs));
++#endif
+ 		time_elapsed -= MATCH20_INC;
+ 		last_match20 += MATCH20_INC;
+ 		jiffie_drift++;
+@@ -153,6 +159,9 @@ void counter0_irq(int irq, void *dev_id,
+ 	if (jiffie_drift >= 999) {
+ 		jiffie_drift -= 999;
+ 		do_timer(regs); /* increment jiffies by one */
++#ifndef CONFIG_SMP
++		update_process_times(user_mode(regs));
++#endif
+ 	}
+ }
+ 
+diff -puN arch/mips/baget/time.c~cleanup-move-call-to-update_process_times arch/mips/baget/time.c
+--- 25/arch/mips/baget/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.773677440 -0700
++++ 25-akpm/arch/mips/baget/time.c	2004-10-05 01:48:17.837667712 -0700
+@@ -52,6 +52,9 @@ void static timer_interrupt(int irq, voi
+ 	if (timer_intr_valid()) {
+ 		sti();
+ 		do_timer(regs);
++#ifndef CONFIG_SMP
++		update_process_times(user_mode(regs));
++#endif
+ 	}
+ }
+ 
+diff -puN arch/mips/galileo-boards/ev96100/time.c~cleanup-move-call-to-update_process_times arch/mips/galileo-boards/ev96100/time.c
+--- 25/arch/mips/galileo-boards/ev96100/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.775677136 -0700
++++ 25-akpm/arch/mips/galileo-boards/ev96100/time.c	2004-10-05 01:48:17.838667560 -0700
+@@ -73,6 +73,9 @@ void mips_timer_interrupt(struct pt_regs
+ 	do {
+ 		kstat_this_cpu.irqs[irq]++;
+ 		do_timer(regs);
++#ifndef CONFIG_SMP
++		update_process_times(user_mode(regs));
++#endif
+ 		r4k_cur += r4k_offset;
+ 		ack_r4ktimer(r4k_cur);
+ 
+diff -puN arch/mips/gt64120/common/time.c~cleanup-move-call-to-update_process_times arch/mips/gt64120/common/time.c
+--- 25/arch/mips/gt64120/common/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.776676984 -0700
++++ 25-akpm/arch/mips/gt64120/common/time.c	2004-10-05 01:48:17.838667560 -0700
+@@ -36,6 +36,9 @@ static void gt64120_irq(int irq, void *d
+ 		handled = 1;
+ 		irq_src &= ~0x00000800;
+ 		do_timer(regs);
++#ifndef CONFIG_SMP
++		update_process_times(user_mode(regs));
++#endif
+ 	}
+ 
+ 	GT_WRITE(GT_INTRCAUSE_OFS, 0);
+diff -puN arch/mips/kernel/time.c~cleanup-move-call-to-update_process_times arch/mips/kernel/time.c
+--- 25/arch/mips/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.777676832 -0700
++++ 25-akpm/arch/mips/kernel/time.c	2004-10-05 01:48:17.839667408 -0700
+@@ -418,10 +418,7 @@ void local_timer_interrupt(int irq, void
+ {
+ 	if (current->pid)
+ 		profile_tick(CPU_PROFILING, regs);
+-#ifdef CONFIG_SMP
+-	/* in UP mode, update_process_times() is invoked by do_timer() */
+ 	update_process_times(user_mode(regs));
+-#endif
+ }
+ 
+ /*
+diff -puN arch/mips/momentum/ocelot_g/gt-irq.c~cleanup-move-call-to-update_process_times arch/mips/momentum/ocelot_g/gt-irq.c
+--- 25/arch/mips/momentum/ocelot_g/gt-irq.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.779676528 -0700
++++ 25-akpm/arch/mips/momentum/ocelot_g/gt-irq.c	2004-10-05 01:48:17.839667408 -0700
+@@ -134,6 +134,9 @@ static irqreturn_t gt64240_p0int_irq(int
+ 
+ 		/* handle the timer call */
+ 		do_timer(regs);
++#ifndef CONFIG_SMP
++		update_process_times(user_mode(regs));
++#endif
+ 	}
+ 
+ 	if (irq_src) {
+diff -puN arch/mips/sgi-ip27/ip27-timer.c~cleanup-move-call-to-update_process_times arch/mips/sgi-ip27/ip27-timer.c
+--- 25/arch/mips/sgi-ip27/ip27-timer.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.780676376 -0700
++++ 25-akpm/arch/mips/sgi-ip27/ip27-timer.c	2004-10-05 01:48:17.839667408 -0700
+@@ -112,9 +112,7 @@ again:
+ 	if (cpu == 0)
+ 		do_timer(regs);
+ 
+-#ifdef CONFIG_SMP
+ 	update_process_times(user_mode(regs));
+-#endif /* CONFIG_SMP */
+ 
+ 	/*
+ 	 * If we have an externally synchronized Linux clock, then update
+diff -puN arch/parisc/kernel/time.c~cleanup-move-call-to-update_process_times arch/parisc/kernel/time.c
+--- 25/arch/parisc/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.781676224 -0700
++++ 25-akpm/arch/parisc/kernel/time.c	2004-10-05 01:48:17.840667256 -0700
+@@ -79,6 +79,8 @@ irqreturn_t timer_interrupt(int irq, voi
+ 	while (nticks--) {
+ #ifdef CONFIG_SMP
+ 		smp_do_timer(regs);
++#else
++		update_process_times(user_mode(regs));
+ #endif
+ 		if (cpu == 0) {
+ 			write_seqlock(&xtime_lock);
+diff -puN arch/ppc64/kernel/time.c~cleanup-move-call-to-update_process_times arch/ppc64/kernel/time.c
+--- 25/arch/ppc64/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.783675920 -0700
++++ 25-akpm/arch/ppc64/kernel/time.c	2004-10-05 01:48:17.841667104 -0700
+@@ -277,6 +277,9 @@ int timer_interrupt(struct pt_regs * reg
+ 			write_seqlock(&xtime_lock);
+ 			tb_last_stamp = lpaca->next_jiffy_update_tb;
+ 			do_timer(regs);
++#ifndef CONFIG_SMP
++			update_process_times(user_mode(regs));
++#endif
+ 			timer_sync_xtime( cur_tb );
+ 			timer_check_rtc();
+ 			write_sequnlock(&xtime_lock);
+diff -puN arch/ppc/kernel/time.c~cleanup-move-call-to-update_process_times arch/ppc/kernel/time.c
+--- 25/arch/ppc/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.784675768 -0700
++++ 25-akpm/arch/ppc/kernel/time.c	2004-10-05 01:48:17.841667104 -0700
+@@ -150,6 +150,9 @@ void timer_interrupt(struct pt_regs * re
+ 		write_seqlock(&xtime_lock);
+ 		tb_last_stamp = jiffy_stamp;
+ 		do_timer(regs);
++#ifndef CONFIG_SMP
++		update_process_times(user_mode(regs));
++#endif
+ 
+ 		/*
+ 		 * update the rtc when needed, this should be performed on the
+diff -puN arch/s390/kernel/time.c~cleanup-move-call-to-update_process_times arch/s390/kernel/time.c
+--- 25/arch/s390/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.785675616 -0700
++++ 25-akpm/arch/s390/kernel/time.c	2004-10-05 01:48:17.842666952 -0700
+@@ -233,8 +233,10 @@ void account_ticks(struct pt_regs *regs)
+ 	while (ticks--)
+ 		update_process_times(user_mode(regs));
+ #else
+-	while (ticks--)
++	while (ticks--) {
+ 		do_timer(regs);
++		update_process_times(user_mode(regs));
++	}
+ #endif
+ 	s390_do_profile(regs);
+ }
+diff -puN arch/sh64/kernel/time.c~cleanup-move-call-to-update_process_times arch/sh64/kernel/time.c
+--- 25/arch/sh64/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.787675312 -0700
++++ 25-akpm/arch/sh64/kernel/time.c	2004-10-05 01:48:17.843666800 -0700
+@@ -309,6 +309,9 @@ static inline void do_timer_interrupt(in
+ 	ctc_last_interrupt = (unsigned long) current_ctc;
+ 
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ 	profile_tick(CPU_PROFILING, regs);
+ 
+ #ifdef CONFIG_HEARTBEAT
+diff -puN arch/sh/kernel/time.c~cleanup-move-call-to-update_process_times arch/sh/kernel/time.c
+--- 25/arch/sh/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.788675160 -0700
++++ 25-akpm/arch/sh/kernel/time.c	2004-10-05 01:48:17.844666648 -0700
+@@ -258,6 +258,9 @@ static long last_rtc_update;
+ static inline void do_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ {
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ 	profile_tick(CPU_PROFILING, regs);
+ 
+ #ifdef CONFIG_HEARTBEAT
+diff -puN arch/sparc64/kernel/time.c~cleanup-move-call-to-update_process_times arch/sparc64/kernel/time.c
+--- 25/arch/sparc64/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.790674856 -0700
++++ 25-akpm/arch/sparc64/kernel/time.c	2004-10-05 01:48:17.845666496 -0700
+@@ -462,6 +462,7 @@ static irqreturn_t timer_interrupt(int i
+ 	do {
+ #ifndef CONFIG_SMP
+ 		profile_tick(CPU_PROFILING, regs);
++		update_process_times(user_mode(regs));
+ #endif
+ 		do_timer(regs);
+ 
+diff -puN arch/sparc/kernel/pcic.c~cleanup-move-call-to-update_process_times arch/sparc/kernel/pcic.c
+--- 25/arch/sparc/kernel/pcic.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.791674704 -0700
++++ 25-akpm/arch/sparc/kernel/pcic.c	2004-10-05 01:48:17.846666344 -0700
+@@ -714,6 +714,9 @@ static irqreturn_t pcic_timer_handler (i
+ 	write_seqlock(&xtime_lock);	/* Dummy, to show that we remember */
+ 	pcic_clear_clock_irq();
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ 	write_sequnlock(&xtime_lock);
+ 	return IRQ_HANDLED;
+ }
+diff -puN arch/sparc/kernel/time.c~cleanup-move-call-to-update_process_times arch/sparc/kernel/time.c
+--- 25/arch/sparc/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.792674552 -0700
++++ 25-akpm/arch/sparc/kernel/time.c	2004-10-05 01:48:17.847666192 -0700
+@@ -134,6 +134,10 @@ irqreturn_t timer_interrupt(int irq, voi
+ 	clear_clock_irq();
+ 
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
++
+ 
+ 	/* Determine when to update the Mostek clock. */
+ 	if ((time_status & STA_UNSYNC) == 0 &&
+diff -puN arch/um/kernel/time_kern.c~cleanup-move-call-to-update_process_times arch/um/kernel/time_kern.c
+--- 25/arch/um/kernel/time_kern.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.794674248 -0700
++++ 25-akpm/arch/um/kernel/time_kern.c	2004-10-05 01:48:17.847666192 -0700
+@@ -167,11 +167,9 @@ void __const_udelay(um_udelay_t usecs)
+ 
+ void timer_handler(int sig, union uml_pt_regs *regs)
+ {
+-#ifdef CONFIG_SMP
+ 	local_irq_disable();
+ 	update_process_times(user_context(UPT_SP(regs)));
+ 	local_irq_enable();
+-#endif
+ 	if(current_thread->cpu == 0)
+ 		timer_irq(regs);
+ }
+diff -puN arch/v850/kernel/time.c~cleanup-move-call-to-update_process_times arch/v850/kernel/time.c
+--- 25/arch/v850/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.795674096 -0700
++++ 25-akpm/arch/v850/kernel/time.c	2004-10-05 01:48:17.847666192 -0700
+@@ -56,6 +56,9 @@ static irqreturn_t timer_interrupt (int 
+ 	  mach_tick ();
+ 
+ 	do_timer (regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ 	profile_tick(CPU_PROFILING, regs);
+ #if 0
+ 	/*
+diff -puN arch/x86_64/kernel/time.c~cleanup-move-call-to-update_process_times arch/x86_64/kernel/time.c
+--- 25/arch/x86_64/kernel/time.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.797673792 -0700
++++ 25-akpm/arch/x86_64/kernel/time.c	2004-10-05 01:48:17.848666040 -0700
+@@ -416,6 +416,9 @@ static irqreturn_t timer_interrupt(int i
+  */
+ 
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ 
+ /*
+  * In the SMP case we use the local APIC timer interrupt to do the profiling,
+diff -puN include/asm-arm/arch-clps711x/time.h~cleanup-move-call-to-update_process_times include/asm-arm/arch-clps711x/time.h
+--- 25/include/asm-arm/arch-clps711x/time.h~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.798673640 -0700
++++ 25-akpm/include/asm-arm/arch-clps711x/time.h	2004-10-05 01:48:17.849665888 -0700
+@@ -30,6 +30,9 @@ p720t_timer_interrupt(int irq, void *dev
+ {
+ 	do_leds();
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ 	do_profile(regs);
+ 	return IRQ_HANDLED;
+ }
+diff -puN include/asm-arm/arch-integrator/time.h~cleanup-move-call-to-update_process_times include/asm-arm/arch-integrator/time.h
+--- 25/include/asm-arm/arch-integrator/time.h~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.811671664 -0700
++++ 25-akpm/include/asm-arm/arch-integrator/time.h	2004-10-05 01:48:17.849665888 -0700
+@@ -107,6 +107,9 @@ integrator_timer_interrupt(int irq, void
+ 
+ 	do_leds();
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ 	do_profile(regs);
+ 
+ 	return IRQ_HANDLED;
+diff -puN include/asm-arm/arch-l7200/time.h~cleanup-move-call-to-update_process_times include/asm-arm/arch-l7200/time.h
+--- 25/include/asm-arm/arch-l7200/time.h~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.813671360 -0700
++++ 25-akpm/include/asm-arm/arch-l7200/time.h	2004-10-05 01:48:17.850665736 -0700
+@@ -46,6 +46,9 @@ static irqreturn_t
+ timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ {
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ 	do_profile(regs);
+ 	RTC_RTCC = 0;				/* Clear interrupt */
+ 
+diff -puN include/asm-i386/mach-default/do_timer.h~cleanup-move-call-to-update_process_times include/asm-i386/mach-default/do_timer.h
+--- 25/include/asm-i386/mach-default/do_timer.h~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.814671208 -0700
++++ 25-akpm/include/asm-i386/mach-default/do_timer.h	2004-10-05 01:48:17.850665736 -0700
+@@ -16,6 +16,9 @@
+ static inline void do_timer_interrupt_hook(struct pt_regs *regs)
+ {
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ /*
+  * In the SMP case we use the local APIC timer interrupt to do the
+  * profiling, except when we simulate SMP mode on a uniprocessor
+diff -puN include/asm-i386/mach-visws/do_timer.h~cleanup-move-call-to-update_process_times include/asm-i386/mach-visws/do_timer.h
+--- 25/include/asm-i386/mach-visws/do_timer.h~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.815671056 -0700
++++ 25-akpm/include/asm-i386/mach-visws/do_timer.h	2004-10-05 01:48:17.851665584 -0700
+@@ -9,6 +9,9 @@ static inline void do_timer_interrupt_ho
+ 	co_cpu_write(CO_CPU_STAT,co_cpu_read(CO_CPU_STAT) & ~CO_STAT_TIMEINTR);
+ 
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ /*
+  * In the SMP case we use the local APIC timer interrupt to do the
+  * profiling, except when we simulate SMP mode on a uniprocessor
+diff -puN include/asm-i386/mach-voyager/do_timer.h~cleanup-move-call-to-update_process_times include/asm-i386/mach-voyager/do_timer.h
+--- 25/include/asm-i386/mach-voyager/do_timer.h~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.822669992 -0700
++++ 25-akpm/include/asm-i386/mach-voyager/do_timer.h	2004-10-05 01:48:17.851665584 -0700
+@@ -4,6 +4,9 @@
+ static inline void do_timer_interrupt_hook(struct pt_regs *regs)
+ {
+ 	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs));
++#endif
+ 
+ 	voyager_timer_interrupt(regs);
+ }
+diff -puN kernel/timer.c~cleanup-move-call-to-update_process_times kernel/timer.c
+--- 25/kernel/timer.c~cleanup-move-call-to-update_process_times	2004-10-05 01:48:17.829668928 -0700
++++ 25-akpm/kernel/timer.c	2004-10-05 01:48:17.853665280 -0700
+@@ -969,11 +969,6 @@ static inline void update_times(void)
+ void do_timer(struct pt_regs *regs)
+ {
+ 	jiffies_64++;
+-#ifndef CONFIG_SMP
+-	/* SMP process accounting uses the local APIC timer */
+-
+-	update_process_times(user_mode(regs));
+-#endif
+ 	update_times();
+ }
+ 
+_

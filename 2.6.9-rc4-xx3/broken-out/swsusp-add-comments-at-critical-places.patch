@@ -1,0 +1,52 @@
+
+From: Pavel Machek <pavel@ucw.cz>
+
+apm.c needs save_processor_state and friends.  Add a comment to keep people
+from removing it.  Describe a way to make swsusp work on non-PSE machines. 
+Document purpose of acpi_restore_state.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/acpi/sleep.c |    2 +-
+ 25-akpm/arch/i386/power/cpu.c         |    2 +-
+ 25-akpm/include/asm-i386/suspend.h    |    3 +++
+ 3 files changed, 5 insertions(+), 2 deletions(-)
+
+diff -puN arch/i386/kernel/acpi/sleep.c~swsusp-add-comments-at-critical-places arch/i386/kernel/acpi/sleep.c
+--- 25/arch/i386/kernel/acpi/sleep.c~swsusp-add-comments-at-critical-places	Mon Oct  4 15:00:48 2004
++++ 25-akpm/arch/i386/kernel/acpi/sleep.c	Mon Oct  4 15:00:48 2004
+@@ -56,7 +56,7 @@ int acpi_save_state_disk (void)
+ }
+ 
+ /*
+- * acpi_restore_state
++ * acpi_restore_state - undo effects of acpi_save_state_mem
+  */
+ void acpi_restore_state_mem (void)
+ {
+diff -puN arch/i386/power/cpu.c~swsusp-add-comments-at-critical-places arch/i386/power/cpu.c
+--- 25/arch/i386/power/cpu.c~swsusp-add-comments-at-critical-places	Mon Oct  4 15:00:48 2004
++++ 25-akpm/arch/i386/power/cpu.c	Mon Oct  4 15:00:48 2004
+@@ -148,6 +148,6 @@ void restore_processor_state(void)
+ 	__restore_processor_state(&saved_context);
+ }
+ 
+-
++/* Needed by apm.c */
+ EXPORT_SYMBOL(save_processor_state);
+ EXPORT_SYMBOL(restore_processor_state);
+diff -puN include/asm-i386/suspend.h~swsusp-add-comments-at-critical-places include/asm-i386/suspend.h
+--- 25/include/asm-i386/suspend.h~swsusp-add-comments-at-critical-places	Mon Oct  4 15:00:48 2004
++++ 25-akpm/include/asm-i386/suspend.h	Mon Oct  4 15:00:48 2004
+@@ -9,6 +9,9 @@
+ static inline int
+ arch_prepare_suspend(void)
+ {
++	/* If you want to make non-PSE machine work, turn off paging
++           in do_magic. swsusp_pg_dir should have identity mapping, so
++           it could work...  */
+ 	if (!cpu_has_pse)
+ 		return -EPERM;
+ 	return 0;
+_

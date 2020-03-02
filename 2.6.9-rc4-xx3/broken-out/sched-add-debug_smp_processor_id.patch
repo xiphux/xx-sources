@@ -1,0 +1,64 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+The patch below adds a DEBUG_SMP_PROCESSOR_ID option to .config.  It
+defaults to y so i expect it to get good usage still, but people should
+have the option to turn it off since it introduces overhead.
+
+I have test-compiled and test-booted x86 and x64 on SMP+!PREEMPT and
+everything is working fine.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/smp.h |    2 +-
+ 25-akpm/kernel/sched.c      |    3 ++-
+ 25-akpm/lib/Kconfig.debug   |    9 +++++++++
+ 3 files changed, 12 insertions(+), 2 deletions(-)
+
+diff -puN include/linux/smp.h~sched-add-debug_smp_processor_id include/linux/smp.h
+--- 25/include/linux/smp.h~sched-add-debug_smp_processor_id	2004-10-05 02:00:53.284822288 -0700
++++ 25-akpm/include/linux/smp.h	2004-10-05 02:00:53.291821224 -0700
+@@ -110,7 +110,7 @@ static inline void smp_send_reschedule(i
+ #endif /* !SMP */
+ 
+ #ifdef __smp_processor_id
+-# ifdef CONFIG_PREEMPT
++# if defined(CONFIG_PREEMPT) && defined(CONFIG_DEBUG_SMP_PROCESSOR_ID)
+   /*
+    * temporary debugging check detecting places that use
+    * smp_processor_id() in a potentially unsafe way:
+diff -puN kernel/sched.c~sched-add-debug_smp_processor_id kernel/sched.c
+--- 25/kernel/sched.c~sched-add-debug_smp_processor_id	2004-10-05 02:00:53.286821984 -0700
++++ 25-akpm/kernel/sched.c	2004-10-05 02:00:53.294820768 -0700
+@@ -2471,7 +2471,8 @@ static inline int dependent_sleeper(int 
+ }
+ #endif
+ 
+-#if defined(CONFIG_PREEMPT) && defined(__smp_processor_id)
++#if defined(CONFIG_PREEMPT) && defined(__smp_processor_id) && \
++				defined(CONFIG_DEBUG_SMP_PROCESSOR_ID)
+ /*
+  * Debugging check.
+  */
+diff -puN lib/Kconfig.debug~sched-add-debug_smp_processor_id lib/Kconfig.debug
+--- 25/lib/Kconfig.debug~sched-add-debug_smp_processor_id	2004-10-05 02:00:53.288821680 -0700
++++ 25-akpm/lib/Kconfig.debug	2004-10-05 02:00:53.295820616 -0700
+@@ -52,6 +52,15 @@ config DEBUG_SPINLOCK_SLEEP
+ 	  If you say Y here, various routines which may sleep will become very
+ 	  noisy if they are called with a spinlock held.
+ 
++config DEBUG_SMP_PROCESSOR_ID
++	bool "Preempt-unsafe smp_processor_id() checking"
++	depends on PREEMPT && X86
++	default y
++	help
++	  If you say Y here then the kernel will use a debug variant of the
++	  commonly used smp_processor_id() function and will print warnings
++	  if kernel code uses it in a preemption-unsafe way.
++
+ config DEBUG_HIGHMEM
+ 	bool "Highmem debugging"
+ 	depends on DEBUG_KERNEL && HIGHMEM && (X86 || PPC32 || MIPS || SPARC32)
+_

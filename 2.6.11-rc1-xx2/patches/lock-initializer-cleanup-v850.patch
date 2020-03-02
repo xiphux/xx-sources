@@ -1,0 +1,73 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/v850/kernel/memcons.c      |    2 +-
+ 25-akpm/arch/v850/kernel/rte_cb_leds.c  |    2 +-
+ 25-akpm/arch/v850/kernel/rte_mb_a_pci.c |    4 ++--
+ 25-akpm/arch/v850/kernel/semaphore.c    |    2 +-
+ 4 files changed, 5 insertions(+), 5 deletions(-)
+
+diff -puN arch/v850/kernel/memcons.c~lock-initializer-cleanup-v850 arch/v850/kernel/memcons.c
+--- 25/arch/v850/kernel/memcons.c~lock-initializer-cleanup-v850	Wed Jan 12 16:54:45 2005
++++ 25-akpm/arch/v850/kernel/memcons.c	Wed Jan 12 16:54:45 2005
+@@ -25,7 +25,7 @@ extern char memcons_output[], memcons_ou
+ static unsigned long memcons_offs = 0;
+ 
+ /* Spinlock protecting memcons_offs.  */
+-static spinlock_t memcons_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(memcons_lock);
+ 
+ 
+ static size_t write (const char *buf, size_t len)
+diff -puN arch/v850/kernel/rte_cb_leds.c~lock-initializer-cleanup-v850 arch/v850/kernel/rte_cb_leds.c
+--- 25/arch/v850/kernel/rte_cb_leds.c~lock-initializer-cleanup-v850	Wed Jan 12 16:54:45 2005
++++ 25-akpm/arch/v850/kernel/rte_cb_leds.c	Wed Jan 12 16:54:45 2005
+@@ -25,7 +25,7 @@
+ static unsigned char leds_image[LED_NUM_DIGITS] = { 0 };
+ 
+ /* Spinlock protecting the above leds.  */
+-static spinlock_t leds_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(leds_lock);
+ 
+ /* Common body of LED read/write functions, checks POS and LEN for
+    correctness, declares a variable using IMG_DECL, initialized pointing at
+diff -puN arch/v850/kernel/rte_mb_a_pci.c~lock-initializer-cleanup-v850 arch/v850/kernel/rte_mb_a_pci.c
+--- 25/arch/v850/kernel/rte_mb_a_pci.c~lock-initializer-cleanup-v850	Wed Jan 12 16:54:45 2005
++++ 25-akpm/arch/v850/kernel/rte_mb_a_pci.c	Wed Jan 12 16:54:45 2005
+@@ -359,7 +359,7 @@ static struct mb_sram_free_area *mb_sram
+ static struct mb_sram_free_area *mb_sram_free_free_areas = 0;
+ 
+ /* Spinlock protecting the above globals.  */
+-static spinlock_t mb_sram_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(mb_sram_lock);
+ 
+ /* Allocate a memory block at least SIZE bytes long in the Mother-A SRAM
+    space.  */
+@@ -514,7 +514,7 @@ static struct dma_mapping *active_dma_ma
+ static struct dma_mapping *free_dma_mappings = 0;
+ 
+ /* Spinlock protecting the above globals.  */
+-static spinlock_t dma_mappings_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(dma_mappings_lock);
+ 
+ static struct dma_mapping *new_dma_mapping (size_t size)
+ {
+diff -puN arch/v850/kernel/semaphore.c~lock-initializer-cleanup-v850 arch/v850/kernel/semaphore.c
+--- 25/arch/v850/kernel/semaphore.c~lock-initializer-cleanup-v850	Wed Jan 12 16:54:45 2005
++++ 25-akpm/arch/v850/kernel/semaphore.c	Wed Jan 12 16:54:45 2005
+@@ -55,7 +55,7 @@ void __up(struct semaphore *sem)
+ 	wake_up(&sem->wait);
+ }
+ 
+-static spinlock_t semaphore_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(semaphore_lock);
+ 
+ void __sched __down(struct semaphore * sem)
+ {
+_

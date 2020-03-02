@@ -1,0 +1,103 @@
+
+From: Hugh Dickins <hugh@veritas.com>
+
+Why is mapping->truncate_count atomic?  It's incremented inside i_mmap_lock
+(and i_sem), and the reads don't need it to be atomic.
+
+And why smp_rmb() before call to ->nopage?  The compiler cannot reorder the
+initial assignment of sequence after the call to ->nopage, and no cpu (yet!)
+can read from the future, which is all that matters there.
+
+And delete totally bogus reset of truncate_count from blkmtd add_device. 
+truncate_count is all about detecting i_size changes: i_size does not change
+there; and if it did, the count should be incremented not reset.
+
+Signed-off-by: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/mtd/devices/blkmtd.c |    1 -
+ 25-akpm/fs/inode.c                   |    1 -
+ 25-akpm/include/linux/fs.h           |    2 +-
+ 25-akpm/mm/memory.c                  |   12 +++++-------
+ 4 files changed, 6 insertions(+), 10 deletions(-)
+
+diff -puN drivers/mtd/devices/blkmtd.c~vmtrunc-truncate_count-not-atomic drivers/mtd/devices/blkmtd.c
+--- 25/drivers/mtd/devices/blkmtd.c~vmtrunc-truncate_count-not-atomic	2004-10-03 14:25:06.192141536 -0700
++++ 25-akpm/drivers/mtd/devices/blkmtd.c	2004-10-03 14:25:06.201140168 -0700
+@@ -661,7 +661,6 @@ static struct blkmtd_dev *add_device(cha
+ 
+ 	memset(dev, 0, sizeof(struct blkmtd_dev));
+ 	dev->blkdev = bdev;
+-	atomic_set(&(dev->blkdev->bd_inode->i_mapping->truncate_count), 0);
+ 	if(!readonly) {
+ 		init_MUTEX(&dev->wrbuf_mutex);
+ 	}
+diff -puN fs/inode.c~vmtrunc-truncate_count-not-atomic fs/inode.c
+--- 25/fs/inode.c~vmtrunc-truncate_count-not-atomic	2004-10-03 14:25:06.193141384 -0700
++++ 25-akpm/fs/inode.c	2004-10-03 14:25:06.202140016 -0700
+@@ -198,7 +198,6 @@ void inode_init_once(struct inode *inode
+ 	INIT_RADIX_TREE(&inode->i_data.page_tree, GFP_ATOMIC);
+ 	rwlock_init(&inode->i_data.tree_lock);
+ 	spin_lock_init(&inode->i_data.i_mmap_lock);
+-	atomic_set(&inode->i_data.truncate_count, 0);
+ 	INIT_LIST_HEAD(&inode->i_data.private_list);
+ 	spin_lock_init(&inode->i_data.private_lock);
+ 	INIT_PRIO_TREE_ROOT(&inode->i_data.i_mmap);
+diff -puN include/linux/fs.h~vmtrunc-truncate_count-not-atomic include/linux/fs.h
+--- 25/include/linux/fs.h~vmtrunc-truncate_count-not-atomic	2004-10-03 14:25:06.195141080 -0700
++++ 25-akpm/include/linux/fs.h	2004-10-03 14:25:06.203139864 -0700
+@@ -339,7 +339,7 @@ struct address_space {
+ 	struct prio_tree_root	i_mmap;		/* tree of private and shared mappings */
+ 	struct list_head	i_mmap_nonlinear;/*list VM_NONLINEAR mappings */
+ 	spinlock_t		i_mmap_lock;	/* protect tree, count, list */
+-	atomic_t		truncate_count;	/* Cover race condition with truncate */
++	unsigned int		truncate_count;	/* Cover race condition with truncate */
+ 	unsigned long		nrpages;	/* number of total pages */
+ 	pgoff_t			writeback_index;/* writeback starts here */
+ 	struct address_space_operations *a_ops;	/* methods */
+diff -puN mm/memory.c~vmtrunc-truncate_count-not-atomic mm/memory.c
+--- 25/mm/memory.c~vmtrunc-truncate_count-not-atomic	2004-10-03 14:25:06.197140776 -0700
++++ 25-akpm/mm/memory.c	2004-10-03 14:25:06.205139560 -0700
+@@ -1212,7 +1212,7 @@ void unmap_mapping_range(struct address_
+ 
+ 	spin_lock(&mapping->i_mmap_lock);
+ 	/* Protect against page fault */
+-	atomic_inc(&mapping->truncate_count);
++	mapping->truncate_count++;
+ 
+ 	if (unlikely(!prio_tree_empty(&mapping->i_mmap)))
+ 		unmap_mapping_range_list(&mapping->i_mmap, &details);
+@@ -1510,7 +1510,7 @@ do_no_page(struct mm_struct *mm, struct 
+ 	struct page * new_page;
+ 	struct address_space *mapping = NULL;
+ 	pte_t entry;
+-	int sequence = 0;
++	unsigned int sequence = 0;
+ 	int ret = VM_FAULT_MINOR;
+ 	int anon = 0;
+ 
+@@ -1522,9 +1522,8 @@ do_no_page(struct mm_struct *mm, struct 
+ 
+ 	if (vma->vm_file) {
+ 		mapping = vma->vm_file->f_mapping;
+-		sequence = atomic_read(&mapping->truncate_count);
++		sequence = mapping->truncate_count;
+ 	}
+-	smp_rmb();  /* Prevent CPU from reordering lock-free ->nopage() */
+ retry:
+ 	cond_resched();
+ 	new_page = vma->vm_ops->nopage(vma, address & PAGE_MASK, &ret);
+@@ -1558,9 +1557,8 @@ retry:
+ 	 * invalidated this page.  If unmap_mapping_range got called,
+ 	 * retry getting the page.
+ 	 */
+-	if (mapping &&
+-	      (unlikely(sequence != atomic_read(&mapping->truncate_count)))) {
+-		sequence = atomic_read(&mapping->truncate_count);
++	if (mapping && unlikely(sequence != mapping->truncate_count)) {
++		sequence = mapping->truncate_count;
+ 		spin_unlock(&mm->page_table_lock);
+ 		page_cache_release(new_page);
+ 		goto retry;
+_

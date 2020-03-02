@@ -1,0 +1,247 @@
+
+From: OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>
+
+Signed-off-by: OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>
+---
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/fat/cache.c           |    8 +++---
+ 25-akpm/fs/fat/dir.c             |    8 +++---
+ 25-akpm/fs/fat/inode.c           |   48 ++++++++++++++++++++-------------------
+ 25-akpm/fs/fat/misc.c            |    3 +-
+ 25-akpm/fs/msdos/namei.c         |    4 +--
+ 25-akpm/include/linux/msdos_fs.h |    4 +--
+ 6 files changed, 39 insertions(+), 36 deletions(-)
+
+diff -puN fs/fat/cache.c~fat-removal-of-c_le_-macro fs/fat/cache.c
+--- 25/fs/fat/cache.c~fat-removal-of-c_le_-macro	2004-09-25 22:06:07.136410744 -0700
++++ 25-akpm/fs/fat/cache.c	2004-09-25 22:06:07.147409072 -0700
+@@ -237,13 +237,13 @@ int __fat_access(struct super_block *sb,
+ 	}
+ 	if (sbi->fat_bits == 32) {
+ 		p_first = p_last = NULL; /* GCC needs that stuff */
+-		next = CF_LE_L(((__le32 *) bh->b_data)[(first &
++		next = le32_to_cpu(((__le32 *) bh->b_data)[(first &
+ 		    (sb->s_blocksize - 1)) >> 2]);
+ 		/* Fscking Microsoft marketing department. Their "32" is 28. */
+ 		next &= 0x0fffffff;
+ 	} else if (sbi->fat_bits == 16) {
+ 		p_first = p_last = NULL; /* GCC needs that stuff */
+-		next = CF_LE_W(((__le16 *) bh->b_data)[(first &
++		next = le16_to_cpu(((__le16 *) bh->b_data)[(first &
+ 		    (sb->s_blocksize - 1)) >> 1]);
+ 	} else {
+ 		p_first = &((__u8 *)bh->b_data)[first & (sb->s_blocksize - 1)];
+@@ -256,10 +256,10 @@ int __fat_access(struct super_block *sb,
+ 	if (new_value != -1) {
+ 		if (sbi->fat_bits == 32) {
+ 			((__le32 *)bh->b_data)[(first & (sb->s_blocksize - 1)) >> 2]
+-				= CT_LE_L(new_value);
++				= cpu_to_le32(new_value);
+ 		} else if (sbi->fat_bits == 16) {
+ 			((__le16 *)bh->b_data)[(first & (sb->s_blocksize - 1)) >> 1]
+-				= CT_LE_W(new_value);
++				= cpu_to_le16(new_value);
+ 		} else {
+ 			if (nr & 1) {
+ 				*p_first = (*p_first & 0xf) | (new_value << 4);
+diff -puN fs/fat/dir.c~fat-removal-of-c_le_-macro fs/fat/dir.c
+--- 25/fs/fat/dir.c~fat-removal-of-c_le_-macro	2004-09-25 22:06:07.137410592 -0700
++++ 25-akpm/fs/fat/dir.c	2004-09-25 22:06:07.148408920 -0700
+@@ -737,10 +737,10 @@ int fat_new_dir(struct inode *dir, struc
+ 		de[0].adate = de[0].cdate =
+ 			de[1].adate = de[1].cdate = date;
+ 	}
+-	de[0].start = CT_LE_W(MSDOS_I(dir)->i_logstart);
+-	de[0].starthi = CT_LE_W(MSDOS_I(dir)->i_logstart>>16);
+-	de[1].start = CT_LE_W(MSDOS_I(parent)->i_logstart);
+-	de[1].starthi = CT_LE_W(MSDOS_I(parent)->i_logstart>>16);
++	de[0].start = cpu_to_le16(MSDOS_I(dir)->i_logstart);
++	de[0].starthi = cpu_to_le16(MSDOS_I(dir)->i_logstart>>16);
++	de[1].start = cpu_to_le16(MSDOS_I(parent)->i_logstart);
++	de[1].starthi = cpu_to_le16(MSDOS_I(parent)->i_logstart>>16);
+ 	mark_buffer_dirty(bh);
+ 	brelse(bh);
+ 	dir->i_atime = dir->i_ctime = dir->i_mtime = CURRENT_TIME;
+diff -puN fs/fat/inode.c~fat-removal-of-c_le_-macro fs/fat/inode.c
+--- 25/fs/fat/inode.c~fat-removal-of-c_le_-macro	2004-09-25 22:06:07.139410288 -0700
++++ 25-akpm/fs/fat/inode.c	2004-09-25 22:06:07.150408616 -0700
+@@ -864,7 +864,8 @@ int fat_fill_super(struct super_block *s
+ 		brelse(bh);
+ 		goto out_invalid;
+ 	}
+-	logical_sector_size = CF_LE_W(get_unaligned((__le16 *)&b->sector_size));
++	logical_sector_size =
++		le16_to_cpu(get_unaligned((__le16 *)&b->sector_size));
+ 	if (!logical_sector_size
+ 	    || (logical_sector_size & (logical_sector_size - 1))
+ 	    || (logical_sector_size < 512)
+@@ -913,8 +914,8 @@ int fat_fill_super(struct super_block *s
+ 	sbi->cluster_bits = ffs(sbi->cluster_size) - 1;
+ 	sbi->fats = b->fats;
+ 	sbi->fat_bits = 0;		/* Don't know yet */
+-	sbi->fat_start = CF_LE_W(b->reserved);
+-	sbi->fat_length = CF_LE_W(b->fat_length);
++	sbi->fat_start = le16_to_cpu(b->reserved);
++	sbi->fat_length = le16_to_cpu(b->fat_length);
+ 	sbi->root_cluster = 0;
+ 	sbi->free_clusters = -1;	/* Don't know yet */
+ 	sbi->prev_free = -1;
+@@ -925,13 +926,13 @@ int fat_fill_super(struct super_block *s
+ 
+ 		/* Must be FAT32 */
+ 		sbi->fat_bits = 32;
+-		sbi->fat_length = CF_LE_L(b->fat32_length);
+-		sbi->root_cluster = CF_LE_L(b->root_cluster);
++		sbi->fat_length = le32_to_cpu(b->fat32_length);
++		sbi->root_cluster = le32_to_cpu(b->root_cluster);
+ 
+ 		sb->s_maxbytes = 0xffffffff;
+ 		
+ 		/* MC - if info_sector is 0, don't multiply by 0 */
+-		sbi->fsinfo_sector = CF_LE_W(b->info_sector);
++		sbi->fsinfo_sector = le16_to_cpu(b->info_sector);
+ 		if (sbi->fsinfo_sector == 0)
+ 			sbi->fsinfo_sector = 1;
+ 
+@@ -949,12 +950,12 @@ int fat_fill_super(struct super_block *s
+ 			       "FAT: Did not find valid FSINFO signature.\n"
+ 			       "     Found signature1 0x%08x signature2 0x%08x"
+ 			       " (sector = %lu)\n",
+-			       CF_LE_L(fsinfo->signature1),
+-			       CF_LE_L(fsinfo->signature2),
++			       le32_to_cpu(fsinfo->signature1),
++			       le32_to_cpu(fsinfo->signature2),
+ 			       sbi->fsinfo_sector);
+ 		} else {
+-			sbi->free_clusters = CF_LE_L(fsinfo->free_clusters);
+-			sbi->prev_free = CF_LE_L(fsinfo->next_cluster);
++			sbi->free_clusters = le32_to_cpu(fsinfo->free_clusters);
++			sbi->prev_free = le32_to_cpu(fsinfo->next_cluster);
+ 		}
+ 
+ 		brelse(fsinfo_bh);
+@@ -964,7 +965,8 @@ int fat_fill_super(struct super_block *s
+ 	sbi->dir_per_block_bits = ffs(sbi->dir_per_block) - 1;
+ 
+ 	sbi->dir_start = sbi->fat_start + sbi->fats * sbi->fat_length;
+-	sbi->dir_entries = CF_LE_W(get_unaligned((__le16 *)&b->dir_entries));
++	sbi->dir_entries =
++		le16_to_cpu(get_unaligned((__le16 *)&b->dir_entries));
+ 	if (sbi->dir_entries & (sbi->dir_per_block - 1)) {
+ 		if (!silent)
+ 			printk(KERN_ERR "FAT: bogus directroy-entries per block"
+@@ -976,9 +978,9 @@ int fat_fill_super(struct super_block *s
+ 	rootdir_sectors = sbi->dir_entries
+ 		* sizeof(struct msdos_dir_entry) / sb->s_blocksize;
+ 	sbi->data_start = sbi->dir_start + rootdir_sectors;
+-	total_sectors = CF_LE_W(get_unaligned((__le16 *)&b->sectors));
++	total_sectors = le16_to_cpu(get_unaligned((__le16 *)&b->sectors));
+ 	if (total_sectors == 0)
+-		total_sectors = CF_LE_L(b->total_sect);
++		total_sectors = le32_to_cpu(b->total_sect);
+ 
+ 	total_clusters = (total_sectors - sbi->data_start) / sbi->sec_per_clus;
+ 
+@@ -1186,9 +1188,9 @@ static int fat_fill_inode(struct inode *
+ 		inode->i_op = sbi->dir_ops;
+ 		inode->i_fop = &fat_dir_operations;
+ 
+-		MSDOS_I(inode)->i_start = CF_LE_W(de->start);
++		MSDOS_I(inode)->i_start = le16_to_cpu(de->start);
+ 		if (sbi->fat_bits == 32)
+-			MSDOS_I(inode)->i_start |= (CF_LE_W(de->starthi) << 16);
++			MSDOS_I(inode)->i_start |= (le16_to_cpu(de->starthi) << 16);
+ 
+ 		MSDOS_I(inode)->i_logstart = MSDOS_I(inode)->i_start;
+ 		error = fat_calc_dir_size(inode);
+@@ -1204,12 +1206,12 @@ static int fat_fill_inode(struct inode *
+ 		       !is_exec(de->ext))
+ 		    	? S_IRUGO|S_IWUGO : S_IRWXUGO)
+ 		    & ~sbi->options.fs_fmask) | S_IFREG;
+-		MSDOS_I(inode)->i_start = CF_LE_W(de->start);
++		MSDOS_I(inode)->i_start = le16_to_cpu(de->start);
+ 		if (sbi->fat_bits == 32)
+-			MSDOS_I(inode)->i_start |= (CF_LE_W(de->starthi) << 16);
++			MSDOS_I(inode)->i_start |= (le16_to_cpu(de->starthi) << 16);
+ 
+ 		MSDOS_I(inode)->i_logstart = MSDOS_I(inode)->i_start;
+-		inode->i_size = CF_LE_L(de->size);
++		inode->i_size = le32_to_cpu(de->size);
+ 	        inode->i_op = &fat_file_inode_operations;
+ 	        inode->i_fop = &fat_file_operations;
+ 		inode->i_mapping->a_ops = &fat_aops;
+@@ -1224,11 +1226,11 @@ static int fat_fill_inode(struct inode *
+ 	inode->i_blocks = ((inode->i_size + (sbi->cluster_size - 1))
+ 			   & ~((loff_t)sbi->cluster_size - 1)) >> 9;
+ 	inode->i_mtime.tv_sec = inode->i_atime.tv_sec =
+-		date_dos2unix(CF_LE_W(de->time),CF_LE_W(de->date));
++		date_dos2unix(le16_to_cpu(de->time), le16_to_cpu(de->date));
+ 	inode->i_mtime.tv_nsec = inode->i_atime.tv_nsec = 0;
+ 	inode->i_ctime.tv_sec =
+ 		MSDOS_SB(sb)->options.isvfat
+-		? date_dos2unix(CF_LE_W(de->ctime),CF_LE_W(de->cdate))
++		? date_dos2unix(le16_to_cpu(de->ctime), le16_to_cpu(de->cdate))
+ 		: inode->i_mtime.tv_sec;
+ 	inode->i_ctime.tv_nsec = de->ctime_ms * 1000000;
+ 	MSDOS_I(inode)->i_ctime_ms = de->ctime_ms;
+@@ -1272,12 +1274,12 @@ retry:
+ 	}
+ 	else {
+ 		raw_entry->attr = ATTR_NONE;
+-		raw_entry->size = CT_LE_L(inode->i_size);
++		raw_entry->size = cpu_to_le32(inode->i_size);
+ 	}
+ 	raw_entry->attr |= MSDOS_MKATTR(inode->i_mode) |
+ 	    MSDOS_I(inode)->i_attrs;
+-	raw_entry->start = CT_LE_W(MSDOS_I(inode)->i_logstart);
+-	raw_entry->starthi = CT_LE_W(MSDOS_I(inode)->i_logstart >> 16);
++	raw_entry->start = cpu_to_le16(MSDOS_I(inode)->i_logstart);
++	raw_entry->starthi = cpu_to_le16(MSDOS_I(inode)->i_logstart >> 16);
+ 	fat_date_unix2dos(inode->i_mtime.tv_sec, &raw_entry->time, &raw_entry->date);
+ 	if (sbi->options.isvfat) {
+ 		fat_date_unix2dos(inode->i_ctime.tv_sec,&raw_entry->ctime,&raw_entry->cdate);
+diff -puN fs/fat/misc.c~fat-removal-of-c_le_-macro fs/fat/misc.c
+--- 25/fs/fat/misc.c~fat-removal-of-c_le_-macro	2004-09-25 22:06:07.140410136 -0700
++++ 25-akpm/fs/fat/misc.c	2004-09-25 22:06:07.151408464 -0700
+@@ -69,7 +69,8 @@ void fat_clusters_flush(struct super_blo
+ 		printk(KERN_ERR "FAT: Did not find valid FSINFO signature.\n"
+ 		       "     Found signature1 0x%08x signature2 0x%08x"
+ 		       " (sector = %lu)\n",
+-		       CF_LE_L(fsinfo->signature1), CF_LE_L(fsinfo->signature2),
++		       le32_to_cpu(fsinfo->signature1),
++		       le32_to_cpu(fsinfo->signature2),
+ 		       sbi->fsinfo_sector);
+ 	} else {
+ 		if (sbi->free_clusters != -1)
+diff -puN fs/msdos/namei.c~fat-removal-of-c_le_-macro fs/msdos/namei.c
+--- 25/fs/msdos/namei.c~fat-removal-of-c_le_-macro	2004-09-25 22:06:07.142409832 -0700
++++ 25-akpm/fs/msdos/namei.c	2004-09-25 22:06:07.151408464 -0700
+@@ -501,8 +501,8 @@ static int do_msdos_rename(struct inode 
+ 		mark_inode_dirty(new_inode);
+ 	}
+ 	if (dotdot_bh) {
+-		dotdot_de->start = CT_LE_W(MSDOS_I(new_dir)->i_logstart);
+-		dotdot_de->starthi = CT_LE_W((MSDOS_I(new_dir)->i_logstart) >> 16);
++		dotdot_de->start = cpu_to_le16(MSDOS_I(new_dir)->i_logstart);
++		dotdot_de->starthi = cpu_to_le16((MSDOS_I(new_dir)->i_logstart) >> 16);
+ 		mark_buffer_dirty(dotdot_bh);
+ 		old_dir->i_nlink--;
+ 		mark_inode_dirty(old_dir);
+diff -puN include/linux/msdos_fs.h~fat-removal-of-c_le_-macro include/linux/msdos_fs.h
+--- 25/include/linux/msdos_fs.h~fat-removal-of-c_le_-macro	2004-09-25 22:06:07.144409528 -0700
++++ 25-akpm/include/linux/msdos_fs.h	2004-09-25 22:06:07.152408312 -0700
+@@ -87,8 +87,8 @@
+ 
+ #define FAT_FSINFO_SIG1	0x41615252
+ #define FAT_FSINFO_SIG2	0x61417272
+-#define IS_FSINFO(x)	(CF_LE_L((x)->signature1) == FAT_FSINFO_SIG1	\
+-			 && CF_LE_L((x)->signature2) == FAT_FSINFO_SIG2)
++#define IS_FSINFO(x)	(le32_to_cpu((x)->signature1) == FAT_FSINFO_SIG1 \
++			 && le32_to_cpu((x)->signature2) == FAT_FSINFO_SIG2)
+ 
+ /*
+  * ioctl commands
+_

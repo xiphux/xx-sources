@@ -1,0 +1,37 @@
+---
+
+ linux-2.6.7-xx1-xiphux/kernel/sched.c |   10 ++++++----
+ 1 files changed, 6 insertions(+), 4 deletions(-)
+
+diff -puN kernel/sched.c~staircase-7.1-to-7.3 kernel/sched.c
+--- linux-2.6.7-xx1/kernel/sched.c~staircase-7.1-to-7.3	2004-06-22 13:34:38.575901192 -0400
++++ linux-2.6.7-xx1-xiphux/kernel/sched.c	2004-06-22 13:41:23.712311096 -0400
+@@ -1741,8 +1741,10 @@ void fastcall wake_up_forked_process(tas
+ 
+ #ifdef CONFIG_STAIRCASE
+ 	/*
+-	 * Forked process gets no burst to prevent fork bombs.
++	 * Forked process and it's parent have their burst dropped to prevent
++	 * priority elevation by forking and becoming fork bombs.
+ 	 */
++	current->burst = 0;
+ 	p->burst = 0;
+ #endif
+ 
+@@ -4499,11 +4501,11 @@ asmlinkage long sys_sched_yield(void)
+ 	runqueue_t *rq = this_rq_lock();
+ #ifdef CONFIG_STAIRCASE
+ 	dequeue_task(current, rq);
+-	current->slice = RR_INTERVAL;
+-	current->time_slice = current->slice;
++	current->slice = slice(current);
++	current->time_slice = RR_INTERVAL;
+ 	if (!rt_task(current) && !batch_task(current))
+ 		current->prio = MAX_PRIO - 2;
+-	inc_burst(current);
++	current->burst = 0;
+ 	enqueue_task(current, rq);
+ #else
+ #ifndef CONFIG_SPA
+
+_

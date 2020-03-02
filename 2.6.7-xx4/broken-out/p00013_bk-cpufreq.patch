@@ -1,0 +1,106 @@
+bk://linux-dj.bkbits.net/cpufreq
+davej@redhat.com|ChangeSet|20040619230448|61899 davej
+
+# This is a BitKeeper generated diff -Nru style patch.
+#
+# ChangeSet
+#   2004/06/27 16:53:42-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-cpufreq
+# 
+# arch/i386/kernel/cpu/cpufreq/powernow-k7.c
+#   2004/06/27 16:53:38-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/06/20 00:04:48+01:00 davej@redhat.com 
+#   [CPUFREQ] Stop powernow-k7 printk'ing tab characters.
+#   
+#   Signed-off-by: Dave Jones <davej@redhat.com>
+# 
+# arch/i386/kernel/cpu/cpufreq/powernow-k7.c
+#   2004/06/20 00:04:29+01:00 davej@redhat.com +5 -5
+#   [CPUFREQ] Stop powernow-k7 printk'ing tab characters.
+#   
+#   Signed-off-by: Dave Jones <davej@redhat.com>
+# 
+# ChangeSet
+#   2004/06/16 17:58:22+01:00 davej@redhat.com 
+#   [CPUFREQ] new Dothan variant for speedstep-centrino
+#   
+#   Add support for new Dothan variant (CPUID 0x6d6) to speedstep-centrino.
+#   Noted to be missing and tested by Athul Acharya.
+#   
+#   Signed-off-by: Dominik Brodowski <linux@brodo.de>
+#   Signed-off-by: Dave Jones <davej@redhat.com>
+# 
+# arch/i386/kernel/cpu/cpufreq/speedstep-centrino.c
+#   2004/06/16 17:58:14+01:00 davej@redhat.com +9 -1
+#   [CPUFREQ] new Dothan variant for speedstep-centrino
+#   
+#   Add support for new Dothan variant (CPUID 0x6d6) to speedstep-centrino.
+#   Noted to be missing and tested by Athul Acharya.
+#   
+#   Signed-off-by: Dominik Brodowski <linux@brodo.de>
+#   Signed-off-by: Dave Jones <davej@redhat.com>
+# 
+diff -Nru a/arch/i386/kernel/cpu/cpufreq/powernow-k7.c b/arch/i386/kernel/cpu/cpufreq/powernow-k7.c
+--- a/arch/i386/kernel/cpu/cpufreq/powernow-k7.c	2004-06-28 19:13:53 -07:00
++++ b/arch/i386/kernel/cpu/cpufreq/powernow-k7.c	2004-06-28 19:13:53 -07:00
+@@ -196,7 +196,7 @@
+ #endif
+ 		}
+ 
+-		dprintk (KERN_INFO PFX "   FID: 0x%x (%d.%dx [%dMHz])\t", fid,
++		dprintk (KERN_INFO PFX "   FID: 0x%x (%d.%dx [%dMHz])  ", fid,
+ 			fid_codes[fid] / 10, fid_codes[fid] % 10, speed/1000);
+ 
+ 		if (speed < minimum_speed)
+@@ -377,7 +377,7 @@
+ 				powernow_table[i].frequency = CPUFREQ_ENTRY_INVALID;
+ 		}
+ 
+-		dprintk (KERN_INFO PFX "   FID: 0x%x (%d.%dx [%dMHz])\t", fid,
++		dprintk (KERN_INFO PFX "   FID: 0x%x (%d.%dx [%dMHz])  ", fid,
+ 			fid_codes[fid] / 10, fid_codes[fid] % 10, speed/1000);
+ 		dprintk ("VID: 0x%x (%d.%03dV)\n", vid,	mobile_vid_table[vid]/1000,
+ 			mobile_vid_table[vid]%1000);
+@@ -467,9 +467,9 @@
+ 				    (maxfid==pst->maxfid) && (startvid==pst->startvid))
+ 				{
+ 					dprintk (KERN_INFO PFX "PST:%d (@%p)\n", i, pst);
+-					dprintk (KERN_INFO PFX " cpuid: 0x%x\t", pst->cpuid);
+-					dprintk ("fsb: %d\t", pst->fsbspeed);
+-					dprintk ("maxFID: 0x%x\t", pst->maxfid);
++					dprintk (KERN_INFO PFX " cpuid: 0x%x  ", pst->cpuid);
++					dprintk ("fsb: %d  ", pst->fsbspeed);
++					dprintk ("maxFID: 0x%x  ", pst->maxfid);
+ 					dprintk ("startvid: 0x%x\n", pst->startvid);
+ 
+ 					ret = get_ranges ((char *) pst + sizeof (struct pst_s));
+diff -Nru a/arch/i386/kernel/cpu/cpufreq/speedstep-centrino.c b/arch/i386/kernel/cpu/cpufreq/speedstep-centrino.c
+--- a/arch/i386/kernel/cpu/cpufreq/speedstep-centrino.c	2004-06-28 19:13:53 -07:00
++++ b/arch/i386/kernel/cpu/cpufreq/speedstep-centrino.c	2004-06-28 19:13:53 -07:00
+@@ -60,6 +60,13 @@
+ 	.x86_mask = 1,
+ };
+ 
++static const struct cpu_id cpu_id_dothan_b0 = {
++	.x86_vendor = X86_VENDOR_INTEL,
++	.x86 = 6,
++	.x86_model = 13,
++	.x86_mask = 6,
++};
++
+ struct cpu_model
+ {
+ 	const struct cpu_id *cpu_id;
+@@ -400,7 +407,8 @@
+ 		return -ENODEV;
+ 
+ 	if ((centrino_verify_cpu_id(cpu, &cpu_id_banias)) &&
+-	    (centrino_verify_cpu_id(cpu, &cpu_id_dothan_a1))) {
++	    (centrino_verify_cpu_id(cpu, &cpu_id_dothan_a1)) &&
++		(centrino_verify_cpu_id(cpu, &cpu_id_dothan_b0))) {
+ 		printk(KERN_INFO PFX "found unsupported CPU with Enhanced SpeedStep: "
+ 		       "send /proc/cpuinfo to " MAINTAINER "\n");
+ 		return -ENODEV;

@@ -1,0 +1,92 @@
+
+From: David Howells <dhowells@redhat.com>
+
+Cleans up some 64-bit problems in cachefs, mainly to do with printing
+size_t and other types that change size.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/cachefs/block.c     |    7 +++++--
+ 25-akpm/fs/cachefs/recycling.c |    2 +-
+ 25-akpm/fs/cachefs/rootdir.c   |    2 +-
+ 25-akpm/fs/cachefs/super.c     |   10 +++++-----
+ 4 files changed, 12 insertions(+), 9 deletions(-)
+
+diff -puN fs/cachefs/block.c~fix-64-bit-problems-in-cachefs fs/cachefs/block.c
+--- 25/fs/cachefs/block.c~fix-64-bit-problems-in-cachefs	2004-09-26 17:19:39.016605640 -0700
++++ 25-akpm/fs/cachefs/block.c	2004-09-26 17:19:39.023604576 -0700
+@@ -469,8 +469,11 @@ struct cachefs_block *cachefs_block_inse
+ 	_enter(",%u", bix);
+ 
+ 	if (bix > i_size_read(super->sb->s_bdev->bd_inode) / PAGE_SIZE) {
+-		printk("CacheFS: trying to insert out of range block %x/%Lx\n",
+-		       bix, i_size_read(super->sb->s_bdev->bd_inode) / PAGE_SIZE);
++		printk("CacheFS: trying to insert out of range block %x/%lx\n",
++		       bix,
++		       (unsigned long)
++		       (i_size_read(super->sb->s_bdev->bd_inode) >> PAGE_SHIFT)
++		       );
+ 		BUG();
+ 	}
+ 
+diff -puN fs/cachefs/recycling.c~fix-64-bit-problems-in-cachefs fs/cachefs/recycling.c
+--- 25/fs/cachefs/recycling.c~fix-64-bit-problems-in-cachefs	2004-09-26 17:19:39.017605488 -0700
++++ 25-akpm/fs/cachefs/recycling.c	2004-09-26 17:19:39.024604424 -0700
+@@ -195,7 +195,7 @@ void cachefs_recycle_unready_blocks(stru
+ 		while (*pbix)
+ 			pbix++;
+ 
+-		BUG_ON(!((unsigned) pbix & (~PAGE_MASK & ~3)));
++		BUG_ON(!((unsigned long) pbix & (~PAGE_MASK & ~3)));
+ 
+ 		*pbix = super->layout->bix_unready + loop;
+ 	}
+diff -puN fs/cachefs/rootdir.c~fix-64-bit-problems-in-cachefs fs/cachefs/rootdir.c
+--- 25/fs/cachefs/rootdir.c~fix-64-bit-problems-in-cachefs	2004-09-26 17:19:39.019605184 -0700
++++ 25-akpm/fs/cachefs/rootdir.c	2004-09-26 17:19:39.025604272 -0700
+@@ -593,7 +593,7 @@ static struct dentry *cachefs_root_looku
+ 	}
+ 
+ 	if (rec.ksize != ptr - rec.key) {
+-		printk("CacheFS: Built key incorrectly %u!=%u\n",
++		printk("CacheFS: Built key incorrectly %u!=%zu\n",
+ 		       rec.ksize, ptr - rec.key);
+ 		ret = -EIO;
+ 		goto error;
+diff -puN fs/cachefs/super.c~fix-64-bit-problems-in-cachefs fs/cachefs/super.c
+--- 25/fs/cachefs/super.c~fix-64-bit-problems-in-cachefs	2004-09-26 17:19:39.020605032 -0700
++++ 25-akpm/fs/cachefs/super.c	2004-09-26 17:19:39.027603968 -0700
+@@ -562,17 +562,17 @@ static int cachefs_initialise_blockdev(s
+ 		nblocks;
+ 
+ 	printk("CacheFS: 00000000 super block\n");
+-	printk("CacheFS: 00000001 initial vnodes (%u blocks)\n", ndirect);
++	printk("CacheFS: 00000001 initial vnodes (%zu blocks)\n", ndirect);
+ 
+-	printk("CacheFS: %08x update journal (recsize %u+%ub)\n",
++	printk("CacheFS: %08x update journal (recsize %zu+%zub)\n",
+ 	       super->layout->bix_ujournal,
+ 	       sizeof(struct cachefs_ondisc_update_journal),
+-	       super->layout->ujnl_rsize -
++	       (size_t) super->layout->ujnl_rsize -
+ 	       sizeof(struct cachefs_ondisc_update_journal));
+ 
+ 	printk("CacheFS: %08x validity journal\n",
+ 	       super->layout->bix_vjournal);
+-	printk("CacheFS: %08x writeback journal (%u recs of %ub)\n",
++	printk("CacheFS: %08x writeback journal (%u recs of %zub)\n",
+ 	       super->layout->bix_wbjournal,
+ 	       super->vjnl_count,
+ 	       sizeof(struct cachefs_ondisc_validity_journal));
+@@ -661,7 +661,7 @@ static int cachefs_initialise_blockdev(s
+ 
+ 		wait_on_page_locked(page);
+ 		if (PageError(page)) {
+-			printk("CacheFS: failed to write blocks %u-%u\n",
++			printk("CacheFS: failed to write blocks %zu-%zu\n",
+ 			       bix, bix + qty - 1);
+ 			__free_page(page);
+ 			return -EIO;
+_

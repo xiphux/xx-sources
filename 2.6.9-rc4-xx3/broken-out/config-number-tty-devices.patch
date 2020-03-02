@@ -1,0 +1,59 @@
+
+Configurable number of tty devices.  Makes udev cleaner.
+
+
+---
+
+ linux-2.6.5-xx21-xiphux/drivers/char/Kconfig |   12 ++++++++++++
+ linux-2.6.5-xx21-xiphux/include/linux/tty.h  |   15 +++++++++++++--
+ 2 files changed, 25 insertions(+), 2 deletions(-)
+
+diff -puN drivers/char/Kconfig~config-number-tty-devices drivers/char/Kconfig
+--- linux-2.6.5-xx21/drivers/char/Kconfig~config-number-tty-devices	2004-05-07 15:28:10.238224088 -0400
++++ linux-2.6.5-xx21-xiphux/drivers/char/Kconfig	2004-05-07 15:28:10.245223024 -0400
+@@ -57,6 +57,18 @@ config VT_CONSOLE
+ 
+ 	  If unsure, say Y.
+ 
++config NR_TTY_DEVICES
++int "Maximum tty device number"
++depends on VT
++default 63
++---help---
++  This is the highest numbered device created in /dev. You will actually have
++  NR_TTY_DEVICES+1 devices in /dev. The default is 63, which will result in
++  64 /dev entries. The lowest number you can set is 11, anything below that,
++  and it will default to 11. 63 is also the upper limit so we don't overrun
++  the serial consoles.
++
++
+ config HW_CONSOLE
+ 	bool
+ 	depends on VT && !S390 && !UM
+diff -puN include/linux/tty.h~config-number-tty-devices include/linux/tty.h
+--- linux-2.6.5-xx21/include/linux/tty.h~config-number-tty-devices	2004-05-07 15:28:10.240223784 -0400
++++ linux-2.6.5-xx21-xiphux/include/linux/tty.h	2004-05-07 15:28:10.246222872 -0400
+@@ -10,8 +10,19 @@
+  * resizing).
+  */
+ #define MIN_NR_CONSOLES 1       /* must be at least 1 */
+-#define MAX_NR_CONSOLES	63	/* serial lines start at 64 */
+-#define MAX_NR_USER_CONSOLES 63	/* must be root to allocate above this */
++#if (CONFIG_NR_TTY_DEVICES < 11)
++/* Lower Limit */
++#define MAX_NR_CONSOLES 11
++#define MAX_NR_USER_CONSOLES 11
++#elif (CONFIG_NR_TTY_DEVICES > 63)
++/* Upper Limit */
++#define MAX_NR_CONSOLES 63
++#define MAX_NR_USER_CONSOLES 63
++#else
++/* They chose a sensible number */
++#define MAX_NR_CONSOLES CONFIG_NR_TTY_DEVICES
++#define MAX_NR_USER_CONSOLES CONFIG_NR_TTY_DEVICES
++#endif
+ 		/* Note: the ioctl VT_GETSTATE does not work for
+ 		   consoles 16 and higher (since it returns a short) */
+ 
+
+_

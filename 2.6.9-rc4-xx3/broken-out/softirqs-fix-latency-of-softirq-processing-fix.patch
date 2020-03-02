@@ -1,0 +1,63 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+the patch below (ontop of rc2-mm2) fixes the fix. We must not do the
+in_interrupt() check with softirqs still disabled because that will
+always be true and we'll miss softirq processing ...
+
+this patch fixes the following anomaly:
+
+ saturn:~/l> ./lat_tcp localhost
+ TCP latency using localhost: 1732.5386 microseconds
+
+there was another(!) bug in the original patch as well:
+
+                preempt_count() -= SOFTIRQ_OFFSET - 1;
+		...
+                preempt_enable();
+
+this is lethal on a !PREEMPT kernel, because preempt_enable() is a NOP
+there ...
+
+	Ingo
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/softirq.c |   21 ++++++++++-----------
+ 1 files changed, 10 insertions(+), 11 deletions(-)
+
+diff -puN kernel/softirq.c~softirqs-fix-latency-of-softirq-processing-fix kernel/softirq.c
+--- 25/kernel/softirq.c~softirqs-fix-latency-of-softirq-processing-fix	Thu Sep 23 14:37:36 2004
++++ 25-akpm/kernel/softirq.c	Thu Sep 23 14:37:36 2004
+@@ -138,18 +138,17 @@ EXPORT_SYMBOL(do_softirq);
+ void local_bh_enable(void)
+ {
+ 	WARN_ON(irqs_disabled());
+-	if (unlikely(!in_interrupt() && local_softirq_pending())) {
+-		/*
+-		 * Keep preemption disabled until we are done with
+-		 * softirq processing:
+-	 	 */
+-		preempt_count() -= SOFTIRQ_OFFSET - 1;
++	/*
++	 * Keep preemption disabled until we are done with
++	 * softirq processing:
++ 	 */
++	preempt_count() -= SOFTIRQ_OFFSET - 1;
++
++	if (unlikely(!in_interrupt() && local_softirq_pending()))
+ 		invoke_softirq();
+-		preempt_enable();
+-	} else {
+-		__local_bh_enable();
+-		preempt_check_resched();
+-	}
++
++	dec_preempt_count();
++	preempt_check_resched();
+ }
+ EXPORT_SYMBOL(local_bh_enable);
+ 
+_

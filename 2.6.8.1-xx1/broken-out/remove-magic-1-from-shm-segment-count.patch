@@ -1,0 +1,31 @@
+
+From: Manfred Spraul <manfred@colorfullife.com>
+
+Michael Kerrisk found a bug in the shm accounting code: sysv shm allows to
+create SHMMNI+1 shared memory segments, instead of SHMMNI segments.  The +1
+is probably from the first shared anonymous mapping implementation that
+used the sysv code to implement shared anon mappings.
+
+The implementation got replaced, it's now the other way around (sysv uses
+the shared anon code), but the +1 remained.
+
+Signed-off-by: Manfred Spraul <manfred@colorfullife.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/ipc/shm.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN ipc/shm.c~remove-magic-1-from-shm-segment-count ipc/shm.c
+--- 25/ipc/shm.c~remove-magic-1-from-shm-segment-count	2004-08-08 12:24:12.954617504 -0700
++++ 25-akpm/ipc/shm.c	2004-08-08 12:24:12.958616896 -0700
+@@ -78,7 +78,7 @@ static inline struct shmid_kernel *shm_r
+ 
+ static inline int shm_addid(struct shmid_kernel *shp)
+ {
+-	return ipc_addid(&shm_ids, &shp->shm_perm, shm_ctlmni+1);
++	return ipc_addid(&shm_ids, &shp->shm_perm, shm_ctlmni);
+ }
+ 
+ 
+_

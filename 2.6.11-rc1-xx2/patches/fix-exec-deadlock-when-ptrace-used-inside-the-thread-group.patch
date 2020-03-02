@@ -1,0 +1,68 @@
+
+From: Roland McGrath <roland@redhat.com>
+
+If one thread uses ptrace on another thread in the same thread group, there
+can be a deadlock when calling exec.  The ptrace_stop change ensures that
+no tracing stop can be entered for a queued signal, or exit tracing, if the
+tracer is part of the same dying group.  The exit_notify change prevents a
+ptrace zombie from sticking around if its tracer is in the midst of a group
+exit (which an exec fakes), so these zombies don't hold up de_thread's
+synchronization.  The de_thread change ensures the new thread group leader
+doesn't wind up ptracing itself, which would produce its own deadlocks.
+
+Signed-off-by: Roland McGrath <roland@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/exec.c       |    8 ++++++++
+ 25-akpm/kernel/exit.c   |    4 +++-
+ 25-akpm/kernel/signal.c |    4 +++-
+ 3 files changed, 14 insertions(+), 2 deletions(-)
+
+diff -puN fs/exec.c~fix-exec-deadlock-when-ptrace-used-inside-the-thread-group fs/exec.c
+--- 25/fs/exec.c~fix-exec-deadlock-when-ptrace-used-inside-the-thread-group	Tue Jan 11 13:58:14 2005
++++ 25-akpm/fs/exec.c	Tue Jan 11 13:58:14 2005
+@@ -685,6 +685,14 @@ static inline int de_thread(struct task_
+ 		 */
+ 		ptrace = leader->ptrace;
+ 		parent = leader->parent;
++		if (unlikely(ptrace) && unlikely(parent == current)) {
++			/*
++			 * Joker was ptracing his own group leader,
++			 * and now he wants to be his own parent!
++			 * We can't have that.
++			 */
++			ptrace = 0;
++		}
+ 
+ 		ptrace_unlink(current);
+ 		ptrace_unlink(leader);
+diff -puN kernel/exit.c~fix-exec-deadlock-when-ptrace-used-inside-the-thread-group kernel/exit.c
+--- 25/kernel/exit.c~fix-exec-deadlock-when-ptrace-used-inside-the-thread-group	Tue Jan 11 13:58:14 2005
++++ 25-akpm/kernel/exit.c	Tue Jan 11 13:58:14 2005
+@@ -747,7 +747,9 @@ static void exit_notify(struct task_stru
+ 	}
+ 
+ 	state = EXIT_ZOMBIE;
+-	if (tsk->exit_signal == -1 && tsk->ptrace == 0)
++	if (tsk->exit_signal == -1 &&
++	    (likely(tsk->ptrace == 0) ||
++	     unlikely(tsk->parent->signal->flags & SIGNAL_GROUP_EXIT)))
+ 		state = EXIT_DEAD;
+ 	tsk->exit_state = state;
+ 
+diff -puN kernel/signal.c~fix-exec-deadlock-when-ptrace-used-inside-the-thread-group kernel/signal.c
+--- 25/kernel/signal.c~fix-exec-deadlock-when-ptrace-used-inside-the-thread-group	Tue Jan 11 13:58:14 2005
++++ 25-akpm/kernel/signal.c	Tue Jan 11 13:58:14 2005
+@@ -1586,7 +1586,9 @@ static void ptrace_stop(int exit_code, i
+ 	read_lock(&tasklist_lock);
+ 	if (likely(current->ptrace & PT_PTRACED) &&
+ 	    likely(current->parent != current->real_parent ||
+-		   !(current->ptrace & PT_ATTACHED))) {
++		   !(current->ptrace & PT_ATTACHED)) &&
++	    (likely(current->parent->signal != current->signal) ||
++	     !unlikely(current->signal->flags & SIGNAL_GROUP_EXIT))) {
+ 		do_notify_parent_cldstop(current, current->parent,
+ 					 CLD_TRAPPED);
+ 		read_unlock(&tasklist_lock);
+_

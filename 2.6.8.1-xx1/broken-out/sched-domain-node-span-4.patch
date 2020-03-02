@@ -1,0 +1,162 @@
+
+From: Jesse Barnes <jbarnes@engr.sgi.com>
+
+This patch limits the cpu span of each node's scheduler domain to prevent
+balancing across too many cpus.  The cpus included in a node's domain are
+determined by the SD_NODES_PER_DOMAIN define and the arch specific
+sched_domain_node_span routine if ARCH_HAS_SCHED_DOMAIN is defined.  If
+ARCH_HAS_SCHED_DOMAIN is not defined, behavior is unchanged--all possible cpus
+will be included in each node's scheduling domain.  Currently, only ia64
+provides an arch specific sched_domain_node_span routine.
+
+Signed-off-by: Jesse Barnes <jbarnes@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ia64/kernel/smpboot.c   |   67 +++++++++++++++++++++++++++++++++++
+ 25-akpm/include/asm-ia64/processor.h |    5 ++
+ 25-akpm/kernel/sched.c               |   17 +++++++-
+ 3 files changed, 86 insertions(+), 3 deletions(-)
+
+diff -puN arch/ia64/kernel/smpboot.c~sched-domain-node-span-4 arch/ia64/kernel/smpboot.c
+--- 25/arch/ia64/kernel/smpboot.c~sched-domain-node-span-4	Tue Jul 27 14:21:37 2004
++++ 25-akpm/arch/ia64/kernel/smpboot.c	Tue Jul 27 14:21:37 2004
+@@ -716,3 +716,70 @@ init_smp_config(void)
+ 		printk(KERN_ERR "SMP: Can't set SAL AP Boot Rendezvous: %s\n",
+ 		       ia64_sal_strerror(sal_ret));
+ }
++
++#ifdef CONFIG_NUMA
++
++/**
++ * find_next_best_node - find the next node to include in a sched_domain
++ * @node: node whose sched_domain we're building
++ * @used_nodes: nodes already in the sched_domain
++ *
++ * Find the next node to include in a given scheduling domain.  Simply
++ * finds the closest node not already in the @used_nodes map.
++ *
++ * Should use nodemask_t.
++ */
++static int __init find_next_best_node(int node, unsigned long *used_nodes)
++{
++	int i, n, val, min_val, best_node = 0;
++
++	min_val = INT_MAX;
++
++	for (i = 0; i < numnodes; i++) {
++		/* Start at @node */
++		n = (node + i) % numnodes;
++
++		/* Skip already used nodes */
++		if (test_bit(n, used_nodes))
++			continue;
++
++		/* Simple min distance search */
++		val = node_distance(node, i);
++
++		if (val < min_val) {
++			min_val = val;
++			best_node = n;
++		}
++	}
++
++	set_bit(best_node, used_nodes);
++	return best_node;
++}
++
++/**
++ * sched_domain_node_span - get a cpumask for a node's sched_domain
++ * @node: node whose cpumask we're constructing
++ * @size: number of nodes to include in this span
++ *
++ * Given a node, construct a good cpumask for its sched_domain to span.  It
++ * should be one that prevents unnecessary balancing, but also spreads tasks
++ * out optimally.
++ */
++cpumask_t __init sched_domain_node_span(int node, int size)
++{
++	int i;
++	cpumask_t span;
++	DECLARE_BITMAP(used_nodes, MAX_NUMNODES);
++
++	cpus_clear(span);
++	bitmap_zero(used_nodes, MAX_NUMNODES);
++
++	for (i = 0; i < size; i++) {
++		int next_node = find_next_best_node(node, used_nodes);
++		cpus_or(span, span, node_to_cpumask(next_node));
++	}
++
++	return span;
++}
++#endif /* CONFIG_NUMA */
++
+diff -puN include/asm-ia64/processor.h~sched-domain-node-span-4 include/asm-ia64/processor.h
+--- 25/include/asm-ia64/processor.h~sched-domain-node-span-4	Tue Jul 27 14:21:37 2004
++++ 25-akpm/include/asm-ia64/processor.h	Tue Jul 27 14:21:37 2004
+@@ -334,6 +334,11 @@ struct task_struct;
+ /* Prepare to copy thread state - unlazy all lazy status */
+ #define prepare_to_copy(tsk)	do { } while (0)
+ 
++#ifdef CONFIG_NUMA
++/* smpboot.c defines a numa specific scheduler domain routine */
++#define ARCH_HAS_SCHED_DOMAIN
++#endif
++
+ /*
+  * This is the mechanism for creating a new kernel thread.
+  *
+diff -puN kernel/sched.c~sched-domain-node-span-4 kernel/sched.c
+--- 25/kernel/sched.c~sched-domain-node-span-4	Tue Jul 27 14:21:37 2004
++++ 25-akpm/kernel/sched.c	Tue Jul 27 14:34:44 2004
+@@ -3667,8 +3667,13 @@ void cpu_attach_domain(struct sched_doma
+ }
+ 
+ #ifdef ARCH_HAS_SCHED_DOMAIN
+-extern void __init arch_init_sched_domains(void);
++extern cpumask_t __init sched_domain_node_span(int node, int size);
+ #else
++static cpumask_t __init sched_domain_node_span(int node, int size)
++{
++	return cpu_possible_map;
++}
++#endif /* ARCH_HAS_SCHED_DOMAIN */
+ 
+ #ifdef CONFIG_SCHED_SMT
+ static DEFINE_PER_CPU(struct sched_domain, cpu_domains);
+@@ -3691,6 +3696,10 @@ __init static int cpu_to_phys_group(int 
+ }
+ 
+ #ifdef CONFIG_NUMA
++
++/* Number of nearby nodes in a node's scheduling domain */
++#define SD_NODES_PER_DOMAIN 4
++
+ static DEFINE_PER_CPU(struct sched_domain, node_domains);
+ static struct sched_group sched_group_nodes[MAX_NUMNODES];
+ __init static int cpu_to_node_group(int cpu)
+@@ -3755,10 +3764,13 @@ __init static void arch_init_sched_domai
+ 		cpumask_t nodemask = node_to_cpumask(cpu_to_node(i));
+ 
+ #ifdef CONFIG_NUMA
++		if (i != first_cpu(sd->groups->cpumask))
++			continue;
+ 		sd = &per_cpu(node_domains, i);
+ 		group = cpu_to_node_group(i);
+ 		*sd = SD_NODE_INIT;
+-		sd->span = cpu_possible_map;
++		/* FIXME: should be multilevel, in arch code */
++		sd->span = sched_domain_node_span(i, SD_NODES_PER_DOMAIN);
+ 		sd->groups = &sched_group_nodes[group];
+ #endif
+ 
+@@ -3845,7 +3857,6 @@ __init static void arch_init_sched_domai
+ 		cpu_attach_domain(sd, i);
+ 	}
+ }
+-#endif /* ARCH_HAS_SCHED_DOMAIN */
+ 
+ #define SCHED_DOMAIN_DEBUG
+ #ifdef SCHED_DOMAIN_DEBUG
+_

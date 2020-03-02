@@ -1,0 +1,78 @@
+
+From: Peter Osterlund <petero2@telia.com>
+
+Running "pktsetup -d" immediately after running "pktsetup" can deadlock,
+because if the kcdrwd thread hasn't flushed the pending signals before
+pkt_remove_dev() calls kill_proc(), kcdrwd() will not be woken up.
+
+This patch fixes it by making sure the kcdrwd() thread has finished its
+initialization before the thread creator returns from pkt_new_dev().
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/pktcdvd.c |    9 ++++++---
+ 25-akpm/include/linux/pktcdvd.h |    2 +-
+ 2 files changed, 7 insertions(+), 4 deletions(-)
+
+diff -puN drivers/block/pktcdvd.c~fix-race-in-pktcdvd-kernel-thread-handling drivers/block/pktcdvd.c
+--- 25/drivers/block/pktcdvd.c~fix-race-in-pktcdvd-kernel-thread-handling	2004-07-31 22:48:28.563650456 -0700
++++ 25-akpm/drivers/block/pktcdvd.c	2004-07-31 22:48:28.570649392 -0700
+@@ -1186,6 +1186,8 @@ static int kcdrwd(void *foobar)
+ 	siginitsetinv(&current->blocked, sigmask(SIGKILL));
+ 	flush_signals(current);
+ 
++	up(&pd->cdrw.thr_sem);
++
+ 	for (;;) {
+ 		DECLARE_WAITQUEUE(wait, current);
+ 
+@@ -1280,7 +1282,7 @@ work_to_do:
+ 		pkt_iosched_process_queue(pd);
+ 	}
+ 
+-	complete_and_exit(&pd->cdrw.thr_compl, 0);
++	up(&pd->cdrw.thr_sem);
+ 	return 0;
+ }
+ 
+@@ -2411,7 +2413,7 @@ static int pkt_new_dev(struct pktcdvd_de
+ 	sprintf(pd->name, "pktcdvd%d", minor);
+ 	atomic_set(&pd->refcnt, 0);
+ 	init_waitqueue_head(&pd->wqueue);
+-	init_completion(&pd->cdrw.thr_compl);
++	init_MUTEX_LOCKED(&pd->cdrw.thr_sem);
+ 
+ 	pkt_init_queue(pd);
+ 
+@@ -2422,6 +2424,7 @@ static int pkt_new_dev(struct pktcdvd_de
+ 		ret = -EBUSY;
+ 		goto out_thread;
+ 	}
++	down(&pd->cdrw.thr_sem);
+ 
+ 	create_proc_read_entry(pd->name, 0, pkt_proc, pkt_read_proc, pd);
+ 	DPRINTK("pktcdvd: writer %d mapped to %s\n", minor, bdevname(bdev, b));
+@@ -2488,7 +2491,7 @@ static int pkt_remove_dev(struct pktcdvd
+ 			printk("pkt_remove_dev: can't kill kernel thread\n");
+ 			return ret;
+ 		}
+-		wait_for_completion(&pd->cdrw.thr_compl);
++		down(&pd->cdrw.thr_sem);
+ 	}
+ 
+ 	/*
+diff -puN include/linux/pktcdvd.h~fix-race-in-pktcdvd-kernel-thread-handling include/linux/pktcdvd.h
+--- 25/include/linux/pktcdvd.h~fix-race-in-pktcdvd-kernel-thread-handling	2004-07-31 22:48:28.566650000 -0700
++++ 25-akpm/include/linux/pktcdvd.h	2004-07-31 22:48:28.571649240 -0700
+@@ -139,7 +139,7 @@ struct packet_cdrw
+ 	spinlock_t		active_list_lock; /* Serialize access to pkt_active_list */
+ 	pid_t			pid;
+ 	int			time_to_die;
+-	struct completion	thr_compl;
++	struct semaphore	thr_sem;
+ 	elevator_merge_fn	*elv_merge_fn;
+ 	elevator_completed_req_fn *elv_completed_req_fn;
+ 	merge_requests_fn	*merge_requests_fn;
+_

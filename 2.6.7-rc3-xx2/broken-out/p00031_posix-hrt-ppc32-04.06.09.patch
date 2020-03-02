@@ -1,0 +1,366 @@
+This patch includes a port of the ppc32 support for
+Posix high res timers from Montavista Linux (linux-2.4 base)
+to linux-2.6.6.
+
+Signed-off-by: Geoff Levand <geoffrey.levand@am.sony.com> for CELF
+---
+
+ arch/ppc/Kconfig            |   43 ++++++++++++++++
+ arch/ppc/kernel/ppc_ksyms.c |    6 ++
+ arch/ppc/kernel/time.c      |  117 ++++++++++++++++++++++++++++++++++++++++++++
+ include/asm-ppc/hrtime.h    |  110 +++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 276 insertions(+)
+
+ 
+diff -ruN -x CVS -x '.#*' -X dontdiff tag_LINUX_2_6_6/arch/ppc/Kconfig branch_HRT/arch/ppc/Kconfig
+--- tag_LINUX_2_6_6/arch/ppc/Kconfig	2004-06-09 15:14:35.000000000 -0700
++++ branch_HRT/arch/ppc/Kconfig	2004-06-09 15:31:58.000000000 -0700
+@@ -679,6 +679,49 @@
+ 	bool "Enable reading PPCBUG NVRAM during boot" if PPLUS || LOPEC
+ 	default y if PPC_PREP
+
++choice
++	prompt "Clock/ timer options"
++	default LEGACY_TIMER
++	help
++	  You may have either high res timers or Legacy Timer Support.
++
++config LEGACY_TIMER
++	bool "Legacy Timer Support"
++	help
++	  This chooses the legacy 8254 (PIT) for timer support.
++
++config HIGH_RES_TIMERS
++	bool "Configure High-Resolution-Timers"
++	help
++	  POSIX timers are available by default.  This option enables
++	  high-resolution POSIX timers.  With this option the resolution
++	  is at least 1 microsecond.  High resolution is not free.  If
++	  enabled this option will add a small overhead each time a
++	  timer expires that is not on a 1/HZ tick boundary.  If no such
++	  timers are used the overhead is nil.
++
++	  This option enables two additional POSIX CLOCKS,
++	  CLOCK_REALTIME_HR and CLOCK_MONOTONIC_HR.  Note that this
++	  option does not change the resolution of CLOCK_REALTIME or
++	  CLOCK_MONOTONIC which remain at 1/HZ resolution.
++
++endchoice
++
++config HIGH_RES_RESOLUTION
++	int "High-Resolution-Timer resolution (nanoseconds)"
++	depends on HIGH_RES_TIMERS
++	default 1000
++	help
++
++	  This sets the resolution of timers accessed with
++          CLOCK_REALTIME_HR and CLOCK_MONOTONIC_HR.  Too
++	  fine a resolution (small a number) will usually not
++          be observable due to normal system latencies.  For an
++          800 MHZ processor about 10,000 is the recommended maximum
++	  (smallest number).  If you don't need that sort of resolution,
++	  higher numbers may generate less overhead.
++
++
+ config SMP
+ 	bool "Symmetric multi-processing support"
+ 	---help---
+diff -ruN -x CVS -x '.#*' -X dontdiff tag_LINUX_2_6_6/arch/ppc/kernel/ppc_ksyms.c branch_HRT/arch/ppc/kernel/ppc_ksyms.c
+--- tag_LINUX_2_6_6/arch/ppc/kernel/ppc_ksyms.c	2004-04-29 18:09:47.000000000 -0700
++++ branch_HRT/arch/ppc/kernel/ppc_ksyms.c	2004-06-09 15:31:58.000000000 -0700
+@@ -306,6 +306,12 @@
+ void ppc_irq_dispatch_handler(struct pt_regs *, int);
+ EXPORT_SYMBOL(ppc_irq_dispatch_handler);
+ EXPORT_SYMBOL(tb_ticks_per_jiffy);
++#ifdef CONFIG_HIGH_RES_TIMERS
++extern int arch_to_nsec;
++extern int nsec_to_arch;
++EXPORT_SYMBOL(arch_to_nsec);
++EXPORT_SYMBOL(nsec_to_arch);
++#endif
+ EXPORT_SYMBOL(get_wchan);
+ EXPORT_SYMBOL(console_drivers);
+ #ifdef CONFIG_XMON
+diff -ruN -x CVS -x '.#*' -X dontdiff tag_LINUX_2_6_6/arch/ppc/kernel/time.c branch_HRT/arch/ppc/kernel/time.c
+--- tag_LINUX_2_6_6/arch/ppc/kernel/time.c	2004-04-29 18:09:47.000000000 -0700
++++ branch_HRT/arch/ppc/kernel/time.c	2004-06-09 15:31:58.000000000 -0700
+@@ -66,6 +66,15 @@
+
+ #include <asm/time.h>
+
++#ifdef CONFIG_HIGH_RES_TIMERS
++#include <linux/hrtime.h>
++int hr_time_resolution = CONFIG_HIGH_RES_RESOLUTION;
++int arch_to_nsec;
++int nsec_to_arch;
++unsigned volatile jiffies_seq = 0;
++int hrtimer_use;
++#endif
++
+ /* XXX false sharing with below? */
+ u64 jiffies_64 = INITIAL_JIFFIES;
+
+@@ -137,6 +146,94 @@
+ 	atomic_inc((atomic_t *)&prof_buffer[nip]);
+ }
+
++#ifdef CONFIG_HIGH_RES_TIMERS
++static int hr_set_dec(unsigned count) {
++
++	if (time_before(count, get_tbl()))
++		/* missed it */
++		return 1;
++
++	/* ok, we've got a shot */
++	set_dec(count - get_tbl());
++
++	if (time_before_eq(get_tbl(), count))
++		/* made it */
++		return 0;
++
++	/*
++	 * Ohh, just missed it. If we were slow enough to have loaded the
++	 * decrementer with a negative value, we're going to have to wait
++	 * an awfully long time for another decrementer interrupt. So, we'll
++	 * trigger an interrupt right now and let timer_interrupt recover and
++	 * re-schedule the next jiffie to make up for our mistake.
++	 */
++	set_dec(1);
++	return 1;
++
++}
++int schedule_hr_timer_int(unsigned ref_jiffies, int cycles) {
++
++	unsigned temp_jiffies, seq;
++	unsigned req_tb, next_jiffy_tb;
++	int flags, ret;
++
++
++	while (unlikely(cycles >= tb_ticks_per_jiffy)) {
++		ref_jiffies++;
++		cycles -= tb_ticks_per_jiffy;
++	}
++
++	do {
++		int jiffies_diff;
++
++		seq = jiffies_seq;
++		temp_jiffies = jiffies;
++		barrier();
++
++		req_tb = tb_last_stamp + cycles;
++		if (unlikely(jiffies_diff = ref_jiffies - temp_jiffies))
++			req_tb += (jiffies_diff) * tb_ticks_per_jiffy;
++
++		next_jiffy_tb = tb_last_stamp + tb_ticks_per_jiffy;
++
++		barrier();
++	} while (unlikely((seq != jiffies_seq) || (seq & 1)));
++
++	if (time_before(ref_jiffies, temp_jiffies))
++		return 1;
++
++	/* paranoia */
++	if (time_after(ref_jiffies, temp_jiffies) ||
++	    time_after(req_tb, next_jiffy_tb))
++		BUG();
++
++	local_irq_save(flags);
++	ret = hr_set_dec(req_tb);
++	local_irq_restore(flags);
++
++	return ret;
++}
++void __init hr_time_init(void)
++{
++	unsigned tb_ticks_per_sec;
++
++	/*
++	 * Use mulhwu_scale_factor to find the number ticks needed to equal
++	 * 1,000,000 uSecs (1 Sec).
++	 */
++	tb_ticks_per_sec = mulhwu_scale_factor(tb_to_us, USEC_PER_SEC);
++
++	arch_to_nsec = div_sc_n(HR_TIME_SCALE_NSEC, NSEC_PER_SEC,
++				tb_ticks_per_sec);
++	nsec_to_arch = div_sc_n(HR_TIME_SCALE_CYCLES, tb_ticks_per_sec,
++				NSEC_PER_SEC);
++
++	printk("hr_time_init: arch_to_nsec = %u, nsec_to_arch = %u\n",
++		arch_to_nsec, nsec_to_arch);
++
++	hrtimer_use = 1; //gl- ok here???
++}
++#endif
+ /*
+  * timer_interrupt - gets called when the decrementer overflows,
+  * with interrupts disabled.
+@@ -147,6 +244,9 @@
+ 	int next_dec;
+ 	unsigned long cpu = smp_processor_id();
+ 	unsigned jiffy_stamp = last_jiffy_stamp(cpu);
++#ifdef CONFIG_HIGH_RES_TIMERS
++	int hr_tick = 1;
++#endif
+ 	extern void do_IRQ(struct pt_regs *);
+
+ 	if (atomic_read(&ppc_n_lost_interrupts) != 0)
+@@ -158,13 +258,22 @@
+ 		jiffy_stamp += tb_ticks_per_jiffy;
+ 		if (!user_mode(regs))
+ 			ppc_do_profile(instruction_pointer(regs));
++#ifdef CONFIG_HIGH_RES_TIMERS
++		hr_tick = 0;
++#endif
+ 	  	if (smp_processor_id())
+ 			continue;
+
+ 		/* We are in an interrupt, no need to save/restore flags */
+ 		write_seqlock(&xtime_lock);
+ 		tb_last_stamp = jiffy_stamp;
++#ifdef CONFIG_HIGH_RES_TIMERS
++		jiffies_seq++;
++#endif
+ 		do_timer(regs);
++#ifdef CONFIG_HIGH_RES_TIMERS
++		jiffies_seq++;
++#endif
+
+ 		/*
+ 		 * update the rtc when needed, this should be performed on the
+@@ -196,6 +305,11 @@
+ 	}
+ 	if ( !disarm_decr[smp_processor_id()] )
+ 		set_dec(next_dec);
++#ifdef CONFIG_HIGH_RES_TIMERS
++	if (hr_tick) {
++		do_hr_timer_int();
++	}
++#endif
+ 	last_jiffy_stamp(cpu) = jiffy_stamp;
+
+ #ifdef CONFIG_SMP
+@@ -318,6 +432,9 @@
+                 ppc_md.calibrate_decr();
+ 		tb_to_ns_scale = mulhwu(tb_to_us, 1000 << 10);
+ 	}
++#ifdef CONFIG_HIGH_RES_TIMERS
++	hr_time_init();
++#endif
+
+ 	/* Now that the decrementer is calibrated, it can be used in case the
+ 	 * clock is stuck, but the fact that we have to handle the 601
+diff -ruN -x CVS -x '.#*' -X dontdiff tag_LINUX_2_6_6/include/asm-ppc/hrtime.h branch_HRT/include/asm-ppc/hrtime.h
+--- tag_LINUX_2_6_6/include/asm-ppc/hrtime.h	1969-12-31 16:00:00.000000000 -0800
++++ branch_HRT/include/asm-ppc/hrtime.h	2004-06-08 11:29:15.000000000 -0700
+@@ -0,0 +1,110 @@
++/*
++ * include/asm-ppc/hrtime.h
++ *
++ * PPC High-Res Timers header file
++ *
++ * Author: source@mvista.com
++ *
++ * 2003 (c) MontaVista Software, Inc. This file is licensed under
++ * the terms of the GNU General Public License version 2. This program
++ * is licensed "as is" without any warranty of any kind, whether express
++ * or implied.
++ */
++
++#ifndef _ASMPPC_HRTIME_H
++#define _ASMPPC_HRTIME_H
++
++#ifdef __KERNEL__
++#include <asm/types.h>
++#include <asm/time.h>
++/* Here's a hack to get sc_math.h working.  Arch i386 puts
++   a def for div_ll_X_l_rem in div64.h, but not ppc. */
++static inline unsigned long div_ll_X_l_rem(unsigned long long divs,
++					   unsigned long div,
++					   unsigned long * rem)
++{
++	return div_long_long_rem(divs, div, rem);
++}
++#include <linux/sc_math.h>
++
++#define CONFIG_HIGH_RES_RESOLUTION 1000 /* 1 uSec expressed as nSecs */
++
++#define arch_cycles_per_jiffy ((int)tb_ticks_per_jiffy)
++#define schedule_jiffies_int(x) (get_arch_cycles(x) >= arch_cycles_per_jiffy)
++
++extern int hr_time_resolution;
++extern seqlock_t  xtime_lock;
++extern unsigned volatile jiffies_seq;
++extern int hrtimer_use;
++
++static inline int get_arch_cycles(unsigned ref_jiffies)
++{
++
++	unsigned seq;
++	int ret_val;
++
++	do {
++		int jiffies_diff;
++
++		/* snapshot jiffies_seq */
++		seq = jiffies_seq;
++		barrier();
++
++		/* calculate cycles since the current jiffy */
++		ret_val = get_tbl() - tb_last_stamp;
++
++		/* compensate for ref_jiffies in the past */
++		if (unlikely(jiffies_diff = jiffies - ref_jiffies))
++			ret_val += (jiffies_diff) * arch_cycles_per_jiffy;
++
++		/* repeat of we didn't have a consistent view of the world */
++		barrier();
++	} while (unlikely((seq != jiffies_seq) || (seq & 1)));
++
++        return ret_val;
++}
++
++extern int schedule_hr_timer_int(unsigned ref_jiffies, int cycles);
++
++/*
++ * We use various scaling.  The ex32 scales by 2**32, sc_n by the first parm.
++ * When working with constants, choose a scale such that x/n->(32-scale)< 1/2.
++ * So for 1/3 <1/2 so scale of 32, where as 3/1 must be shifted 3 times (3/8) to
++ * be less than 1/2 so scale should be 29.
++ *
++ * For PPC, the lower limit for the decrementer clock was assumed to be 1.25
++ * MHz. Since 1,000,000,000 / 1,250,000 = 800, the scale factor was chosen to
++ * be 21 (800/2048 < 0.5).
++ */
++#define HR_TIME_SCALE_NSEC 21
++#define HR_TIME_SCALE_CYCLES 32
++
++extern int arch_to_nsec;
++extern int nsec_to_arch;
++
++static inline int scaled_mult(int x, int y, int shift) {
++
++	int hi;
++	unsigned lo;
++
++	if ((unsigned)shift > 32)
++		BUG();
++	asm ("mulhw %0,%1,%2" : "=r" (hi) : "r" (x), "r" (y));
++	if (shift == 32)
++		return hi;
++	asm ("mullw %0,%1,%2" : "=r" (lo) : "r" (x), "r" (y));
++
++	return (hi << (32-shift)) | (lo >> shift);
++}
++
++static inline int arch_cycle_to_nsec(long update)
++{
++        return scaled_mult(update, arch_to_nsec, HR_TIME_SCALE_NSEC);
++}
++static inline int nsec_to_arch_cycle(unsigned long nsec)
++{
++        return scaled_mult(nsec, nsec_to_arch, HR_TIME_SCALE_CYCLES);
++}
++
++#endif /*__KERNEL__*/
++#endif /* _ASMPPC_HRTIME_H */

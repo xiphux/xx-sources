@@ -1,0 +1,172 @@
+
+From: James Morris <jmorris@redhat.com>
+
+This patch replaces the dentry parameter with an inode in the LSM
+inode_{set|get|list}security hooks, in keeping with the ext2/ext3 code. 
+dentries are not needed here.
+
+Signed-off-by: James Morris <jmorris@redhat.com>
+Signed-off-by: Stephen Smalley <sds@epoch.ncsc.mil>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/security.h |   33 +++++++++++++++++----------------
+ 25-akpm/security/dummy.c         |    6 +++---
+ 25-akpm/security/selinux/hooks.c |   10 ++++------
+ 3 files changed, 24 insertions(+), 25 deletions(-)
+
+diff -puN include/linux/security.h~xattr-consolidation-v3-lsm include/linux/security.h
+--- 25/include/linux/security.h~xattr-consolidation-v3-lsm	2004-09-23 00:08:38.023295544 -0700
++++ 25-akpm/include/linux/security.h	2004-09-23 00:08:38.033294024 -0700
+@@ -396,13 +396,13 @@ struct swap_info_struct;
+  * 	Return 0 if permission is granted.
+  * @inode_getsecurity:
+  *	Copy the extended attribute representation of the security label 
+- *	associated with @name for @dentry into @buffer.  @buffer may be 
++ *	associated with @name for @inode into @buffer.  @buffer may be
+  *	NULL to request the size of the buffer required.  @size indicates
+  *	the size of @buffer in bytes.  Note that @name is the remainder
+  *	of the attribute name after the security. prefix has been removed.
+  *	Return number of bytes used/required on success.
+  * @inode_setsecurity:
+- *	Set the security label associated with @name for @dentry from the 
++ *	Set the security label associated with @name for @inode from the
+  *	extended attribute value @value.  @size indicates the size of the
+  *	@value in bytes.  @flags may be XATTR_CREATE, XATTR_REPLACE, or 0.
+  *	Note that @name is the remainder of the attribute name after the 
+@@ -410,8 +410,9 @@ struct swap_info_struct;
+  *	Return 0 on success.
+  * @inode_listsecurity:
+  *	Copy the extended attribute names for the security labels
+- *	associated with @dentry into @buffer.  @buffer may be NULL to 
+- *	request the size of the buffer required.  
++ *	associated with @inode into @buffer.  The maximum size of @buffer
++ *	is specified by @buffer_size.  @buffer may be NULL to request
++ *	the size of the buffer required.
+  *	Returns number of bytes used/required on success.
+  *
+  * Security hooks for file operations
+@@ -1109,9 +1110,9 @@ struct security_operations {
+ 	int (*inode_getxattr) (struct dentry *dentry, char *name);
+ 	int (*inode_listxattr) (struct dentry *dentry);
+ 	int (*inode_removexattr) (struct dentry *dentry, char *name);
+-  	int (*inode_getsecurity)(struct dentry *dentry, const char *name, void *buffer, size_t size);
+-  	int (*inode_setsecurity)(struct dentry *dentry, const char *name, const void *value, size_t size, int flags);
+-  	int (*inode_listsecurity)(struct dentry *dentry, char *buffer);
++  	int (*inode_getsecurity)(struct inode *inode, const char *name, void *buffer, size_t size);
++  	int (*inode_setsecurity)(struct inode *inode, const char *name, const void *value, size_t size, int flags);
++  	int (*inode_listsecurity)(struct inode *inode, char *buffer, size_t buffer_size);
+ 
+ 	int (*file_permission) (struct file * file, int mask);
+ 	int (*file_alloc_security) (struct file * file);
+@@ -1576,19 +1577,19 @@ static inline int security_inode_removex
+ 	return security_ops->inode_removexattr (dentry, name);
+ }
+ 
+-static inline int security_inode_getsecurity(struct dentry *dentry, const char *name, void *buffer, size_t size)
++static inline int security_inode_getsecurity(struct inode *inode, const char *name, void *buffer, size_t size)
+ {
+-	return security_ops->inode_getsecurity(dentry, name, buffer, size);
++	return security_ops->inode_getsecurity(inode, name, buffer, size);
+ }
+ 
+-static inline int security_inode_setsecurity(struct dentry *dentry, const char *name, const void *value, size_t size, int flags) 
++static inline int security_inode_setsecurity(struct inode *inode, const char *name, const void *value, size_t size, int flags)
+ {
+-	return security_ops->inode_setsecurity(dentry, name, value, size, flags);
++	return security_ops->inode_setsecurity(inode, name, value, size, flags);
+ }
+ 
+-static inline int security_inode_listsecurity(struct dentry *dentry, char *buffer)
++static inline int security_inode_listsecurity(struct inode *inode, char *buffer, size_t buffer_size)
+ {
+-	return security_ops->inode_listsecurity(dentry, buffer);
++	return security_ops->inode_listsecurity(inode, buffer, buffer_size);
+ }
+ 
+ static inline int security_file_permission (struct file *file, int mask)
+@@ -2215,17 +2216,17 @@ static inline int security_inode_removex
+ 	return cap_inode_removexattr(dentry, name);
+ }
+ 
+-static inline int security_inode_getsecurity(struct dentry *dentry, const char *name, void *buffer, size_t size)
++static inline int security_inode_getsecurity(struct inode *inode, const char *name, void *buffer, size_t size)
+ {
+ 	return -EOPNOTSUPP;
+ }
+ 
+-static inline int security_inode_setsecurity(struct dentry *dentry, const char *name, const void *value, size_t size, int flags) 
++static inline int security_inode_setsecurity(struct inode *inode, const char *name, const void *value, size_t size, int flags)
+ {
+ 	return -EOPNOTSUPP;
+ }
+ 
+-static inline int security_inode_listsecurity(struct dentry *dentry, char *buffer)
++static inline int security_inode_listsecurity(struct inode *inode, char *buffer, size_t buffer_size)
+ {
+ 	return 0;
+ }
+diff -puN security/dummy.c~xattr-consolidation-v3-lsm security/dummy.c
+--- 25/security/dummy.c~xattr-consolidation-v3-lsm	2004-09-23 00:08:38.024295392 -0700
++++ 25-akpm/security/dummy.c	2004-09-23 00:08:38.034293872 -0700
+@@ -447,17 +447,17 @@ static int dummy_inode_removexattr (stru
+ 	return 0;
+ }
+ 
+-static int dummy_inode_getsecurity(struct dentry *dentry, const char *name, void *buffer, size_t size)
++static int dummy_inode_getsecurity(struct inode *inode, const char *name, void *buffer, size_t size)
+ {
+ 	return -EOPNOTSUPP;
+ }
+ 
+-static int dummy_inode_setsecurity(struct dentry *dentry, const char *name, const void *value, size_t size, int flags) 
++static int dummy_inode_setsecurity(struct inode *inode, const char *name, const void *value, size_t size, int flags)
+ {
+ 	return -EOPNOTSUPP;
+ }
+ 
+-static int dummy_inode_listsecurity(struct dentry *dentry, char *buffer)
++static int dummy_inode_listsecurity(struct inode *inode, char *buffer, size_t buffer_size)
+ {
+ 	return 0;
+ }
+diff -puN security/selinux/hooks.c~xattr-consolidation-v3-lsm security/selinux/hooks.c
+--- 25/security/selinux/hooks.c~xattr-consolidation-v3-lsm	2004-09-23 00:08:38.026295088 -0700
++++ 25-akpm/security/selinux/hooks.c	2004-09-23 00:08:38.037293416 -0700
+@@ -2332,9 +2332,8 @@ static int selinux_inode_removexattr (st
+ 	return -EACCES;
+ }
+ 
+-static int selinux_inode_getsecurity(struct dentry *dentry, const char *name, void *buffer, size_t size)
++static int selinux_inode_getsecurity(struct inode *inode, const char *name, void *buffer, size_t size)
+ {
+-	struct inode *inode = dentry->d_inode;
+ 	struct inode_security_struct *isec = inode->i_security;
+ 	char *context;
+ 	unsigned len;
+@@ -2362,10 +2361,9 @@ static int selinux_inode_getsecurity(str
+ 	return len;
+ }
+ 
+-static int selinux_inode_setsecurity(struct dentry *dentry, const char *name,
++static int selinux_inode_setsecurity(struct inode *inode, const char *name,
+                                      const void *value, size_t size, int flags)
+ {
+-	struct inode *inode = dentry->d_inode;
+ 	struct inode_security_struct *isec = inode->i_security;
+ 	u32 newsid;
+ 	int rc;
+@@ -2384,10 +2382,10 @@ static int selinux_inode_setsecurity(str
+ 	return 0;
+ }
+ 
+-static int selinux_inode_listsecurity(struct dentry *dentry, char *buffer)
++static int selinux_inode_listsecurity(struct inode *inode, char *buffer, size_t buffer_size)
+ {
+ 	const int len = sizeof(XATTR_NAME_SELINUX);
+-	if (buffer)
++	if (buffer && len <= buffer_size)
+ 		memcpy(buffer, XATTR_NAME_SELINUX, len);
+ 	return len;
+ }
+_

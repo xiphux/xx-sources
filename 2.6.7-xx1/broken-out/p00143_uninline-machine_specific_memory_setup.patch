@@ -1,0 +1,111 @@
+
+From: Mika Kukkonen <mika@osdl.org>
+
+Cleanup arch/i386/kernel/setup.c a little bit by:
+
+* un-inlining machine_specific_memory_setup() (it's implementations are
+  pretty big to be inlined anyway)
+
+* remove setup_memory_region() by moving the code inside setup_arch()
+
+I would also recommend BK-renaming all four files
+(include/asm-i386/*/setup_arch_post.h) to ".c" and moving them into
+arch/i386/*/, but that obviously is not needed in anyway.  But IMHO they
+are clearly ".c" files, not ".h" files.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/setup.c                        |   18 +++++-----------
+ 25-akpm/include/asm-i386/mach-default/setup_arch_post.h |    2 -
+ 25-akpm/include/asm-i386/mach-pc9800/setup_arch_post.h  |    2 -
+ 25-akpm/include/asm-i386/mach-visws/setup_arch_post.h   |    2 -
+ 25-akpm/include/asm-i386/mach-voyager/setup_arch_post.h |    2 -
+ 5 files changed, 10 insertions(+), 16 deletions(-)
+
+diff -puN arch/i386/kernel/setup.c~uninline-machine_specific_memory_setup arch/i386/kernel/setup.c
+--- 25/arch/i386/kernel/setup.c~uninline-machine_specific_memory_setup	2004-06-17 22:24:18.325203456 -0700
++++ 25-akpm/arch/i386/kernel/setup.c	2004-06-17 22:24:18.339201328 -0700
+@@ -57,8 +57,6 @@ unsigned long init_pg_tables_end __initd
+ 
+ int disable_pse __initdata = 0;
+ 
+-static inline char * __init machine_specific_memory_setup(void);
+-
+ /*
+  * Machine setup..
+  */
+@@ -659,14 +657,6 @@ static inline void copy_edd(void)
+  */
+ #define LOWMEMSIZE()	(0x9f000)
+ 
+-static void __init setup_memory_region(void)
+-{
+-	char *who = machine_specific_memory_setup();
+-	printk(KERN_INFO "BIOS-provided physical RAM map:\n");
+-	print_memory_map(who);
+-} /* setup_memory_region */
+-
+-
+ static void __init parse_cmdline_early (char ** cmdline_p)
+ {
+ 	char c = ' ', *to = command_line, *from = saved_command_line;
+@@ -1269,6 +1259,8 @@ static int __init noreplacement_setup(ch
+ 
+ __setup("noreplacement", noreplacement_setup); 
+ 
++static char * __init machine_specific_memory_setup(void);
++
+ /*
+  * Determine if we were loaded by an EFI loader.  If so, then we have also been
+  * passed the efi memmap, systab, etc., so we should use these data structures
+@@ -1319,8 +1311,10 @@ void __init setup_arch(char **cmdline_p)
+ 	ARCH_SETUP
+ 	if (efi_enabled)
+ 		efi_init();
+-	else
+-		setup_memory_region();
++	else {
++		printk(KERN_INFO "BIOS-provided physical RAM map:\n");
++		print_memory_map(machine_specific_memory_setup());
++	}
+ 
+ 	copy_edd();
+ 
+diff -puN include/asm-i386/mach-default/setup_arch_post.h~uninline-machine_specific_memory_setup include/asm-i386/mach-default/setup_arch_post.h
+--- 25/include/asm-i386/mach-default/setup_arch_post.h~uninline-machine_specific_memory_setup	2004-06-17 22:24:18.327203152 -0700
++++ 25-akpm/include/asm-i386/mach-default/setup_arch_post.h	2004-06-17 22:24:18.339201328 -0700
+@@ -6,7 +6,7 @@
+  *	use of all of the static functions.
+  **/
+ 
+-static inline char * __init machine_specific_memory_setup(void)
++static char * __init machine_specific_memory_setup(void)
+ {
+ 	char *who;
+ 
+diff -puN include/asm-i386/mach-visws/setup_arch_post.h~uninline-machine_specific_memory_setup include/asm-i386/mach-visws/setup_arch_post.h
+--- 25/include/asm-i386/mach-visws/setup_arch_post.h~uninline-machine_specific_memory_setup	2004-06-17 22:24:18.331202544 -0700
++++ 25-akpm/include/asm-i386/mach-visws/setup_arch_post.h	2004-06-17 22:24:18.341201024 -0700
+@@ -10,7 +10,7 @@ unsigned long sgivwfb_mem_size;
+ 
+ long long mem_size __initdata = 0;
+ 
+-static inline char * __init machine_specific_memory_setup(void)
++static char * __init machine_specific_memory_setup(void)
+ {
+ 	long long gfx_mem_size = 8 * MB;
+ 
+diff -puN include/asm-i386/mach-voyager/setup_arch_post.h~uninline-machine_specific_memory_setup include/asm-i386/mach-voyager/setup_arch_post.h
+--- 25/include/asm-i386/mach-voyager/setup_arch_post.h~uninline-machine_specific_memory_setup	2004-06-17 22:24:18.333202240 -0700
++++ 25-akpm/include/asm-i386/mach-voyager/setup_arch_post.h	2004-06-17 22:24:18.341201024 -0700
+@@ -3,7 +3,7 @@
+  * This is included late in kernel/setup.c so that it can make use of all of
+  * the static functions. */
+ 
+-static inline char * __init machine_specific_memory_setup(void)
++static char * __init machine_specific_memory_setup(void)
+ {
+ 	char *who;
+ 
+_

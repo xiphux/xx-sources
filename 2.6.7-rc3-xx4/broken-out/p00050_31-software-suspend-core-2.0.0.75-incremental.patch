@@ -1,0 +1,503 @@
+---
+
+ linux-2.6.6-xx2-xiphux/include/linux/suspend-debug.h |    2 
+ linux-2.6.6-xx2-xiphux/kernel/power/lzfcompress.c    |   24 --
+ linux-2.6.6-xx2-xiphux/kernel/power/pagedir.c        |   39 +++-
+ linux-2.6.6-xx2-xiphux/kernel/power/prepare_image.c  |  175 ++++++-------------
+ linux-2.6.6-xx2-xiphux/kernel/power/process.c        |    1 
+ linux-2.6.6-xx2-xiphux/kernel/power/range.c          |    1 
+ linux-2.6.6-xx2-xiphux/kernel/power/swapwriter.c     |    6 
+ 7 files changed, 98 insertions(+), 150 deletions(-)
+
+diff -puN include/linux/suspend-debug.h~31-software-suspend-core-2.0.0.75-incremental include/linux/suspend-debug.h
+--- linux-2.6.6-xx2/include/linux/suspend-debug.h~31-software-suspend-core-2.0.0.75-incremental	2004-05-28 04:31:05.582646704 -0400
++++ linux-2.6.6-xx2-xiphux/include/linux/suspend-debug.h	2004-05-28 04:31:05.603643512 -0400
+@@ -5,7 +5,7 @@
+ /* Solely for comparison with the version specific patch revision */
+ #define SWSUSP_CORE_REVISION 0x201
+ 
+-#define SWSUSP_CORE_VERSION "2.0.0.74"
++#define SWSUSP_CORE_VERSION "2.0.0.75"
+ #define name_suspend "Software Suspend " SWSUSP_CORE_VERSION ": "
+ 
+ /* Same length to ensure one overwrites the other */
+diff -puN kernel/power/lzfcompress.c~31-software-suspend-core-2.0.0.75-incremental kernel/power/lzfcompress.c
+--- linux-2.6.6-xx2/kernel/power/lzfcompress.c~31-software-suspend-core-2.0.0.75-incremental	2004-05-28 04:31:05.585646248 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/lzfcompress.c	2004-05-28 04:31:05.605643208 -0400
+@@ -51,7 +51,6 @@ static void *compression_workspace = NUL
+ static u8 *local_buffer = NULL;
+ static u8 *page_buffer = NULL;
+ static unsigned int bufofs;
+-static int debug_print_count = 1;
+ 
+ static __nosavedata unsigned long bytes_in = 0, bytes_out = 0;
+ 
+@@ -176,8 +175,6 @@ static int lzf_write_init(int stream_num
+ 
+ 	bufofs = 0;
+ 
+-	debug_print_count = 1;
+-
+ 	return 0;
+ }
+ 
+@@ -201,15 +198,6 @@ static int lzf_write (u8 *buffer, unsign
+ 		buffer += chunk;
+ 		len -= chunk;
+ 		bufofs = 0;
+-		if (debug_print_count < 5) {
+-			printk("LZF writer: Writing block %d. First bytes %x %x %x %x.\n",
+-					debug_print_count,
+-					*local_buffer,
+-					*(local_buffer+1),
+-					*(local_buffer+2),
+-					*(local_buffer+3));
+-			debug_print_count++;
+-		}
+ 		if ((ret = next_driver->write_chunk(local_buffer)) < 0)
+ 			return ret;
+ 	}
+@@ -289,9 +277,6 @@ static int lzf_read_init(int stream_numb
+ 
+ 	bufofs = PAGE_SIZE;
+ 
+-	debug_print_count = 1;
+-
+-
+ 	return 0;
+ }
+ 
+@@ -316,15 +301,6 @@ static int lzf_read (u8 *buffer, unsigne
+ 		if ((ret = next_driver->read_chunk(
+ 					local_buffer, SUSPEND_SYNC)) < 0)
+ 			return ret;
+-		if (debug_print_count < 5) {
+-			printk("LZF writer: Reading block %d. First bytes %x %x %x %x.\n",
+-					debug_print_count,
+-					*local_buffer,
+-					*(local_buffer+1),
+-					*(local_buffer+2),
+-					*(local_buffer+3));
+-			debug_print_count++;
+-		}
+ 	}
+ 	memcpy (buffer, local_buffer + bufofs, len);
+ 	bufofs += len;
+diff -puN kernel/power/pagedir.c~31-software-suspend-core-2.0.0.75-incremental kernel/power/pagedir.c
+--- linux-2.6.6-xx2/kernel/power/pagedir.c~31-software-suspend-core-2.0.0.75-incremental	2004-05-28 04:31:05.589645640 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/pagedir.c	2004-05-28 04:31:05.607642904 -0400
+@@ -152,7 +152,6 @@ void free_pagedir(struct pagedir * p)
+ 		range_for_each(&p->allocdranges, rangepointer, pagenumber) {
+ 			ClearPageNosave(mem_map+pagenumber);
+ 			free_page((unsigned long) page_address(mem_map+pagenumber));
+-			check_shift_keys(0, NULL);
+ 		}
+ 	}
+ 
+@@ -183,6 +182,7 @@ int allocate_extra_pagedir_memory(struct
+ 		int alloc_from)
+ {
+ 	int num_to_alloc = pageset_size - alloc_from - p->allocdranges.size;
++	int j, order;
+ 
+ 	prepare_status(0, 0, "Preparing page directory.");
+ 
+@@ -192,18 +192,32 @@ int allocate_extra_pagedir_memory(struct
+ 		num_to_alloc = 0;
+ 
+ 	if (num_to_alloc) {
+-		int i, numnosaveallocated=0;
++		int num_added = 0, numnosaveallocated=0;
+ #ifdef CONFIG_SOFTWARE_SUSPEND_DEBUG
+ 		int origallocd = p->allocdranges.size;
+ #endif
+ 
+ 		PRINTFREEMEM("prior to attempt");
+-		for(i=1; i <= num_to_alloc; i++) {
++
++		order = generic_fls(num_to_alloc);
++		if (order >= MAX_ORDER)
++			order = MAX_ORDER - 1;
++
++		while (num_added < num_to_alloc) {
+ 			struct page * newpage;
+ 			unsigned long virt;
+-			virt = get_grabbed_pages(0);
++
++			while ((1 << order) > (num_to_alloc - num_added))
++				order--;
++
++			virt = get_grabbed_pages(order);
++			while ((!virt) && (order > 0)) {
++				order--;
++				virt = get_grabbed_pages(order);
++			}
++
+ 			if (!virt) {
+-				p->pageset_size = i;
++				p->pageset_size += num_added;
+ 				printlog(SUSPEND_PAGESETS, SUSPEND_VERBOSE,
+ 					"   Allocated (extra) memory for pages"
+ 					" from %d-%d (%d pages).\n",
+@@ -211,16 +225,21 @@ int allocate_extra_pagedir_memory(struct
+ 					p->allocdranges.size - origallocd);
+ 				printk("Couldn't get enough yet."
+ 						" %d pages short.\n",
+-						num_to_alloc - i + 1);
++						num_to_alloc - num_added);
+ 				PRINTFREEMEM("at abort of "
+ 					"allocate_extra_pagedir_memory");
+ 				return 1;
+ 			}
++
+ 			newpage = virt_to_page(virt);
+-			SetPageNosave(newpage);
+-			add_to_range_chain(&p->allocdranges, newpage - mem_map);
+-			numnosaveallocated++;
+-			check_shift_keys(0, NULL);
++			for (j = 0; j < (1 << order); j++) {
++				SetPageNosave(newpage + j);
++				/* Pages will be freed one at a time. */
++				set_page_count(newpage + j, 1);
++				add_to_range_chain(&p->allocdranges, newpage - mem_map + j);
++				numnosaveallocated++;
++			}
++			num_added+= (1 << order);
+ 		}
+ 		printlog(SUSPEND_PAGESETS, SUSPEND_VERBOSE,
+ 			"   Allocated (extra) memory for pages "
+diff -puN kernel/power/prepare_image.c~31-software-suspend-core-2.0.0.75-incremental kernel/power/prepare_image.c
+--- linux-2.6.6-xx2/kernel/power/prepare_image.c~31-software-suspend-core-2.0.0.75-incremental	2004-05-28 04:31:05.591645336 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/prepare_image.c	2004-05-28 04:31:05.613641992 -0400
+@@ -318,7 +318,6 @@ static struct pageset_sizes_result count
+ 
+ 	if (currentrange)
+ 		append_to_range_chain(currentrange, rangemin, loop - 1);
+-	check_shift_keys(0, NULL);
+ 
+ 	if ((pagedir1.pageset_size) && (result.size1 > pagedir1.pageset_size))
+ 		result.needmorespace = 1;
+@@ -329,7 +328,6 @@ static struct pageset_sizes_result count
+ 	pagedir2.destranges.size = pagedir2.origranges.size;
+ 	range_for_each(&pagedir1.allocdranges, rangepointer, value) {
+ 		add_to_range_chain(&pagedir1.destranges, value);
+-		check_shift_keys(0, NULL);
+ 	}
+ 
+ 	printnolog(SUSPEND_EAT_MEMORY, SUSPEND_MEDIUM, 0,
+@@ -422,7 +420,6 @@ static int update_image(void)
+ {
+ 	struct pageset_sizes_result result;
+ 	int iteration = 0, orig_num_range_pages;
+-	int alloc_from;
+ 
+ 	result = recalculate_stats();
+ 
+@@ -433,15 +430,7 @@ static int update_image(void)
+ 
+ 		printlog(SUSPEND_ANY_SECTION, SUSPEND_LOW,"-- Iteration %d.\n", iteration);
+ 
+-		if (allocate_extra_pagedir_memory(&pagedir2, pageset2_size, pageset2_size)) {
+-			printlog(SUSPEND_ANY_SECTION, SUSPEND_LOW,
+-				"Still need to get more pages for pagedir 2.\n");
+-			return 1;
+-		}
+-
+-		alloc_from = (pageset1_sizelow > pageset2_sizelow ? pageset2_sizelow : pageset1_sizelow);
+-
+-		if (allocate_extra_pagedir_memory(&pagedir1, pageset1_size, alloc_from)) {
++		if (allocate_extra_pagedir_memory(&pagedir1, pageset1_size, pageset2_sizelow)) {
+ 			printlog(SUSPEND_ANY_SECTION, SUSPEND_LOW,
+ 				"Still need to get more pages for pagedir 1.\n");
+ 			return 1;
+@@ -476,6 +465,8 @@ static int update_image(void)
+ 			     (long)(HEADER_STORAGE_NEEDED + MAIN_STORAGE_NEEDED(1))));
+ 
+ #ifdef CONFIG_SOFTWARE_SUSPEND_VARIATION_ANALYSIS
++		printlog(SUSPEND_ANY_SECTION, SUSPEND_MEDIUM,"-- Allocate checksum pages.\n");
++
+ 		suspend_allocate_checksum_pages();
+ #endif
+ 
+@@ -487,6 +478,8 @@ static int update_image(void)
+ 		   active_writer->ops.writer.storage_allocated() < (HEADER_STORAGE_NEEDED + MAIN_STORAGE_NEEDED(1)))
+ 		 && (!TEST_RESULT_STATE(SUSPEND_ABORTED)));
+ 
++	printlog(SUSPEND_ANY_SECTION, SUSPEND_MEDIUM,"-- Exit loop.\n");
++
+ 	return (amount_needed(0) > 0);
+ }
+ 
+@@ -495,15 +488,13 @@ static spinlock_t suspend_grabbed_memory
+ struct eaten_memory_t
+ {
+ 	void * next;
+-	int order; /* Order of _this_ allocation */
+ };
+ 
+-struct eaten_memory_t *eaten_memory = NULL;
++struct eaten_memory_t *eaten_memory[MAX_ORDER];
+ 
+ static void grab_free_memory(void)
+ {
+ 	int order, k;
+-	struct eaten_memory_t *prev = eaten_memory;
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&suspend_grabbed_memory_lock, flags);
+@@ -512,49 +503,44 @@ static void grab_free_memory(void)
+ 	 */
+ 
+ 	for (order = MAX_ORDER - 1; order > -1; order--) {
+-		eaten_memory = (struct eaten_memory_t *) __get_free_pages(EAT_MEMORY_FLAGS, order);
+-		while (eaten_memory) {
+-			struct page * page = virt_to_page(eaten_memory);
+-			printnolog(SUSPEND_MEMORY, SUSPEND_HIGH, 0,
+-				"Grab free memory got %x, order %d.\n",
+-				eaten_memory, order);
+-			check_shift_keys(0, NULL);
+-			eaten_memory->next = prev;
+-			eaten_memory->order = order;
+-			prev = eaten_memory;
++		struct eaten_memory_t *prev = eaten_memory[order];
++		eaten_memory[order] = (struct eaten_memory_t *) __get_free_pages(EAT_MEMORY_FLAGS, order);
++		while (eaten_memory[order]) {
++			struct page * page = virt_to_page(eaten_memory[order]);
++			eaten_memory[order]->next = prev;
++			prev = eaten_memory[order];
+ 			amount_eaten += (1 << order);
+ 			for (k=0; k < (1 << order); k++)
+ 				SetPageNosave(page + k);
+-			eaten_memory = (struct eaten_memory_t *) __get_free_pages(EAT_MEMORY_FLAGS, order);
++			eaten_memory[order] = (struct eaten_memory_t *) __get_free_pages(EAT_MEMORY_FLAGS, order);
+ 		}
++		eaten_memory[order] = prev;
+ 	}
+ 
+-	eaten_memory = prev;
+ 	spin_unlock_irqrestore(&suspend_grabbed_memory_lock, flags);
+ }
+ 
+ static void free_grabbed_memory(void)
+ {
+-	struct eaten_memory_t *next = NULL;
+-	int j, num_freed = 0;
++	struct eaten_memory_t *next = NULL, *this = NULL;
++	int j, num_freed = 0, order;
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&suspend_grabbed_memory_lock, flags);
+ 
+ 	/* Free all eaten pages immediately */
+-	while(eaten_memory) {
+-		struct page * page = virt_to_page(eaten_memory);
+-		next = eaten_memory->next;
+-		for (j=0; j < (1 << (eaten_memory->order)); j++) {
+-			ClearPageNosave(page + j);
+-			num_freed++;
++	for (order = MAX_ORDER - 1; order > -1; order--) {
++		this=eaten_memory[order];
++		while(this) {
++			struct page * page = virt_to_page(this);
++			next = this->next;
++			for (j=0; j < (1 << order); j++)
++				ClearPageNosave(page + j);
++			free_pages((unsigned long) this, order);
++			num_freed+= (1 << order);
++			this = next;
+ 		}
+-		printnolog(SUSPEND_MEMORY, SUSPEND_HIGH, 0,
+-			"Free grabbed pages returning %x, order %d. (Fast path).\n",
+-			eaten_memory, eaten_memory->order);
+-		check_shift_keys(0, NULL);
+-		free_pages((unsigned long) eaten_memory, eaten_memory->order);
+-		eaten_memory = next;
++		eaten_memory[order] = NULL;
+ 	}
+ 	amount_eaten -= num_freed;
+ 	spin_unlock_irqrestore(&suspend_grabbed_memory_lock, flags);
+@@ -562,100 +548,65 @@ static void free_grabbed_memory(void)
+ 
+ unsigned long get_grabbed_pages(int order)
+ {
+-	struct eaten_memory_t *prev = NULL, *next=NULL, *this=eaten_memory;
+-	struct eaten_memory_t *alternative = NULL, *alternative_prev = NULL;
+-	int alternative_order = 999, j;
+-	unsigned long result, flags;
+-
+-	/* Get a single grabbed page for suspend's use */
+-	/* We only look at pages of the desired order */
+-	/* Code could be added to split a higher order) */
+-	printnolog(SUSPEND_MEMORY, SUSPEND_HIGH, 0,
+-		"\nNew call to get_grabbed_pages. Seeking order %d.\n",
+-		order);
++	unsigned long this = (unsigned long) eaten_memory[order];
++	int alternative, j;
++	unsigned long flags;
+ 
++	/* Get grabbed lowmem pages for suspend's use */
+ 	spin_lock_irqsave(&suspend_grabbed_memory_lock, flags);
+-	while(this) {
+-		next = this->next;
+-		if (this->order == order) {
+-			struct page * page = virt_to_page(this);
+-			if (prev)
+-				prev->next = next;
+-			else
+-				eaten_memory = next;
+-			for (j=0; j < (1 << order); j++) {
+-				ClearPageNosave(page + j);
+-				clear_page(page_address(page + j));
+-			}
+-			amount_eaten -= (1 << order);
+-			printnolog(SUSPEND_MEMORY, SUSPEND_HIGH, 0,
+-				"Get grabbed pages returning %x, order %d. (Fast path).\n",
+-				this, order);
+-			spin_unlock_irqrestore(&suspend_grabbed_memory_lock, flags);
+-			check_shift_keys(0, NULL);
+-			return (unsigned long) this;
+-		}
+-		if ((this->order < alternative_order) && (this->order > order)) {
+-			alternative_prev = prev;
+-			alternative = this;
+-			alternative_order = this->order;
+-			printnolog(SUSPEND_MEMORY, SUSPEND_HIGH, 0,
+-				"New alternative: %p, order %d.\n", alternative, alternative->order);
++
++	if (this) {
++		struct page * page = virt_to_page(this);
++		eaten_memory[order] = eaten_memory[order]->next;
++		for (j=0; j < (1 << order); j++) {
++			ClearPageNosave(page + j);
++			clear_page(page_address(page + j));
+ 		}
+-		prev = this;
+-		this = next;
++		amount_eaten -= (1 << order);
++		spin_unlock_irqrestore(&suspend_grabbed_memory_lock, flags);
++		check_shift_keys(0, NULL);
++		return this;
+ 	}
+ 
++	alternative = order+1;
++	while ((!eaten_memory[alternative]) && (alternative < MAX_ORDER))
++		alternative++;
++
+ 	/* Maybe we didn't eat any memory - try normal get */
+-	if (!alternative) {
+-		printnolog(SUSPEND_MEMORY, SUSPEND_HIGH, 0,
+-			"No alternative. Trying __get_free_pages...");
+-		this = (struct eaten_memory_t *) __get_free_pages(GFP_ATOMIC, order);
+-		printnolog(SUSPEND_MEMORY, SUSPEND_HIGH, 0,
+-			"Result is %p, order %d.\n",
+-			this, order);
+-		for (j=0; j < (1 << order); j++)
+-			clear_page((char *) this + j * PAGE_SIZE);
++	if (alternative == MAX_ORDER) {
++		this = __get_free_pages(GFP_ATOMIC, order);
++		if (this)
++			for (j=0; j < (1 << order); j++)
++				clear_page((char *) this + j * PAGE_SIZE);
+ 		spin_unlock_irqrestore(&suspend_grabbed_memory_lock, flags);
+ 		check_shift_keys(0, NULL);
+-		return (unsigned long) this;
++		return this;
+ 	}
+ 
+-	if (alternative_prev)
+-		alternative_prev->next = alternative->next;
+-	else
+-		eaten_memory = alternative->next;
+-
+-
+ 	{
+-		struct page * page = virt_to_page(alternative);
+-		for (j=0; j < (1 << (alternative_order)); j++) {
++		struct page * page = virt_to_page(eaten_memory[alternative]);
++		unsigned long virt = (unsigned long) eaten_memory[alternative];
++		eaten_memory[alternative] = eaten_memory[alternative]->next;
++		for (j=0; j < (1 << (alternative)); j++) {
+ 			ClearPageNosave(page + j);
+ 			clear_page(page_address(page + j));
+ 		}
+-		printnolog(SUSPEND_MEMORY, SUSPEND_HIGH, 0,
+-			"Freeing %p, Order %d.\n",
+-			alternative, alternative_order);
+-		free_pages((unsigned long) alternative, alternative_order);
+-		amount_eaten -= (1 << alternative_order);
++		free_pages(virt, alternative);
++		amount_eaten -= (1 << alternative);
+ 	}
+ 
+ 	/* Get the chunk we want to return */
+-	result = __get_free_pages(EAT_MEMORY_FLAGS, order);
+-	printnolog(SUSPEND_MEMORY, SUSPEND_HIGH, 0,
+-		"Got %p, Order %d back.\n",
+-		result, order);
+-	clear_page(result);
++	this = __get_free_pages(EAT_MEMORY_FLAGS, order);
++	for (j=0; j < (1 << order); j++)
++		clear_page(this);
++
+ 	spin_unlock_irqrestore(&suspend_grabbed_memory_lock, flags);
+ 
+ 	/* Grab the rest */
+ 	grab_free_memory();
+ 
+-	printnolog(SUSPEND_MEMORY, SUSPEND_HIGH, 0,
+-		"Get grabbed pages returning %x, order %d. (Slow path).\n",
+-		result, order);
+ 	check_shift_keys(0, NULL);
+-	return result;
++	return this;
+ }
+ 
+ extern int freeze_processes(int no_progress);
+diff -puN kernel/power/process.c~31-software-suspend-core-2.0.0.75-incremental kernel/power/process.c
+--- linux-2.6.6-xx2/kernel/power/process.c~31-software-suspend-core-2.0.0.75-incremental	2004-05-28 04:31:05.594644880 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/process.c	2004-05-28 04:31:05.615641688 -0400
+@@ -114,7 +114,6 @@ static void smp_pause(void * data)
+ 	while(software_suspend_state & SOFTWARE_SUSPEND_FREEZE_SMP) {
+ 		cpu_relax();
+ 		barrier();
+-		check_shift_keys(0, "");
+ 	}
+ 	FLUSH_LOCAL_TLB();
+ 	atomic_dec(&suspend_cpu_counter);
+diff -puN kernel/power/range.c~31-software-suspend-core-2.0.0.75-incremental kernel/power/range.c
+--- linux-2.6.6-xx2/kernel/power/range.c~31-software-suspend-core-2.0.0.75-incremental	2004-05-28 04:31:05.596644576 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/range.c	2004-05-28 04:31:05.616641536 -0400
+@@ -538,7 +538,6 @@ int append_to_range_chain(int chain, uns
+ 				result = append_range_to_range_chain(
+ 					&pagedir1.destranges, min, max);
+ 	}
+-	check_shift_keys(0, NULL);
+ 	return result;
+ }
+ 
+diff -puN kernel/power/swapwriter.c~31-software-suspend-core-2.0.0.75-incremental kernel/power/swapwriter.c
+--- linux-2.6.6-xx2/kernel/power/swapwriter.c~31-software-suspend-core-2.0.0.75-incremental	2004-05-28 04:31:05.599644120 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/swapwriter.c	2004-05-28 04:31:05.619641080 -0400
+@@ -954,6 +954,7 @@ static struct io_info * start_one(int rw
+ 	outstanding_io++;
+ 	if (outstanding_io > max_outstanding_io)
+ 		max_outstanding_io++;
++
+ 	return io_info;
+ }
+ 
+@@ -2256,8 +2257,11 @@ static int swapwriter_read_chunk(char * 
+ 	}
+ 
+ 	readahead_index++;
+-	if (readahead_index == MAX_READAHEAD)
++	if (readahead_index == MAX_READAHEAD) {
+ 		readahead_index = 0;
++		RUN_IO;
++	}
++
+ 
+ 	return 0;
+ }
+
+_

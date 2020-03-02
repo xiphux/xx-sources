@@ -1,0 +1,48 @@
+
+
+- Fix the !CONFIG_FRAME_POINTER && !CONFIG_KALLSYMS output formatting.
+
+- Make print_context_stack() static
+
+
+
+---
+
+ 25-akpm/arch/i386/kernel/traps.c |    9 +++++----
+ 1 files changed, 5 insertions(+), 4 deletions(-)
+
+diff -puN arch/i386/kernel/traps.c~x86-stack-dump-fixes arch/i386/kernel/traps.c
+--- 25/arch/i386/kernel/traps.c~x86-stack-dump-fixes	Fri May 21 16:18:09 2004
++++ 25-akpm/arch/i386/kernel/traps.c	Fri May 21 16:18:09 2004
+@@ -137,7 +137,7 @@ void breakpoint(void)
+ 
+ 
+ #ifdef CONFIG_FRAME_POINTER
+-void print_context_stack(struct task_struct *task, unsigned long *stack,
++static void print_context_stack(struct task_struct *task, unsigned long *stack,
+ 			 unsigned long ebp)
+ {
+ 	unsigned long addr;
+@@ -151,7 +151,7 @@ void print_context_stack(struct task_str
+ 	}
+ }
+ #else
+-void print_context_stack(struct task_struct *task, unsigned long *stack,
++static void print_context_stack(struct task_struct *task, unsigned long *stack,
+ 			 unsigned long ebp)
+ {
+ 	unsigned long addr;
+@@ -159,8 +159,9 @@ void print_context_stack(struct task_str
+ 	while (!kstack_end(stack)) {
+ 		addr = *stack++;
+ 		if (kernel_text_address(addr)) {
+-			printk(" [<%08lx>] ", addr);
+-			print_symbol("%s\n", addr);
++			printk(" [<%08lx>]", addr);
++			print_symbol(" %s", addr);
++			printk("\n");
+ 		}
+ 	}
+ }
+
+_

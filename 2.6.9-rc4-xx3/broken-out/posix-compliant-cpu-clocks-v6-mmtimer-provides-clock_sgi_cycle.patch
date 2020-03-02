@@ -1,0 +1,91 @@
+
+From: Christoph Lameter <clameter@sgi.com>
+
+* Add CLOCK_SGI_CYCLE provided by drivers/char/mmtimer
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/mmtimer.c |   43 +++++++++++++++++++++++++++++++++++++++++
+ 25-akpm/include/linux/time.h   |    1 
+ 2 files changed, 44 insertions(+)
+
+diff -puN drivers/char/mmtimer.c~posix-compliant-cpu-clocks-v6-mmtimer-provides-clock_sgi_cycle drivers/char/mmtimer.c
+--- 25/drivers/char/mmtimer.c~posix-compliant-cpu-clocks-v6-mmtimer-provides-clock_sgi_cycle	2004-10-06 22:11:27.853936840 -0700
++++ 25-akpm/drivers/char/mmtimer.c	2004-10-06 22:11:27.858936080 -0700
+@@ -28,6 +28,7 @@
+ #include <asm/uaccess.h>
+ #include <asm/sn/addrs.h>
+ #include <asm/sn/clksupport.h>
++#include <linux/posix-timers.h>
+ 
+ MODULE_AUTHOR("Jesse Barnes <jbarnes@sgi.com>");
+ MODULE_DESCRIPTION("Multimedia timer support");
+@@ -177,6 +178,45 @@ static struct miscdevice mmtimer_miscdev
+ 	&mmtimer_fops
+ };
+ 
++static struct timespec sgi_clock_offset;
++static int sgi_clock_period;
++
++static int sgi_clock_get(struct timespec *tp) {
++	u64 nsec;
++
++	nsec = readq(RTC_COUNTER_ADDR) * sgi_clock_period
++			+ sgi_clock_offset.tv_nsec;
++	tp->tv_sec = div_long_long_rem(nsec, NSEC_PER_SEC, &tp->tv_nsec)
++			+ sgi_clock_offset.tv_sec;
++	return 0;
++};
++
++static int sgi_clock_set(struct timespec *tp) {
++
++	u64 nsec;
++	u64 rem;
++
++	nsec = readq(RTC_COUNTER_ADDR) * sgi_clock_period;
++
++	sgi_clock_offset.tv_sec = tp->tv_sec - div_long_long_rem(nsec, NSEC_PER_SEC, &rem);
++
++	if (rem <= tp->tv_nsec)
++		sgi_clock_offset.tv_nsec = tp->tv_sec - rem;
++	else {
++		sgi_clock_offset.tv_nsec = tp->tv_sec + NSEC_PER_SEC - rem;
++		sgi_clock_offset.tv_sec--;
++	}
++	return 0;
++}
++
++static struct k_clock sgi_clock = {
++	.res = 0,
++	.clock_set = sgi_clock_set,
++	.clock_get = sgi_clock_get,
++	.timer_create = do_posix_clock_notimer_create,
++	.nsleep = do_posix_clock_nonanosleep
++};
++
+ /**
+  * mmtimer_init - device initialization routine
+  *
+@@ -206,6 +246,9 @@ static int __init mmtimer_init(void)
+ 		return -1;
+ 	}
+ 
++	sgi_clock_period = sgi_clock.res = NSEC_PER_SEC / sn_rtc_cycles_per_second;
++	register_posix_clock(CLOCK_SGI_CYCLE, &sgi_clock);
++
+ 	printk(KERN_INFO "%s: v%s, %ld MHz\n", MMTIMER_DESC, MMTIMER_VERSION,
+ 	       sn_rtc_cycles_per_second/(unsigned long)1E6);
+ 
+diff -puN include/linux/time.h~posix-compliant-cpu-clocks-v6-mmtimer-provides-clock_sgi_cycle include/linux/time.h
+--- 25/include/linux/time.h~posix-compliant-cpu-clocks-v6-mmtimer-provides-clock_sgi_cycle	2004-10-06 22:11:27.855936536 -0700
++++ 25-akpm/include/linux/time.h	2004-10-06 22:11:27.859935928 -0700
+@@ -162,6 +162,7 @@ struct	itimerval {
+  */
+ 
+ 
++#define CLOCK_SGI_CYCLE 10
+ #define MAX_CLOCKS 16
+ #define CLOCKS_MASK  (CLOCK_REALTIME | CLOCK_MONOTONIC | \
+                      CLOCK_REALTIME_HR | CLOCK_MONOTONIC_HR)
+_

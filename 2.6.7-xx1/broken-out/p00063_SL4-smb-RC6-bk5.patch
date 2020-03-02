@@ -1,0 +1,98 @@
+
+From: <viro@parcelfarce.linux.theplanet.co.uk>
+
+smbfs - switched from on-stack allocation of buffer for link body (!) to
+__getname()/putname(); switched to new scheme.
+
+
+---
+
+ 25-akpm/fs/smbfs/proto.h   |    2 -
+ 25-akpm/fs/smbfs/symlink.c |   48 ++++++++++++++++++++++-----------------------
+ 2 files changed, 24 insertions(+), 26 deletions(-)
+
+diff -puN fs/smbfs/proto.h~SL4-smb-RC6-bk5 fs/smbfs/proto.h
+--- 25/fs/smbfs/proto.h~SL4-smb-RC6-bk5	2004-05-19 20:51:04.409395800 -0700
++++ 25-akpm/fs/smbfs/proto.h	2004-05-19 20:51:04.413395192 -0700
+@@ -87,7 +87,5 @@ extern int smb_request_send_req(struct s
+ extern int smb_request_send_server(struct smb_sb_info *server);
+ extern int smb_request_recv(struct smb_sb_info *server);
+ /* symlink.c */
+-extern int smb_read_link(struct dentry *dentry, char *buffer, int len);
+ extern int smb_symlink(struct inode *inode, struct dentry *dentry, const char *oldname);
+-extern int smb_follow_link(struct dentry *dentry, struct nameidata *nd);
+ extern struct inode_operations smb_link_inode_operations;
+diff -puN fs/smbfs/symlink.c~SL4-smb-RC6-bk5 fs/smbfs/symlink.c
+--- 25/fs/smbfs/symlink.c~SL4-smb-RC6-bk5	2004-05-19 20:51:04.410395648 -0700
++++ 25-akpm/fs/smbfs/symlink.c	2004-05-19 20:51:04.413395192 -0700
+@@ -26,19 +26,6 @@
+ #include "smb_debug.h"
+ #include "proto.h"
+ 
+-int smb_read_link(struct dentry *dentry, char *buffer, int len)
+-{
+-	char link[256];		/* FIXME: pain ... */
+-	int r;
+-	DEBUG1("read link buffer len = %d\n", len);
+-
+-	r = smb_proc_read_link(server_from_dentry(dentry), dentry, link,
+-			       sizeof(link) - 1);
+-	if (r < 0)
+-		return -ENOENT;
+-	return vfs_readlink(dentry, buffer, len, link);
+-}
+-
+ int smb_symlink(struct inode *inode, struct dentry *dentry, const char *oldname)
+ {
+ 	DEBUG1("create symlink %s -> %s/%s\n", oldname, DENTRY_PATH(dentry));
+@@ -46,24 +33,37 @@ int smb_symlink(struct inode *inode, str
+ 	return smb_proc_symlink(server_from_dentry(dentry), dentry, oldname);
+ }
+ 
+-int smb_follow_link(struct dentry *dentry, struct nameidata *nd)
++static int smb_follow_link(struct dentry *dentry, struct nameidata *nd)
+ {
+-	char link[256];		/* FIXME: pain ... */
+-	int len;
++	char *link = __getname();
+ 	DEBUG1("followlink of %s/%s\n", DENTRY_PATH(dentry));
+ 
+-	len = smb_proc_read_link(server_from_dentry(dentry), dentry, link,
+-				 sizeof(link) - 1);
+-	if(len < 0)
+-		return -ENOENT;
+-
+-	link[len] = 0;
+-	return vfs_follow_link(nd, link);
++	if (!link) {
++		link = ERR_PTR(-ENOMEM);
++	} else {
++		int len = smb_proc_read_link(server_from_dentry(dentry),
++						dentry, link, PATH_MAX - 1);
++		if (len < 0) {
++			kfree(link);
++			link = ERR_PTR(len);
++		} else {
++			link[len] = 0;
++		}
++	}
++	nd_set_link(nd, link);
++	return 0;
+ }
+ 
++static void smb_put_link(struct dentry *dentry, struct nameidata *nd)
++{
++	char *s = nd_get_link(nd);
++	if (!IS_ERR(s))
++		putname(s);
++}
+ 
+ struct inode_operations smb_link_inode_operations =
+ {
+-	.readlink	= smb_read_link,
++	.readlink	= generic_readlink,
+ 	.follow_link	= smb_follow_link,
++	.put_link	= smb_put_link,
+ };
+
+_

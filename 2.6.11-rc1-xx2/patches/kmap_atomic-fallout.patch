@@ -1,0 +1,206 @@
+
+
+Fix up various places which were assuming that kmap_atomic() and
+kunmap_atomic() use void*'s.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/aio.c          |   18 +++++++++---------
+ 25-akpm/fs/nfs/nfs2xdr.c  |    2 +-
+ 25-akpm/fs/nfs/nfs3xdr.c  |    2 +-
+ 25-akpm/fs/nfs/nfs4proc.c |    2 +-
+ 25-akpm/fs/nfs/nfs4xdr.c  |    4 ++--
+ 25-akpm/fs/ntfs/super.c   |    4 ++--
+ 25-akpm/mm/shmem.c        |    6 +++---
+ 7 files changed, 19 insertions(+), 19 deletions(-)
+
+diff -puN fs/aio.c~kmap_atomic-fallout fs/aio.c
+--- 25/fs/aio.c~kmap_atomic-fallout	2005-01-10 21:14:33.836431048 -0800
++++ 25-akpm/fs/aio.c	2005-01-10 21:14:33.849429072 -0800
+@@ -158,7 +158,7 @@ static int aio_setup_ring(struct kioctx 
+ 
+ 	info->nr = nr_events;		/* trusted copy */
+ 
+-	ring = kmap_atomic(info->ring_pages[0], KM_USER0);
++	ring = (void *)kmap_atomic(info->ring_pages[0], KM_USER0);
+ 	ring->nr = nr_events;	/* user copy */
+ 	ring->id = ctx->user_id;
+ 	ring->head = ring->tail = 0;
+@@ -166,7 +166,7 @@ static int aio_setup_ring(struct kioctx 
+ 	ring->compat_features = AIO_RING_COMPAT_FEATURES;
+ 	ring->incompat_features = AIO_RING_INCOMPAT_FEATURES;
+ 	ring->header_length = sizeof(struct aio_ring);
+-	kunmap_atomic(ring, KM_USER0);
++	kunmap_atomic((char *)ring, KM_USER0);
+ 
+ 	return 0;
+ }
+@@ -182,7 +182,7 @@ static int aio_setup_ring(struct kioctx 
+ #define aio_ring_event(info, nr, km) ({					\
+ 	unsigned pos = (nr) + AIO_EVENTS_OFFSET;			\
+ 	struct io_event *__event;					\
+-	__event = kmap_atomic(						\
++	__event = (void *)kmap_atomic(					\
+ 			(info)->ring_pages[pos / AIO_EVENTS_PER_PAGE], km); \
+ 	__event += pos % AIO_EVENTS_PER_PAGE;				\
+ 	__event;							\
+@@ -414,14 +414,14 @@ static struct kiocb fastcall *__aio_get_
+ 	 * accept an event from this io.
+ 	 */
+ 	spin_lock_irq(&ctx->ctx_lock);
+-	ring = kmap_atomic(ctx->ring_info.ring_pages[0], KM_USER0);
++	ring = (void *)kmap_atomic(ctx->ring_info.ring_pages[0], KM_USER0);
+ 	if (ctx->reqs_active < aio_ring_avail(&ctx->ring_info, ring)) {
+ 		list_add(&req->ki_list, &ctx->active_reqs);
+ 		get_ioctx(ctx);
+ 		ctx->reqs_active++;
+ 		okay = 1;
+ 	}
+-	kunmap_atomic(ring, KM_USER0);
++	kunmap_atomic((char *)ring, KM_USER0);
+ 	spin_unlock_irq(&ctx->ctx_lock);
+ 
+ 	if (!okay) {
+@@ -980,7 +980,7 @@ int fastcall aio_complete(struct kiocb *
+ 	if (kiocbIsCancelled(iocb))
+ 		goto put_rq;
+ 
+-	ring = kmap_atomic(info->ring_pages[0], KM_IRQ1);
++	ring = (void *)kmap_atomic(info->ring_pages[0], KM_IRQ1);
+ 
+ 	tail = info->tail;
+ 	event = aio_ring_event(info, tail, KM_IRQ0);
+@@ -1004,7 +1004,7 @@ int fastcall aio_complete(struct kiocb *
+ 	ring->tail = tail;
+ 
+ 	put_aio_ring_event(event, KM_IRQ0);
+-	kunmap_atomic(ring, KM_IRQ1);
++	kunmap_atomic((char *)ring, KM_IRQ1);
+ 
+ 	pr_debug("added to ring %p at [%lu]\n", iocb, tail);
+ 
+@@ -1040,7 +1040,7 @@ static int aio_read_evt(struct kioctx *i
+ 	unsigned long head;
+ 	int ret = 0;
+ 
+-	ring = kmap_atomic(info->ring_pages[0], KM_USER0);
++	ring = (void *)kmap_atomic(info->ring_pages[0], KM_USER0);
+ 	dprintk("in aio_read_evt h%lu t%lu m%lu\n",
+ 		 (unsigned long)ring->head, (unsigned long)ring->tail,
+ 		 (unsigned long)ring->nr);
+@@ -1063,7 +1063,7 @@ static int aio_read_evt(struct kioctx *i
+ 	spin_unlock(&info->ring_lock);
+ 
+ out:
+-	kunmap_atomic(ring, KM_USER0);
++	kunmap_atomic((char *)ring, KM_USER0);
+ 	dprintk("leaving aio_read_evt: %d  h%lu t%lu\n", ret,
+ 		 (unsigned long)ring->head, (unsigned long)ring->tail);
+ 	return ret;
+diff -puN mm/shmem.c~kmap_atomic-fallout mm/shmem.c
+--- 25/mm/shmem.c~kmap_atomic-fallout	2005-01-10 21:14:33.837430896 -0800
++++ 25-akpm/mm/shmem.c	2005-01-10 21:14:33.851428768 -0800
+@@ -108,7 +108,7 @@ static struct page **shmem_dir_map(struc
+ 
+ static inline void shmem_dir_unmap(struct page **dir)
+ {
+-	kunmap_atomic(dir, KM_USER0);
++	kunmap_atomic((char *)dir, KM_USER0);
+ }
+ 
+ static swp_entry_t *shmem_swp_map(struct page *page)
+@@ -125,12 +125,12 @@ static inline void shmem_swp_balance_unm
+ 	 * What kmap_atomic of a lowmem page does depends on config
+ 	 * and architecture, so pretend to kmap_atomic some lowmem page.
+ 	 */
+-	(void) kmap_atomic(ZERO_PAGE(0), KM_USER1);
++	kmap_atomic(ZERO_PAGE(0), KM_USER1);
+ }
+ 
+ static inline void shmem_swp_unmap(swp_entry_t *entry)
+ {
+-	kunmap_atomic(entry, KM_USER1);
++	kunmap_atomic((char *)entry, KM_USER1);
+ }
+ 
+ static inline struct shmem_sb_info *SHMEM_SB(struct super_block *sb)
+diff -puN fs/nfs/nfs2xdr.c~kmap_atomic-fallout fs/nfs/nfs2xdr.c
+--- 25/fs/nfs/nfs2xdr.c~kmap_atomic-fallout	2005-01-10 21:14:33.838430744 -0800
++++ 25-akpm/fs/nfs/nfs2xdr.c	2005-01-10 21:14:33.852428616 -0800
+@@ -440,7 +440,7 @@ nfs_xdr_readdirres(struct rpc_rqst *req,
+ 	if (!nr && (entry[0] != 0 || entry[1] == 0))
+ 		goto short_pkt;
+  out:
+-	kunmap_atomic(kaddr, KM_USER0);
++	kunmap_atomic((char *)kaddr, KM_USER0);
+ 	return nr;
+  short_pkt:
+ 	entry[0] = entry[1] = 0;
+diff -puN fs/nfs/nfs3xdr.c~kmap_atomic-fallout fs/nfs/nfs3xdr.c
+--- 25/fs/nfs/nfs3xdr.c~kmap_atomic-fallout	2005-01-10 21:14:33.840430440 -0800
++++ 25-akpm/fs/nfs/nfs3xdr.c	2005-01-10 21:14:33.853428464 -0800
+@@ -560,7 +560,7 @@ nfs3_xdr_readdirres(struct rpc_rqst *req
+ 	if (!nr && (entry[0] != 0 || entry[1] == 0))
+ 		goto short_pkt;
+  out:
+-	kunmap_atomic(kaddr, KM_USER0);
++	kunmap_atomic((char *)kaddr, KM_USER0);
+ 	return nr;
+  short_pkt:
+ 	entry[0] = entry[1] = 0;
+diff -puN fs/nfs/nfs4proc.c~kmap_atomic-fallout fs/nfs/nfs4proc.c
+--- 25/fs/nfs/nfs4proc.c~kmap_atomic-fallout	2005-01-10 21:14:33.842430136 -0800
++++ 25-akpm/fs/nfs/nfs4proc.c	2005-01-10 21:14:33.855428160 -0800
+@@ -167,7 +167,7 @@ static void nfs4_setup_readdir(u64 cooki
+ 
+ 	readdir->pgbase = (char *)p - (char *)start;
+ 	readdir->count -= readdir->pgbase;
+-	kunmap_atomic(start, KM_USER0);
++	kunmap_atomic((char *)start, KM_USER0);
+ }
+ 
+ static void
+diff -puN fs/nfs/nfs4xdr.c~kmap_atomic-fallout fs/nfs/nfs4xdr.c
+--- 25/fs/nfs/nfs4xdr.c~kmap_atomic-fallout	2005-01-10 21:14:33.843429984 -0800
++++ 25-akpm/fs/nfs/nfs4xdr.c	2005-01-10 21:14:33.857427856 -0800
+@@ -3034,7 +3034,7 @@ static int decode_readdir(struct xdr_str
+ 	if (!nr && (entry[0] != 0 || entry[1] == 0))
+ 		goto short_pkt;
+ out:	
+-	kunmap_atomic(kaddr, KM_USER0);
++	kunmap_atomic((char *)kaddr, KM_USER0);
+ 	return 0;
+ short_pkt:
+ 	entry[0] = entry[1] = 0;
+@@ -3045,7 +3045,7 @@ short_pkt:
+ 	}
+ 	goto out;
+ err_unmap:
+-	kunmap_atomic(kaddr, KM_USER0);
++	kunmap_atomic((char *)kaddr, KM_USER0);
+ 	return -errno_NFSERR_IO;
+ }
+ 
+diff -puN fs/ntfs/super.c~kmap_atomic-fallout fs/ntfs/super.c
+--- 25/fs/ntfs/super.c~kmap_atomic-fallout	2005-01-10 21:14:33.845429680 -0800
++++ 25-akpm/fs/ntfs/super.c	2005-01-10 21:14:33.860427400 -0800
+@@ -2012,7 +2012,7 @@ static s64 get_nr_free_clusters(ntfs_vol
+ 		 */
+ 	  	for (i = 0; i < PAGE_CACHE_SIZE / 4; i++)
+ 			nr_free -= (s64)hweight32(kaddr[i]);
+-		kunmap_atomic(kaddr, KM_USER0);
++		kunmap_atomic((char *)kaddr, KM_USER0);
+ 		page_cache_release(page);
+ 	}
+ 	ntfs_debug("Finished reading $Bitmap, last index = 0x%lx.", index - 1);
+@@ -2094,7 +2094,7 @@ static unsigned long __get_nr_free_mft_r
+ 		 */
+ 	  	for (i = 0; i < PAGE_CACHE_SIZE / 4; i++)
+ 			nr_free -= (s64)hweight32(kaddr[i]);
+-		kunmap_atomic(kaddr, KM_USER0);
++		kunmap_atomic((char *)kaddr, KM_USER0);
+ 		page_cache_release(page);
+ 	}
+ 	ntfs_debug("Finished reading $MFT/$BITMAP, last index = 0x%lx.",
+_

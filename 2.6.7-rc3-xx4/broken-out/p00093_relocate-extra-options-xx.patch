@@ -1,0 +1,607 @@
+---
+
+ linux-2.6.7-rc3-xx2-xiphux/arch/i386/Kconfig       |  272 ---------------------
+ linux-2.6.7-rc3-xx2-xiphux/arch/ia64/Kconfig       |    2 
+ linux-2.6.7-rc3-xx2-xiphux/arch/ppc/Kconfig        |    2 
+ linux-2.6.7-rc3-xx2-xiphux/arch/ppc64/Kconfig      |    1 
+ linux-2.6.7-rc3-xx2-xiphux/arch/x86_64/Kconfig     |    1 
+ linux-2.6.7-rc3-xx2-xiphux/kernel/Kconfig-extra.xx |  271 ++++++++++++++++++++
+ 6 files changed, 278 insertions(+), 271 deletions(-)
+
+diff -puN arch/i386/Kconfig~relocate-extra-options-xx arch/i386/Kconfig
+--- linux-2.6.7-rc3-xx2/arch/i386/Kconfig~relocate-extra-options-xx	2004-06-13 03:33:07.000000000 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/arch/i386/Kconfig	2004-06-13 03:35:15.942407256 -0400
+@@ -1734,50 +1734,6 @@ config X86_MPPARSE
+ 	depends on X86_LOCAL_APIC && !X86_VISWS
+ 	default y
+ 
+-choice
+-	prompt "Latency management"
+-	default LATENCY_NONE
+-	help
+-	  This will allow you to choose between different ways to improve
+-	  the latency of the kernel.  These options are, for the moment,
+-	  mutually exclusive.
+-
+-	  Nothing is selected by default.
+-
+-config LATENCY_NONE
+-	bool "None"
+-	help
+-	  With this option, the kernel will not be enhanced to be preemptible
+-	  nor low latency.  This is not recommended for a desktop system, and
+-	  should really only be used for troubleshooting.
+-
+-config PREEMPT
+-	bool "Preemptible Kernel"
+-	help
+-	  This option reduces the latency of the kernel when reacting to
+-	  real-time or interactive events by allowing a low priority process to
+-	  be preempted even if it is in kernel mode executing a system call.
+-	  This allows applications to run more reliably even when the system is
+-	  under load.
+-
+-	  Say Y here if you are building a kernel for a desktop, embedded
+-	  or real-time system.  Say N if you are unsure.  Low-latency
+-	  must be disabled.
+-
+-config LOW_LATENCY
+-	bool "Low-latency Kernel"
+-	depends on EXPERIMENTAL
+-	help
+-	  Activating the low-latency patch theoretically fixes 90% of
+-	  latency issues and supposedly outperforms preempt.  This
+-	  config option is only temporary, for testing.
+-
+-	  Say Y if you want to test the low latency calls instead of the
+-	  standard preempt.  Preempt must be disabled.  Say N if you
+-	  are unsure.
+-
+-endchoice
+-
+ endmenu
+ 
+ source "security/Kconfig"
+@@ -1811,230 +1767,4 @@ config PC
+ 	depends on X86 && !EMBEDDED
+ 	default y
+ 
+-menu "Extra options"
+-
+-choice
+-	prompt "Process scheduling policy"
+-	default SCHED_NONE
+-	depends on EXPERIMENTAL
+-	help
+-	  Different people have written alternate implementations of
+-	  the kernel's scheduler code.  Each implementation is different
+-	  and has its own pros and cons.  This will allow you to choose
+-	  between different scheduling policies.
+-
+-config SCHED_NONE
+-	bool "Default"
+-	help
+-	  This is the default scheduler as is included in the -mm kernels.
+-	  It contains the sched domains code by Nick Piggin and some tweaks
+-	  to the scheduling code, but no significant changes.
+-
+-config NICKSCHED
+-	bool "Nicksched"
+-	help
+-	  This is a scheduler written by Nick Piggin.  It is quite fast,
+-	  responsive, and does well under heavy loads.
+-
+-	  In this scheduler, the architecture is still pretty similar
+-	  to the original scheduler - there are still two priority
+-	  arrays, for example.  The differences are in how the bonuses
+-	  are given.
+-
+-	  In Nicksched, a task's priority and bonuses are based on its
+-	  "sleep time."  The scheduler keeps track of a task's history -
+-	  how long the task was running.  Each task is also assigned one
+-	  of three running modes: sleeping (not active), running (using
+-	  the CPU), and waiting (waiting for CPU time).  Tasks are given
+-	  priority bonuses based on these two factors.  This is a lot
+-	  simpler than the original interactivity/credit model, since
+-	  it mostly uses linear functions and bit shifts to keep
+-	  calculations simple and quick.  And with this method, it
+-	  is a lot easier to scale timeslices - for example, the
+-	  timeslice given is scaled against the priority of the other
+-	  tasks, so a lower priority process can still get larger
+-	  timeslices if there aren't higher priority processes using
+-	  the CPU.
+-
+-config SPA_STAIRCASE
+-	bool "Staircase-SPA hybrid"
+-	help
+-	  This is a hybrid scheduler.  It's an amalgamation of the
+-	  Staircase scheduler by Con Kolivas and the Single CPU
+-	  Priority Array (SPA) scheduler by Peter Williams.
+-
+-	  The two different schedulers had many similarities in their
+-	  architectures, and so were able to be merged to get the best
+-	  of both worlds.
+-
+-	  The SPA scheduler is an effort to simplify the workings of
+-	  the kernel scheduler.  In the original scheduler, tasks
+-	  switched back and forth between two arrays: an active array,
+-	  and an expired array.  A task that is using / will use its
+-	  timeslice is in the active array, and once it does, it
+-	  "expires" to the expired array.  There are many other factors
+-	  involved to determine a task's effective priority - interactivity,
+-	  credit, etc.  And there are special rules; for example, real-time
+-	  tasks never expire to the expired array, they just get requeued
+-	  in the active array.
+-	  In the SPA scheduler, however, there is only a single priority
+-	  array that all tasks remain in.  The task's position in the
+-	  list is adjusted with various "bonuses" - interactivity,
+-	  throughput, etc.  So, for example, a higher priority task will
+-	  be put closer to the front of the priority array, and so will
+-	  be run sooner.
+-
+-	  The staircase scheduler operates on a similar principle to the
+-	  SPA scheduler.  Like SPA, it has only one priority array that
+-	  tasks will remain in.  The difference is in how the "bonuses"
+-	  are calculated.  Every task starts with a certain "deadline,"
+-	  or "burst" as it's called in newer versions.  The deadline
+-	  is used to calculate how large a timeslice the task will get.
+-	  A task will be first activated with a relatively high deadline,
+-	  and therefore get large timeslices.  However, each time it uses
+-	  its timeslice and is requeued, its deadline is decreased.  So
+-	  on the next run, it will get a smaller timeslice than before.
+-	  And likewise, its timeslice will keep "stepping down" each
+-	  requeue - like a staircase.  And, of course, there are other
+-	  factors used in calculation.  For example, the actual timeslice
+-	  size is scaled according to priority.  Also, the task has a
+-	  maximum deadline based on its priority.  So a task with a certain
+-	  priority will only be able to go so high on the staircase.
+-	  Another task with a higher priority will also have a limit on the
+-	  staircase, but its best deadline will be higher than the other
+-	  task's.  Tasks will also regain deadline due to bonuses.
+-
+-config EBS
+-	bool "Entitlement Based Scheduling"
+-	help
+-	  The fundamental concept of entitlement based sharing is that
+-	  each task is entitled to a certain amount of CPU resources,
+-	  determined by the number of shares it holds.  The scheduler
+-	  will allocate CPU to tasks so that the rate at which they
+-	  receive CPU time is consistent with their entitlement.
+-	  Each task's priority is continually adjusted to achieve this.
+-	  Tasks' nice values are also automatically converted to an
+-	  appropriate number of shares.
+-
+-endchoice
+-
+-#
+-# CPU scheduling options
+-#
+-menu "EBS Scheduler Options"
+-	depends on EBS
+-
+-config SCHED_DYNAMIC_HALF_LIFE
+-	bool "Dynamic EBS scheduler response half life"
+-	default y
+-	---help---
+-	Dynamic CPU Scheduler Response Half Life
+-	  Saying yes here allows the CPU scheduler half life to be set dynamically on a
+-	  running system.
+-
+-config SCHED_DYNAMIC_TIME_SLICE
+-	bool "EBS scheduler dynamic time slice setting"
+-	default y
+-	---help---
+-	  CPU Scheduler Dynamic Time Slice Setting
+-	  Saying yes here will allow size the time slice received by tasks to be altered
+-	  dynamically on a running system
+-
+-config SCHED_STATS
+-	bool "EBS scheduler statistics"
+-	default y
+-	---help---
+-	  CPU Scheduler Statistics
+-	  If you say yes here you get per CPU and per task scheduler
+-	  statistics (including time spent on run queues).
+-
+-	  Per CPU statistics are displayed in the file /proc/cpustats. The
+-	  first line contains the total for all CPUs on the system in the
+-	  following format:
+-
+-	  cpu <user-ticks> <system-ticks> <idle-ticks> <runqueue-ticks>
+-	  <switches> @ <timestamp>
+-
+-	  and subsequent lines hold the same statistics for each individual
+-	  CPU minus the timestamp which is valid for the entire file.
+-
+-	  Per task statistics are displayed in the file /proc/<pid>/cpu. The
+-	  first line contains the totals (for all CPUs) for this task in the
+-	  following format:
+-
+-	  cpu <user-ticks> <system-ticks> <runqueue-ticks> <num-runs>
+-	  <sleep-ticks> @ <timestamp>
+-
+-	  and subsequent lines hold the same statistics for each individual
+-	  CPU minus sleep-ticks (which can't sensibly be attributed to any
+-	  CPU) and the timestamp which is valid for the whole file.
+-
+-endmenu
+-
+-menu "I/O Schedulers"
+-
+-source "drivers/block/Kconfig.iosched"
+-
+-endmenu
+-
+-choice
+-	prompt "I/O scheduling elevator frameworks"
+-	default ELV_SELECT
+-	depends on EXPERIMENTAL
+-	help
+-	  This will allow you to choose between various modifications to the
+-	  I/O scheduler code, most of which are incompatible with each other.
+-
+-	  At the moment, there are only two options: CFQ with ionice support,
+-	  and runtime selectable I/O schedulers.
+-
+-	  Runtime selectable I/O schedulers is selected by default.
+-
+-config IO_NONE
+-	bool "None"
+-	help
+-	  With this option, none of the extensions to the IO schedulers
+-	  will be added.  Your system will have the default Anticipatory,
+-	  Deadline, Noop, and CFQ elevators (if enabled).  Your CFQ
+-	  elevator will be the default CFQ elevator.
+-
+-config CFQIONICE
+-	bool "CFQ with IOnice support"
+-	depends on IOSCHED_CFQ
+-	help
+-	  This will extend the CFQ IO scheduler to support IOnicing.
+-	  Processes can be given a priority, and higher priority tasks
+-	  will be favored with more disk time.
+-	  (Much like the process scheduler)
+-
+-	  Please note that this is still experimental.  Also, enabling
+-	  this will, for some reason, break the other IO schedulers.
+-	  You will only be able to use this scheduler.
+-
+-config ELV_SELECT
+-	bool "Runtime selectable I/O schedulers"
+-	depends on (IOSCHED_AS && IOSCHED_CFQ)
+-	help
+-	  This will enable runtime selectable I/O schedulers.
+-	  I/O schedulers can be changed at any time by echoing a
+-	  string to /sys/block/*/queue/io_scheduler.  Schedulers
+-	  can also be assigned on a per-device basis.
+-
+-	  Please note that this is still experimental.  This patch
+-	  also has known issues with usb-storage devices.  It is
+-	  also incompatible with the IOnice CFQ scheduler.
+-
+-endchoice
+-
+-config SILENT_BOOT
+-	bool "Silent boot"
+-	default n
+-	help
+-	  This will hide many of the boot messages to make the system
+-	  startup look cleaner with less junk.  Note that even if you
+-	  choose to hide these messages, you can still view them by
+-	  booting the kernel in debug mode.
+-
+-	  If unsure, say N.
+-
+-endmenu
++source "kernel/Kconfig-extra.xx"
+diff -puN /dev/null kernel/Kconfig-extra.xx
+--- /dev/null	2004-05-31 17:36:38.000000000 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/kernel/Kconfig-extra.xx	2004-06-13 03:33:07.053001424 -0400
+@@ -0,0 +1,271 @@
++menu "Extra options"
++
++choice
++	prompt "Process scheduling policy"
++	default SCHED_NONE
++	depends on EXPERIMENTAL
++	help
++	  Different people have written alternate implementations of
++	  the kernel's scheduler code.  Each implementation is different
++	  and has its own pros and cons.  This will allow you to choose
++	  between different scheduling policies.
++
++config SCHED_NONE
++	bool "Default"
++	help
++	  This is the default scheduler as is included in the -mm kernels.
++	  It contains the sched domains code by Nick Piggin and some tweaks
++	  to the scheduling code, but no significant changes.
++
++config NICKSCHED
++	bool "Nicksched"
++	help
++	  This is a scheduler written by Nick Piggin.  It is quite fast,
++	  responsive, and does well under heavy loads.
++
++	  In this scheduler, the architecture is still pretty similar
++	  to the original scheduler - there are still two priority
++	  arrays, for example.  The differences are in how the bonuses
++	  are given.
++
++	  In Nicksched, a task's priority and bonuses are based on its
++	  "sleep time."  The scheduler keeps track of a task's history -
++	  how long the task was running.  Each task is also assigned one
++	  of three running modes: sleeping (not active), running (using
++	  the CPU), and waiting (waiting for CPU time).  Tasks are given
++	  priority bonuses based on these two factors.  This is a lot
++	  simpler than the original interactivity/credit model, since
++	  it mostly uses linear functions and bit shifts to keep
++	  calculations simple and quick.  And with this method, it
++	  is a lot easier to scale timeslices - for example, the
++	  timeslice given is scaled against the priority of the other
++	  tasks, so a lower priority process can still get larger
++	  timeslices if there aren't higher priority processes using
++	  the CPU.
++
++config SPA_STAIRCASE
++	bool "Staircase-SPA hybrid"
++	help
++	  This is a hybrid scheduler.  It's an amalgamation of the
++	  Staircase scheduler by Con Kolivas and the Single CPU
++	  Priority Array (SPA) scheduler by Peter Williams.
++
++	  The two different schedulers had many similarities in their
++	  architectures, and so were able to be merged to get the best
++	  of both worlds.
++
++	  The SPA scheduler is an effort to simplify the workings of
++	  the kernel scheduler.  In the original scheduler, tasks
++	  switched back and forth between two arrays: an active array,
++	  and an expired array.  A task that is using / will use its
++	  timeslice is in the active array, and once it does, it
++	  "expires" to the expired array.  There are many other factors
++	  involved to determine a task's effective priority - interactivity,
++	  credit, etc.  And there are special rules; for example, real-time
++	  tasks never expire to the expired array, they just get requeued
++	  in the active array.
++	  In the SPA scheduler, however, there is only a single priority
++	  array that all tasks remain in.  The task's position in the
++	  list is adjusted with various "bonuses" - interactivity,
++	  throughput, etc.  So, for example, a higher priority task will
++	  be put closer to the front of the priority array, and so will
++	  be run sooner.
++
++	  The staircase scheduler operates on a similar principle to the
++	  SPA scheduler.  Like SPA, it has only one priority array that
++	  tasks will remain in.  The difference is in how the "bonuses"
++	  are calculated.  Every task starts with a certain "deadline,"
++	  or "burst" as it's called in newer versions.  The deadline
++	  is used to calculate how large a timeslice the task will get.
++	  A task will be first activated with a relatively high deadline,
++	  and therefore get large timeslices.  However, each time it uses
++	  its timeslice and is requeued, its deadline is decreased.  So
++	  on the next run, it will get a smaller timeslice than before.
++	  And likewise, its timeslice will keep "stepping down" each
++	  requeue - like a staircase.  And, of course, there are other
++	  factors used in calculation.  For example, the actual timeslice
++	  size is scaled according to priority.  Also, the task has a
++	  maximum deadline based on its priority.  So a task with a certain
++	  priority will only be able to go so high on the staircase.
++	  Another task with a higher priority will also have a limit on the
++	  staircase, but its best deadline will be higher than the other
++	  task's.  Tasks will also regain deadline due to bonuses.
++
++config EBS
++	bool "Entitlement Based Scheduling"
++	help
++	  The fundamental concept of entitlement based sharing is that
++	  each task is entitled to a certain amount of CPU resources,
++	  determined by the number of shares it holds.  The scheduler
++	  will allocate CPU to tasks so that the rate at which they
++	  receive CPU time is consistent with their entitlement.
++	  Each task's priority is continually adjusted to achieve this.
++	  Tasks' nice values are also automatically converted to an
++	  appropriate number of shares.
++
++endchoice
++
++#
++# CPU scheduling options
++#
++menu "EBS Scheduler Options"
++	depends on EBS
++
++config SCHED_DYNAMIC_HALF_LIFE
++	bool "Dynamic EBS scheduler response half life"
++	default y
++	---help---
++	Dynamic CPU Scheduler Response Half Life
++	  Saying yes here allows the CPU scheduler half life to be set dynamically on a
++	  running system.
++
++config SCHED_DYNAMIC_TIME_SLICE
++	bool "EBS scheduler dynamic time slice setting"
++	default y
++	---help---
++	  CPU Scheduler Dynamic Time Slice Setting
++	  Saying yes here will allow size the time slice received by tasks to be altered
++	  dynamically on a running system
++
++config SCHED_STATS
++	bool "EBS scheduler statistics"
++	default y
++	---help---
++	  CPU Scheduler Statistics
++	  If you say yes here you get per CPU and per task scheduler
++	  statistics (including time spent on run queues).
++
++	  Per CPU statistics are displayed in the file /proc/cpustats. The
++	  first line contains the total for all CPUs on the system in the
++	  following format:
++
++	  cpu <user-ticks> <system-ticks> <idle-ticks> <runqueue-ticks>
++	  <switches> @ <timestamp>
++
++	  and subsequent lines hold the same statistics for each individual
++	  CPU minus the timestamp which is valid for the entire file.
++
++	  Per task statistics are displayed in the file /proc/<pid>/cpu. The
++	  first line contains the totals (for all CPUs) for this task in the
++	  following format:
++
++	  cpu <user-ticks> <system-ticks> <runqueue-ticks> <num-runs>
++	  <sleep-ticks> @ <timestamp>
++
++	  and subsequent lines hold the same statistics for each individual
++	  CPU minus sleep-ticks (which can't sensibly be attributed to any
++	  CPU) and the timestamp which is valid for the whole file.
++
++endmenu
++
++menu "I/O Schedulers"
++
++source "drivers/block/Kconfig.iosched"
++
++endmenu
++
++choice
++	prompt "I/O scheduling elevator frameworks"
++	default ELV_SELECT
++	depends on EXPERIMENTAL
++	help
++	  This will allow you to choose between various modifications to the
++	  I/O scheduler code, most of which are incompatible with each other.
++
++	  At the moment, there are only two options: CFQ with ionice support,
++	  and runtime selectable I/O schedulers.
++
++	  Runtime selectable I/O schedulers is selected by default.
++
++config IO_NONE
++	bool "None"
++	help
++	  With this option, none of the extensions to the IO schedulers
++	  will be added.  Your system will have the default Anticipatory,
++	  Deadline, Noop, and CFQ elevators (if enabled).  Your CFQ
++	  elevator will be the default CFQ elevator.
++
++config CFQIONICE
++	bool "CFQ with IOnice support"
++	depends on IOSCHED_CFQ
++	help
++	  This will extend the CFQ IO scheduler to support IOnicing.
++	  Processes can be given a priority, and higher priority tasks
++	  will be favored with more disk time.
++	  (Much like the process scheduler)
++
++	  Please note that this is still experimental.  Also, enabling
++	  this will, for some reason, break the other IO schedulers.
++	  You will only be able to use this scheduler.
++
++config ELV_SELECT
++	bool "Runtime selectable I/O schedulers"
++	depends on (IOSCHED_AS && IOSCHED_CFQ)
++	help
++	  This will enable runtime selectable I/O schedulers.
++	  I/O schedulers can be changed at any time by echoing a
++	  string to /sys/block/*/queue/io_scheduler.  Schedulers
++	  can also be assigned on a per-device basis.
++
++	  Please note that this is still experimental.  This patch
++	  also has known issues with usb-storage devices.  It is
++	  also incompatible with the IOnice CFQ scheduler.
++
++endchoice
++
++choice
++	prompt "Latency management"
++	default LATENCY_NONE
++	help
++	  This will allow you to choose between different ways to improve
++	  the latency of the kernel.  These options are, for the moment,
++	  mutually exclusive.
++
++	  Nothing is selected by default.
++
++config LATENCY_NONE
++	bool "None"
++	help
++	  With this option, the kernel will not be enhanced to be preemptible
++	  nor low latency.  This is not recommended for a desktop system, and
++	  should really only be used for troubleshooting.
++
++config PREEMPT
++	bool "Preemptible Kernel"
++	help
++	  This option reduces the latency of the kernel when reacting to
++	  real-time or interactive events by allowing a low priority process to
++	  be preempted even if it is in kernel mode executing a system call.
++	  This allows applications to run more reliably even when the system is
++	  under load.
++
++	  Say Y here if you are building a kernel for a desktop, embedded
++	  or real-time system.  Say N if you are unsure.  Low-latency
++	  must be disabled.
++
++config LOW_LATENCY
++	bool "Low-latency Kernel"
++	depends on EXPERIMENTAL
++	help
++	  Activating the low-latency patch theoretically fixes 90% of
++	  latency issues and supposedly outperforms preempt.  This
++	  config option is only temporary, for testing.
++
++	  Say Y if you want to test the low latency calls instead of the
++	  standard preempt.  Preempt must be disabled.  Say N if you
++	  are unsure.
++
++endchoice
++
++config SILENT_BOOT
++	bool "Silent boot"
++	default n
++	help
++	  This will hide many of the boot messages to make the system
++	  startup look cleaner with less junk.  Note that even if you
++	  choose to hide these messages, you can still view them by
++	  booting the kernel in debug mode.
++
++	  If unsure, say N.
++
++endmenu
+diff -puN arch/ia64/Kconfig~relocate-extra-options-xx arch/ia64/Kconfig
+--- linux-2.6.7-rc3-xx2/arch/ia64/Kconfig~relocate-extra-options-xx	2004-06-13 03:33:07.000000000 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/arch/ia64/Kconfig	2004-06-13 03:33:07.000000000 -0400
+@@ -701,3 +701,5 @@ endmenu
+ source "security/Kconfig"
+ 
+ source "crypto/Kconfig"
++
++source "kernel/Kconfig-extra.xx"
+diff -puN arch/ppc/Kconfig~relocate-extra-options-xx arch/ppc/Kconfig
+--- linux-2.6.7-rc3-xx2/arch/ppc/Kconfig~relocate-extra-options-xx	2004-06-13 03:33:07.000000000 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/arch/ppc/Kconfig	2004-06-13 03:33:07.000000000 -0400
+@@ -1370,3 +1370,5 @@ endmenu
+ source "security/Kconfig"
+ 
+ source "crypto/Kconfig"
++
++source "kernel/Kconfig-extra.xx"
+diff -puN arch/ppc64/Kconfig~relocate-extra-options-xx arch/ppc64/Kconfig
+--- linux-2.6.7-rc3-xx2/arch/ppc64/Kconfig~relocate-extra-options-xx	2004-06-13 03:33:07.000000000 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/arch/ppc64/Kconfig	2004-06-13 03:33:07.000000000 -0400
+@@ -456,3 +456,4 @@ source "crypto/Kconfig"
+ 
+ source "lib/Kconfig"
+ 
++source "kernel/Kconfig-extra.xx"
+diff -puN arch/x86_64/Kconfig~relocate-extra-options-xx arch/x86_64/Kconfig
+--- linux-2.6.7-rc3-xx2/arch/x86_64/Kconfig~relocate-extra-options-xx	2004-06-13 03:33:07.000000000 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/arch/x86_64/Kconfig	2004-06-13 03:33:07.000000000 -0400
+@@ -561,3 +561,4 @@ source "crypto/Kconfig"
+ 
+ source "lib/Kconfig"
+ 
++source "kernel/Kconfig-extra.xx"
+
+_

@@ -1,0 +1,34 @@
+
+From: Keith Owens <kaos@sgi.com>
+
+Exclude symbols added by kallsyms itself, so .tmp_kallsyms[12].S have
+the same list of symbols.
+
+Signed-off-by: Keith Owens <kaos@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/scripts/kallsyms.c |   10 +++++++++-
+ 1 files changed, 9 insertions(+), 1 deletion(-)
+
+diff -puN scripts/kallsyms.c~kallsyms-exclude scripts/kallsyms.c
+--- 25/scripts/kallsyms.c~kallsyms-exclude	2004-06-20 16:50:43.787486208 -0700
++++ 25-akpm/scripts/kallsyms.c	2004-06-20 16:50:43.791485600 -0700
+@@ -72,7 +72,15 @@ symbol_valid(struct sym_entry *s)
+ 			return 0;
+ 	}
+ 
+-	if (strstr(s->sym, "_compiled."))
++	/* Exclude symbols which vary between passes.  Passes 1 and 2 must have
++	 * identical symbol lists.  The kallsyms_* symbols below are only added
++	 * after pass 1, they would be included in pass 2 when --all-symbols is
++	 * specified so exclude them to get a stable symbol list.
++	 */
++	if (strstr(s->sym, "_compiled.") ||
++	    strcmp(s->sym, "kallsyms_addresses") == 0 ||
++	    strcmp(s->sym, "kallsyms_num_syms") == 0 ||
++	    strcmp(s->sym, "kallsyms_names") == 0)
+ 		return 0;
+ 
+ 	return 1;
+_

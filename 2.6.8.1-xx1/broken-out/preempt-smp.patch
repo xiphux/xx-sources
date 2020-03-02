@@ -1,0 +1,274 @@
+Index: linux-2.6.7/fs/inode.c
+===================================================================
+--- linux-2.6.7.orig/fs/inode.c	2004-08-11 16:49:47.790753056 -0400
++++ linux-2.6.7/fs/inode.c	2004-08-11 16:50:01.658644816 -0400
+@@ -302,7 +302,7 @@
+ /*
+  * Invalidate all inodes for a device.
+  */
+-static int invalidate_list(struct list_head *head, struct list_head *dispose)
++static int invalidate_list(struct list_head *head, struct list_head *dispose, struct list_head *mark)
+ {
+ 	struct list_head *next;
+ 	int busy = 0, count = 0;
+@@ -312,6 +312,21 @@
+ 		struct list_head * tmp = next;
+ 		struct inode * inode;
+ 
++		/*
++		 * Preempt if necessary. To make this safe we use a dummy
++		 * inode as a marker - we can continue off that point.
++		 * We rely on this sb's inodes (including the marker) not
++		 * getting reordered within the list during umount. Other
++		 * inodes might get reordered.
++		 */
++		if (need_resched_lock()) {
++			list_add_tail(mark, next);
++			spin_unlock(&inode_lock);
++			cond_resched();
++			spin_lock(&inode_lock);
++			tmp = next = mark->next;
++			list_del(mark);
++		}
+ 		next = next->next;
+ 		if (tmp == head)
+ 			break;
+@@ -352,15 +367,21 @@
+ {
+ 	int busy;
+ 	LIST_HEAD(throw_away);
++	struct inode *marker;
++
++	marker = kmalloc(sizeof(*marker), GFP_KERNEL|__GFP_REPEAT);
++	memset(marker, 0, sizeof(*marker));
+ 
+ 	down(&iprune_sem);
+ 	spin_lock(&inode_lock);
+-	busy = invalidate_list(&sb->s_inodes, &throw_away);
++	busy = invalidate_list(&sb->s_inodes, &throw_away, &marker->i_list);
+ 	spin_unlock(&inode_lock);
+ 
+ 	dispose_list(&throw_away);
+ 	up(&iprune_sem);
+ 
++	kfree(marker);
++
+ 	return busy;
+ }
+ 
+@@ -431,6 +452,8 @@
+ 	for (nr_scanned = 0; nr_scanned < nr_to_scan; nr_scanned++) {
+ 		struct inode *inode;
+ 
++		cond_resched_lock(&inode_lock);
++
+ 		if (list_empty(&inode_unused))
+ 			break;
+ 
+Index: linux-2.6.7/fs/jbd/checkpoint.c
+===================================================================
+--- linux-2.6.7.orig/fs/jbd/checkpoint.c	2004-08-11 16:49:47.788753360 -0400
++++ linux-2.6.7/fs/jbd/checkpoint.c	2004-08-11 16:50:01.659644664 -0400
+@@ -504,7 +504,7 @@
+ 		 * We don't test cond_resched() here because another CPU could
+ 		 * be waiting on j_list_lock() while holding a different lock.
+ 		 */
+-		if (journal->j_checkpoint_transactions && (ret & 127) == 127) {
++		if (journal->j_checkpoint_transactions && need_resched_lock()) {
+ 			/*
+ 			 * We need to schedule away.  Rotate both this
+ 			 * transaction's buffer list and the checkpoint list to
+Index: linux-2.6.7/fs/jbd/commit.c
+===================================================================
+--- linux-2.6.7.orig/fs/jbd/commit.c	2004-08-11 16:49:47.787753512 -0400
++++ linux-2.6.7/fs/jbd/commit.c	2004-08-11 16:50:01.661644360 -0400
+@@ -271,9 +271,8 @@
+ 						BJ_Locked);
+ 			jbd_unlock_bh_state(bh);
+ 			nr_buffers++;
+-			if ((nr_buffers & 15) == 0 || need_resched()) {
++			if (cond_resched_lock(&journal->j_list_lock)) {
+ 				spin_unlock(&journal->j_list_lock);
+-				cpu_relax();
+ 				goto write_out_data;
+ 			}
+ 		} else {
+@@ -299,9 +298,8 @@
+ 				journal_remove_journal_head(bh);
+ 				put_bh(bh);
+ 				nr_buffers++;
+-				if ((nr_buffers & 15) == 0 || need_resched()) {
++				if (cond_resched_lock(&journal->j_list_lock)) {
+ 					spin_unlock(&journal->j_list_lock);
+-					cpu_relax();
+ 					goto write_out_data;
+ 				}
+ 			}
+@@ -346,11 +344,7 @@
+ 		}
+ 		put_bh(bh);
+ 		nr_buffers++;
+-		if ((nr_buffers & 15) == 0 || need_resched()) {
+-			spin_unlock(&journal->j_list_lock);
+-			cond_resched();
+-			spin_lock(&journal->j_list_lock);
+-		}
++		cond_resched_lock(&journal->j_list_lock);
+ 	}
+ 	spin_unlock(&journal->j_list_lock);
+ 
+Index: linux-2.6.7/include/linux/sched.h
+===================================================================
+--- linux-2.6.7.orig/include/linux/sched.h	2004-08-11 16:49:47.798751840 -0400
++++ linux-2.6.7/include/linux/sched.h	2004-08-11 16:50:01.665643752 -0400
+@@ -1033,12 +1033,7 @@
+ 	return unlikely(test_thread_flag(TIF_NEED_RESCHED));
+ }
+ 
+-extern void __cond_resched(void);
+-static inline void cond_resched(void)
+-{
+-	if (need_resched())
+-		__cond_resched();
+-}
++extern void cond_resched(void);
+ 
+ /*
+  * cond_resched_lock() - if a reschedule is pending, drop the given lock,
+@@ -1048,15 +1043,8 @@
+  * operations here to prevent schedule() from being called twice (once via
+  * spin_unlock(), once by hand).
+  */
+-static inline void cond_resched_lock(spinlock_t * lock)
+-{
+-	if (need_resched()) {
+-		_raw_spin_unlock(lock);
+-		preempt_enable_no_resched();
+-		__cond_resched();
+-		spin_lock(lock);
+-	}
+-}
++extern int cond_resched_lock(spinlock_t *lock);
++extern int need_resched_lock(void);
+ 
+ /* Reevaluate whether the task has signals pending delivery.
+    This is required every time the blocked sigset_t changes.
+Index: linux-2.6.7/kernel/sched.c
+===================================================================
+--- linux-2.6.7.orig/kernel/sched.c	2004-08-11 16:49:47.796752144 -0400
++++ linux-2.6.7/kernel/sched.c	2004-08-11 16:50:01.673642536 -0400
+@@ -5198,13 +5198,64 @@
+ 	return 0;
+ }
+ 
+-void __sched __cond_resched(void)
++void __sched cond_resched(void)
+ {
+-	set_current_state(TASK_RUNNING);
+-	schedule();
++	if (need_resched()) {
++		set_current_state(TASK_RUNNING);
++		schedule();
++	}
+ }
+ 
+-EXPORT_SYMBOL(__cond_resched);
++EXPORT_SYMBOL(cond_resched);
++
++/*
++ * break out of a lock if preemption is necessary.
++ *
++ * cond_resched_lock() is also used to ensure spinlock fairness
++ * on SMP, we break out of the lock every now and then, to handle
++ * the possibility of another CPU waiting for us:
++ */
++#ifdef CONFIG_SMP
++static DEFINE_PER_CPU(unsigned long, preempt_check_count);
++#endif
++
++int __sched cond_resched_lock(spinlock_t * lock)
++{
++	if (need_resched()) {
++		_raw_spin_unlock(lock);
++		preempt_enable_no_resched();
++		set_current_state(TASK_RUNNING);
++		schedule();
++		spin_lock(lock);
++		return 1;
++	}
++#ifdef CONFIG_SMP
++	if (!(__get_cpu_var(preempt_check_count)++ & 63)) {
++		spin_unlock(lock);
++		cpu_relax();
++		spin_lock(lock);
++		return 1;
++	}
++#endif
++	return 0;
++}
++
++EXPORT_SYMBOL(cond_resched_lock);
++
++int __sched need_resched_lock(void)
++{
++	if (need_resched())
++		return 1;
++#ifdef CONFIG_SMP
++	if (!(__get_cpu_var(preempt_check_count)++ & 63))
++		return 1;
++#endif
++	return 0;
++}
++
++EXPORT_SYMBOL(need_resched_lock);
++
++
+ 
+ /**
+  * yield - yield the current processor to other threads.
+Index: linux-2.6.7/mm/memory.c
+===================================================================
+--- linux-2.6.7.orig/mm/memory.c	2004-08-11 16:49:47.792752752 -0400
++++ linux-2.6.7/mm/memory.c	2004-08-11 16:50:01.678641776 -0400
+@@ -710,7 +710,6 @@
+ 	int i;
+ 	int vm_io;
+ 	unsigned int flags;
+-	int nr_pages = 0;
+ 
+ 	/* 
+ 	 * Require read or write permissions.
+@@ -774,12 +773,7 @@
+ 			struct page *map = NULL;
+ 			int lookup_write = write;
+ 
+-			if ((++nr_pages & 63) == 0) {
+-				spin_unlock(&mm->page_table_lock);
+-				cpu_relax();
+-				spin_lock(&mm->page_table_lock);
+-			}
+-
++			cond_resched_lock(&mm->page_table_lock);
+ 			/*
+ 			 * We don't follow pagetables for VM_IO regions - they
+ 			 * may have no pageframes.
+Index: linux-2.6.7/net/ipv4/tcp_minisocks.c
+===================================================================
+--- linux-2.6.7.orig/net/ipv4/tcp_minisocks.c	2004-08-11 16:49:47.793752600 -0400
++++ linux-2.6.7/net/ipv4/tcp_minisocks.c	2004-08-11 16:50:01.681641320 -0400
+@@ -511,13 +511,8 @@
+ 			if (!(twkill_thread_slots & (1 << i)))
+ 				continue;
+ 
+-			while (tcp_do_twkill_work(i, TCP_TWKILL_QUOTA) != 0) {
+-				if (need_resched()) {
+-					spin_unlock_bh(&tw_death_lock);
+-					schedule();
+-					spin_lock_bh(&tw_death_lock);
+-				}
+-			}
++			while (tcp_do_twkill_work(i, TCP_TWKILL_QUOTA) != 0)
++				cond_resched_lock(&tw_death_lock);
+ 
+ 			twkill_thread_slots &= ~(1 << i);
+ 		}

@@ -1,0 +1,574 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+Server-side support for the limited portion of the NFSv4 ACL protocol necessary
+to support POSIX ACLs.  Will return an error on an attempt to set any ACL that
+doesn't map to a POSIX ACL.
+
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/nfsd/nfs4proc.c        |   17 ++-
+ 25-akpm/fs/nfsd/nfs4xdr.c         |  120 +++++++++++++++++++++++--
+ 25-akpm/fs/nfsd/vfs.c             |  181 ++++++++++++++++++++++++++++++++++++++
+ 25-akpm/include/linux/nfsd/nfsd.h |   11 +-
+ 25-akpm/include/linux/nfsd/xdr4.h |    6 +
+ 5 files changed, 318 insertions(+), 17 deletions(-)
+
+diff -puN fs/nfsd/nfs4proc.c~nfsd-acl-support-for-the-nfsv4-server fs/nfsd/nfs4proc.c
+--- 25/fs/nfsd/nfs4proc.c~nfsd-acl-support-for-the-nfsv4-server	2004-08-01 21:10:13.097894264 -0700
++++ 25-akpm/fs/nfsd/nfs4proc.c	2004-08-01 21:10:13.138888032 -0700
+@@ -52,6 +52,7 @@
+ #include <linux/nfs4.h>
+ #include <linux/nfsd/state.h>
+ #include <linux/nfsd/xdr4.h>
++#include <linux/nfs4_acl.h>
+ 
+ #define NFSDDBG_FACILITY		NFSDDBG_PROC
+ 
+@@ -620,7 +621,7 @@ nfsd4_setattr(struct svc_rqst *rqstp, st
+ 		status = nfserr_bad_stateid;
+ 		if (ZERO_STATEID(&setattr->sa_stateid) || ONE_STATEID(&setattr->sa_stateid)) {
+ 			dprintk("NFSD: nfsd4_setattr: magic stateid!\n");
+-			return status;
++			goto out;
+ 		}
+ 
+ 		nfs4_lock_state();
+@@ -628,17 +629,25 @@ nfsd4_setattr(struct svc_rqst *rqstp, st
+ 						&setattr->sa_stateid, 
+ 						CHECK_FH | RDWR_STATE, &stp))) {
+ 			dprintk("NFSD: nfsd4_setattr: couldn't process stateid!\n");
+-			goto out;
++			goto out_unlock;
+ 		}
+ 		status = nfserr_openmode;
+ 		if (!access_bits_permit_write(stp->st_access_bmap)) {
+ 			dprintk("NFSD: nfsd4_setattr: not opened for write!\n");
+-			goto out;
++			goto out_unlock;
+ 		}
+ 		nfs4_unlock_state();
+ 	}
+-	return (nfsd_setattr(rqstp, current_fh, &setattr->sa_iattr, 0, (time_t)0));
++	status = nfs_ok;
++	if (setattr->sa_acl != NULL)
++		status = nfsd4_set_nfs4_acl(rqstp, current_fh, setattr->sa_acl);
++	if (status)
++		goto out;
++	status = nfsd_setattr(rqstp, current_fh, &setattr->sa_iattr,
++				0, (time_t)0);
+ out:
++	return status;
++out_unlock:
+ 	nfs4_unlock_state();
+ 	return status;
+ }
+diff -puN fs/nfsd/nfs4xdr.c~nfsd-acl-support-for-the-nfsv4-server fs/nfsd/nfs4xdr.c
+--- 25/fs/nfsd/nfs4xdr.c~nfsd-acl-support-for-the-nfsv4-server	2004-08-01 21:10:13.106892896 -0700
++++ 25-akpm/fs/nfsd/nfs4xdr.c	2004-08-01 21:10:13.140887728 -0700
+@@ -55,6 +55,8 @@
+ #include <linux/nfsd/state.h>
+ #include <linux/nfsd/xdr4.h>
+ #include <linux/nfsd_idmap.h>
++#include <linux/nfs4.h>
++#include <linux/nfs4_acl.h>
+ 
+ #define NFSDDBG_FACILITY		NFSDDBG_XDR
+ 
+@@ -348,7 +350,8 @@ nfsd4_decode_bitmap(struct nfsd4_compoun
+ }
+ 
+ static int
+-nfsd4_decode_fattr(struct nfsd4_compoundargs *argp, u32 *bmval, struct iattr *iattr)
++nfsd4_decode_fattr(struct nfsd4_compoundargs *argp, u32 *bmval, struct iattr *iattr,
++    struct nfs4_acl **acl)
+ {
+ 	int expected_len, len = 0;
+ 	u32 dummy32;
+@@ -377,6 +380,51 @@ nfsd4_decode_fattr(struct nfsd4_compound
+ 		READ64(iattr->ia_size);
+ 		iattr->ia_valid |= ATTR_SIZE;
+ 	}
++	if (bmval[0] & FATTR4_WORD0_ACL) {
++		int nace, i;
++		struct nfs4_ace ace;
++
++		READ_BUF(4); len += 4;
++		READ32(nace);
++
++		*acl = nfs4_acl_new();
++		if (*acl == NULL) {
++			status = -ENOMEM;
++			goto out_nfserr;
++		}
++		defer_free(argp, (void (*)(const void *))nfs4_acl_free, *acl);
++
++		for (i = 0; i < nace; i++) {
++			READ_BUF(16); len += 16;
++			READ32(ace.type);
++			READ32(ace.flag);
++			READ32(ace.access_mask);
++			READ32(dummy32);
++			READ_BUF(dummy32);
++			len += XDR_QUADLEN(dummy32) << 2;
++			READMEM(buf, dummy32);
++			if (check_utf8(buf, dummy32))
++				return nfserr_inval;
++			ace.whotype = nfs4_acl_get_whotype(buf, dummy32);
++			status = 0;
++			if (ace.whotype != NFS4_ACL_WHO_NAMED)
++				ace.who = 0;
++			else if (ace.flag & NFS4_ACE_IDENTIFIER_GROUP)
++				status = nfsd_map_name_to_gid(argp->rqstp,
++						buf, dummy32, &ace.who);
++			else
++				status = nfsd_map_name_to_uid(argp->rqstp,
++						buf, dummy32, &ace.who);
++			if (status)
++				goto out_nfserr;
++			if (nfs4_acl_add_ace(*acl, ace.type, ace.flag,
++				 ace.access_mask, ace.whotype, ace.who) != 0) {
++				status = -ENOMEM;
++				goto out_nfserr;
++			}
++		}
++	} else
++		*acl = NULL;
+ 	if (bmval[1] & FATTR4_WORD1_MODE) {
+ 		READ_BUF(4);
+ 		len += 4;
+@@ -562,7 +610,7 @@ nfsd4_decode_create(struct nfsd4_compoun
+ 	if ((status = check_filename(create->cr_name, create->cr_namelen, nfserr_inval)))
+ 		return status;
+ 
+-	if ((status = nfsd4_decode_fattr(argp, create->cr_bmval, &create->cr_iattr)))
++	if ((status = nfsd4_decode_fattr(argp, create->cr_bmval, &create->cr_iattr, &create->cr_acl)))
+ 		goto out;
+ 
+ 	DECODE_TAIL;
+@@ -711,7 +759,7 @@ nfsd4_decode_open(struct nfsd4_compounda
+ 		switch (open->op_createmode) {
+ 		case NFS4_CREATE_UNCHECKED:
+ 		case NFS4_CREATE_GUARDED:
+-			if ((status = nfsd4_decode_fattr(argp, open->op_bmval, &open->op_iattr)))
++			if ((status = nfsd4_decode_fattr(argp, open->op_bmval, &open->op_iattr, &open->op_acl)))
+ 				goto out;
+ 			break;
+ 		case NFS4_CREATE_EXCLUSIVE:
+@@ -888,7 +936,7 @@ nfsd4_decode_setattr(struct nfsd4_compou
+ 	READ_BUF(sizeof(stateid_t));
+ 	READ32(setattr->sa_stateid.si_generation);
+ 	COPYMEM(&setattr->sa_stateid.si_opaque, sizeof(stateid_opaque_t));
+-	if ((status = nfsd4_decode_fattr(argp, setattr->sa_bmval, &setattr->sa_iattr)))
++	if ((status = nfsd4_decode_fattr(argp, setattr->sa_bmval, &setattr->sa_iattr, &setattr->sa_acl)))
+ 		goto out;
+ 
+ 	DECODE_TAIL;
+@@ -1302,14 +1350,16 @@ static u32 nfs4_ftypes[16] = {
+ };
+ 
+ static int
+-nfsd4_encode_name(struct svc_rqst *rqstp, int group, uid_t id,
++nfsd4_encode_name(struct svc_rqst *rqstp, int whotype, uid_t id, int group,
+ 			u32 **p, int *buflen)
+ {
+ 	int status;
+ 
+ 	if (*buflen < (XDR_QUADLEN(IDMAP_NAMESZ) << 2) + 4)
+ 		return nfserr_resource;
+-	if (group)
++	if (whotype != NFS4_ACL_WHO_NAMED)
++		status = nfs4_acl_write_who(whotype, (u8 *)(*p + 1));
++	else if (group)
+ 		status = nfsd_map_gid_to_name(rqstp, id, (u8 *)(*p + 1));
+ 	else
+ 		status = nfsd_map_uid_to_name(rqstp, id, (u8 *)(*p + 1));
+@@ -1324,13 +1374,20 @@ nfsd4_encode_name(struct svc_rqst *rqstp
+ static inline int
+ nfsd4_encode_user(struct svc_rqst *rqstp, uid_t uid, u32 **p, int *buflen)
+ {
+-	return nfsd4_encode_name(rqstp, uid, 0, p, buflen);
++	return nfsd4_encode_name(rqstp, NFS4_ACL_WHO_NAMED, uid, 0, p, buflen);
+ }
+ 
+ static inline int
+ nfsd4_encode_group(struct svc_rqst *rqstp, uid_t gid, u32 **p, int *buflen)
+ {
+-	return nfsd4_encode_name(rqstp, gid, 1, p, buflen);
++	return nfsd4_encode_name(rqstp, NFS4_ACL_WHO_NAMED, gid, 1, p, buflen);
++}
++
++static inline int
++nfsd4_encode_aclname(struct svc_rqst *rqstp, int whotype, uid_t id, int group,
++		u32 **p, int *buflen)
++{
++	return nfsd4_encode_name(rqstp, whotype, id, group, p, buflen);
+ }
+ 
+ 
+@@ -1357,6 +1414,7 @@ nfsd4_encode_fattr(struct svc_fh *fhp, s
+ 	u64 dummy64;
+ 	u32 *p = buffer;
+ 	int status;
++	struct nfs4_acl *acl = NULL;
+ 
+ 	BUG_ON(bmval1 & NFSD_WRITEONLY_ATTRS_WORD1);
+ 	BUG_ON(bmval0 & ~NFSD_SUPPORTED_ATTRS_WORD0);
+@@ -1379,6 +1437,13 @@ nfsd4_encode_fattr(struct svc_fh *fhp, s
+ 			goto out;
+ 		fhp = &tempfh;
+ 	}
++	if (bmval0 & FATTR4_WORD0_ACL) {
++		status = nfsd4_get_nfs4_acl(rqstp, dentry, &acl);
++		if (status == -EOPNOTSUPP)
++			bmval0 &= ~FATTR4_WORD0_ACL;
++		else if (status < 0)
++			goto out_nfserr;
++	}
+ 	if ((buflen -= 16) < 0)
+ 		goto out_resource;
+ 
+@@ -1391,6 +1456,8 @@ nfsd4_encode_fattr(struct svc_fh *fhp, s
+ 		if ((buflen -= 12) < 0)
+ 			goto out_resource;
+ 		WRITE32(2);
++		/* XXX Should depend on exported filesystem (e.g.
++		 * for acl support) */
+ 		WRITE32(NFSD_SUPPORTED_ATTRS_WORD0);
+ 		WRITE32(NFSD_SUPPORTED_ATTRS_WORD1);
+ 	}
+@@ -1462,10 +1529,44 @@ nfsd4_encode_fattr(struct svc_fh *fhp, s
+ 			goto out_resource;
+ 		WRITE32(0);
+ 	}
++	if (bmval0 & FATTR4_WORD0_ACL) {
++		struct nfs4_ace *ace;
++		struct list_head *h;
++
++		if (acl == NULL) {
++			if ((buflen -= 4) < 0)
++				goto out_resource;
++
++			WRITE32(0);
++			goto out_acl;
++		}
++		if ((buflen -= 4) < 0)
++			goto out_resource;
++		WRITE32(acl->naces);
++
++		list_for_each(h, &acl->ace_head) {
++			ace = list_entry(h, struct nfs4_ace, l_ace);
++
++			if ((buflen -= 4*3) < 0)
++				goto out_resource;
++			WRITE32(ace->type);
++			WRITE32(ace->flag);
++			WRITE32(ace->access_mask & NFS4_ACE_MASK_ALL);
++			status = nfsd4_encode_aclname(rqstp, ace->whotype,
++				ace->who, ace->flag & NFS4_ACE_IDENTIFIER_GROUP,
++				&p, &buflen);
++			if (status == nfserr_resource)
++				goto out_resource;
++			if (status)
++				goto out;
++		}
++	}
++out_acl:
+ 	if (bmval0 & FATTR4_WORD0_ACLSUPPORT) {
+ 		if ((buflen -= 4) < 0)
+ 			goto out_resource;
+-		WRITE32(0);
++		/* XXX: should depend on exported filesystem: */
++		WRITE32(ACL4_SUPPORT_ALLOW_ACL|ACL4_SUPPORT_DENY_ACL);
+ 	}
+ 	if (bmval0 & FATTR4_WORD0_CANSETTIME) {
+ 		if ((buflen -= 4) < 0)
+@@ -1648,6 +1749,7 @@ nfsd4_encode_fattr(struct svc_fh *fhp, s
+ 	status = nfs_ok;
+ 
+ out:
++	nfs4_acl_free(acl);
+ 	if (fhp == &tempfh)
+ 		fh_put(&tempfh);
+ 	return status;
+diff -puN fs/nfsd/vfs.c~nfsd-acl-support-for-the-nfsv4-server fs/nfsd/vfs.c
+--- 25/fs/nfsd/vfs.c~nfsd-acl-support-for-the-nfsv4-server	2004-08-01 21:10:13.111892136 -0700
++++ 25-akpm/fs/nfsd/vfs.c	2004-08-01 21:10:13.142887424 -0700
+@@ -44,6 +44,16 @@
+ #include <linux/nfsd/nfsfh.h>
+ #include <linux/quotaops.h>
+ #include <linux/dnotify.h>
++#ifdef CONFIG_NFSD_V4
++#include <linux/posix_acl.h>
++#include <linux/posix_acl_xattr.h>
++#include <linux/xattr_acl.h>
++#include <linux/xattr.h>
++#include <linux/nfs4.h>
++#include <linux/nfs4_acl.h>
++#include <linux/nfsd_idmap.h>
++#include <linux/security.h>
++#endif /* CONFIG_NFSD_V4 */
+ 
+ #include <asm/uaccess.h>
+ 
+@@ -344,6 +354,177 @@ out_nfserr:
+ 	goto out;
+ }
+ 
++#if defined(CONFIG_NFSD_V4)
++
++static int
++set_nfsv4_acl_one(struct dentry *dentry, struct posix_acl *pacl, char *key)
++{
++	int len;
++	size_t buflen;
++	char *buf = NULL;
++	int error = 0;
++	struct inode *inode = dentry->d_inode;
++
++	buflen = posix_acl_xattr_size(pacl->a_count);
++	buf = kmalloc(buflen, GFP_KERNEL);
++	error = -ENOMEM;
++	if (buf == NULL)
++		goto out;
++
++	len = posix_acl_to_xattr(pacl, buf, buflen);
++	if (len < 0) {
++		error = len;
++		goto out;
++	}
++
++	error = -EOPNOTSUPP;
++	if (inode->i_op && inode->i_op->setxattr) {
++		down(&inode->i_sem);
++		security_inode_setxattr(dentry, key, buf, len, 0);
++		error = inode->i_op->setxattr(dentry, key, buf, len, 0);
++		if (!error)
++			security_inode_post_setxattr(dentry, key, buf, len, 0);
++		up(&inode->i_sem);
++	}
++out:
++	kfree(buf);
++	return (error);
++}
++
++int
++nfsd4_set_nfs4_acl(struct svc_rqst *rqstp, struct svc_fh *fhp,
++    struct nfs4_acl *acl)
++{
++	int error;
++	struct dentry *dentry;
++	struct inode *inode;
++	struct posix_acl *pacl = NULL, *dpacl = NULL;
++	unsigned int flags = 0;
++
++	/* Get inode */
++	error = fh_verify(rqstp, fhp, 0 /* S_IFREG */, MAY_SATTR);
++	if (error)
++		goto out;
++
++	dentry = fhp->fh_dentry;
++	inode = dentry->d_inode;
++	if (S_ISDIR(inode->i_mode))
++		flags = NFS4_ACL_DIR;
++
++	error = nfs4_acl_nfsv4_to_posix(acl, &pacl, &dpacl, flags);
++	if (error < 0)
++		goto out_nfserr;
++
++	if (pacl) {
++		error = set_nfsv4_acl_one(dentry, pacl, XATTR_NAME_ACL_ACCESS);
++		if (error < 0)
++			goto out_nfserr;
++	}
++
++	if (dpacl) {
++		error = set_nfsv4_acl_one(dentry, dpacl, XATTR_NAME_ACL_DEFAULT);
++		if (error < 0)
++			goto out_nfserr;
++	}
++
++	error = nfs_ok;
++
++out:
++	posix_acl_release(pacl);
++	posix_acl_release(dpacl);
++	return (error);
++out_nfserr:
++	error = nfserrno(error);
++	goto out;
++}
++
++static struct posix_acl *
++_get_posix_acl(struct dentry *dentry, char *key)
++{
++	struct inode *inode = dentry->d_inode;
++	char *buf = NULL;
++	int buflen, error = 0;
++	struct posix_acl *pacl = NULL;
++
++	down(&inode->i_sem);
++
++	buflen = inode->i_op->getxattr(dentry, key, NULL, 0);
++	if (buflen <= 0) {
++		error = buflen < 0 ? buflen : -ENODATA;
++		goto out_sem;
++	}
++
++	buf = kmalloc(buflen, GFP_KERNEL);
++	if (buf == NULL) {
++		error = -ENOMEM;
++		goto out_sem;
++	}
++
++	error = -EOPNOTSUPP;
++	if (inode->i_op && inode->i_op->getxattr) {
++		error = security_inode_getxattr(dentry, key);
++		if (error)
++			goto out_sem;
++		error = inode->i_op->getxattr(dentry, key, buf, buflen);
++	}
++	if (error < 0)
++		goto out_sem;
++
++	error = 0;
++	up(&inode->i_sem);
++
++	pacl = posix_acl_from_xattr(buf, buflen);
++ out:
++	kfree(buf);
++	return pacl;
++ out_sem:
++	up(&inode->i_sem);
++	pacl = ERR_PTR(error);
++	goto out;
++}
++
++int
++nfsd4_get_nfs4_acl(struct svc_rqst *rqstp, struct dentry *dentry, struct nfs4_acl **acl)
++{
++	struct inode *inode = dentry->d_inode;
++	int error = 0;
++	struct posix_acl *pacl = NULL, *dpacl = NULL;
++	unsigned int flags = 0;
++
++	pacl = _get_posix_acl(dentry, XATTR_NAME_ACL_ACCESS);
++	if (IS_ERR(pacl) && PTR_ERR(pacl) == -ENODATA)
++		pacl = posix_acl_from_mode(inode->i_mode, GFP_KERNEL);
++	if (IS_ERR(pacl)) {
++		error = PTR_ERR(pacl);
++		pacl = NULL;
++		goto out;
++	}
++
++	if (S_ISDIR(inode->i_mode)) {
++		dpacl = _get_posix_acl(dentry, XATTR_NAME_ACL_DEFAULT);
++		if (IS_ERR(dpacl) && PTR_ERR(dpacl) == -ENODATA)
++			dpacl = NULL;
++		else if (IS_ERR(dpacl)) {
++			error = PTR_ERR(dpacl);
++			dpacl = NULL;
++			goto out;
++		}
++		flags = NFS4_ACL_DIR;
++	}
++
++	*acl = nfs4_acl_posix_to_nfsv4(pacl, dpacl, flags);
++	if (IS_ERR(*acl)) {
++		error = PTR_ERR(*acl);
++		*acl = NULL;
++	}
++ out:
++	posix_acl_release(pacl);
++	posix_acl_release(dpacl);
++	return error;
++}
++
++#endif /* defined(CONFIG_NFS_V4) */
++
+ #ifdef CONFIG_NFSD_V3
+ /*
+  * Check server access rights to a file system object
+diff -puN include/linux/nfsd/nfsd.h~nfsd-acl-support-for-the-nfsv4-server include/linux/nfsd/nfsd.h
+--- 25/include/linux/nfsd/nfsd.h~nfsd-acl-support-for-the-nfsv4-server	2004-08-01 21:10:13.132888944 -0700
++++ 25-akpm/include/linux/nfsd/nfsd.h	2004-08-01 21:10:13.143887272 -0700
+@@ -76,6 +76,11 @@ int		nfsd_lookup(struct svc_rqst *, stru
+ 				const char *, int, struct svc_fh *);
+ int		nfsd_setattr(struct svc_rqst *, struct svc_fh *,
+ 				struct iattr *, int, time_t);
++#ifdef CONFIG_NFSD_V4
++int             nfsd4_set_nfs4_acl(struct svc_rqst *, struct svc_fh *,
++                    struct nfs4_acl *);
++int             nfsd4_get_nfs4_acl(struct svc_rqst *, struct dentry *, struct nfs4_acl **);
++#endif /* CONFIG_NFSD_V4 */
+ int		nfsd_create(struct svc_rqst *, struct svc_fh *,
+ 				char *name, int len, struct iattr *attrs,
+ 				int type, dev_t rdev, struct svc_fh *res);
+@@ -258,7 +263,6 @@ static inline int is_fsid(struct svc_fh 
+ 
+ /*
+  * The following attributes are currently not supported by the NFSv4 server:
+- *    ACL           (will be supported in a forthcoming patch)
+  *    ARCHIVE       (deprecated anyway)
+  *    FS_LOCATIONS  (will be supported eventually)
+  *    HIDDEN        (unlikely to be supported any time soon)
+@@ -278,7 +282,7 @@ static inline int is_fsid(struct svc_fh 
+  | FATTR4_WORD0_FILEHANDLE      | FATTR4_WORD0_FILEID       | FATTR4_WORD0_FILES_AVAIL      \
+  | FATTR4_WORD0_FILES_FREE      | FATTR4_WORD0_FILES_TOTAL  | FATTR4_WORD0_HOMOGENEOUS      \
+  | FATTR4_WORD0_MAXFILESIZE     | FATTR4_WORD0_MAXLINK      | FATTR4_WORD0_MAXNAME          \
+- | FATTR4_WORD0_MAXREAD         | FATTR4_WORD0_MAXWRITE)
++ | FATTR4_WORD0_MAXREAD         | FATTR4_WORD0_MAXWRITE     | FATTR4_WORD0_ACL)
+ 
+ #define NFSD_SUPPORTED_ATTRS_WORD1                                                          \
+ (FATTR4_WORD1_MODE              | FATTR4_WORD1_NO_TRUNC     | FATTR4_WORD1_NUMLINKS         \
+@@ -293,7 +297,8 @@ static inline int is_fsid(struct svc_fh 
+ (FATTR4_WORD1_TIME_ACCESS_SET   | FATTR4_WORD1_TIME_MODIFY_SET)
+ 
+ /* These are the only attrs allowed in CREATE/OPEN/SETATTR. */
+-#define NFSD_WRITEABLE_ATTRS_WORD0                            FATTR4_WORD0_SIZE
++#define NFSD_WRITEABLE_ATTRS_WORD0                                                          \
++(FATTR4_WORD0_SIZE              | FATTR4_WORD0_ACL                                         )
+ #define NFSD_WRITEABLE_ATTRS_WORD1                                                          \
+ (FATTR4_WORD1_MODE              | FATTR4_WORD1_OWNER         | FATTR4_WORD1_OWNER_GROUP     \
+  | FATTR4_WORD1_TIME_ACCESS_SET | FATTR4_WORD1_TIME_METADATA | FATTR4_WORD1_TIME_MODIFY_SET)
+diff -puN include/linux/nfsd/xdr4.h~nfsd-acl-support-for-the-nfsv4-server include/linux/nfsd/xdr4.h
+--- 25/include/linux/nfsd/xdr4.h~nfsd-acl-support-for-the-nfsv4-server	2004-08-01 21:10:13.134888640 -0700
++++ 25-akpm/include/linux/nfsd/xdr4.h	2004-08-01 21:10:13.144887120 -0700
+@@ -39,6 +39,8 @@
+ #ifndef _LINUX_NFSD_XDR4_H
+ #define _LINUX_NFSD_XDR4_H
+ 
++#include <linux/nfs4.h>
++
+ #define NFSD4_MAX_TAGLEN	128
+ #define XDR_LEN(n)                     (((n) + 3) & ~3)
+ 
+@@ -95,6 +97,7 @@ struct nfsd4_create {
+ 	u32		cr_bmval[2];        /* request */
+ 	struct iattr	cr_iattr;           /* request */
+ 	struct nfsd4_change_info  cr_cinfo; /* response */
++	struct nfs4_acl *cr_acl;
+ };
+ #define cr_linklen	u.link.namelen
+ #define cr_linkname	u.link.name
+@@ -216,7 +219,7 @@ struct nfsd4_open {
+ 	u32		op_rflags;          /* response */
+ 	int		op_truncate;        /* used during processing */
+ 	struct nfs4_stateowner *op_stateowner; /* used during processing */
+-
++	struct nfs4_acl *op_acl;
+ };
+ #define op_iattr	u.iattr
+ #define op_verf		u.verf
+@@ -291,6 +294,7 @@ struct nfsd4_setattr {
+ 	stateid_t	sa_stateid;         /* request */
+ 	u32		sa_bmval[2];        /* request */
+ 	struct iattr	sa_iattr;           /* request */
++	struct nfs4_acl *sa_acl;
+ };
+ 
+ struct nfsd4_setclientid {
+_

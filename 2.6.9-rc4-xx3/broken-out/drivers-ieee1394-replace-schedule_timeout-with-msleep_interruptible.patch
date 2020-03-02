@@ -1,0 +1,48 @@
+
+From: <janitor@sternwelten.at>
+
+Signed-off-by: Nishanth Aravamudan <nacc@us.ibm.com>
+Signed-off-by: Maximilian Attems <janitor@sternwelten.at>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/ieee1394/nodemgr.c |    5 ++---
+ 25-akpm/drivers/ieee1394/sbp2.c    |    3 +--
+ 2 files changed, 3 insertions(+), 5 deletions(-)
+
+diff -puN drivers/ieee1394/nodemgr.c~drivers-ieee1394-replace-schedule_timeout-with-msleep_interruptible drivers/ieee1394/nodemgr.c
+--- 25/drivers/ieee1394/nodemgr.c~drivers-ieee1394-replace-schedule_timeout-with-msleep_interruptible	Thu Sep 23 16:08:36 2004
++++ 25-akpm/drivers/ieee1394/nodemgr.c	Thu Sep 23 16:08:36 2004
+@@ -70,8 +70,7 @@ static int nodemgr_bus_read(struct csr12
+ 		if (!ret)
+ 			break;
+ 
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		if (schedule_timeout (HZ/3))
++		if (msleep_interruptible(334))
+ 			return -EINTR;
+ 	}
+ 
+@@ -1496,7 +1495,7 @@ static int nodemgr_host_thread(void *__h
+ 		 * to make sure things settle down. */
+ 		for (i = 0; i < 4 ; i++) {
+ 			set_current_state(TASK_INTERRUPTIBLE);
+-			if (schedule_timeout(HZ/16)) {
++			if (msleep_interruptible(63)) {
+ 				up(&nodemgr_serialize);
+ 				goto caught_signal;
+ 			}
+diff -puN drivers/ieee1394/sbp2.c~drivers-ieee1394-replace-schedule_timeout-with-msleep_interruptible drivers/ieee1394/sbp2.c
+--- 25/drivers/ieee1394/sbp2.c~drivers-ieee1394-replace-schedule_timeout-with-msleep_interruptible	Thu Sep 23 16:08:36 2004
++++ 25-akpm/drivers/ieee1394/sbp2.c	Thu Sep 23 16:08:36 2004
+@@ -357,8 +357,7 @@ static int sbp2util_down_timeout(atomic_
+ 	int i;
+ 
+ 	for (i = timeout; (i > 0 && atomic_read(done) == 0); i-= HZ/10) {
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		if (schedule_timeout(HZ/10))	/* 100ms */
++		if (msleep_interruptible(100))	/* 100ms */
+ 			return(1);
+ 	}
+ 	return ((i > 0) ? 0:1);
+_

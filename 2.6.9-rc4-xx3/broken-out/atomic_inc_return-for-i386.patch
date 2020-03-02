@@ -1,0 +1,73 @@
+
+From: Kaigai Kohei <kaigai@ak.jp.nec.com>
+
+This patch implements atomic_inc_return() and so on for i386, and includes
+runtime check whether CPU is legacy 386.
+
+Signed-off-by: KaiGai, Kohei <kaigai@ak.jp.nec.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/asm-i386/atomic.h |   42 ++++++++++++++++++++++++++++++++++++++
+ 1 files changed, 42 insertions(+)
+
+diff -puN include/asm-i386/atomic.h~atomic_inc_return-for-i386 include/asm-i386/atomic.h
+--- 25/include/asm-i386/atomic.h~atomic_inc_return-for-i386	2004-09-11 16:04:25.480714728 -0700
++++ 25-akpm/include/asm-i386/atomic.h	2004-09-11 16:04:25.485713968 -0700
+@@ -2,6 +2,8 @@
+ #define __ARCH_I386_ATOMIC__
+ 
+ #include <linux/config.h>
++#include <linux/compiler.h>
++#include <asm/processor.h>
+ 
+ /*
+  * Atomic operations that C can't guarantee us.  Useful for
+@@ -176,6 +178,46 @@ static __inline__ int atomic_add_negativ
+ 	return c;
+ }
+ 
++/**
++ * atomic_add_return - add and return
++ * @v: pointer of type atomic_t
++ * @i: integer value to add
++ *
++ * Atomically adds @i to @v and returns @i + @v
++ */
++static __inline__ int atomic_add_return(int i, atomic_t *v)
++{
++	int __i;
++#ifdef CONFIG_M386
++	if(unlikely(boot_cpu_data.x86==3))
++		goto no_xadd;
++#endif
++	/* Modern 486+ processor */
++	__i = i;
++	__asm__ __volatile__(
++		LOCK "xaddl %0, %1;"
++		:"=r"(i)
++		:"m"(v->counter), "0"(i));
++	return i + __i;
++
++#ifdef CONFIG_M386
++no_xadd: /* Legacy 386 processor */
++	local_irq_disable();
++	__i = atomic_read(v);
++	atomic_set(v, i + __i);
++	local_irq_enable();
++	return i + __i;
++#endif
++}
++
++static __inline__ int atomic_sub_return(int i, atomic_t *v)
++{
++	return atomic_add_return(-i,v);
++}
++
++#define atomic_inc_return(v)  (atomic_add_return(1,v))
++#define atomic_dec_return(v)  (atomic_sub_return(1,v))
++
+ /* These are x86-specific, used by some header files */
+ #define atomic_clear_mask(mask, addr) \
+ __asm__ __volatile__(LOCK "andl %0,%1" \
+_

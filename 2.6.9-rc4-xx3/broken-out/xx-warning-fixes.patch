@@ -1,0 +1,49 @@
+Index: xx-sources/drivers/block/compressloop.c
+===================================================================
+--- xx-sources.orig/drivers/block/compressloop.c	2004-10-01 11:49:47.320251992 -0400
++++ xx-sources/drivers/block/compressloop.c	2004-10-01 11:49:50.027840376 -0400
+@@ -141,7 +141,7 @@
+ 	/* then load the offset */
+ 
+ 	for (i = 0, offsets_read = 0; offsets_read < total_offsets; i++) {
+-		int toread=min(bsize,(total_offsets-offsets_read)*sizeof(uint32_t));
++		int toread=min(bsize, (ssize_t)((total_offsets-offsets_read)*sizeof(uint32_t)));
+ 		if(cloop_file_io(file, buf, bsize, &pos)) {
+ 			printk(KERN_ERR "%s: can't read the image\n",
+ 				CLOOP_NAME);
+Index: xx-sources/fs/reiserfs/xattr.c
+===================================================================
+--- xx-sources.orig/fs/reiserfs/xattr.c	2004-09-28 17:04:38.000000000 -0400
++++ xx-sources/fs/reiserfs/xattr.c	2004-10-01 11:54:50.872105096 -0400
+@@ -1410,7 +1410,9 @@
+                 }
+ #endif
+ 	} else {
++#ifdef CONFIG_REISERFS_FS_POSIX_ACL
+ check_groups:
++#endif
+ 		if (in_group_p(inode->i_gid))
+ 			mode >>= 3;
+ 	}
+@@ -1421,7 +1423,9 @@
+ 	if (((mode & mask & (MAY_READ|MAY_WRITE|MAY_EXEC)) == mask))
+ 		return 0;
+ 
++#ifdef CONFIG_REISERFS_FS_POSIX_ACL
+ check_capabilities:
++#endif
+ 	/*
+ 	 * Read/write DACs are always overridable.
+ 	 * Executable DACs are overridable if at least one exec bit is set.
+Index: xx-sources/net/ipv4/netfilter/iptables-p2p/main.c
+===================================================================
+--- xx-sources.orig/net/ipv4/netfilter/iptables-p2p/main.c	2004-10-01 11:49:48.799027184 -0400
++++ xx-sources/net/ipv4/netfilter/iptables-p2p/main.c	2004-10-01 11:49:50.028840224 -0400
+@@ -97,7 +97,6 @@
+ 	const struct tcphdr *tcph;
+ 	const unsigned char *data;
+ 	const unsigned char *end;
+-	int ret;
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
+ 	int datalen;

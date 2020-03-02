@@ -1,0 +1,126 @@
+Index: xx-sources/drivers/acpi/Kconfig
+===================================================================
+--- xx-sources.orig/drivers/acpi/Kconfig	2004-10-18 17:55:29.000000000 -0400
++++ xx-sources/drivers/acpi/Kconfig	2004-10-26 10:06:47.192963168 -0400
+@@ -296,5 +296,19 @@
+ 	  kernel logs, and/or you are using this on a notebook which
+ 	  does not yet have an HPET, you should say "Y" here.
+ 
++config ACPI_INITRD
++	bool "Read DSDT from initrd"
++	depends on ACPI && BLK_DEV_INITRD
++	default y
++	help
++	  The DSDT (Differentiated System Description Table) often needs to be
++	  overridden because of broken BIOS implementations. If you want to use
++	  a customized DSDT, please use the mkinitrd tool (mkinitrd package) to 
++	  attach the  DSDT to the initrd) or see http://gaugusch.at/kernel.shtml 
++	  for instructions on using an existing initrd with ACPI. If there is no 
++	  one found in the initrd, the DSDT from the BIOS is used. Even you do not 
++	  need a new one at the moment, you may want to use a better implemented 
++	  DSDT later. It is save to say yes here
++
+ endmenu
+ 
+Index: xx-sources/drivers/acpi/osl.c
+===================================================================
+--- xx-sources.orig/drivers/acpi/osl.c	2004-10-18 17:54:55.000000000 -0400
++++ xx-sources/drivers/acpi/osl.c	2004-10-26 10:09:14.093630872 -0400
+@@ -34,6 +34,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/kmod.h>
+ #include <linux/delay.h>
++#include <linux/initrd.h>
+ #include <linux/workqueue.h>
+ #include <linux/nmi.h>
+ #include <acpi/acpi.h>
+@@ -237,6 +238,60 @@
+ 	return AE_OK;
+ }
+ 
++#ifdef CONFIG_ACPI_INITRD
++unsigned char * acpi_find_dsdt_initrd(void)
++{
++	unsigned char start_signature[] = "INITRDDSDT123DSDT123";
++	unsigned char end_signature[] =   "INITRDDSDT321DSDT321";
++	unsigned char *data = (unsigned char*) initrd_start;
++	unsigned char *dsdt_start = NULL;
++	unsigned char *initrd_end_tmp = NULL;
++
++	if (initrd_start) {
++		printk(KERN_INFO PREFIX "Looking for DSDT in initrd...");
++		 /* don't scan above end, do not modify initrd borders */
++		initrd_end_tmp = (unsigned char*) initrd_end - sizeof(end_signature);
++
++		if ((initrd_end_tmp - (unsigned char*)initrd_start) > 4 && 
++			!memcmp((unsigned char*)initrd_start, "DSDT", 4)) {
++			/* found DSDT at start of initrd */
++			dsdt_start = (unsigned char*)initrd_start; 
++		} else { /* searching for start signature in initrd */
++			for (; data < initrd_end_tmp; data++) {
++				if (!memcmp(data, start_signature, 
++						sizeof(start_signature) - 1)) {
++					dsdt_start = data + sizeof(start_signature) - 1;
++					printk(" found (at offset %u)!\n", 
++						dsdt_start - 
++						(unsigned char*)initrd_start);
++					break;
++				}
++			}
++		}
++		/* check if head of dsdt is valid */
++		if (dsdt_start != NULL && !memcmp(dsdt_start, "DSDT", 4)) {
++			// This search is useful only for debug now that acpi 
++			// handle by itself the size of the table -eric
++			// searching for end signature in initrd
++			for (data += sizeof(start_signature); 
++			     data <= initrd_end_tmp; data++) {  
++				if (!memcmp(data, end_signature,
++						sizeof(end_signature) - 1))
++					break;
++			}
++			printk(" found customized DSDT with %u bytes!\n", data - dsdt_start);
++			return dsdt_start;
++		} else
++			printk(" not found!\n");
++	}
++	
++	/* no DSDT found */
++	return NULL;
++}
++#else
++static inline unsigned char * acpi_find_dsdt_initrd(void) { return NULL; }
++#endif
++
+ acpi_status
+ acpi_os_table_override (struct acpi_table_header *existing_table,
+ 			struct acpi_table_header **new_table)
+@@ -244,14 +299,23 @@
+ 	if (!existing_table || !new_table)
+ 		return AE_BAD_PARAMETER;
+ 
++#ifdef CONFIG_ACPI_INITRD
++	if (!strncmp(existing_table->signature, "DSDT", 4)) {
++		*new_table = (struct acpi_table_header*)acpi_find_dsdt_initrd();
++		if (*new_table)
++			printk(KERN_INFO PREFIX "Using customized DSDT\n");
++	} else 
++#endif
++	{
+ #ifdef CONFIG_ACPI_CUSTOM_DSDT
+-	if (strncmp(existing_table->signature, "DSDT", 4) == 0)
+-		*new_table = (struct acpi_table_header*)AmlCode;
+-	else
+-		*new_table = NULL;
++		if (strncmp(existing_table->signature, "DSDT", 4) == 0)
++			*new_table = (struct acpi_table_header*)AmlCode;
++		else
++			*new_table = NULL;
+ #else
+-	*new_table = NULL;
++		*new_table = NULL;
+ #endif
++	}
+ 	return AE_OK;
+ }
+ 

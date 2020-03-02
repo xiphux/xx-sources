@@ -1,0 +1,84 @@
+
+From: Bjorn Helgaas <bjorn.helgaas@hp.com>
+
+Jeff Garzik pointed out that I should have propagated the error returned
+from pci_enable_device() rather than making up -ENODEV.
+
+Propagate pci_enable_device() error returns rather than using -ENODEV.
+
+Signed-off-by: Bjorn Helgaas <bjorn.helgaas@hp.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/atm/idt77252.c        |    4 ++--
+ 25-akpm/drivers/isdn/tpam/tpam_main.c |    4 ++--
+ 25-akpm/drivers/misc/ibmasm/module.c  |    6 +++---
+ 25-akpm/drivers/net/tulip/de4x5.c     |    4 ++--
+ 4 files changed, 9 insertions(+), 9 deletions(-)
+
+diff -puN drivers/atm/idt77252.c~propagate-pci_enable_device-errors drivers/atm/idt77252.c
+--- 25/drivers/atm/idt77252.c~propagate-pci_enable_device-errors	Thu Aug 26 16:32:43 2004
++++ 25-akpm/drivers/atm/idt77252.c	Thu Aug 26 16:32:43 2004
+@@ -3684,9 +3684,9 @@ idt77252_init_one(struct pci_dev *pcidev
+ 	int i, err;
+ 
+ 
+-	if (pci_enable_device(pcidev)) {
++	if ((err = pci_enable_device(pcidev))) {
+ 		printk("idt77252: can't enable PCI device at %s\n", pci_name(pcidev));
+-		return -ENODEV;
++		return err;
+ 	}
+ 
+ 	if (pci_read_config_word(pcidev, PCI_REVISION_ID, &revision)) {
+diff -puN drivers/isdn/tpam/tpam_main.c~propagate-pci_enable_device-errors drivers/isdn/tpam/tpam_main.c
+--- 25/drivers/isdn/tpam/tpam_main.c~propagate-pci_enable_device-errors	Thu Aug 26 16:32:43 2004
++++ 25-akpm/drivers/isdn/tpam/tpam_main.c	Thu Aug 26 16:32:43 2004
+@@ -88,10 +88,10 @@ static int __devinit tpam_probe(struct p
+ 	tpam_card *card, *c;
+ 	int i, err;
+ 
+-	if (pci_enable_device(dev)) {
++	if ((err = pci_enable_device(dev))) {
+ 		printk(KERN_ERR "TurboPAM: can't enable PCI device at %s\n",
+ 			pci_name(dev));
+-		return -ENODEV;
++		return err;
+ 	}
+ 
+ 	/* allocate memory for the board structure */
+diff -puN drivers/misc/ibmasm/module.c~propagate-pci_enable_device-errors drivers/misc/ibmasm/module.c
+--- 25/drivers/misc/ibmasm/module.c~propagate-pci_enable_device-errors	Thu Aug 26 16:32:43 2004
++++ 25-akpm/drivers/misc/ibmasm/module.c	Thu Aug 26 16:32:43 2004
+@@ -59,13 +59,13 @@
+ 
+ static int __init ibmasm_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
+ {
+-	int result = -ENOMEM;
++	int err, result = -ENOMEM;
+ 	struct service_processor *sp;
+ 
+-	if (pci_enable_device(pdev)) {
++	if ((err = pci_enable_device(pdev))) {
+ 		printk(KERN_ERR "%s: can't enable PCI device at %s\n",
+ 			DRIVER_NAME, pci_name(pdev));
+-		return -ENODEV;
++		return err;
+ 	}
+ 
+ 	sp = kmalloc(sizeof(struct service_processor), GFP_KERNEL);
+diff -puN drivers/net/tulip/de4x5.c~propagate-pci_enable_device-errors drivers/net/tulip/de4x5.c
+--- 25/drivers/net/tulip/de4x5.c~propagate-pci_enable_device-errors	Thu Aug 26 16:32:43 2004
++++ 25-akpm/drivers/net/tulip/de4x5.c	Thu Aug 26 16:32:43 2004
+@@ -2242,8 +2242,8 @@ static int __devinit de4x5_pci_probe (st
+ 		return -ENODEV;
+ 
+ 	/* Ok, the device seems to be for us. */
+-	if (pci_enable_device (pdev))
+-		return -ENODEV;
++	if ((error = pci_enable_device (pdev)))
++		return error;
+ 
+ 	if (!(dev = alloc_etherdev (sizeof (struct de4x5_private)))) {
+ 		error = -ENOMEM;
+_

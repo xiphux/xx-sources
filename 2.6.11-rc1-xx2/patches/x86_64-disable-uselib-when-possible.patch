@@ -1,0 +1,44 @@
+
+From: Andi Kleen <ak@suse.de>
+
+Disable sys_uselib for 64bit processes and only enable for 32bit processes
+when a.out support is compiled in.
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/x86_64/ia32/ia32entry.S |    4 ++++
+ 25-akpm/include/asm-x86_64/unistd.h  |    3 ++-
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff -puN arch/x86_64/ia32/ia32entry.S~x86_64-disable-uselib-when-possible arch/x86_64/ia32/ia32entry.S
+--- 25/arch/x86_64/ia32/ia32entry.S~x86_64-disable-uselib-when-possible	Wed Jan 12 15:48:47 2005
++++ 25-akpm/arch/x86_64/ia32/ia32entry.S	Wed Jan 12 15:48:47 2005
+@@ -388,7 +388,11 @@ ia32_sys_call_table:
+ 	.quad sys_symlink
+ 	.quad sys_lstat
+ 	.quad sys_readlink		/* 85 */
++#ifdef CONFIG_IA32_AOUT
+ 	.quad sys_uselib
++#else
++	.quad quiet_ni_syscall
++#endif
+ 	.quad sys_swapon
+ 	.quad sys_reboot
+ 	.quad compat_sys_old_readdir
+diff -puN include/asm-x86_64/unistd.h~x86_64-disable-uselib-when-possible include/asm-x86_64/unistd.h
+--- 25/include/asm-x86_64/unistd.h~x86_64-disable-uselib-when-possible	Wed Jan 12 15:48:47 2005
++++ 25-akpm/include/asm-x86_64/unistd.h	Wed Jan 12 15:48:47 2005
+@@ -298,8 +298,9 @@ __SYSCALL(__NR_utime, sys_utime)
+ #define __NR_mknod                             133
+ __SYSCALL(__NR_mknod, sys_mknod)
+ 
++/* Only needed for a.out */
+ #define __NR_uselib                            134
+-__SYSCALL(__NR_uselib, sys_uselib)
++__SYSCALL(__NR_uselib, sys_ni_syscall)
+ #define __NR_personality                       135
+ __SYSCALL(__NR_personality, sys_personality)
+ 
+_

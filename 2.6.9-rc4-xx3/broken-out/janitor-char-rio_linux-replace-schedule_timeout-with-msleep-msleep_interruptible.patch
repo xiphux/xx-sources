@@ -1,0 +1,38 @@
+
+From: <janitor@sternwelten.at>
+
+Use msleep()/msleep_interruptible() [as appropriate] instead of
+schedule_timeout() to guarantee the task delays as expected.
+
+Signed-off-by: Nishanth Aravamudan <nacc@us.ibm.com>
+Signed-off-by: Maximilian Attems <janitor@sternwelten.at>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/rio/rio_linux.c |    6 ++----
+ 1 files changed, 2 insertions(+), 4 deletions(-)
+
+diff -puN drivers/char/rio/rio_linux.c~janitor-char-rio_linux-replace-schedule_timeout-with-msleep-msleep_interruptible drivers/char/rio/rio_linux.c
+--- 25/drivers/char/rio/rio_linux.c~janitor-char-rio_linux-replace-schedule_timeout-with-msleep-msleep_interruptible	Thu Sep 23 15:39:18 2004
++++ 25-akpm/drivers/char/rio/rio_linux.c	Thu Sep 23 15:39:18 2004
+@@ -330,8 +330,7 @@ int RIODelay (struct Port *PortP, int nj
+   func_enter ();
+ 
+   rio_dprintk (RIO_DEBUG_DELAY, "delaying %d jiffies\n", njiffies);  
+-  current->state = TASK_INTERRUPTIBLE;
+-  schedule_timeout(njiffies);
++  msleep_interruptible(jiffies_to_msecs(njiffies));
+   func_exit();
+ 
+   if (signal_pending(current))
+@@ -347,8 +346,7 @@ int RIODelay_ni (struct Port *PortP, int
+   func_enter ();
+ 
+   rio_dprintk (RIO_DEBUG_DELAY, "delaying %d jiffies (ni)\n", njiffies);  
+-  current->state = TASK_UNINTERRUPTIBLE;
+-  schedule_timeout(njiffies);
++  msleep(jiffies_to_msecs(njiffies));
+   func_exit();
+   return !RIO_FAIL;
+ }
+_

@@ -1,0 +1,150 @@
+
+From: Paul Jackson <pj@sgi.com>
+
+Remove by recoding other uses of the obsolete cpumask const, coerce and
+promote macros.
+
+Signed-off-by: Paul Jackson <pj@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc64/kernel/open_pic.c  |    8 ++++----
+ 25-akpm/arch/ppc64/kernel/rtasd.c     |    6 +++---
+ 25-akpm/arch/x86_64/kernel/io_apic.c  |    2 +-
+ 25-akpm/arch/x86_64/kernel/pci-gart.c |    4 ++--
+ 25-akpm/arch/x86_64/kernel/smp.c      |    2 +-
+ 25-akpm/include/asm-x86_64/smp.h      |    5 ++---
+ 6 files changed, 13 insertions(+), 14 deletions(-)
+
+diff -puN arch/ppc64/kernel/open_pic.c~cpumask-8-10-remove-obsolete-cpumask-macro-uses-other arch/ppc64/kernel/open_pic.c
+--- 25/arch/ppc64/kernel/open_pic.c~cpumask-8-10-remove-obsolete-cpumask-macro-uses-other	2004-06-16 00:10:39.883652088 -0700
++++ 25-akpm/arch/ppc64/kernel/open_pic.c	2004-06-16 00:10:39.895650264 -0700
+@@ -591,7 +591,7 @@ static inline u32 physmask(u32 cpumask)
+ void openpic_init_processor(u_int cpumask)
+ {
+ 	openpic_write(&OpenPIC->Global.Processor_Initialization,
+-		      physmask(cpumask & cpus_coerce(cpu_online_map)));
++		      physmask(cpumask & cpus_addr(cpu_online_map)[0]));
+ }
+ 
+ #ifdef CONFIG_SMP
+@@ -625,7 +625,7 @@ void openpic_cause_IPI(u_int ipi, u_int 
+ 	CHECK_THIS_CPU;
+ 	check_arg_ipi(ipi);
+ 	openpic_write(&OpenPIC->THIS_CPU.IPI_Dispatch(ipi),
+-		      physmask(cpumask & cpus_coerce(cpu_online_map)));
++		      physmask(cpumask & cpus_addr(cpu_online_map)[0]));
+ }
+ 
+ void openpic_request_IPIs(void)
+@@ -711,7 +711,7 @@ static void __init openpic_maptimer(u_in
+ {
+ 	check_arg_timer(timer);
+ 	openpic_write(&OpenPIC->Global.Timer[timer].Destination,
+-		      physmask(cpumask & cpus_coerce(cpu_online_map)));
++		      physmask(cpumask & cpus_addr(cpu_online_map)[0]));
+ }
+ 
+ 
+@@ -844,7 +844,7 @@ static void openpic_set_affinity(unsigne
+ 	cpumask_t tmp;
+ 
+ 	cpus_and(tmp, cpumask, cpu_online_map);
+-	openpic_mapirq(irq_nr - open_pic_irq_offset, physmask(cpus_coerce(tmp)));
++	openpic_mapirq(irq_nr - open_pic_irq_offset, physmask(cpus_addr(tmp)[0]));
+ }
+ 
+ #ifdef CONFIG_SMP
+diff -puN arch/ppc64/kernel/rtasd.c~cpumask-8-10-remove-obsolete-cpumask-macro-uses-other arch/ppc64/kernel/rtasd.c
+--- 25/arch/ppc64/kernel/rtasd.c~cpumask-8-10-remove-obsolete-cpumask-macro-uses-other	2004-06-16 00:10:39.884651936 -0700
++++ 25-akpm/arch/ppc64/kernel/rtasd.c	2004-06-16 00:10:39.895650264 -0700
+@@ -415,7 +415,7 @@ static int rtasd(void *unused)
+ 	}
+ 
+ 	lock_cpu_hotplug();
+-	cpu = first_cpu_const(mk_cpumask_const(cpu_online_map));
++	cpu = first_cpu(cpu_online_map);
+ 	for (;;) {
+ 		set_cpus_allowed(current, cpumask_of_cpu(cpu));
+ 		do_event_scan(event_scan);
+@@ -429,9 +429,9 @@ static int rtasd(void *unused)
+ 		schedule_timeout((HZ*60/rtas_event_scan_rate) / 2);
+ 		lock_cpu_hotplug();
+ 
+-		cpu = next_cpu_const(cpu, mk_cpumask_const(cpu_online_map));
++		cpu = next_cpu(cpu, cpu_online_map);
+ 		if (cpu == NR_CPUS)
+-			cpu = first_cpu_const(mk_cpumask_const(cpu_online_map));
++			cpu = first_cpu(cpu_online_map);
+ 	}
+ 
+ error:
+diff -puN arch/x86_64/kernel/io_apic.c~cpumask-8-10-remove-obsolete-cpumask-macro-uses-other arch/x86_64/kernel/io_apic.c
+--- 25/arch/x86_64/kernel/io_apic.c~cpumask-8-10-remove-obsolete-cpumask-macro-uses-other	2004-06-16 00:10:39.886651632 -0700
++++ 25-akpm/arch/x86_64/kernel/io_apic.c	2004-06-16 00:10:39.897649960 -0700
+@@ -1384,7 +1384,7 @@ static void set_ioapic_affinity_irq(unsi
+ 	unsigned long flags;
+ 	unsigned int dest;
+ 
+-	dest = cpu_mask_to_apicid(mk_cpumask_const(mask));
++	dest = cpu_mask_to_apicid(mask);
+ 
+ 	/*
+ 	 * Only the first 8 bits are valid.
+diff -puN arch/x86_64/kernel/pci-gart.c~cpumask-8-10-remove-obsolete-cpumask-macro-uses-other arch/x86_64/kernel/pci-gart.c
+--- 25/arch/x86_64/kernel/pci-gart.c~cpumask-8-10-remove-obsolete-cpumask-macro-uses-other	2004-06-16 00:10:39.888651328 -0700
++++ 25-akpm/arch/x86_64/kernel/pci-gart.c	2004-06-16 00:10:39.898649808 -0700
+@@ -148,7 +148,7 @@ static void flush_gart(struct pci_dev *d
+ { 
+ 	unsigned long flags;
+ 	int bus = dev ? dev->bus->number : -1;
+-	cpumask_const_t bus_cpumask = pcibus_to_cpumask(bus);
++	cpumask_t bus_cpumask = pcibus_to_cpumask(bus);
+ 	int flushed = 0;
+ 	int i;
+ 
+@@ -158,7 +158,7 @@ static void flush_gart(struct pci_dev *d
+ 			u32 w;
+ 			if (!northbridges[i]) 
+ 				continue;
+-			if (bus >= 0 && !(cpu_isset_const(i, bus_cpumask)))
++			if (bus >= 0 && !(cpu_isset(i, bus_cpumask)))
+ 				continue;
+ 			pci_write_config_dword(northbridges[i], 0x9c, 
+ 					       northbridge_flush_word[i] | 1); 
+diff -puN arch/x86_64/kernel/smp.c~cpumask-8-10-remove-obsolete-cpumask-macro-uses-other arch/x86_64/kernel/smp.c
+--- 25/arch/x86_64/kernel/smp.c~cpumask-8-10-remove-obsolete-cpumask-macro-uses-other	2004-06-16 00:10:39.890651024 -0700
++++ 25-akpm/arch/x86_64/kernel/smp.c	2004-06-16 00:10:39.898649808 -0700
+@@ -94,7 +94,7 @@ void send_IPI_self(int vector)
+ 
+ static inline void send_IPI_mask(cpumask_t cpumask, int vector)
+ {
+-	unsigned long mask = cpus_coerce(cpumask);
++	unsigned long mask = cpus_addr(cpumask)[0];
+ 	unsigned long cfg;
+ 	unsigned long flags;
+ 
+diff -puN include/asm-x86_64/smp.h~cpumask-8-10-remove-obsolete-cpumask-macro-uses-other include/asm-x86_64/smp.h
+--- 25/include/asm-x86_64/smp.h~cpumask-8-10-remove-obsolete-cpumask-macro-uses-other	2004-06-16 00:10:39.891650872 -0700
++++ 25-akpm/include/asm-x86_64/smp.h	2004-06-16 00:10:39.899649656 -0700
+@@ -105,7 +105,6 @@ static inline int cpu_present_to_apicid(
+ 		return BAD_APICID;
+ }
+ 
+-#define cpu_online(cpu) cpu_isset(cpu, cpu_online_map)
+ #endif /* !ASSEMBLY */
+ 
+ #define NO_PROC_ID		0xFF		/* No processor magic marker */
+@@ -115,9 +114,9 @@ static inline int cpu_present_to_apicid(
+ #define TARGET_CPUS 1
+ 
+ #ifndef ASSEMBLY
+-static inline unsigned int cpu_mask_to_apicid(cpumask_const_t cpumask)
++static inline unsigned int cpu_mask_to_apicid(cpumask_t cpumask)
+ {
+-	return cpus_coerce_const(cpumask);
++	return cpus_addr(cpumask)[0];
+ }
+ #endif
+ 
+_

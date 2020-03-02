@@ -1,0 +1,109 @@
+
+From: Jens Axboe <axboe@suse.de>
+
+It's not trivial, here's a hack that should dump the offending opcode
+though.
+DESC
+From: Jens Axboe <axboe@suse.de>
+Subject: Re: ide errors in 7-rc1-mm1 and later
+EDESC
+
+On Mon, Jun 14 2004, Andrew Morton wrote:
+> Ed Tomlinson <edt@aei.ca> wrote:
+> >
+> > Hi,
+> > 
+> > Still get the errors with 7-rc3-mm2.  Will this be fixed anytime soon?
+> > 
+> 
+> (don't top-post).
+> 
+> Waiting for Jens to send an updated dump-the-opcode patch.
+
+Damn keep forgetting. This one I tested, it works for me. Ed, can you
+apply this to your kernel, reboot, and send the dmesg?
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/ide/ide-disk.c |   31 +++++++++++++++++++++++++++++++
+ 25-akpm/drivers/ide/ide.c      |   24 ++++++++++++++++++++++++
+ 2 files changed, 55 insertions(+)
+
+diff -puN drivers/ide/ide.c~ide-print-failed-opcode drivers/ide/ide.c
+--- 25/drivers/ide/ide.c~ide-print-failed-opcode	2004-06-22 02:03:52.000000000 -0700
++++ 25-akpm/drivers/ide/ide.c	2004-06-22 02:03:52.000000000 -0700
+@@ -437,6 +437,30 @@ u8 ide_dump_status (ide_drive_t *drive, 
+ #endif	/* FANCY_STATUS_DUMPS */
+ 		printk("\n");
+ 	}
++	{
++		struct request *rq;
++		int opcode = 0x100;
++
++		spin_lock(&ide_lock);
++		rq = HWGROUP(drive)->rq;
++		spin_unlock(&ide_lock);
++		if (!rq)
++			goto out;
++		if (rq->flags & (REQ_DRIVE_CMD | REQ_DRIVE_TASK)) {
++			char *args = rq->buffer;
++			if (args)
++				opcode = args[0];
++		} else if (rq->flags & REQ_DRIVE_TASKFILE) {
++			ide_task_t *args = rq->special;
++			if (args) {
++				task_struct_t *tf = (task_struct_t *) args->tfRegister;
++				opcode = tf->command;
++			}
++		}
++
++		printk("ide: failed opcode was %x\n", opcode);
++	}
++out:
+ 	local_irq_restore(flags);
+ 	return err;
+ }
+diff -puN drivers/ide/ide-disk.c~ide-print-failed-opcode drivers/ide/ide-disk.c
+--- 25/drivers/ide/ide-disk.c~ide-print-failed-opcode	2004-06-22 11:08:05.319255456 -0700
++++ 25-akpm/drivers/ide/ide-disk.c	2004-06-22 11:08:05.323254848 -0700
+@@ -702,6 +702,37 @@ static u8 idedisk_dump_status (ide_drive
+ 	}
+ #endif	/* FANCY_STATUS_DUMPS */
+ 	printk("\n");
++	{
++		struct request *rq;
++		unsigned char opcode = 0;
++		int found = 0;
++
++		spin_lock(&ide_lock);
++		rq = HWGROUP(drive)->rq;
++		spin_unlock(&ide_lock);
++		if (!rq)
++			goto out;
++		if (rq->flags & (REQ_DRIVE_CMD | REQ_DRIVE_TASK)) {
++			char *args = rq->buffer;
++			if (args) {
++				opcode = args[0];
++				found = 1;
++			}
++		} else if (rq->flags & REQ_DRIVE_TASKFILE) {
++			ide_task_t *args = rq->special;
++			if (args) {
++				task_struct_t *tf = (task_struct_t *) args->tfRegister;
++				opcode = tf->command;
++				found = 1;
++			}
++		}
++		printk("ide: failed opcode was: ");
++		if (!found)
++			printk("unknown\n");
++		else
++			printk("0x%02x\n", opcode);
++	}
++out:
+ 	local_irq_restore(flags);
+ 	return err;
+ }
+_

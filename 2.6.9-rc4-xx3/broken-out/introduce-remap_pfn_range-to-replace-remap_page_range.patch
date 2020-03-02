@@ -1,0 +1,131 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+This patch introduces remap_pfn_range(), destined to replace
+remap_page_range(), to which all callers of remap_page_range() are converted
+in the sequel.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/mm.h |   11 +++++++++--
+ 25-akpm/mm/memory.c        |   19 ++++++++-----------
+ 25-akpm/mm/nommu.c         |    2 +-
+ 3 files changed, 18 insertions(+), 14 deletions(-)
+
+diff -puN include/linux/mm.h~introduce-remap_pfn_range-to-replace-remap_page_range include/linux/mm.h
+--- 25/include/linux/mm.h~introduce-remap_pfn_range-to-replace-remap_page_range	2004-10-03 16:43:54.427057384 -0700
++++ 25-akpm/include/linux/mm.h	2004-10-03 16:43:54.433056472 -0700
+@@ -772,8 +772,15 @@ extern struct vm_area_struct *find_exten
+ extern struct page * vmalloc_to_page(void *addr);
+ extern struct page * follow_page(struct mm_struct *mm, unsigned long address,
+ 		int write);
+-extern int remap_page_range(struct vm_area_struct *vma, unsigned long from,
+-		unsigned long to, unsigned long size, pgprot_t prot);
++int remap_pfn_range(struct vm_area_struct *, unsigned long,
++		unsigned long, unsigned long, pgprot_t);
++
++static inline __deprecated /* since 25 Sept 2004 -- wli */
++int remap_page_range(struct vm_area_struct *vma, unsigned long uvaddr,
++			unsigned long paddr, unsigned long size, pgprot_t prot)
++{
++	return remap_pfn_range(vma, uvaddr, paddr >> PAGE_SHIFT, size, prot);
++}
+ 
+ #ifdef CONFIG_PROC_FS
+ void __vm_stat_account(struct mm_struct *, unsigned long, struct file *, long);
+diff -puN mm/memory.c~introduce-remap_pfn_range-to-replace-remap_page_range mm/memory.c
+--- 25/mm/memory.c~introduce-remap_pfn_range-to-replace-remap_page_range	2004-10-03 16:43:54.428057232 -0700
++++ 25-akpm/mm/memory.c	2004-10-03 16:43:54.435056168 -0700
+@@ -955,16 +955,14 @@ int zeromap_page_range(struct vm_area_st
+  * in null mappings (currently treated as "copy-on-access")
+  */
+ static inline void remap_pte_range(pte_t * pte, unsigned long address, unsigned long size,
+-	unsigned long phys_addr, pgprot_t prot)
++	unsigned long pfn, pgprot_t prot)
+ {
+ 	unsigned long end;
+-	unsigned long pfn;
+ 
+ 	address &= ~PMD_MASK;
+ 	end = address + size;
+ 	if (end > PMD_SIZE)
+ 		end = PMD_SIZE;
+-	pfn = phys_addr >> PAGE_SHIFT;
+ 	do {
+ 		BUG_ON(!pte_none(*pte));
+ 		if (!pfn_valid(pfn) || PageReserved(pfn_to_page(pfn)))
+@@ -976,7 +974,7 @@ static inline void remap_pte_range(pte_t
+ }
+ 
+ static inline int remap_pmd_range(struct mm_struct *mm, pmd_t * pmd, unsigned long address, unsigned long size,
+-	unsigned long phys_addr, pgprot_t prot)
++	unsigned long pfn, pgprot_t prot)
+ {
+ 	unsigned long base, end;
+ 
+@@ -985,12 +983,12 @@ static inline int remap_pmd_range(struct
+ 	end = address + size;
+ 	if (end > PGDIR_SIZE)
+ 		end = PGDIR_SIZE;
+-	phys_addr -= address;
++	pfn -= address >> PAGE_SHIFT;
+ 	do {
+ 		pte_t * pte = pte_alloc_map(mm, pmd, base + address);
+ 		if (!pte)
+ 			return -ENOMEM;
+-		remap_pte_range(pte, base + address, end - address, address + phys_addr, prot);
++		remap_pte_range(pte, base + address, end - address, pfn + (address >> PAGE_SHIFT), prot);
+ 		pte_unmap(pte);
+ 		address = (address + PMD_SIZE) & PMD_MASK;
+ 		pmd++;
+@@ -999,7 +997,7 @@ static inline int remap_pmd_range(struct
+ }
+ 
+ /*  Note: this is only safe if the mm semaphore is held when called. */
+-int remap_page_range(struct vm_area_struct *vma, unsigned long from, unsigned long phys_addr, unsigned long size, pgprot_t prot)
++int remap_pfn_range(struct vm_area_struct *vma, unsigned long from, unsigned long pfn, unsigned long size, pgprot_t prot)
+ {
+ 	int error = 0;
+ 	pgd_t * dir;
+@@ -1007,7 +1005,7 @@ int remap_page_range(struct vm_area_stru
+ 	unsigned long end = from + size;
+ 	struct mm_struct *mm = vma->vm_mm;
+ 
+-	phys_addr -= from;
++	pfn -= from >> PAGE_SHIFT;
+ 	dir = pgd_offset(mm, from);
+ 	flush_cache_range(vma, beg, end);
+ 	if (from >= end)
+@@ -1019,7 +1017,7 @@ int remap_page_range(struct vm_area_stru
+ 		error = -ENOMEM;
+ 		if (!pmd)
+ 			break;
+-		error = remap_pmd_range(mm, pmd, from, end - from, phys_addr + from, prot);
++		error = remap_pmd_range(mm, pmd, from, end - from, pfn + (from >> PAGE_SHIFT), prot);
+ 		if (error)
+ 			break;
+ 		from = (from + PGDIR_SIZE) & PGDIR_MASK;
+@@ -1032,8 +1030,7 @@ int remap_page_range(struct vm_area_stru
+ 	spin_unlock(&mm->page_table_lock);
+ 	return error;
+ }
+-
+-EXPORT_SYMBOL(remap_page_range);
++EXPORT_SYMBOL(remap_pfn_range);
+ 
+ /*
+  * Do pte_mkwrite, but only if the vma says VM_WRITE.  We do this when
+diff -puN mm/nommu.c~introduce-remap_pfn_range-to-replace-remap_page_range mm/nommu.c
+--- 25/mm/nommu.c~introduce-remap_pfn_range-to-replace-remap_page_range	2004-10-03 16:43:54.430056928 -0700
++++ 25-akpm/mm/nommu.c	2004-10-03 16:43:54.436056016 -0700
+@@ -560,7 +560,7 @@ struct vm_area_struct *find_extend_vma(s
+ 	return NULL;
+ }
+ 
+-int remap_page_range(struct vm_area_struct *vma, unsigned long from,
++int remap_pfn_range(struct vm_area_struct *vma, unsigned long from,
+ 		unsigned long to, unsigned long size, pgprot_t prot)
+ {
+ 	return -EPERM;
+_

@@ -1,0 +1,55 @@
+
+From: Dmitry Torokhov <dtor_core@ameritech.net>
+
+  Driver core: add driver_find helper to find a driver by its name
+  
+Signed-off-by: Dmitry Torokhov <dtor@mail.ru>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/base/driver.c  |   16 ++++++++++++++++
+ 25-akpm/include/linux/device.h |    1 +
+ 2 files changed, 17 insertions(+)
+
+diff -puN drivers/base/driver.c~input-add-driver_find drivers/base/driver.c
+--- 25/drivers/base/driver.c~input-add-driver_find	2004-06-27 22:51:13.521139536 -0700
++++ 25-akpm/drivers/base/driver.c	2004-06-27 22:51:13.527138624 -0700
+@@ -111,10 +111,26 @@ void driver_unregister(struct device_dri
+ 	up(&drv->unload_sem);
+ }
+ 
++/**
++ *	driver_find - find driver on a given bus by its name.
++ *	@name:	name of the driver.
++ *	@bus:	bus to seatch for the driver
++ */
++
++struct device_driver *driver_find(const char *name, struct bus_type *bus)
++{
++	struct kobject *k = kset_find_obj(&bus->drivers, name);
++	if (k)
++		return to_drv(k);
++	return NULL;
++}
++
++
+ EXPORT_SYMBOL(driver_register);
+ EXPORT_SYMBOL(driver_unregister);
+ EXPORT_SYMBOL(get_driver);
+ EXPORT_SYMBOL(put_driver);
++EXPORT_SYMBOL(driver_find);
+ 
+ EXPORT_SYMBOL(driver_create_file);
+ EXPORT_SYMBOL(driver_remove_file);
+diff -puN include/linux/device.h~input-add-driver_find include/linux/device.h
+--- 25/include/linux/device.h~input-add-driver_find	2004-06-27 22:51:13.523139232 -0700
++++ 25-akpm/include/linux/device.h	2004-06-27 22:51:13.529138320 -0700
+@@ -120,6 +120,7 @@ extern void driver_unregister(struct dev
+ 
+ extern struct device_driver * get_driver(struct device_driver * drv);
+ extern void put_driver(struct device_driver * drv);
++extern struct device_driver *driver_find(const char *name, struct bus_type *bus);
+ 
+ 
+ /* driverfs interface for exporting driver attributes */
+_

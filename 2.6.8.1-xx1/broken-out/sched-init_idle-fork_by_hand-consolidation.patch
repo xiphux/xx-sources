@@ -1,0 +1,542 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+It appears that init_idle() and fork_by_hand() could be combined into a
+single method that calls init_idle() on behalf of the caller.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Index: xx-sources/arch/alpha/kernel/smp.c
+===================================================================
+--- xx-sources.orig/arch/alpha/kernel/smp.c	2004-08-14 13:23:59.881704712 -0400
++++ xx-sources/arch/alpha/kernel/smp.c	2004-08-14 13:24:36.616120232 -0400
+@@ -411,15 +411,6 @@
+ 	return 0;
+ }
+ 
+-static struct task_struct * __init
+-fork_by_hand(void)
+-{
+-	/* Don't care about the contents of regs since we'll never
+-	   reschedule the forked task. */
+-	struct pt_regs regs;
+-	return copy_process(CLONE_VM|CLONE_IDLETASK, 0, &regs, 0, NULL, NULL);
+-}
+-
+ /*
+  * Bring one cpu online.
+  */
+@@ -435,13 +426,10 @@
+ 	   the other task-y sort of data structures set up like we
+ 	   wish.  We can't use kernel_thread since we must avoid
+ 	   rescheduling the child.  */
+-	idle = fork_by_hand();
++	idle = fork_idle(cpuid);
+ 	if (IS_ERR(idle))
+ 		panic("failed fork for CPU %d", cpuid);
+ 
+-	init_idle(idle, cpuid);
+-	unhash_process(idle);
+-
+ 	DBGS(("smp_boot_one_cpu: CPU %d state 0x%lx flags 0x%lx\n",
+ 	      cpuid, idle->state, idle->flags));
+ 
+Index: xx-sources/arch/i386/kernel/smpboot.c
+===================================================================
+--- xx-sources.orig/arch/i386/kernel/smpboot.c	2004-08-14 13:24:31.503897408 -0400
++++ xx-sources/arch/i386/kernel/smpboot.c	2004-08-14 13:24:36.773096368 -0400
+@@ -496,16 +496,6 @@
+ 	unsigned short ss;
+ } stack_start;
+ 
+-static struct task_struct * __init fork_by_hand(void)
+-{
+-	struct pt_regs regs;
+-	/*
+-	 * don't care about the eip and regs settings since
+-	 * we'll never reschedule the forked task.
+-	 */
+-	return copy_process(CLONE_VM|CLONE_IDLETASK, 0, &regs, 0, NULL, NULL);
+-}
+-
+ #ifdef CONFIG_NUMA
+ 
+ /* which logical CPUs are on which nodes */
+@@ -801,18 +791,10 @@
+ 	 * We can't use kernel_thread since we must avoid to
+ 	 * reschedule the child.
+ 	 */
+-	idle = fork_by_hand();
++	idle = fork_idle(cpu);
+ 	if (IS_ERR(idle))
+ 		panic("failed fork for CPU %d", cpu);
+-
+-	/* Make this the idle thread */
+-	init_idle(idle, cpu);
+-
+ 	idle->thread.eip = (unsigned long) start_secondary;
+-
+-	/* Remove it from the pidhash */
+-	unhash_process(idle);
+-
+ 	/* start_eip had better be page-aligned! */
+ 	start_eip = setup_trampoline();
+ 
+Index: xx-sources/arch/i386/mach-voyager/voyager_smp.c
+===================================================================
+--- xx-sources.orig/arch/i386/mach-voyager/voyager_smp.c	2004-08-14 13:23:59.886703952 -0400
++++ xx-sources/arch/i386/mach-voyager/voyager_smp.c	2004-08-14 13:24:36.775096064 -0400
+@@ -523,15 +523,6 @@
+ 	return cpu_idle();
+ }
+ 
+-static struct task_struct * __init
+-fork_by_hand(void)
+-{
+-	struct pt_regs regs;
+-	/* don't care about the eip and regs settings since we'll
+-	 * never reschedule the forked task. */
+-	return copy_process(CLONE_VM|CLONE_IDLETASK, 0, &regs, 0, NULL, NULL);
+-}
+-
+ 
+ /* Routine to kick start the given CPU and wait for it to report ready
+  * (or timeout in startup).  When this routine returns, the requested
+@@ -587,17 +578,10 @@
+ 	hijack_source.idt.Segment = (start_phys_address >> 4) & 0xFFFF;
+ 
+ 	cpucount++;
+-	idle = fork_by_hand();
++	idle = fork_idle(cpu);
+ 	if(IS_ERR(idle))
+ 		panic("failed fork for CPU%d", cpu);
+-
+-	/* Make this the idle thread */
+-	init_idle(idle, cpu);
+-
+ 	idle->thread.eip = (unsigned long) start_secondary;
+-
+-	/* Remove it from the pidhash */
+-	unhash_process(idle);
+ 	/* init_tasks (in sched.c) is indexed logically */
+ 	stack_start.esp = (void *) idle->thread.esp;
+ 
+Index: xx-sources/arch/ia64/kernel/smpboot.c
+===================================================================
+--- xx-sources.orig/arch/ia64/kernel/smpboot.c	2004-08-14 13:24:31.764857736 -0400
++++ xx-sources/arch/ia64/kernel/smpboot.c	2004-08-14 13:24:36.776095912 -0400
+@@ -356,19 +356,10 @@
+ 	return cpu_idle();
+ }
+ 
+-static struct task_struct * __devinit
+-fork_by_hand (void)
+-{
+-	/*
+-	 * Don't care about the IP and regs settings since we'll never reschedule the
+-	 * forked task.
+-	 */
+-	return copy_process(CLONE_VM|CLONE_IDLETASK, 0, 0, 0, NULL, NULL);
+-}
+-
+ struct create_idle {
+ 	struct task_struct *idle;
+ 	struct completion done;
++	int cpu;
+ };
+ 
+ void
+@@ -376,7 +367,7 @@
+ {
+ 	struct create_idle *c_idle = _c_idle;
+ 
+-	c_idle->idle = fork_by_hand();
++	c_idle->idle = fork_idle(c_idle->cpu);
+ 	complete(&c_idle->done);
+ }
+ 
+@@ -384,10 +375,11 @@
+ do_boot_cpu (int sapicid, int cpu)
+ {
+ 	int timeout;
+-	struct create_idle c_idle;
++	struct create_idle c_idle = {
++		.cpu	= cpu,
++		.done	= COMPLETION_INITIALIZER(c_idle.done),
++	};
+ 	DECLARE_WORK(work, do_fork_idle, &c_idle);
+-
+-	init_completion(&c_idle.done);
+ 	/*
+ 	 * We can't use kernel_thread since we must avoid to reschedule the child.
+ 	 */
+@@ -400,13 +392,6 @@
+ 
+ 	if (IS_ERR(c_idle.idle))
+ 		panic("failed fork for CPU %d", cpu);
+-
+-	/* Make this the idle thread */
+-	init_idle(c_idle.idle, cpu);
+-
+-	/* Remove it from the pidhash */
+-	unhash_process(c_idle.idle);
+-
+ 	task_for_booting_cpu = c_idle.idle;
+ 
+ 	Dprintk("Sending wakeup vector %lu to AP 0x%x/0x%x.\n", ap_wakeup_vector, cpu, sapicid);
+Index: xx-sources/arch/mips/kernel/smp.c
+===================================================================
+--- xx-sources.orig/arch/mips/kernel/smp.c	2004-08-14 13:23:59.890703344 -0400
++++ xx-sources/arch/mips/kernel/smp.c	2004-08-14 13:24:36.777095760 -0400
+@@ -254,16 +254,6 @@
+ 	cpu_set(0, cpu_callin_map);
+ }
+ 
+-static struct task_struct * __init fork_by_hand(void)
+-{
+-	struct pt_regs regs;
+-	/*
+-	 * don't care about the eip and regs settings since
+-	 * we'll never reschedule the forked task.
+-	 */
+-	return copy_process(CLONE_VM|CLONE_IDLETASK, 0, &regs, 0, NULL, NULL);
+-}
+-
+ /*
+  * Startup the CPU with this logical number
+  */
+@@ -275,16 +265,10 @@
+ 	 * The following code is purely to make sure
+ 	 * Linux can schedule processes on this slave.
+ 	 */
+-	idle = fork_by_hand();
++	idle = fork_idle(cpu);
+ 	if (IS_ERR(idle))
+ 		panic("failed fork for CPU %d\n", cpu);
+ 
+-	/* Make this the idle thread */
+-	init_idle(idle, cpu);
+-
+-	/* Remove it from the pidhash */
+-	unhash_process(idle);
+-
+ 	prom_boot_secondary(cpu, idle);
+ 
+ 	/* XXXKW timeout */
+Index: xx-sources/arch/parisc/kernel/smp.c
+===================================================================
+--- xx-sources.orig/arch/parisc/kernel/smp.c	2004-08-14 13:24:22.024338520 -0400
++++ xx-sources/arch/parisc/kernel/smp.c	2004-08-14 13:25:03.971961512 -0400
+@@ -486,24 +486,6 @@
+ }
+ 
+ /*
+- * Create the idle task for a new Slave CPU.  DO NOT use kernel_thread()
+- * because that could end up calling schedule(). If it did, the new idle
+- * task could get scheduled before we had a chance to remove it from the
+- * run-queue...
+- */
+-static struct task_struct *fork_by_hand(void)
+-{
+-	struct pt_regs regs;  
+-
+-	/*
+-	 * don't care about the regs settings since
+-	 * we'll never reschedule the forked task.
+-	 */
+-	return copy_process(CLONE_VM|CLONE_IDLETASK, 0, &regs, 0, NULL, NULL);
+-}
+-
+-
+-/*
+  * Bring one cpu online.
+  */
+ int __init smp_boot_one_cpu(int cpuid)
+@@ -521,12 +503,10 @@
+ 	 * Sheesh . . .
+ 	 */
+ 
+-	idle = fork_by_hand();
++	idle = fork_idle(cpunum);
+ 	if (IS_ERR(idle))
+ 		panic("SMP: fork failed for CPU:%d", cpuid);
+ 
+-	init_idle(idle, cpuid);
+-	unhash_process(idle);
+ 	idle->thread_info->cpu = cpuid;
+ 
+ 	/* Let _start know what logical CPU we're booting
+Index: xx-sources/arch/ppc/kernel/smp.c
+===================================================================
+--- xx-sources.orig/arch/ppc/kernel/smp.c	2004-08-14 13:23:59.897702280 -0400
++++ xx-sources/arch/ppc/kernel/smp.c	2004-08-14 13:24:36.781095152 -0400
+@@ -364,20 +364,15 @@
+ 
+ int __cpu_up(unsigned int cpu)
+ {
+-	struct pt_regs regs;
+ 	struct task_struct *p;
+ 	char buf[32];
+ 	int c;
+ 
+ 	/* create a process for the processor */
+ 	/* only regs.msr is actually used, and 0 is OK for it */
+-	memset(&regs, 0, sizeof(struct pt_regs));
+-	p = copy_process(CLONE_VM|CLONE_IDLETASK, 0, &regs, 0, NULL, NULL);
++	p = fork_idle(cpu);
+ 	if (IS_ERR(p))
+ 		panic("failed fork for CPU %u: %li", cpu, PTR_ERR(p));
+-	init_idle(p, cpu);
+-	unhash_process(p);
+-
+ 	secondary_ti = p->thread_info;
+ 	p->thread_info->cpu = cpu;
+ 
+Index: xx-sources/arch/ppc64/kernel/smp.c
+===================================================================
+--- xx-sources.orig/arch/ppc64/kernel/smp.c	2004-08-14 13:24:32.175795264 -0400
++++ xx-sources/arch/ppc64/kernel/smp.c	2004-08-14 13:24:36.780095304 -0400
+@@ -800,20 +800,12 @@
+ 
+ static void __init smp_create_idle(unsigned int cpu)
+ {
+-	struct pt_regs regs;
+ 	struct task_struct *p;
+ 
+ 	/* create a process for the processor */
+-	/* only regs.msr is actually used, and 0 is OK for it */
+-	memset(&regs, 0, sizeof(struct pt_regs));
+-	p = copy_process(CLONE_VM | CLONE_IDLETASK,
+-			 0, &regs, 0, NULL, NULL);
++	p = fork_idle(cpu);
+ 	if (IS_ERR(p))
+ 		panic("failed fork for CPU %u: %li", cpu, PTR_ERR(p));
+-
+-	init_idle(p, cpu);
+-	unhash_process(p);
+-
+ 	paca[cpu].__current = p;
+ 	current_set[cpu] = p->thread_info;
+ }
+Index: xx-sources/arch/s390/kernel/smp.c
+===================================================================
+--- xx-sources.orig/arch/s390/kernel/smp.c	2004-08-14 13:23:59.898702128 -0400
++++ xx-sources/arch/s390/kernel/smp.c	2004-08-14 13:24:36.783094848 -0400
+@@ -562,24 +562,15 @@
+ 
+ static void __init smp_create_idle(unsigned int cpu)
+ {
+-	struct pt_regs regs;
+ 	struct task_struct *p;
+ 
+ 	/*
+ 	 *  don't care about the psw and regs settings since we'll never
+ 	 *  reschedule the forked task.
+ 	 */
+-	memset(&regs, 0, sizeof(struct pt_regs));
+-	p = copy_process(CLONE_VM | CLONE_IDLETASK, 0, &regs, 0, NULL, NULL);
++	p = fork_idle(cpu);
+ 	if (IS_ERR(p))
+ 		panic("failed fork for CPU %u: %li", cpu, PTR_ERR(p));
+-
+-	/* Make this the idle thread */
+-	init_idle(p, cpu);
+-
+-	/* Remove it from the pidhash */
+-	unhash_process(p);
+-
+ 	current_set[cpu] = p;
+ }
+ 
+Index: xx-sources/arch/sh/kernel/smp.c
+===================================================================
+--- xx-sources.orig/arch/sh/kernel/smp.c	2004-08-14 13:23:59.900701824 -0400
++++ xx-sources/arch/sh/kernel/smp.c	2004-08-14 13:24:36.783094848 -0400
+@@ -98,17 +98,12 @@
+ int __cpu_up(unsigned int cpu)
+ {
+ 	struct task_struct *tsk;
+-	struct pt_regs regs;
+ 
+-	memset(&regs, 0, sizeof(struct pt_regs));
+-	tsk = copy_process(CLONE_VM | CLONE_IDLETASK, 0, &regs, 0, 0, 0);
++	tsk = fork_idle(cpu);
+ 
+ 	if (IS_ERR(tsk))
+ 		panic("Failed forking idle task for cpu %d\n", cpu);
+ 	
+-	init_idle(tsk, cpu);
+-	unhash_process(tsk);
+-	
+ 	tsk->thread_info->cpu = cpu;
+ 
+ 	cpu_set(cpu, cpu_online_map);
+Index: xx-sources/arch/sparc/kernel/sun4d_smp.c
+===================================================================
+--- xx-sources.orig/arch/sparc/kernel/sun4d_smp.c	2004-08-14 01:36:16.000000000 -0400
++++ xx-sources/arch/sparc/kernel/sun4d_smp.c	2004-08-14 13:24:36.786094392 -0400
+@@ -201,18 +201,9 @@
+ 			int no;
+ 
+ 			/* Cook up an idler for this guy. */
+-			kernel_thread(start_secondary, NULL, CLONE_IDLETASK);
+-
++			p = fork_idle(p, cpu);
+ 			cpucount++;
+-
+-			p = prev_task(&init_task);
+-
+-			init_idle(p, i);
+-
+ 			current_set[i] = p->thread_info;
+-
+-			unhash_process(p);
+-
+ 			for (no = 0; !cpu_find_by_instance(no, NULL, &mid)
+ 				     && mid != i; no++) ;
+ 
+Index: xx-sources/arch/sparc64/kernel/smp.c
+===================================================================
+--- xx-sources.orig/arch/sparc64/kernel/smp.c	2004-08-14 01:36:10.000000000 -0400
++++ xx-sources/arch/sparc64/kernel/smp.c	2004-08-14 13:24:36.785094544 -0400
+@@ -303,14 +303,7 @@
+ 	struct task_struct *p;
+ 	int timeout, ret, cpu_node;
+ 
+-	kernel_thread(NULL, NULL, CLONE_IDLETASK);
+-
+-	p = prev_task(&init_task);
+-
+-	init_idle(p, cpu);
+-
+-	unhash_process(p);
+-
++	p = fork_idle(cpu);
+ 	callin_flag = 0;
+ 	cpu_new_thread = p->thread_info;
+ 	cpu_set(cpu, cpu_callout_map);
+Index: xx-sources/arch/x86_64/kernel/smpboot.c
+===================================================================
+--- xx-sources.orig/arch/x86_64/kernel/smpboot.c	2004-08-14 13:23:59.902701520 -0400
++++ xx-sources/arch/x86_64/kernel/smpboot.c	2004-08-14 13:24:36.787094240 -0400
+@@ -392,16 +392,6 @@
+ extern volatile unsigned long init_rsp; 
+ extern void (*initial_code)(void);
+ 
+-static struct task_struct * __init fork_by_hand(void)
+-{
+-	struct pt_regs regs;
+-	/*
+-	 * don't care about the eip and regs settings since
+-	 * we'll never reschedule the forked task.
+-	 */
+-	return copy_process(CLONE_VM|CLONE_IDLETASK, 0, &regs, 0, NULL, NULL);
+-}
+-
+ #if APIC_DEBUG
+ static inline void inquire_remote_apic(int apicid)
+ {
+@@ -575,17 +565,11 @@
+ 	 * We can't use kernel_thread since we must avoid to
+ 	 * reschedule the child.
+ 	 */
+-	idle = fork_by_hand();
++	idle = fork_idle(cpu);
+ 	if (IS_ERR(idle))
+ 		panic("failed fork for CPU %d", cpu);
+ 	x86_cpu_to_apicid[cpu] = apicid;
+ 
+-	/* Make this the idle thread */
+-	init_idle(idle,cpu);
+-
+-	/* Remove it from the pidhash */
+-	unhash_process(idle);
+-
+ 	cpu_pda[cpu].pcurrent = idle;
+ 
+ 	start_rip = setup_trampoline();
+Index: xx-sources/include/linux/sched.h
+===================================================================
+--- xx-sources.orig/include/linux/sched.h	2004-08-14 13:24:32.338770488 -0400
++++ xx-sources/include/linux/sched.h	2004-08-14 13:24:36.789093936 -0400
+@@ -788,7 +788,7 @@
+ 
+ extern int do_execve(char *, char __user * __user *, char __user * __user *, struct pt_regs *);
+ extern long do_fork(unsigned long, unsigned long, struct pt_regs *, unsigned long, int __user *, int __user *);
+-extern struct task_struct * copy_process(unsigned long, unsigned long, struct pt_regs *, unsigned long, int __user *, int __user *);
++task_t *fork_idle(int);
+ 
+ extern void set_task_comm(struct task_struct *tsk, char *from);
+ extern void get_task_comm(char *to, struct task_struct *tsk);
+Index: xx-sources/init/main.c
+===================================================================
+--- xx-sources.orig/init/main.c	2004-08-14 13:23:59.903701368 -0400
++++ xx-sources/init/main.c	2004-08-14 13:24:36.790093784 -0400
+@@ -465,15 +465,6 @@
+ 	 * time - but meanwhile we still have a functioning scheduler.
+ 	 */
+ 	sched_init();
+-
+-	/*
+-	 * Make us the idle thread. Technically, schedule() should not be
+-	 * called from this thread, however somewhere below it might be,
+-	 * but because we are the idle thread, we just pick up running again
+-	 * when this runqueue becomes "idle".
+-	 */
+-	init_idle(current, smp_processor_id());
+-
+ 	build_all_zonelists();
+ 	page_alloc_init();
+ 	trap_init();
+Index: xx-sources/kernel/fork.c
+===================================================================
+--- xx-sources.orig/kernel/fork.c	2004-08-14 13:24:31.428908808 -0400
++++ xx-sources/kernel/fork.c	2004-08-14 13:24:36.791093632 -0400
+@@ -864,7 +864,7 @@
+  * parts of the process environment (as per the clone
+  * flags). The actual kick-off is left to the caller.
+  */
+-struct task_struct *copy_process(unsigned long clone_flags,
++static task_t *copy_process(unsigned long clone_flags,
+ 				 unsigned long stack_start,
+ 				 struct pt_regs *regs,
+ 				 unsigned long stack_size,
+@@ -1152,6 +1152,20 @@
+ 	goto fork_out;
+ }
+ 
++task_t * __init fork_idle(int cpu)
++{
++	task_t *task;
++	struct pt_regs regs;
++
++	memset(&regs, 0, sizeof(struct pt_regs));
++	task = copy_process(CLONE_VM|CLONE_IDLETASK, 0, &regs, 0, NULL, NULL);
++	if (!task)
++		return ERR_PTR(-ENOMEM);
++	init_idle(task, cpu);
++	unhash_process(task);
++	return task;
++}
++
+ static inline int fork_traceflag (unsigned clone_flags)
+ {
+ 	if (clone_flags & (CLONE_UNTRACED | CLONE_IDLETASK))
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-08-14 13:24:32.342769880 -0400
++++ xx-sources/kernel/sched.c	2004-08-14 13:24:36.794093176 -0400
+@@ -4535,6 +4535,14 @@
+ 	 */
+ 	atomic_inc(&init_mm.mm_count);
+ 	enter_lazy_tlb(&init_mm, current);
++
++	/*
++	 * Make us the idle thread. Technically, schedule() should not be
++	 * called from this thread, however somewhere below it might be,
++	 * but because we are the idle thread, we just pick up running again
++	 * when this runqueue becomes "idle".
++	 */
++	init_idle(current, smp_processor_id());
+ }
+ 
+ #ifdef CONFIG_DEBUG_SPINLOCK_SLEEP

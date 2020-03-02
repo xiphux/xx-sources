@@ -1,0 +1,35 @@
+
+From: Matt Mackall <mpm@selenic.com>
+
+Add run-time switchable entropy debugging.  Entire debug infrastructure
+remains compiled out by default.
+
+Signed-off-by: Matt Mackall <mpm@selenic.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/random.c |    7 +++++--
+ 1 files changed, 5 insertions(+), 2 deletions(-)
+
+diff -puN drivers/char/random.c~random-run-time-configurable-debugging drivers/char/random.c
+--- 25/drivers/char/random.c~random-run-time-configurable-debugging	2005-01-12 23:16:37.449479656 -0800
++++ 25-akpm/drivers/char/random.c	2005-01-12 23:16:37.455478744 -0800
+@@ -473,12 +473,15 @@ static inline __u32 int_ln_12bits(__u32 
+ #endif
+ 
+ #if 0
+-#define DEBUG_ENT(fmt, arg...) printk(KERN_DEBUG "random %04d %04d %04d: " \
++static int debug = 0;
++module_param(debug, bool, 0644);
++#define DEBUG_ENT(fmt, arg...) do { if (debug) \
++	printk(KERN_DEBUG "random %04d %04d %04d: " \
+ 	fmt,\
+ 	random_state->entropy_count,\
+ 	sec_random_state->entropy_count,\
+ 	urandom_state->entropy_count,\
+-	## arg)
++	## arg); } while (0)
+ #else
+ #define DEBUG_ENT(fmt, arg...) do {} while (0)
+ #endif
+_

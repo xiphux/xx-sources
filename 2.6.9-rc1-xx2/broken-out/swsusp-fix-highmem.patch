@@ -1,0 +1,42 @@
+
+From: Pavel Machek <pavel@ucw.cz>
+
+This actually calls highmem_resume(), so swsusp has chance to work on
+highmem machines.  It also adds comments about code flow, which is quite
+interesting at that point.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/power/swsusp.c |    7 +++++++
+ 1 files changed, 7 insertions(+)
+
+diff -puN kernel/power/swsusp.c~swsusp-fix-highmem kernel/power/swsusp.c
+--- 25/kernel/power/swsusp.c~swsusp-fix-highmem	Tue Aug 17 15:15:11 2004
++++ 25-akpm/kernel/power/swsusp.c	Tue Aug 17 15:15:11 2004
+@@ -854,8 +854,10 @@ int swsusp_suspend(void)
+ 	local_irq_disable();
+ 	save_processor_state();
+ 	error = swsusp_arch_suspend();
++	/* Restore control flow magically appears here */
+ 	restore_processor_state();
+ 	local_irq_enable();
++	restore_highmem();
+ 	return error;
+ }
+ 
+@@ -874,8 +876,13 @@ int swsusp_resume(void)
+ {
+ 	int error;
+ 	local_irq_disable();
++	/* We'll ignore saved state, but this gets preempt count (etc) right */
+ 	save_processor_state();
+ 	error = swsusp_arch_resume();
++	/* Code below is only ever reached in case of failure. Otherwise
++	 * execution continues at place where swsusp_arch_suspend was called
++         */
++	BUG_ON(!error);
+ 	restore_processor_state();
+ 	restore_highmem();
+ 	local_irq_enable();
+_

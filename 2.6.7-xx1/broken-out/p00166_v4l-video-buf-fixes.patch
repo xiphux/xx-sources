@@ -1,0 +1,72 @@
+
+From: Gerd Knorr <kraxel@bytesex.org>
+
+This patch has some minor bugfixes for the video-buf module.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/media/video/video-buf.c |   15 +++++++++++----
+ 25-akpm/include/media/video-buf.h       |    2 --
+ 2 files changed, 11 insertions(+), 6 deletions(-)
+
+diff -puN drivers/media/video/video-buf.c~v4l-video-buf-fixes drivers/media/video/video-buf.c
+--- 25/drivers/media/video/video-buf.c~v4l-video-buf-fixes	2004-06-19 13:58:04.692104568 -0700
++++ 25-akpm/drivers/media/video/video-buf.c	2004-06-19 13:58:04.698103656 -0700
+@@ -5,10 +5,10 @@
+  * The functions expect the hardware being able to scatter gatter
+  * (i.e. the buffers are not linear in physical memory, but fragmented
+  * into PAGE_SIZE chunks).  They also assume the driver does not need
+- * to touch the video data (thus it is probably not useful for USB as
+- * data often must be uncompressed by the drivers).
++ * to touch the video data (thus it is probably not useful for USB 1.1
++ * as data often must be uncompressed by the drivers).
+  * 
+- * (c) 2001,02 Gerd Knorr <kraxel@bytesex.org>
++ * (c) 2001-2004 Gerd Knorr <kraxel@bytesex.org> [SUSE Labs]
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -536,6 +536,11 @@ videobuf_reqbufs(struct file *file, stru
+ 	    req->memory != V4L2_MEMORY_OVERLAY)
+ 		return -EINVAL;
+ 
++	if (q->streaming)
++		return -EBUSY;
++	if (!list_empty(&q->stream))
++		return -EBUSY;
++
+ 	down(&q->lock);
+ 	count = req->count;
+ 	if (count > VIDEO_MAX_FRAME)
+@@ -614,6 +619,8 @@ videobuf_qbuf(struct file *file, struct 
+ 	case V4L2_MEMORY_USERPTR:
+ 		if (b->length < buf->bsize)
+ 			goto done;
++		if (STATE_NEEDS_INIT != buf->state && buf->baddr != b->m.userptr)
++			q->ops->buf_release(file,buf);
+ 		buf->baddr = b->m.userptr;
+ 		break;
+ 	case V4L2_MEMORY_OVERLAY:
+@@ -1118,7 +1125,7 @@ int videobuf_mmap_setup(struct file *fil
+ 		case V4L2_MEMORY_OVERLAY:
+ 			/* nothing */
+ 			break;
+-		};
++		}
+ 	}
+ 	dprintk(1,"mmap setup: %d buffers, %d bytes each\n",
+ 		bcount,bsize);
+diff -puN include/media/video-buf.h~v4l-video-buf-fixes include/media/video-buf.h
+--- 25/include/media/video-buf.h~v4l-video-buf-fixes	2004-06-19 13:58:04.693104416 -0700
++++ 25-akpm/include/media/video-buf.h	2004-06-19 13:58:04.698103656 -0700
+@@ -36,8 +36,6 @@ struct scatterlist* videobuf_vmalloc_to_
+  */
+ struct scatterlist* videobuf_pages_to_sg(struct page **pages, int nr_pages,
+ 					 int offset);
+-int videobuf_lock(struct page **pages, int nr_pages);
+-int videobuf_unlock(struct page **pages, int nr_pages);
+ 
+ /* --------------------------------------------------------------------- */
+ 
+_

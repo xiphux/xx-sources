@@ -1,0 +1,107 @@
+
+From: Andrey Panin <pazke@donpac.ru>
+
+This patch ports PnP BIOS driver to new DMI probing API.
+
+Signed-off-by: Andrey Panin <pazke@donpac.ru>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/dmi_scan.c |   24 ------------------------
+ 25-akpm/drivers/pnp/pnpbios/core.c  |   32 +++++++++++++++++++++++++++++++-
+ 2 files changed, 31 insertions(+), 25 deletions(-)
+
+diff -puN arch/i386/kernel/dmi_scan.c~267-mm1-port-pnp-bios-driver-to-new-dmi-probing arch/i386/kernel/dmi_scan.c
+--- 25/arch/i386/kernel/dmi_scan.c~267-mm1-port-pnp-bios-driver-to-new-dmi-probing	Wed Jun 23 14:17:08 2004
++++ 25-akpm/arch/i386/kernel/dmi_scan.c	Wed Jun 23 14:17:08 2004
+@@ -433,18 +433,6 @@ static __init int broken_ps2_resume(stru
+ 	return 0;
+ }
+ 
+-/*
+- *	Exploding PnPBIOS. Don't yet know if its the BIOS or us for
+- *	some entries
+- */
+-
+-static __init int exploding_pnp_bios(struct dmi_blacklist *d)
+-{
+-	printk(KERN_WARNING "%s detected. Disabling PnPBIOS\n", d->ident);
+-	dmi_broken |= BROKEN_PNP_BIOS;
+-	return 0;
+-}
+-
+ static __init int acer_cpufreq_pst(struct dmi_blacklist *d)
+ {
+ 	printk(KERN_WARNING "%s laptop with broken PST tables in BIOS detected.\n", d->ident);
+@@ -748,18 +736,6 @@ static __initdata struct dmi_blacklist d
+ 			MATCH(DMI_BIOS_DATE, "10/26/01"), NO_MATCH
+ 			} },
+ 			
+-	{ exploding_pnp_bios, "Higraded P14H", {	/* PnPBIOS GPF on boot */
+-			MATCH(DMI_BIOS_VENDOR, "American Megatrends Inc."),
+-			MATCH(DMI_BIOS_VERSION, "07.00T"),
+-			MATCH(DMI_SYS_VENDOR, "Higraded"),
+-			MATCH(DMI_PRODUCT_NAME, "P14H")
+-			} },
+-	{ exploding_pnp_bios, "ASUS P4P800", {	/* PnPBIOS GPF on boot */
+-			MATCH(DMI_BOARD_VENDOR, "ASUSTeK Computer Inc."),
+-			MATCH(DMI_BOARD_NAME, "P4P800"),
+-			NO_MATCH, NO_MATCH
+-			} },
+-
+ 	/* Machines which have problems handling enabled local APICs */
+ 
+ 	{ local_apic_kills_bios, "Dell Inspiron", {
+diff -puN drivers/pnp/pnpbios/core.c~267-mm1-port-pnp-bios-driver-to-new-dmi-probing drivers/pnp/pnpbios/core.c
+--- 25/drivers/pnp/pnpbios/core.c~267-mm1-port-pnp-bios-driver-to-new-dmi-probing	Wed Jun 23 14:17:08 2004
++++ 25-akpm/drivers/pnp/pnpbios/core.c	Wed Jun 23 14:17:08 2004
+@@ -59,6 +59,7 @@
+ #include <linux/kmod.h>
+ #include <linux/completion.h>
+ #include <linux/spinlock.h>
++#include <linux/dmi.h>
+ 
+ #include <asm/page.h>
+ #include <asm/desc.h>
+@@ -498,10 +499,39 @@ int __init pnpbios_probe_system(void)
+ 	return 0;
+ }
+ 
++static int __init exploding_pnp_bios(struct dmi_system_id *d)
++{
++	printk(KERN_WARNING "%s detected. Disabling PnPBIOS\n", d->ident);
++	return 0;
++}
++
++static struct dmi_system_id pnpbios_dmi_table[] = {
++	{	/* PnPBIOS GPF on boot */
++		.callback = exploding_pnp_bios,
++		.ident = "Higraded P14H",
++		.matches = {
++			DMI_MATCH(DMI_BIOS_VENDOR, "American Megatrends Inc."),
++			DMI_MATCH(DMI_BIOS_VERSION, "07.00T"),
++			DMI_MATCH(DMI_SYS_VENDOR, "Higraded"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "P14H"),
++		},
++	},
++	{	/* PnPBIOS GPF on boot */
++		.callback = exploding_pnp_bios,
++		.ident = "ASUS P4P800",
++		.matches = {
++			DMI_MATCH(DMI_BOARD_VENDOR, "ASUSTeK Computer Inc."),
++			DMI_MATCH(DMI_BOARD_NAME, "P4P800"),
++		},
++	},
++	{ }
++};
++
+ int __init pnpbios_init(void)
+ {
+ 	int ret;
+-	if(pnpbios_disabled || (dmi_broken & BROKEN_PNP_BIOS)) {
++
++	if (pnpbios_disabled || dmi_check_system(pnpbios_dmi_table)) {
+ 		printk(KERN_INFO "PnPBIOS: Disabled\n");
+ 		return -ENODEV;
+ 	}
+_

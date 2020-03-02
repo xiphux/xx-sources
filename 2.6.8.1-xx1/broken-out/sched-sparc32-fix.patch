@@ -1,0 +1,48 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+Fix up sparc32 properly.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/sparc/kernel/sun4d_smp.c |    2 +-
+ 25-akpm/arch/sparc/kernel/sun4m_smp.c |   11 +----------
+ 2 files changed, 2 insertions(+), 11 deletions(-)
+
+diff -puN arch/sparc/kernel/sun4d_smp.c~sched-sparc32-fix arch/sparc/kernel/sun4d_smp.c
+--- 25/arch/sparc/kernel/sun4d_smp.c~sched-sparc32-fix	2004-08-07 19:27:45.545113016 -0700
++++ 25-akpm/arch/sparc/kernel/sun4d_smp.c	2004-08-07 19:27:45.549112408 -0700
+@@ -201,7 +201,7 @@ void __init smp4d_boot_cpus(void)
+ 			int no;
+ 
+ 			/* Cook up an idler for this guy. */
+-			p = fork_idle(p, cpu);
++			p = fork_idle(p, i);
+ 			cpucount++;
+ 			current_set[i] = p->thread_info;
+ 			for (no = 0; !cpu_find_by_instance(no, NULL, &mid)
+diff -puN arch/sparc/kernel/sun4m_smp.c~sched-sparc32-fix arch/sparc/kernel/sun4m_smp.c
+--- 25/arch/sparc/kernel/sun4m_smp.c~sched-sparc32-fix	2004-08-07 19:27:45.546112864 -0700
++++ 25-akpm/arch/sparc/kernel/sun4m_smp.c	2004-08-07 19:27:45.550112256 -0700
+@@ -173,18 +173,9 @@ void __init smp4m_boot_cpus(void)
+ 			int timeout;
+ 
+ 			/* Cook up an idler for this guy. */
+-			kernel_thread(start_secondary, NULL, CLONE_IDLETASK);
+-
++			p = fork_idle(i);
+ 			cpucount++;
+-
+-			p = prev_task(&init_task);
+-
+-			init_idle(p, i);
+-
+ 			current_set[i] = p->thread_info;
+-
+-			unhash_process(p);
+-
+ 			/* See trampoline.S for details... */
+ 			entry += ((i-1) * 3);
+ 
+_

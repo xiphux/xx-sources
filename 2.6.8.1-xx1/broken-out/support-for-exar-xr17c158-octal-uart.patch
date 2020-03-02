@@ -1,0 +1,98 @@
+
+From: Raphael Zimmerer <killekulla@rdrz.de>
+
+Here's a minimal patch to support the Exar Corp.  XR17C158 Octal UART Chip
+(PCI).
+
+Signed-off-by: Raphael Zimmerer <killekulla@rdrz.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/serial/8250_pci.c |   44 +++++++++++++++++++++++++++++++++++++-
+ 25-akpm/include/linux/pci_ids.h   |    5 ++++
+ 2 files changed, 48 insertions(+), 1 deletion(-)
+
+diff -puN drivers/serial/8250_pci.c~support-for-exar-xr17c158-octal-uart drivers/serial/8250_pci.c
+--- 25/drivers/serial/8250_pci.c~support-for-exar-xr17c158-octal-uart	Mon Aug  9 13:54:49 2004
++++ 25-akpm/drivers/serial/8250_pci.c	Mon Aug  9 13:54:49 2004
+@@ -1068,6 +1068,9 @@ enum pci_board_num_t {
+ 	pbn_computone_6,
+ 	pbn_computone_8,
+ 	pbn_sbsxrsio,
++	pbn_exar_XR17C152,
++	pbn_exar_XR17C154,
++	pbn_exar_XR17C158,
+ };
+ 
+ /*
+@@ -1488,7 +1491,30 @@ static struct pci_board pci_boards[] __d
+ 		.base_baud	= 460800,
+ 		.uart_offset	= 256,
+ 		.reg_shift	= 4,
+-	}
++	},
++	/*
++	 * Exar Corp. XR17C15[248] Dual/Quad/Octal UART
++	 *  Only basic 16550A support.
++	 *  XR17C15[24] are not tested, but they should work.
++	 */
++	[pbn_exar_XR17C152] = {
++		.flags		= FL_BASE0,
++		.num_ports	= 2,
++		.base_baud	= 921600,
++		.uart_offset	= 0x200,
++	},
++	[pbn_exar_XR17C154] = {
++		.flags		= FL_BASE0,
++		.num_ports	= 4,
++		.base_baud	= 921600,
++		.uart_offset	= 0x200,
++	},
++	[pbn_exar_XR17C158] = {
++		.flags		= FL_BASE0,
++		.num_ports	= 8,
++		.base_baud	= 921600,
++		.uart_offset	= 0x200,
++	},
+ };
+ 
+ /*
+@@ -2148,6 +2174,22 @@ static struct pci_device_id serial_pci_t
+ 		pbn_b3_8_115200 },
+ 
+ 	/*
++	 * Exar Corp. XR17C15[248] Dual/Quad/Octal UART
++	 */
++	{	PCI_VENDOR_ID_EXAR, PCI_DEVICE_ID_EXAR_XR17C152,
++		PCI_ANY_ID, PCI_ANY_ID,
++		0,
++		0, pbn_exar_XR17C152 },
++	{	PCI_VENDOR_ID_EXAR, PCI_DEVICE_ID_EXAR_XR17C154,
++		PCI_ANY_ID, PCI_ANY_ID,
++		0,
++		0, pbn_exar_XR17C154 },
++	{	PCI_VENDOR_ID_EXAR, PCI_DEVICE_ID_EXAR_XR17C158,
++		PCI_ANY_ID, PCI_ANY_ID,
++		0,
++		0, pbn_exar_XR17C158 },
++
++	/*
+ 	 * These entries match devices with class COMMUNICATION_SERIAL,
+ 	 * COMMUNICATION_MODEM or COMMUNICATION_MULTISERIAL
+ 	 */
+diff -puN include/linux/pci_ids.h~support-for-exar-xr17c158-octal-uart include/linux/pci_ids.h
+--- 25/include/linux/pci_ids.h~support-for-exar-xr17c158-octal-uart	Mon Aug  9 13:54:49 2004
++++ 25-akpm/include/linux/pci_ids.h	Mon Aug  9 13:54:49 2004
+@@ -1800,6 +1800,11 @@
+ #define PCI_DEVICE_ID_CCD_B00C		0xb00c
+ #define PCI_DEVICE_ID_CCD_B100		0xb100
+ 
++#define PCI_VENDOR_ID_EXAR		0x13a8
++#define PCI_DEVICE_ID_EXAR_XR17C152	0x0152
++#define PCI_DEVICE_ID_EXAR_XR17C154	0x0154
++#define PCI_DEVICE_ID_EXAR_XR17C158	0x0158
++
+ #define PCI_VENDOR_ID_MICROGATE		0x13c0
+ #define PCI_DEVICE_ID_MICROGATE_USC	0x0010
+ #define PCI_DEVICE_ID_MICROGATE_SCC	0x0020
+_

@@ -1,0 +1,53 @@
+
+From: Francois Romieu <romieu@fr.zoreil.com>
+
+It is possible to remove the device without calling pci_disable_device(). 
+A leak can take place during the init as well.
+
+Signed-off-by: Francois Romieu <romieu@fr.zoreil.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/3c59x.c |   21 ++++++++++++++-------
+ 1 files changed, 14 insertions(+), 7 deletions(-)
+
+diff -puN drivers/net/3c59x.c~3c59x-missing-pci_disable_device drivers/net/3c59x.c
+--- 25/drivers/net/3c59x.c~3c59x-missing-pci_disable_device	Thu Sep 30 14:31:40 2004
++++ 25-akpm/drivers/net/3c59x.c	Thu Sep 30 14:32:12 2004
+@@ -1074,14 +1074,20 @@ static int __devinit vortex_init_one (st
+ 	int rc;
+ 
+ 	/* wake up and enable device */		
+-	if (pci_enable_device (pdev)) {
+-		rc = -EIO;
+-	} else {
+-		rc = vortex_probe1 (&pdev->dev, pci_resource_start (pdev, 0),
+-							pdev->irq, ent->driver_data, vortex_cards_found);
+-		if (rc == 0)
+-			vortex_cards_found++;
++	rc = pci_enable_device (pdev);
++	if (rc < 0)
++		goto out;
++
++	rc = vortex_probe1 (&pdev->dev, pci_resource_start (pdev, 0),
++						pdev->irq, ent->driver_data, vortex_cards_found);
++	if (rc < 0) {
++		pci_disable_device (pdev);
++		goto out;
+ 	}
++
++	vortex_cards_found++;
++
++out:
+ 	return rc;
+ }
+ 
+@@ -3162,6 +3168,7 @@ static void __devexit vortex_remove_one 
+ 		pci_set_power_state(VORTEX_PCI(vp), 0);	/* Go active */
+ 		if (vp->pm_state_valid)
+ 			pci_restore_state(VORTEX_PCI(vp));
++		pci_disable_device(VORTEX_PCI(vp));
+ 	}
+ 	/* Should really use issue_and_wait() here */
+ 	outw(TotalReset|0x14, dev->base_addr + EL3_CMD);
+_

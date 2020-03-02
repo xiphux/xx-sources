@@ -1,0 +1,72 @@
+
+
+- remove APIC_MISMATCH_DEBUG altogether.  Just make it synonymous with
+  CONFIG_X86_IO_APIC
+
+- Move the definition of irq_mis_count over to io_apic.c
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/io_apic.c |    4 ++--
+ 25-akpm/arch/i386/kernel/irq.c     |    5 +----
+ 25-akpm/include/asm-i386/io_apic.h |    2 --
+ 3 files changed, 3 insertions(+), 8 deletions(-)
+
+diff -puN include/asm-i386/io_apic.h~irq_mis_count-build-fix include/asm-i386/io_apic.h
+--- 25/include/asm-i386/io_apic.h~irq_mis_count-build-fix	2004-10-02 14:36:52.055630464 -0700
++++ 25-akpm/include/asm-i386/io_apic.h	2004-10-02 14:37:03.188937944 -0700
+@@ -53,8 +53,6 @@ static inline void end_edge_ioapic_irq (
+ #define end_edge_ioapic 	end_edge_ioapic_irq
+ #endif
+ 
+-#define APIC_MISMATCH_DEBUG
+-
+ #define IO_APIC_BASE(idx) \
+ 		((volatile int *)(__fix_to_virt(FIX_IO_APIC_BASE_0 + idx) \
+ 		+ (mp_ioapics[idx].mpc_apicaddr & ~PAGE_MASK)))
+diff -puN arch/i386/kernel/irq.c~irq_mis_count-build-fix arch/i386/kernel/irq.c
+--- 25/arch/i386/kernel/irq.c~irq_mis_count-build-fix	2004-10-02 14:36:52.072627880 -0700
++++ 25-akpm/arch/i386/kernel/irq.c	2004-10-02 14:37:26.449401816 -0700
+@@ -194,9 +194,6 @@ EXPORT_SYMBOL(do_softirq);
+  */
+ 
+ atomic_t irq_err_count;
+-#if defined(CONFIG_X86_IO_APIC) && defined(APIC_MISMATCH_DEBUG)
+-atomic_t irq_mis_count;
+-#endif
+ 
+ /*
+  * /proc/interrupts printing:
+@@ -253,7 +250,7 @@ skip:
+ 		seq_putc(p, '\n');
+ #endif
+ 		seq_printf(p, "ERR: %10u\n", atomic_read(&irq_err_count));
+-#if defined(CONFIG_X86_IO_APIC) && defined(APIC_MISMATCH_DEBUG)
++#if defined(CONFIG_X86_IO_APIC)
+ 		seq_printf(p, "MIS: %10u\n", atomic_read(&irq_mis_count));
+ #endif
+ 	}
+diff -puN arch/i386/kernel/io_apic.c~irq_mis_count-build-fix arch/i386/kernel/io_apic.c
+--- 25/arch/i386/kernel/io_apic.c~irq_mis_count-build-fix	2004-10-02 14:36:52.091624992 -0700
++++ 25-akpm/arch/i386/kernel/io_apic.c	2004-10-02 14:37:56.827783600 -0700
+@@ -42,6 +42,8 @@
+ 
+ #include "io_ports.h"
+ 
++atomic_t irq_mis_count;
++
+ static spinlock_t ioapic_lock = SPIN_LOCK_UNLOCKED;
+ 
+ /*
+@@ -1877,9 +1879,7 @@ static void end_level_ioapic_irq (unsign
+ 	ack_APIC_irq();
+ 
+ 	if (!(v & (1 << (i & 0x1f)))) {
+-#ifdef APIC_MISMATCH_DEBUG
+ 		atomic_inc(&irq_mis_count);
+-#endif
+ 		spin_lock(&ioapic_lock);
+ 		__mask_and_edge_IO_APIC_irq(irq);
+ 		__unmask_and_level_IO_APIC_irq(irq);
+_

@@ -1,0 +1,33 @@
+
+From: Duncan Sands <baldrick@free.fr>
+
+The error exit path in request_firmware frees the allocated struct firmware
+*firmware, which is good.  What is not so good is that the value of
+firmware has already been copied out to the caller as *firmware_p.  The
+risk is that the caller will pass this to release_firmware, a double free. 
+This is exactly what will happen if the caller copied the example code
+
+         if(request_firmware(&fw_entry, $FIRMWARE, device) == 0)
+                copy_fw_to_device(fw_entry->data, fw_entry->size);
+         release(fw_entry);
+
+from the firmware documentation.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/base/firmware_class.c |    1 +
+ 1 files changed, 1 insertion(+)
+
+diff -puN drivers/base/firmware_class.c~firmware_class-avoid-double-free drivers/base/firmware_class.c
+--- 25/drivers/base/firmware_class.c~firmware_class-avoid-double-free	2004-10-02 23:26:40.192099176 -0700
++++ 25-akpm/drivers/base/firmware_class.c	2004-10-02 23:26:40.195098720 -0700
+@@ -441,6 +441,7 @@ request_firmware(const struct firmware *
+ 
+ error_kfree_fw:
+ 	kfree(firmware);
++	*firmware_p = NULL;
+ out:
+ 	return retval;
+ }
+_

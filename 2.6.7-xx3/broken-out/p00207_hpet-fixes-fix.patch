@@ -1,0 +1,46 @@
+
+
+- Need to set TASK_INTERRUPTIBLE before checking devp->hd_irqdata. 
+  Otherwise the wakeup from hpet_interrupt() could be missed.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/hpet.c |   12 +++++-------
+ 1 files changed, 5 insertions(+), 7 deletions(-)
+
+diff -puN drivers/char/hpet.c~hpet-fixes-fix drivers/char/hpet.c
+--- 25/drivers/char/hpet.c~hpet-fixes-fix	Wed Jun 23 14:38:16 2004
++++ 25-akpm/drivers/char/hpet.c	Wed Jun 23 14:38:16 2004
+@@ -196,7 +196,8 @@ hpet_read(struct file *file, char *buf, 
+ 
+ 	add_wait_queue(&devp->hd_waitqueue, &wait);
+ 
+-	do {
++	for ( ; ; ) {
++		set_current_state(TASK_INTERRUPTIBLE);
+ 		spin_lock_irq(&hpet_lock);
+ 		data = devp->hd_irqdata;
+ 		devp->hd_irqdata = 0;
+@@ -211,17 +212,14 @@ hpet_read(struct file *file, char *buf, 
+ 			retval = -ERESTARTSYS;
+ 			goto out;
+ 		}
+-
+-		set_current_state(TASK_INTERRUPTIBLE);
+ 		schedule();
+-
+-	} while (1);
++	}
+ 
+ 	retval = put_user(data, (unsigned long *)buf);
+ 	if (!retval)
+ 		retval = sizeof(unsigned long);
+-      out:
+-	current->state = TASK_RUNNING;
++out:
++	__set_current_state(TASK_RUNNING);
+ 	remove_wait_queue(&devp->hd_waitqueue, &wait);
+ 
+ 	return retval;
+_

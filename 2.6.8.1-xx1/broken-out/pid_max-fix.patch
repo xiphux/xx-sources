@@ -1,0 +1,38 @@
+
+From: "Zhu, Yi" <yi.zhu@intel.com>
+
+I found this is a bug in alloc_pidmap(). If one sets
+/proc/sys/kernel/pid_max more than 32768, "map" will
+increases 1 at (pid from 32767 to 32768)
+
+110: map = pidmap_array + pid / BITS_PER_PAGE;
+
+But at
+
+126: map = next_free_map(map, &max_steps);
+
+"map" will increase 1 again, because offset == 0.
+
+This is not correct, but only happens when pid_max > 32k.
+
+
+
+---
+
+ kernel/pid.c |    2 ++
+ 1 files changed, 2 insertions(+)
+
+diff -puN kernel/pid.c~pid_max-fix kernel/pid.c
+--- 25/kernel/pid.c~pid_max-fix	2004-01-19 15:38:02.000000000 -0800
++++ 25-akpm/kernel/pid.c	2004-01-19 15:38:02.000000000 -0800
+@@ -122,6 +122,8 @@ return_pid:
+ 	}
+ 	
+ 	if (!offset || !atomic_read(&map->nr_free)) {
++		if (!offset)
++			map--;
+ next_map:
+ 		map = next_free_map(map, &max_steps);
+ 		if (!map)
+
+_

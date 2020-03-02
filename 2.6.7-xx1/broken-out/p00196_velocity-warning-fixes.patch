@@ -1,0 +1,196 @@
+---
+
+ linux-2.6.7-xx1-xiphux/drivers/net/via-velocity.c |  168 +++++++++++-----------
+ 1 files changed, 85 insertions(+), 83 deletions(-)
+
+diff -puN drivers/net/via-velocity.c~velocity-warning-fixes drivers/net/via-velocity.c
+--- linux-2.6.7-xx1/drivers/net/via-velocity.c~velocity-warning-fixes	2004-06-22 13:05:53.832102104 -0400
++++ linux-2.6.7-xx1-xiphux/drivers/net/via-velocity.c	2004-06-22 13:05:54.277034464 -0400
+@@ -254,7 +254,6 @@ static void enable_flow_control_ability(
+ static void enable_mii_autopoll(struct mac_regs * regs);
+ static int velocity_mii_read(struct mac_regs *, u8 byIdx, u16 * pdata);
+ static int velocity_mii_write(struct mac_regs *, u8 byMiiAddr, u16 data);
+-static int velocity_set_wol(struct velocity_info *vptr);
+ static void velocity_save_context(struct velocity_info *vptr, struct velocity_context *context);
+ static void velocity_restore_context(struct velocity_info *vptr, struct velocity_context *context);
+ static u32 mii_check_media_mode(struct mac_regs * regs);
+@@ -3021,6 +3020,91 @@ static void velocity_restore_context(str
+ 
+ }
+ 
++#ifdef ETHTOOL_GWOL
++
++/**
++ *	velocity_set_wol	-	set up for wake on lan
++ *	@vptr: velocity to set WOL status on
++ *
++ *	Set a card up for wake on lan either by unicast or by
++ *	ARP packet.
++ *
++ *	FIXME: check static buffer is safe here
++ */
++
++static int velocity_set_wol(struct velocity_info *vptr)
++{
++	struct mac_regs * regs = vptr->mac_regs;
++	static u8 buf[256];
++	int i;
++
++	writew(0xFFFF, &regs->WOLCRClr);
++	writeb(WOLCFG_SAB | WOLCFG_SAM, &regs->WOLCFGSet);
++	writew(WOLCR_MAGIC_EN, &regs->WOLCRSet);
++
++	/*
++	   if (vptr->wol_opts & VELOCITY_WOL_PHY)
++	   writew((WOLCR_LINKON_EN|WOLCR_LINKOFF_EN), &regs->WOLCRSet);
++	 */
++
++	if (vptr->wol_opts & VELOCITY_WOL_UCAST) {
++		writew(WOLCR_UNICAST_EN, &regs->WOLCRSet);
++	}
++
++	if (vptr->wol_opts & VELOCITY_WOL_ARP) {
++		struct arp_packet *arp = (struct arp_packet *) buf;
++		u16 crc;
++		memset(buf, 0, sizeof(struct arp_packet) + 7);
++
++		for (i = 0; i < 4; i++)
++			writel(mask_pattern[0][i], &regs->ByteMask[0][i]);
++
++		arp->type = htons(ETH_P_ARP);
++		arp->ar_op = htons(1);
++
++		memcpy(arp->ar_tip, vptr->ip_addr, 4);
++
++		crc = wol_calc_crc((sizeof(struct arp_packet) + 7) / 8, buf,
++				(u8 *) & mask_pattern[0][0]);
++
++		writew(crc, &regs->PatternCRC[0]);
++		writew(WOLCR_ARP_EN, &regs->WOLCRSet);
++	}
++
++	BYTE_REG_BITS_ON(PWCFG_WOLTYPE, &regs->PWCFGSet);
++	BYTE_REG_BITS_ON(PWCFG_LEGACY_WOLEN, &regs->PWCFGSet);
++
++	writew(0x0FFF, &regs->WOLSRClr);
++
++	if (vptr->mii_status & VELOCITY_AUTONEG_ENABLE) {
++		if (PHYID_GET_PHY_ID(vptr->phy_id) == PHYID_CICADA_CS8201)
++			MII_REG_BITS_ON(AUXCR_MDPPS, MII_REG_AUXCR, vptr->mac_regs);
++
++		MII_REG_BITS_OFF(G1000CR_1000FD | G1000CR_1000, MII_REG_G1000CR, vptr->mac_regs);
++	}
++
++	if (vptr->mii_status & VELOCITY_SPEED_1000)
++		MII_REG_BITS_ON(BMCR_REAUTO, MII_REG_BMCR, vptr->mac_regs);
++
++	BYTE_REG_BITS_ON(CHIPGCR_FCMODE, &regs->CHIPGCR);
++
++	{
++		u8 GCR;
++		GCR = readb(&regs->CHIPGCR);
++		GCR = (GCR & ~CHIPGCR_FCGMII) | CHIPGCR_FCFDX;
++		writeb(GCR, &regs->CHIPGCR);
++	}
++
++	BYTE_REG_BITS_OFF(ISR_PWEI, &regs->ISR);
++	/* Turn on SWPTAG just before entering power mode */
++	BYTE_REG_BITS_ON(STICKHW_SWPTAG, &regs->STICKHW);
++	/* Go to bed ..... */
++	BYTE_REG_BITS_ON((STICKHW_DS1 | STICKHW_DS0), &regs->STICKHW);
++
++	return 0;
++}
++#endif	/* ETHTOOL_GWOL */
++
+ static int velocity_suspend(struct pci_dev *pdev, u32 state)
+ {
+ 	struct velocity_info *vptr = pci_get_drvdata(pdev);
+@@ -3222,85 +3306,3 @@ u16 wol_calc_crc(int size, u8 * pattern,
+ 	crc = ~crc;
+ 	return bit_reverse(crc);
+ }
+-
+-/**
+- *	velocity_set_wol	-	set up for wake on lan
+- *	@vptr: velocity to set WOL status on
+- *
+- *	Set a card up for wake on lan either by unicast or by
+- *	ARP packet.
+- *
+- *	FIXME: check static buffer is safe here
+- */
+-
+-static int velocity_set_wol(struct velocity_info *vptr)
+-{
+-	struct mac_regs * regs = vptr->mac_regs;
+-	static u8 buf[256];
+-	int i;
+-
+-	writew(0xFFFF, &regs->WOLCRClr);
+-	writeb(WOLCFG_SAB | WOLCFG_SAM, &regs->WOLCFGSet);
+-	writew(WOLCR_MAGIC_EN, &regs->WOLCRSet);
+-
+-	/*
+-	   if (vptr->wol_opts & VELOCITY_WOL_PHY)
+-	   writew((WOLCR_LINKON_EN|WOLCR_LINKOFF_EN), &regs->WOLCRSet);
+-	 */
+-
+-	if (vptr->wol_opts & VELOCITY_WOL_UCAST) {
+-		writew(WOLCR_UNICAST_EN, &regs->WOLCRSet);
+-	}
+-
+-	if (vptr->wol_opts & VELOCITY_WOL_ARP) {
+-		struct arp_packet *arp = (struct arp_packet *) buf;
+-		u16 crc;
+-		memset(buf, 0, sizeof(struct arp_packet) + 7);
+-
+-		for (i = 0; i < 4; i++)
+-			writel(mask_pattern[0][i], &regs->ByteMask[0][i]);
+-
+-		arp->type = htons(ETH_P_ARP);
+-		arp->ar_op = htons(1);
+-
+-		memcpy(arp->ar_tip, vptr->ip_addr, 4);
+-
+-		crc = wol_calc_crc((sizeof(struct arp_packet) + 7) / 8, buf, (u8 *) & mask_pattern[0][0]);
+-
+-		writew(crc, &regs->PatternCRC[0]);
+-		writew(WOLCR_ARP_EN, &regs->WOLCRSet);
+-	}
+-
+-	BYTE_REG_BITS_ON(PWCFG_WOLTYPE, &regs->PWCFGSet);
+-	BYTE_REG_BITS_ON(PWCFG_LEGACY_WOLEN, &regs->PWCFGSet);
+-
+-	writew(0x0FFF, &regs->WOLSRClr);
+-
+-	if (vptr->mii_status & VELOCITY_AUTONEG_ENABLE) {
+-		if (PHYID_GET_PHY_ID(vptr->phy_id) == PHYID_CICADA_CS8201)
+-			MII_REG_BITS_ON(AUXCR_MDPPS, MII_REG_AUXCR, vptr->mac_regs);
+-
+-		MII_REG_BITS_OFF(G1000CR_1000FD | G1000CR_1000, MII_REG_G1000CR, vptr->mac_regs);
+-	}
+-
+-	if (vptr->mii_status & VELOCITY_SPEED_1000)
+-		MII_REG_BITS_ON(BMCR_REAUTO, MII_REG_BMCR, vptr->mac_regs);
+-
+-	BYTE_REG_BITS_ON(CHIPGCR_FCMODE, &regs->CHIPGCR);
+-
+-	{
+-		u8 GCR;
+-		GCR = readb(&regs->CHIPGCR);
+-		GCR = (GCR & ~CHIPGCR_FCGMII) | CHIPGCR_FCFDX;
+-		writeb(GCR, &regs->CHIPGCR);
+-	}
+-
+-	BYTE_REG_BITS_OFF(ISR_PWEI, &regs->ISR);
+-	/* Turn on SWPTAG just before entering power mode */
+-	BYTE_REG_BITS_ON(STICKHW_SWPTAG, &regs->STICKHW);
+-	/* Go to bed ..... */
+-	BYTE_REG_BITS_ON((STICKHW_DS1 | STICKHW_DS0), &regs->STICKHW);
+-
+-	return 0;
+-}
+-
+
+_

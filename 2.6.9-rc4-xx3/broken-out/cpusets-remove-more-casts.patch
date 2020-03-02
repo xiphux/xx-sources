@@ -1,0 +1,62 @@
+
+From: Paul Jackson <pj@sgi.com>
+
+Remove some more casts of (void *) d_fsdata.
+
+In gcc, unlike C++, these serve no good purpose, and can hide valid errors
+if the type changes in the future.
+
+Signed-off-by: Paul Jackson <pj@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/cpuset.c |   11 +++++------
+ 1 files changed, 5 insertions(+), 6 deletions(-)
+
+diff -puN kernel/cpuset.c~cpusets-remove-more-casts kernel/cpuset.c
+--- 25/kernel/cpuset.c~cpusets-remove-more-casts	Fri Sep 17 16:45:29 2004
++++ 25-akpm/kernel/cpuset.c	Fri Sep 17 16:45:29 2004
+@@ -215,7 +215,7 @@ static void cpuset_diput(struct dentry *
+ {
+ 	/* is dentry a directory ? if so, kfree() associated cpuset */
+ 	if (S_ISDIR(inode->i_mode)) {
+-		struct cpuset *cs = (struct cpuset *)dentry->d_fsdata;
++		struct cpuset *cs = dentry->d_fsdata;
+ 		BUG_ON(!(is_removed(cs)));
+ 		kfree(cs);
+ 	}
+@@ -351,12 +351,12 @@ struct cftype {
+ 
+ static inline struct cpuset *__d_cs(struct dentry *dentry)
+ {
+-	return (struct cpuset *)dentry->d_fsdata;
++	return dentry->d_fsdata;
+ }
+ 
+ static inline struct cftype *__d_cft(struct dentry *dentry)
+ {
+-	return (struct cftype *)dentry->d_fsdata;
++	return dentry->d_fsdata;
+ }
+ 
+ /*
+@@ -1271,8 +1271,7 @@ err:
+ 
+ static int cpuset_mkdir(struct inode *dir, struct dentry *dentry, int mode)
+ {
+-	struct dentry *d_parent = dentry->d_parent;
+-	struct cpuset *c_parent = (struct cpuset *)d_parent->d_fsdata;
++	struct cpuset *c_parent = dentry->d_parent->d_fsdata;
+ 
+ 	/* the vfs holds inode->i_sem already */
+ 	return cpuset_create(c_parent, dentry->d_name.name, mode | S_IFDIR);
+@@ -1280,7 +1279,7 @@ static int cpuset_mkdir(struct inode *di
+ 
+ static int cpuset_rmdir(struct inode *unused_dir, struct dentry *dentry)
+ {
+-	struct cpuset *cs = (struct cpuset *)dentry->d_fsdata;
++	struct cpuset *cs = dentry->d_fsdata;
+ 	struct dentry *d;
+ 	struct cpuset *parent;
+ 
+_

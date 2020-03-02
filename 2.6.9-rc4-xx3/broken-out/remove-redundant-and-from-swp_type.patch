@@ -1,0 +1,29 @@
+
+: Marcelo Tosatti <marcelo.tosatti@cyclades.com>
+
+There is a useless AND in swp_type() function.
+
+We just shifted right SWP_TYPE_SHIFT() bits the value from the swp_entry_t,
+and then we AND it with "(1 << 5) - 1" (which is a mask corresponding to
+the number of bits used by "type").
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/swapops.h |    3 +--
+ 1 files changed, 1 insertion(+), 2 deletions(-)
+
+diff -puN include/linux/swapops.h~remove-redundant-and-from-swp_type include/linux/swapops.h
+--- 25/include/linux/swapops.h~remove-redundant-and-from-swp_type	Fri Oct  8 14:50:12 2004
++++ 25-akpm/include/linux/swapops.h	Fri Oct  8 14:50:12 2004
+@@ -30,8 +30,7 @@ static inline swp_entry_t swp_entry(unsi
+  */
+ static inline unsigned swp_type(swp_entry_t entry)
+ {
+-	return (entry.val >> SWP_TYPE_SHIFT(entry)) &
+-			((1 << MAX_SWAPFILES_SHIFT) - 1);
++	return (entry.val >> SWP_TYPE_SHIFT(entry));
+ }
+ 
+ /*
+_

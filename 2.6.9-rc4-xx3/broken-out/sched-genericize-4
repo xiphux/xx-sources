@@ -1,0 +1,1029 @@
+Index: xx-sources/include/linux/sched.h
+===================================================================
+--- xx-sources.orig/include/linux/sched.h	2004-10-10 22:32:41.072081672 -0400
++++ xx-sources/include/linux/sched.h	2004-10-10 23:25:38.856984936 -0400
+@@ -1248,6 +1248,7 @@
+ }
+ #endif
+ 
++extern task_t *find_process_by_pid(pid_t pid);
+ extern long sched_setaffinity(pid_t pid, cpumask_t new_mask);
+ extern long sched_getaffinity(pid_t pid, cpumask_t *mask);
+ 
+Index: xx-sources/include/linux/scheduler.h
+===================================================================
+--- xx-sources.orig/include/linux/scheduler.h	2004-10-10 20:39:39.000000000 -0400
++++ xx-sources/include/linux/scheduler.h	2004-10-10 23:18:26.792668696 -0400
+@@ -4,7 +4,6 @@
+ typedef asmlinkage void (schedule_tail_fn) (task_t *);
+ typedef asmlinkage void (schedule_fn) (void);
+ typedef void (scheduler_tick_fn) (int, int);
+-typedef void (yield_fn) (void);
+ typedef void FASTCALL((wait_for_completion_fn)(struct completion *));
+ typedef int (idle_cpu_fn) (int);
+ 
+@@ -33,12 +32,8 @@
+ typedef void (sched_exec_fn)(void);
+ typedef long (sched_setaffinity_fn)(pid_t, cpumask_t);
+ typedef long (sched_getaffinity_fn)(pid_t, cpumask_t *);
++typedef int (setscheduler_fn)(pid_t, int, struct sched_param __user *);
+ typedef asmlinkage long (sys_nice_fn)(int);
+-typedef asmlinkage long (sys_sched_setscheduler_fn)(pid_t, int, struct sched_param __user *);
+-typedef asmlinkage long (sys_sched_setparam_fn)(pid_t, struct sched_param __user *);
+-typedef asmlinkage long (sys_sched_getscheduler_fn)(pid_t);
+-typedef asmlinkage long (sys_sched_getparam_fn)(pid_t, struct sched_param __user *);
+-typedef asmlinkage long (sys_sched_getaffinity_fn)(pid_t, unsigned int, unsigned long __user *);
+ typedef asmlinkage long (sys_sched_yield_fn)(void);
+ typedef asmlinkage long (sys_sched_rr_get_interval_fn)(pid_t, struct timespec __user *);
+ typedef void (sched_init_fn)(void);
+@@ -65,7 +60,6 @@
+ 	schedule_tail_fn *schedule_tail_fn;
+ 	schedule_fn *schedule_fn;
+ 	scheduler_tick_fn *scheduler_tick_fn;
+-	yield_fn *yield_fn;
+ 	wait_for_completion_fn *wait_for_completion_fn;
+ 	idle_cpu_fn *idle_cpu_fn;
+ 
+@@ -94,12 +88,8 @@
+ 	sched_exec_fn *sched_exec_fn;
+ 	sched_setaffinity_fn *sched_setaffinity_fn;
+ 	sched_getaffinity_fn *sched_getaffinity_fn;
++	setscheduler_fn *setscheduler_fn;
+ 	sys_nice_fn *sys_nice_fn;
+-	sys_sched_setscheduler_fn *sys_sched_setscheduler_fn;
+-	sys_sched_setparam_fn *sys_sched_setparam_fn;
+-	sys_sched_getscheduler_fn *sys_sched_getscheduler_fn;
+-	sys_sched_getparam_fn *sys_sched_getparam_fn;
+-	sys_sched_getaffinity_fn *sys_sched_getaffinity_fn;
+ 	sys_sched_yield_fn *sys_sched_yield_fn;
+ 	sys_sched_rr_get_interval_fn *sys_sched_rr_get_interval_fn;
+ 	sched_init_fn *sched_init_fn;
+Index: xx-sources/kernel/default-sched.c
+===================================================================
+--- xx-sources.orig/kernel/default-sched.c	2004-10-10 22:32:41.014090488 -0400
++++ xx-sources/kernel/default-sched.c	2004-10-10 23:18:55.525300672 -0400
+@@ -2924,15 +2924,6 @@
+ 	return cpu_curr(cpu) == cpu_rq(cpu)->idle;
+ }
+ 
+-/**
+- * find_process_by_pid - find a process with a matching PID value.
+- * @pid: the pid in question.
+- */
+-static inline task_t *find_process_by_pid(pid_t pid)
+-{
+-	return pid ? find_task_by_pid(pid) : current;
+-}
+-
+ /* Actually do priority change: must hold rq lock. */
+ static void __setscheduler(struct task_struct *p, int policy, int prio)
+ {
+@@ -2948,7 +2939,7 @@
+ /*
+  * setscheduler - change the scheduling policy and/or RT priority of a thread.
+  */
+-static int setscheduler(pid_t pid, int policy, struct sched_param __user *param)
++int default_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
+ {
+ 	struct sched_param lp;
+ 	int retval = -EINVAL;
+@@ -3043,93 +3034,6 @@
+ 	return retval;
+ }
+ 
+-/**
+- * sys_sched_setscheduler - set/change the scheduler policy and RT priority
+- * @pid: the pid in question.
+- * @policy: new policy
+- * @param: structure containing the new RT priority.
+- */
+-asmlinkage long default_sys_sched_setscheduler(pid_t pid, int policy,
+-				       struct sched_param __user *param)
+-{
+-	return setscheduler(pid, policy, param);
+-}
+-
+-/**
+- * sys_sched_setparam - set/change the RT priority of a thread
+- * @pid: the pid in question.
+- * @param: structure containing the new RT priority.
+- */
+-asmlinkage long default_sys_sched_setparam(pid_t pid, struct sched_param __user *param)
+-{
+-	return setscheduler(pid, -1, param);
+-}
+-
+-/**
+- * sys_sched_getscheduler - get the policy (scheduling class) of a thread
+- * @pid: the pid in question.
+- */
+-asmlinkage long default_sys_sched_getscheduler(pid_t pid)
+-{
+-	int retval = -EINVAL;
+-	task_t *p;
+-
+-	if (pid < 0)
+-		goto out_nounlock;
+-
+-	retval = -ESRCH;
+-	read_lock(&tasklist_lock);
+-	p = find_process_by_pid(pid);
+-	if (p) {
+-		retval = security_task_getscheduler(p);
+-		if (!retval)
+-			retval = p->policy;
+-	}
+-	read_unlock(&tasklist_lock);
+-
+-out_nounlock:
+-	return retval;
+-}
+-
+-/**
+- * sys_sched_getscheduler - get the RT priority of a thread
+- * @pid: the pid in question.
+- * @param: structure containing the RT priority.
+- */
+-asmlinkage long default_sys_sched_getparam(pid_t pid, struct sched_param __user *param)
+-{
+-	struct sched_param lp;
+-	int retval = -EINVAL;
+-	task_t *p;
+-
+-	if (!param || pid < 0)
+-		goto out_nounlock;
+-
+-	read_lock(&tasklist_lock);
+-	p = find_process_by_pid(pid);
+-	retval = -ESRCH;
+-	if (!p)
+-		goto out_unlock;
+-
+-	retval = security_task_getscheduler(p);
+-	if (retval)
+-		goto out_unlock;
+-
+-	lp.sched_priority = p->rt_priority;
+-	read_unlock(&tasklist_lock);
+-
+-	/*
+-	 * This one might sleep, we cannot do it with a spinlock held ...
+-	 */
+-	retval = copy_to_user(param, &lp, sizeof(*param)) ? -EFAULT : 0;
+-
+-out_nounlock:
+-	return retval;
+-
+-out_unlock:
+-	read_unlock(&tasklist_lock);
+-	return retval;
+-}
+ 
+ long default_sched_setaffinity(pid_t pid, cpumask_t new_mask)
+ {
+@@ -3196,31 +3100,6 @@
+ }
+ 
+ /**
+- * sys_sched_getaffinity - get the cpu affinity of a process
+- * @pid: pid of the process
+- * @len: length in bytes of the bitmask pointed to by user_mask_ptr
+- * @user_mask_ptr: user-space pointer to hold the current cpu mask
+- */
+-asmlinkage long default_sys_sched_getaffinity(pid_t pid, unsigned int len,
+-				      unsigned long __user *user_mask_ptr)
+-{
+-	int ret;
+-	cpumask_t mask;
+-
+-	if (len < sizeof(cpumask_t))
+-		return -EINVAL;
+-
+-	ret = sched_getaffinity(pid, &mask);
+-	if (ret < 0)
+-		return ret;
+-
+-	if (copy_to_user(user_mask_ptr, &mask, sizeof(cpumask_t)))
+-		return -EFAULT;
+-
+-	return sizeof(cpumask_t);
+-}
+-
+-/**
+  * default_sys_sched_yield - yield the current processor to other threads.
+  *
+  * this function yields the current CPU by moving the calling thread
+@@ -3266,21 +3145,6 @@
+ 	return 0;
+ }
+ 
+-
+-/**
+- * yield - yield the current processor to other threads.
+- *
+- * this is a shortcut for kernel-space yielding - it marks the
+- * thread runnable and calls sys_sched_yield().
+- */
+-void __sched default_yield(void)
+-{
+-	set_current_state(TASK_RUNNING);
+-	sys_sched_yield();
+-}
+-
+-EXPORT_SYMBOL(yield);
+-
+ /*
+  * This task is about to go to sleep on IO.  Increment rq->nr_iowait so
+  * that process accounting knows that this is a task in IO wait state.
+@@ -4226,7 +4090,6 @@
+ 	.schedule_tail_fn = 			default_schedule_tail,
+ 	.schedule_fn =				default_schedule,
+ 	.scheduler_tick_fn = 			default_scheduler_tick,
+-	.yield_fn = 				default_yield,
+ 	.wait_for_completion_fn	=		default_wait_for_completion,
+ 	.idle_cpu_fn = 				default_idle_cpu,
+ 	.__wake_up_fn = 			default___wake_up,
+@@ -4253,12 +4116,8 @@
+ #endif
+ 	.sched_setaffinity_fn = 		default_sched_setaffinity,
+ 	.sched_getaffinity_fn =			default_sched_getaffinity,
++	.setscheduler_fn = 			default_setscheduler,
+ 	.sys_nice_fn = 				default_sys_nice,
+-	.sys_sched_setscheduler_fn = 		default_sys_sched_setscheduler,
+-	.sys_sched_setparam_fn = 		default_sys_sched_setparam,
+-	.sys_sched_getscheduler_fn = 		default_sys_sched_getscheduler,
+-	.sys_sched_getparam_fn = 		default_sys_sched_getparam,
+-	.sys_sched_getaffinity_fn = 		default_sys_sched_getaffinity,
+ 	.sys_sched_yield_fn = 			default_sys_sched_yield,
+ 	.sys_sched_rr_get_interval_fn = 	default_sys_sched_rr_get_interval,
+ 	.sched_init_fn = 			default_sched_init,
+Index: xx-sources/kernel/nicksched-sched.c
+===================================================================
+--- xx-sources.orig/kernel/nicksched-sched.c	2004-10-10 22:32:41.068082280 -0400
++++ xx-sources/kernel/nicksched-sched.c	2004-10-10 23:19:24.787852088 -0400
+@@ -2754,15 +2754,6 @@
+ 	return cpu_curr(cpu) == cpu_rq(cpu)->idle;
+ }
+ 
+-/**
+- * find_process_by_pid - find a process with a matching PID value.
+- * @pid: the pid in question.
+- */
+-static inline task_t *find_process_by_pid(pid_t pid)
+-{
+-	return pid ? find_task_by_pid(pid) : current;
+-}
+-
+ /* Actually do priority change: must hold rq lock. */
+ static void __setscheduler(struct task_struct *p, int policy, int prio)
+ {
+@@ -2778,7 +2769,7 @@
+ /*
+  * setscheduler - change the scheduling policy and/or RT priority of a thread.
+  */
+-static int setscheduler(pid_t pid, int policy, struct sched_param __user *param)
++int nicksched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
+ {
+ 	struct sched_param lp;
+ 	int retval = -EINVAL;
+@@ -2876,94 +2867,6 @@
+ 	return retval;
+ }
+ 
+-/**
+- * sys_sched_setscheduler - set/change the scheduler policy and RT priority
+- * @pid: the pid in question.
+- * @policy: new policy
+- * @param: structure containing the new RT priority.
+- */
+-asmlinkage long nicksched_sys_sched_setscheduler(pid_t pid, int policy,
+-				       struct sched_param __user *param)
+-{
+-	return setscheduler(pid, policy, param);
+-}
+-
+-/**
+- * sys_sched_setparam - set/change the RT priority of a thread
+- * @pid: the pid in question.
+- * @param: structure containing the new RT priority.
+- */
+-asmlinkage long nicksched_sys_sched_setparam(pid_t pid, struct sched_param __user *param)
+-{
+-	return setscheduler(pid, -1, param);
+-}
+-
+-/**
+- * sys_sched_getscheduler - get the policy (scheduling class) of a thread
+- * @pid: the pid in question.
+- */
+-asmlinkage long nicksched_sys_sched_getscheduler(pid_t pid)
+-{
+-	int retval = -EINVAL;
+-	task_t *p;
+-
+-	if (pid < 0)
+-		goto out_nounlock;
+-
+-	retval = -ESRCH;
+-	read_lock(&tasklist_lock);
+-	p = find_process_by_pid(pid);
+-	if (p) {
+-		retval = security_task_getscheduler(p);
+-		if (!retval)
+-			retval = p->policy;
+-	}
+-	read_unlock(&tasklist_lock);
+-
+-out_nounlock:
+-	return retval;
+-}
+-
+-/**
+- * sys_sched_getscheduler - get the RT priority of a thread
+- * @pid: the pid in question.
+- * @param: structure containing the RT priority.
+- */
+-asmlinkage long nicksched_sys_sched_getparam(pid_t pid, struct sched_param __user *param)
+-{
+-	struct sched_param lp;
+-	int retval = -EINVAL;
+-	task_t *p;
+-
+-	if (!param || pid < 0)
+-		goto out_nounlock;
+-
+-	read_lock(&tasklist_lock);
+-	p = find_process_by_pid(pid);
+-	retval = -ESRCH;
+-	if (!p)
+-		goto out_unlock;
+-
+-	retval = security_task_getscheduler(p);
+-	if (retval)
+-		goto out_unlock;
+-
+-	lp.sched_priority = p->rt_priority;
+-	read_unlock(&tasklist_lock);
+-
+-	/*
+-	 * This one might sleep, we cannot do it with a spinlock held ...
+-	 */
+-	retval = copy_to_user(param, &lp, sizeof(*param)) ? -EFAULT : 0;
+-
+-out_nounlock:
+-	return retval;
+-
+-out_unlock:
+-	read_unlock(&tasklist_lock);
+-	return retval;
+-}
+-
+ long nicksched_sched_setaffinity(pid_t pid, cpumask_t new_mask)
+ {
+ 	task_t *p;
+@@ -3029,31 +2932,6 @@
+ }
+ 
+ /**
+- * sys_sched_getaffinity - get the cpu affinity of a process
+- * @pid: pid of the process
+- * @len: length in bytes of the bitmask pointed to by user_mask_ptr
+- * @user_mask_ptr: user-space pointer to hold the current cpu mask
+- */
+-asmlinkage long nicksched_sys_sched_getaffinity(pid_t pid, unsigned int len,
+-				      unsigned long __user *user_mask_ptr)
+-{
+-	int ret;
+-	cpumask_t mask;
+-
+-	if (len < sizeof(cpumask_t))
+-		return -EINVAL;
+-
+-	ret = sched_getaffinity(pid, &mask);
+-	if (ret < 0)
+-		return ret;
+-
+-	if (copy_to_user(user_mask_ptr, &mask, sizeof(cpumask_t)))
+-		return -EFAULT;
+-
+-	return sizeof(cpumask_t);
+-}
+-
+-/**
+  * nicksched_sys_sched_yield - yield the current processor to other threads.
+  *
+  * this function yields the current CPU by moving the calling thread
+@@ -3093,18 +2971,6 @@
+ 	return 0;
+ }
+ 
+-/**
+- * yield - yield the current processor to other threads.
+- *
+- * this is a shortcut for kernel-space yielding - it marks the
+- * thread runnable and calls sys_sched_yield().
+- */
+-void __sched nicksched_yield(void)
+-{
+-	set_current_state(TASK_RUNNING);
+-	sys_sched_yield();
+-}
+-
+ /*
+  * This task is about to go to sleep on IO.  Increment rq->nr_iowait so
+  * that process accounting knows that this is a task in IO wait state.
+@@ -4095,7 +3961,6 @@
+ 	.schedule_tail_fn = 			nicksched_schedule_tail,
+ 	.schedule_fn =				nicksched_schedule,
+ 	.scheduler_tick_fn = 			nicksched_scheduler_tick,
+-	.yield_fn = 				nicksched_yield,
+ 	.wait_for_completion_fn	=		nicksched_wait_for_completion,
+ 	.idle_cpu_fn = 				nicksched_idle_cpu,
+ 	.__wake_up_fn = 			nicksched___wake_up,
+@@ -4122,12 +3987,8 @@
+ #endif
+ 	.sched_setaffinity_fn = 		nicksched_sched_setaffinity,
+ 	.sched_getaffinity_fn = 		nicksched_sched_getaffinity,
++	.setscheduler_fn = 			nicksched_setscheduler,
+ 	.sys_nice_fn = 				nicksched_sys_nice,
+-	.sys_sched_setscheduler_fn = 		nicksched_sys_sched_setscheduler,
+-	.sys_sched_setparam_fn = 		nicksched_sys_sched_setparam,
+-	.sys_sched_getscheduler_fn = 		nicksched_sys_sched_getscheduler,
+-	.sys_sched_getparam_fn = 		nicksched_sys_sched_getparam,
+-	.sys_sched_getaffinity_fn = 		nicksched_sys_sched_getaffinity,
+ 	.sys_sched_yield_fn = 			nicksched_sys_sched_yield,
+ 	.sys_sched_rr_get_interval_fn = 	nicksched_sys_sched_rr_get_interval,
+ 	.sched_init_fn = 			nicksched_sched_init,
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-10-10 22:32:41.046085624 -0400
++++ xx-sources/kernel/sched.c	2004-10-10 23:23:57.708361864 -0400
+@@ -444,39 +444,133 @@
+ 	return 0;
+ }
+ 
+-inline asmlinkage long sys_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
++/**
++ * find_process_by_pid - find a process with a matching PID value.
++ * @pid: the pid in question.
++ */
++inline task_t *find_process_by_pid(pid_t pid)
+ {
+-	if (current_scheduler->sys_sched_setscheduler_fn)
+-		return current_scheduler->sys_sched_setscheduler_fn(pid, policy, param);
+-	return 0;
++	return pid ? find_task_by_pid(pid) : current;
+ }
+ 
+-inline asmlinkage long sys_sched_setparam(pid_t pid, struct sched_param __user *param)
++inline int setscheduler(pid_t pid, int policy, struct sched_param __user *param)
+ {
+-	if (current_scheduler->sys_sched_setparam_fn)
+-		return current_scheduler->sys_sched_setparam_fn(pid, param);
++	if (current_scheduler->setscheduler_fn)
++		return current_scheduler->setscheduler_fn(pid, policy, param);
+ 	return 0;
+ }
+ 
+-inline asmlinkage long sys_sched_getscheduler(pid_t pid)
++/**
++ * sys_sched_setscheduler - set/change the scheduler policy and RT priority
++ * @pid: the pid in question.
++ * @policy: new policy
++ * @param: structure containing the new RT priority.
++ */
++asmlinkage long sys_sched_setscheduler(pid_t pid, int policy,
++				       struct sched_param __user *param)
+ {
+-	if (current_scheduler->sys_sched_getscheduler_fn)
+-		return current_scheduler->sys_sched_getscheduler_fn(pid);
+-	return 0;
++	return setscheduler(pid, policy, param);
+ }
+ 
+-inline asmlinkage long sys_sched_getparam(pid_t pid, struct sched_param __user *param)
++/**
++ * sys_sched_setparam - set/change the RT priority of a thread
++ * @pid: the pid in question.
++ * @param: structure containing the new RT priority.
++ */
++asmlinkage long sys_sched_setparam(pid_t pid, struct sched_param __user *param)
+ {
+-	if (current_scheduler->sys_sched_getparam_fn)
+-		return current_scheduler->sys_sched_getparam_fn(pid, param);
+-	return 0;
++	return setscheduler(pid, -1, param);
+ }
+ 
+-inline asmlinkage long sys_sched_getaffinity(pid_t pid, unsigned int len, unsigned long __user *user_mask_ptr)
++/**
++ * sys_sched_getscheduler - get the policy (scheduling class) of a thread
++ * @pid: the pid in question.
++ */
++asmlinkage long sys_sched_getscheduler(pid_t pid)
+ {
+-	if (current_scheduler->sys_sched_getaffinity_fn)
+-		return current_scheduler->sys_sched_getaffinity_fn(pid, len, user_mask_ptr);
+-	return 0;
++	int retval = -EINVAL;
++	task_t *p;
++
++	if (pid < 0)
++		goto out_nounlock;
++
++	retval = -ESRCH;
++	read_lock(&tasklist_lock);
++	p = find_process_by_pid(pid);
++	if (p) {
++		retval = security_task_getscheduler(p);
++		if (!retval)
++			retval = p->policy;
++	}
++	read_unlock(&tasklist_lock);
++
++out_nounlock:
++	return retval;
++}
++
++/**
++ * sys_sched_getscheduler - get the RT priority of a thread
++ * @pid: the pid in question.
++ * @param: structure containing the RT priority.
++ */
++asmlinkage long sys_sched_getparam(pid_t pid, struct sched_param __user *param)
++{
++	struct sched_param lp;
++	int retval = -EINVAL;
++	task_t *p;
++
++	if (!param || pid < 0)
++		goto out_nounlock;
++
++	read_lock(&tasklist_lock);
++	p = find_process_by_pid(pid);
++	retval = -ESRCH;
++	if (!p)
++		goto out_unlock;
++
++	retval = security_task_getscheduler(p);
++	if (retval)
++		goto out_unlock;
++
++	lp.sched_priority = p->rt_priority;
++	read_unlock(&tasklist_lock);
++
++	/*
++	 * This one might sleep, we cannot do it with a spinlock held ...
++	 */
++	retval = copy_to_user(param, &lp, sizeof(*param)) ? -EFAULT : 0;
++
++out_nounlock:
++	return retval;
++
++out_unlock:
++	read_unlock(&tasklist_lock);
++	return retval;
++}
++
++/**
++ * sys_sched_getaffinity - get the cpu affinity of a process
++ * @pid: pid of the process
++ * @len: length in bytes of the bitmask pointed to by user_mask_ptr
++ * @user_mask_ptr: user-space pointer to hold the current cpu mask
++ */
++asmlinkage long sys_sched_getaffinity(pid_t pid, unsigned int len,
++				      unsigned long __user *user_mask_ptr)
++{
++	int ret;
++	cpumask_t mask;
++
++	if (len < sizeof(cpumask_t))
++		return -EINVAL;
++
++	ret = sched_getaffinity(pid, &mask);
++	if (ret < 0)
++		return ret;
++
++	if (copy_to_user(user_mask_ptr, &mask, sizeof(cpumask_t)))
++		return -EFAULT;
++
++	return sizeof(cpumask_t);
+ }
+ 
+ inline asmlinkage long sys_sched_yield(void)
+@@ -486,10 +580,16 @@
+ 	return 0;
+ }
+ 
+-inline void __sched yield(void)
++/**
++ * yield - yield the current processor to other threads.
++ *
++ * this is a shortcut for kernel-space yielding - it marks the
++ * thread runnable and calls sys_sched_yield().
++ */
++void __sched yield(void)
+ {
+-	if (current_scheduler->yield_fn)
+-		current_scheduler->yield_fn();
++	set_current_state(TASK_RUNNING);
++	sys_sched_yield();
+ }
+ 
+ inline void __sched io_schedule(void)
+Index: xx-sources/kernel/staircase-sched.c
+===================================================================
+--- xx-sources.orig/kernel/staircase-sched.c	2004-10-10 22:32:41.070081976 -0400
++++ xx-sources/kernel/staircase-sched.c	2004-10-10 23:19:47.056466744 -0400
+@@ -2626,15 +2626,6 @@
+ 	return cpu_curr(cpu) == cpu_rq(cpu)->idle;
+ }
+ 
+-/**
+- * find_process_by_pid - find a process with a matching PID value.
+- * @pid: the pid in question.
+- */
+-static inline task_t *find_process_by_pid(pid_t pid)
+-{
+-	return pid ? find_task_by_pid(pid) : current;
+-}
+-
+ /* Actually do priority change: must hold rq lock. */
+ static void __setscheduler(struct task_struct *p, int policy, int prio)
+ {
+@@ -2650,7 +2641,7 @@
+ /*
+  * setscheduler - change the scheduling policy and/or RT priority of a thread.
+  */
+-static int setscheduler(pid_t pid, int policy, struct sched_param __user *param)
++int staircase_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
+ {
+ 	struct sched_param lp;
+ 	int retval = -EINVAL;
+@@ -2743,94 +2734,6 @@
+ 	return retval;
+ }
+ 
+-/**
+- * sys_sched_setscheduler - set/change the scheduler policy and RT priority
+- * @pid: the pid in question.
+- * @policy: new policy
+- * @param: structure containing the new RT priority.
+- */
+-asmlinkage long staircase_sys_sched_setscheduler(pid_t pid, int policy,
+-				       struct sched_param __user *param)
+-{
+-	return setscheduler(pid, policy, param);
+-}
+-
+-/**
+- * sys_sched_setparam - set/change the RT priority of a thread
+- * @pid: the pid in question.
+- * @param: structure containing the new RT priority.
+- */
+-asmlinkage long staircase_sys_sched_setparam(pid_t pid, struct sched_param __user *param)
+-{
+-	return setscheduler(pid, -1, param);
+-}
+-
+-/**
+- * sys_sched_getscheduler - get the policy (scheduling class) of a thread
+- * @pid: the pid in question.
+- */
+-asmlinkage long staircase_sys_sched_getscheduler(pid_t pid)
+-{
+-	int retval = -EINVAL;
+-	task_t *p;
+-
+-	if (pid < 0)
+-		goto out_nounlock;
+-
+-	retval = -ESRCH;
+-	read_lock(&tasklist_lock);
+-	p = find_process_by_pid(pid);
+-	if (p) {
+-		retval = security_task_getscheduler(p);
+-		if (!retval)
+-			retval = p->policy;
+-	}
+-	read_unlock(&tasklist_lock);
+-
+-out_nounlock:
+-	return retval;
+-}
+-
+-/**
+- * sys_sched_getscheduler - get the RT priority of a thread
+- * @pid: the pid in question.
+- * @param: structure containing the RT priority.
+- */
+-asmlinkage long staircase_sys_sched_getparam(pid_t pid, struct sched_param __user *param)
+-{
+-	struct sched_param lp;
+-	int retval = -EINVAL;
+-	task_t *p;
+-
+-	if (!param || pid < 0)
+-		goto out_nounlock;
+-
+-	read_lock(&tasklist_lock);
+-	p = find_process_by_pid(pid);
+-	retval = -ESRCH;
+-	if (!p)
+-		goto out_unlock;
+-
+-	retval = security_task_getscheduler(p);
+-	if (retval)
+-		goto out_unlock;
+-
+-	lp.sched_priority = p->rt_priority;
+-	read_unlock(&tasklist_lock);
+-
+-	/*
+-	 * This one might sleep, we cannot do it with a spinlock held ...
+-	 */
+-	retval = copy_to_user(param, &lp, sizeof(*param)) ? -EFAULT : 0;
+-
+-out_nounlock:
+-	return retval;
+-
+-out_unlock:
+-	read_unlock(&tasklist_lock);
+-	return retval;
+-}
+-
+ long staircase_sched_setaffinity(pid_t pid, cpumask_t new_mask)
+ {
+ 	task_t *p;
+@@ -2896,31 +2799,6 @@
+ }
+ 
+ /**
+- * sys_sched_getaffinity - get the cpu affinity of a process
+- * @pid: pid of the process
+- * @len: length in bytes of the bitmask pointed to by user_mask_ptr
+- * @user_mask_ptr: user-space pointer to hold the current cpu mask
+- */
+-asmlinkage long staircase_sys_sched_getaffinity(pid_t pid, unsigned int len,
+-				      unsigned long __user *user_mask_ptr)
+-{
+-	int ret;
+-	cpumask_t mask;
+-
+-	if (len < sizeof(cpumask_t))
+-		return -EINVAL;
+-
+-	ret = sched_getaffinity(pid, &mask);
+-	if (ret < 0)
+-		return ret;
+-
+-	if (copy_to_user(user_mask_ptr, &mask, sizeof(cpumask_t)))
+-		return -EFAULT;
+-
+-	return sizeof(cpumask_t);
+-}
+-
+-/**
+  * sys_sched_yield - yield the current processor to other threads.
+  *
+  * this function yields the current CPU by dropping the priority of current
+@@ -2954,18 +2832,6 @@
+ 	return 0;
+ }
+ 
+-/**
+- * yield - yield the current processor to other threads.
+- *
+- * this is a shortcut for kernel-space yielding - it marks the
+- * thread runnable and calls sys_sched_yield().
+- */
+-void __sched staircase_yield(void)
+-{
+-	set_current_state(TASK_RUNNING);
+-	staircase_sys_sched_yield();
+-}
+-
+ /*
+  * This task is about to go to sleep on IO.  Increment rq->nr_iowait so
+  * that process accounting knows that this is a task in IO wait state.
+@@ -3954,7 +3820,6 @@
+ 	.schedule_tail_fn = 			staircase_schedule_tail,
+ 	.schedule_fn =				staircase_schedule,
+ 	.scheduler_tick_fn = 			staircase_scheduler_tick,
+-	.yield_fn = 				staircase_yield,
+ 	.wait_for_completion_fn	=		staircase_wait_for_completion,
+ 	.idle_cpu_fn = 				staircase_idle_cpu,
+ 	.__wake_up_fn = 			staircase___wake_up,
+@@ -3981,12 +3846,8 @@
+ #endif
+ 	.sched_setaffinity_fn = 		staircase_sched_setaffinity,
+ 	.sched_getaffinity_fn = 		staircase_sched_getaffinity,
++	.setscheduler_fn = 			staircase_setscheduler,
+ 	.sys_nice_fn = 				staircase_sys_nice,
+-	.sys_sched_setscheduler_fn = 		staircase_sys_sched_setscheduler,
+-	.sys_sched_setparam_fn = 		staircase_sys_sched_setparam,
+-	.sys_sched_getscheduler_fn = 		staircase_sys_sched_getscheduler,
+-	.sys_sched_getparam_fn = 		staircase_sys_sched_getparam,
+-	.sys_sched_getaffinity_fn = 		staircase_sys_sched_getaffinity,
+ 	.sys_sched_yield_fn = 			staircase_sys_sched_yield,
+ 	.sys_sched_rr_get_interval_fn = 	staircase_sys_sched_rr_get_interval,
+ 	.sched_init_fn = 			staircase_sched_init,
+Index: xx-sources/kernel/xsched-sched.c
+===================================================================
+--- xx-sources.orig/kernel/xsched-sched.c	2004-10-10 22:32:41.064082888 -0400
++++ xx-sources/kernel/xsched-sched.c	2004-10-10 23:27:55.288244232 -0400
+@@ -2859,15 +2859,6 @@
+ 	return cpu_curr(cpu) == cpu_rq(cpu)->idle;
+ }
+ 
+-/**
+- * find_process_by_pid - find a process with a matching PID value.
+- * @pid: the pid in question.
+- */
+-static inline task_t *find_process_by_pid(pid_t pid)
+-{
+-	return pid ? find_task_by_pid(pid) : current;
+-}
+-
+ /* Actually do priority change: must hold rq lock. */
+ static void __setscheduler(struct task_struct *p, int policy, int prio)
+ {
+@@ -2883,7 +2874,7 @@
+ /*
+  * setscheduler - change the scheduling policy and/or RT priority of a thread.
+  */
+-static int setscheduler(pid_t pid, int policy, struct sched_param __user *param)
++int xsched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
+ {
+ 	struct sched_param lp;
+ 	int retval = -EINVAL;
+@@ -2981,94 +2972,6 @@
+ 	return retval;
+ }
+ 
+-/**
+- * sys_sched_setscheduler - set/change the scheduler policy and RT priority
+- * @pid: the pid in question.
+- * @policy: new policy
+- * @param: structure containing the new RT priority.
+- */
+-asmlinkage long xsched_sys_sched_setscheduler(pid_t pid, int policy,
+-				       struct sched_param __user *param)
+-{
+-	return setscheduler(pid, policy, param);
+-}
+-
+-/**
+- * sys_sched_setparam - set/change the RT priority of a thread
+- * @pid: the pid in question.
+- * @param: structure containing the new RT priority.
+- */
+-asmlinkage long xsched_sys_sched_setparam(pid_t pid, struct sched_param __user *param)
+-{
+-	return setscheduler(pid, -1, param);
+-}
+-
+-/**
+- * sys_sched_getscheduler - get the policy (scheduling class) of a thread
+- * @pid: the pid in question.
+- */
+-asmlinkage long xsched_sys_sched_getscheduler(pid_t pid)
+-{
+-	int retval = -EINVAL;
+-	task_t *p;
+-
+-	if (pid < 0)
+-		goto out_nounlock;
+-
+-	retval = -ESRCH;
+-	read_lock(&tasklist_lock);
+-	p = find_process_by_pid(pid);
+-	if (p) {
+-		retval = security_task_getscheduler(p);
+-		if (!retval)
+-			retval = p->policy;
+-	}
+-	read_unlock(&tasklist_lock);
+-
+-out_nounlock:
+-	return retval;
+-}
+-
+-/**
+- * sys_sched_getscheduler - get the RT priority of a thread
+- * @pid: the pid in question.
+- * @param: structure containing the RT priority.
+- */
+-asmlinkage long xsched_sys_sched_getparam(pid_t pid, struct sched_param __user *param)
+-{
+-	struct sched_param lp;
+-	int retval = -EINVAL;
+-	task_t *p;
+-
+-	if (!param || pid < 0)
+-		goto out_nounlock;
+-
+-	read_lock(&tasklist_lock);
+-	p = find_process_by_pid(pid);
+-	retval = -ESRCH;
+-	if (!p)
+-		goto out_unlock;
+-
+-	retval = security_task_getscheduler(p);
+-	if (retval)
+-		goto out_unlock;
+-
+-	lp.sched_priority = p->rt_priority;
+-	read_unlock(&tasklist_lock);
+-
+-	/*
+-	 * This one might sleep, we cannot do it with a spinlock held ...
+-	 */
+-	retval = copy_to_user(param, &lp, sizeof(*param)) ? -EFAULT : 0;
+-
+-out_nounlock:
+-	return retval;
+-
+-out_unlock:
+-	read_unlock(&tasklist_lock);
+-	return retval;
+-}
+-
+ long xsched_sched_setaffinity(pid_t pid, cpumask_t new_mask)
+ {
+ 	task_t *p;
+@@ -3134,31 +3037,6 @@
+ }
+ 
+ /**
+- * sys_sched_getaffinity - get the cpu affinity of a process
+- * @pid: pid of the process
+- * @len: length in bytes of the bitmask pointed to by user_mask_ptr
+- * @user_mask_ptr: user-space pointer to hold the current cpu mask
+- */
+-asmlinkage long xsched_sys_sched_getaffinity(pid_t pid, unsigned int len,
+-				      unsigned long __user *user_mask_ptr)
+-{
+-	int ret;
+-	cpumask_t mask;
+-
+-	if (len < sizeof(cpumask_t))
+-		return -EINVAL;
+-
+-	ret = sched_getaffinity(pid, &mask);
+-	if (ret < 0)
+-		return ret;
+-
+-	if (copy_to_user(user_mask_ptr, &mask, sizeof(cpumask_t)))
+-		return -EFAULT;
+-
+-	return sizeof(cpumask_t);
+-}
+-
+-/**
+  * sys_sched_yield - yield the current processor to other threads.
+  *
+  * this function yields the current CPU by moving the calling thread
+@@ -3203,20 +3081,6 @@
+ 	return 0;
+ }
+ 
+-/**
+- * yield - yield the current processor to other threads.
+- *
+- * this is a shortcut for kernel-space yielding - it marks the
+- * thread runnable and calls sys_sched_yield().
+- */
+-void __sched xsched_yield(void)
+-{
+-	set_current_state(TASK_RUNNING);
+-	xsched_sys_sched_yield();
+-}
+-
+-EXPORT_SYMBOL(yield);
+-
+ /*
+  * This task is about to go to sleep on IO.  Increment rq->nr_iowait so
+  * that process accounting knows that this is a task in IO wait state.
+@@ -4386,7 +4250,6 @@
+ 	.schedule_tail_fn = 			xsched_schedule_tail,
+ 	.schedule_fn =				xsched_schedule,
+ 	.scheduler_tick_fn = 			xsched_scheduler_tick,
+-	.yield_fn = 				xsched_yield,
+ 	.wait_for_completion_fn	=		xsched_wait_for_completion,
+ 	.idle_cpu_fn = 				xsched_idle_cpu,
+ 	.__wake_up_fn = 			xsched___wake_up,
+@@ -4413,12 +4276,8 @@
+ #endif
+ 	.sched_setaffinity_fn = 		xsched_sched_setaffinity,
+ 	.sched_getaffinity_fn = 		xsched_sched_getaffinity,
++	.setscheduler_fn = 			xsched_setscheduler,
+ 	.sys_nice_fn = 				xsched_sys_nice,
+-	.sys_sched_setscheduler_fn = 		xsched_sys_sched_setscheduler,
+-	.sys_sched_setparam_fn = 		xsched_sys_sched_setparam,
+-	.sys_sched_getscheduler_fn = 		xsched_sys_sched_getscheduler,
+-	.sys_sched_getparam_fn = 		xsched_sys_sched_getparam,
+-	.sys_sched_getaffinity_fn = 		xsched_sys_sched_getaffinity,
+ 	.sys_sched_yield_fn = 			xsched_sys_sched_yield,
+ 	.sys_sched_rr_get_interval_fn = 	xsched_sys_sched_rr_get_interval,
+ 	.sched_init_fn = 			xsched_sched_init,

@@ -1,0 +1,37 @@
+
+From: Ulrich Drepper <drepper@redhat.com>
+
+The last change to alloc_layer in lib/idr.c unnecessarily complicates
+the code and depending on the definition of spin_unlock will cause worse
+code to be generated than necessary.  The following patch should improve
+the situation.
+
+Signed-off-by: Ulrich Drepper <drepper@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/lib/idr.c |   10 ++++------
+ 1 files changed, 4 insertions(+), 6 deletions(-)
+
+diff -puN lib/idr.c~simplify-last-lib-idrc-change lib/idr.c
+--- 25/lib/idr.c~simplify-last-lib-idrc-change	2004-09-22 23:16:52.349429736 -0700
++++ 25-akpm/lib/idr.c	2004-09-22 23:16:52.352429280 -0700
+@@ -39,13 +39,11 @@ static struct idr_layer *alloc_layer(str
+ 	struct idr_layer *p;
+ 
+ 	spin_lock(&idp->lock);
+-	if (!(p = idp->id_free)) {
+-		spin_unlock(&idp->lock);
+-		return NULL;
++	if ((p = idp->id_free)) {
++		idp->id_free = p->ary[0];
++		idp->id_free_cnt--;
++		p->ary[0] = NULL;
+ 	}
+-	idp->id_free = p->ary[0];
+-	idp->id_free_cnt--;
+-	p->ary[0] = NULL;
+ 	spin_unlock(&idp->lock);
+ 	return(p);
+ }
+_

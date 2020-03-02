@@ -1,0 +1,144 @@
+
+From: Rajesh Venkatasubramanian <vrajesh@umich.edu>
+
+vma_prio_tree_insert() relies on the fact, that vma was
+vma_prio_tree_init()'ed.
+
+Content of vma->shared should be considered undefined, until this vma is
+inserted into i_mmap/i_mmap_nonlinear.  It's better to do proper
+initialization in vma_prio_tree_add/insert.
+
+Signed-off-by: Oleg Nesterov <oleg@tv-sign.ru>
+Signed-off-by: Rajesh Venkatasubramanian <vrajesh@umich.edu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/mm.h |   15 +++++++--------
+ 25-akpm/kernel/fork.c      |    1 -
+ 25-akpm/mm/fremap.c        |    4 +---
+ 25-akpm/mm/mmap.c          |   10 ++--------
+ 25-akpm/mm/prio_tree.c     |    5 +++++
+ 5 files changed, 15 insertions(+), 20 deletions(-)
+
+diff -puN include/linux/mm.h~prio_tree-kill-vma_prio_tree_init include/linux/mm.h
+--- 25/include/linux/mm.h~prio_tree-kill-vma_prio_tree_init	2004-08-04 20:40:52.095645440 -0700
++++ 25-akpm/include/linux/mm.h	2004-08-04 20:40:52.105643920 -0700
+@@ -600,14 +600,6 @@ extern void show_mem(void);
+ extern void si_meminfo(struct sysinfo * val);
+ extern void si_meminfo_node(struct sysinfo *val, int nid);
+ 
+-static inline void vma_prio_tree_init(struct vm_area_struct *vma)
+-{
+-	vma->shared.vm_set.list.next = NULL;
+-	vma->shared.vm_set.list.prev = NULL;
+-	vma->shared.vm_set.parent = NULL;
+-	vma->shared.vm_set.head = NULL;
+-}
+-
+ /* prio_tree.c */
+ void vma_prio_tree_add(struct vm_area_struct *, struct vm_area_struct *old);
+ void vma_prio_tree_insert(struct vm_area_struct *, struct prio_tree_root *);
+@@ -616,6 +608,13 @@ struct vm_area_struct *vma_prio_tree_nex
+ 	struct vm_area_struct *, struct prio_tree_root *,
+ 	struct prio_tree_iter *, pgoff_t begin, pgoff_t end);
+ 
++static inline void vma_nonlinear_insert(struct vm_area_struct *vma,
++					struct list_head *list)
++{
++	vma->shared.vm_set.parent = NULL;
++	list_add_tail(&vma->shared.vm_set.list, list);
++}
++
+ /* mmap.c */
+ extern void vma_adjust(struct vm_area_struct *vma, unsigned long start,
+ 	unsigned long end, pgoff_t pgoff, struct vm_area_struct *insert);
+diff -puN kernel/fork.c~prio_tree-kill-vma_prio_tree_init kernel/fork.c
+--- 25/kernel/fork.c~prio_tree-kill-vma_prio_tree_init	2004-08-04 20:40:52.097645136 -0700
++++ 25-akpm/kernel/fork.c	2004-08-04 20:40:52.106643768 -0700
+@@ -330,7 +330,6 @@ static inline int dup_mmap(struct mm_str
+ 		tmp->vm_mm = mm;
+ 		tmp->vm_next = NULL;
+ 		anon_vma_link(tmp);
+-		vma_prio_tree_init(tmp);
+ 		file = tmp->vm_file;
+ 		if (file) {
+ 			struct inode *inode = file->f_dentry->d_inode;
+diff -puN mm/fremap.c~prio_tree-kill-vma_prio_tree_init mm/fremap.c
+--- 25/mm/fremap.c~prio_tree-kill-vma_prio_tree_init	2004-08-04 20:40:52.098644984 -0700
++++ 25-akpm/mm/fremap.c	2004-08-04 20:40:52.107643616 -0700
+@@ -220,9 +220,7 @@ asmlinkage long sys_remap_file_pages(uns
+ 			flush_dcache_mmap_lock(mapping);
+ 			vma->vm_flags |= VM_NONLINEAR;
+ 			vma_prio_tree_remove(vma, &mapping->i_mmap);
+-			vma_prio_tree_init(vma);
+-			list_add_tail(&vma->shared.vm_set.list,
+-					&mapping->i_mmap_nonlinear);
++			vma_nonlinear_insert(vma, &mapping->i_mmap_nonlinear);
+ 			flush_dcache_mmap_unlock(mapping);
+ 			spin_unlock(&mapping->i_mmap_lock);
+ 		}
+diff -puN mm/mmap.c~prio_tree-kill-vma_prio_tree_init mm/mmap.c
+--- 25/mm/mmap.c~prio_tree-kill-vma_prio_tree_init	2004-08-04 20:40:52.100644680 -0700
++++ 25-akpm/mm/mmap.c	2004-08-04 20:40:52.109643312 -0700
+@@ -280,8 +280,7 @@ static inline void __vma_link_file(struc
+ 
+ 		flush_dcache_mmap_lock(mapping);
+ 		if (unlikely(vma->vm_flags & VM_NONLINEAR))
+-			list_add_tail(&vma->shared.vm_set.list,
+-					&mapping->i_mmap_nonlinear);
++			vma_nonlinear_insert(vma, &mapping->i_mmap_nonlinear);
+ 		else
+ 			vma_prio_tree_insert(vma, &mapping->i_mmap);
+ 		flush_dcache_mmap_unlock(mapping);
+@@ -450,11 +449,8 @@ again:			remove_next = 1 + (end > next->
+ 	}
+ 
+ 	if (root) {
+-		if (adjust_next) {
+-			vma_prio_tree_init(next);
++		if (adjust_next)
+ 			vma_prio_tree_insert(next, root);
+-		}
+-		vma_prio_tree_init(vma);
+ 		vma_prio_tree_insert(vma, root);
+ 		flush_dcache_mmap_unlock(mapping);
+ 	}
+@@ -1588,7 +1584,6 @@ int split_vma(struct mm_struct * mm, str
+ 
+ 	/* most fields are the same, copy all, and then fixup */
+ 	*new = *vma;
+-	vma_prio_tree_init(new);
+ 
+ 	if (new_below)
+ 		new->vm_end = addr;
+@@ -1901,7 +1896,6 @@ struct vm_area_struct *copy_vma(struct v
+ 		new_vma = kmem_cache_alloc(vm_area_cachep, SLAB_KERNEL);
+ 		if (new_vma) {
+ 			*new_vma = *vma;
+-			vma_prio_tree_init(new_vma);
+ 			pol = mpol_copy(vma_policy(vma));
+ 			if (IS_ERR(pol)) {
+ 				kmem_cache_free(vm_area_cachep, new_vma);
+diff -puN mm/prio_tree.c~prio_tree-kill-vma_prio_tree_init mm/prio_tree.c
+--- 25/mm/prio_tree.c~prio_tree-kill-vma_prio_tree_init	2004-08-04 20:40:52.102644376 -0700
++++ 25-akpm/mm/prio_tree.c	2004-08-04 20:40:52.110643160 -0700
+@@ -538,6 +538,9 @@ void vma_prio_tree_add(struct vm_area_st
+ 	BUG_ON(RADIX_INDEX(vma) != RADIX_INDEX(old));
+ 	BUG_ON(HEAP_INDEX(vma) != HEAP_INDEX(old));
+ 
++	vma->shared.vm_set.head = NULL;
++	vma->shared.vm_set.parent = NULL;
++
+ 	if (!old->shared.vm_set.parent)
+ 		list_add(&vma->shared.vm_set.list,
+ 				&old->shared.vm_set.list);
+@@ -557,6 +560,8 @@ void vma_prio_tree_insert(struct vm_area
+ 	struct prio_tree_node *ptr;
+ 	struct vm_area_struct *old;
+ 
++	vma->shared.vm_set.head = NULL;
++
+ 	ptr = prio_tree_insert(root, &vma->shared.prio_tree_node);
+ 	if (ptr != &vma->shared.prio_tree_node) {
+ 		old = prio_tree_entry(ptr, struct vm_area_struct,
+_

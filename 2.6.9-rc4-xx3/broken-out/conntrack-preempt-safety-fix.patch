@@ -1,0 +1,28 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/netfilter_ipv4/ip_conntrack.h |    9 +++++----
+ 1 files changed, 5 insertions(+), 4 deletions(-)
+
+diff -puN include/linux/netfilter_ipv4/ip_conntrack.h~conntrack-preempt-safety-fix include/linux/netfilter_ipv4/ip_conntrack.h
+--- 25/include/linux/netfilter_ipv4/ip_conntrack.h~conntrack-preempt-safety-fix	Mon Oct  4 14:36:19 2004
++++ 25-akpm/include/linux/netfilter_ipv4/ip_conntrack.h	Mon Oct  4 14:37:02 2004
+@@ -311,10 +311,11 @@ struct ip_conntrack_stat
+ 	unsigned int expect_delete;
+ };
+ 
+-#define CONNTRACK_STAT_INC(count)				\
+-	do {							\
+-		per_cpu(ip_conntrack_stat, get_cpu()).count++;	\
+-		put_cpu();					\
++#define CONNTRACK_STAT_INC(count)					\
++	do {								\
++		preempt_disable();					\
++		per_cpu(ip_conntrack_stat, smp_processor_id()).count++;	\
++		preempt_enable();					\
+ 	} while (0)
+ 
+ /* eg. PROVIDES_CONNTRACK(ftp); */
+_

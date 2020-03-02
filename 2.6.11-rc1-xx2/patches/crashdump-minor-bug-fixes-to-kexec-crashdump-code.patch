@@ -1,0 +1,135 @@
+
+From: Hariprasad Nellitheertha <hari@in.ibm.com>
+
+This patch fixes a problem where the kernel compilation was failing upon
+disabling PROC_FS.  It also ensures the reboot-on-panic kernel is pointed
+to by a different variable , thereby separating the normal use of kexec
+from the crashdump situation.
+
+Signed-off-by: Vivek Goyal <vgoyal@in.ibm.com>
+Signed-off-by: Hariprasad Nellitheertha <hari@in.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/kdump.txt    |   24 ++++++++----------------
+ 25-akpm/include/linux/crash_dump.h |   11 ++++++++---
+ 25-akpm/kernel/crash.c             |    5 ++++-
+ 3 files changed, 20 insertions(+), 20 deletions(-)
+
+diff -puN Documentation/kdump.txt~crashdump-minor-bug-fixes-to-kexec-crashdump-code Documentation/kdump.txt
+--- 25/Documentation/kdump.txt~crashdump-minor-bug-fixes-to-kexec-crashdump-code	Wed Oct 20 16:22:21 2004
++++ 25-akpm/Documentation/kdump.txt	Wed Oct 20 16:22:21 2004
+@@ -27,19 +27,11 @@ SETUP
+ 1) Obtain the appropriate -mm tree patch and apply it on to the vanilla
+    kernel tree.
+ 
+-2) In order to enable the kernel to boot from a non-default location, the
+-   following patches (by Eric Biederman) needs to be applied.
+-
+-   http://www.xmission.com/~ebiederm/files/kexec/2.6.8.1-kexec3/
+-	broken-out/highbzImage.i386.patch
+-   http://www.xmission.com/~ebiederm/files/kexec/2.6.8.1-kexec3/
+-	broken-out/vmlinux-lds.i386.patch
+-
+-3) Two kernels need to be built in order to get this feature working.
++2) Two kernels need to be built in order to get this feature working.
+ 
+    For the first kernel, choose the default values for the following options.
+ 
+-   a) Physical address where the kernel expects to be loaded
++   a) Physical address where the kernel is loaded
+    b) kexec system call
+    c) kernel crash dumps
+ 
+@@ -51,28 +43,28 @@ SETUP
+ 
+    Also ensure you have CONFIG_HIGHMEM on.
+ 
+-4) Boot into the first kernel. You are now ready to try out kexec based crash
++3) Boot into the first kernel. You are now ready to try out kexec based crash
+    dumps.
+ 
+-5) Load the second kernel to be booted using
++4) Load the second kernel to be booted using
+ 
+-   kexec -l <second-kernel> --args-linux --append="root=<root-dev> dump
++   kexec -p <second-kernel> --args-linux --append="root=<root-dev> dump
+    init 1 memmap=exactmap memmap=640k@0 memmap=32M@16M"
+ 
+    Note that <second-kernel> has to be a vmlinux image. bzImage will not
+    work, as of now.
+ 
+-6) Enable kexec based dumping by
++5) Enable kexec based dumping by
+ 
+    echo 1 > /proc/kexec-dump
+ 
+    If this is not set, the system will not do a kexec reboot in the event
+    of a panic.
+ 
+-7) System reboots into the second kernel when a panic occurs.
++6) System reboots into the second kernel when a panic occurs.
+    You could write a module to call panic, for testing purposes.
+ 
+-8) Write out the dump file using
++7) Write out the dump file using
+ 
+    cp /proc/vmcore <dump-file>
+ 
+diff -puN include/linux/crash_dump.h~crashdump-minor-bug-fixes-to-kexec-crashdump-code include/linux/crash_dump.h
+--- 25/include/linux/crash_dump.h~crashdump-minor-bug-fixes-to-kexec-crashdump-code	Wed Oct 20 16:22:21 2004
++++ 25-akpm/include/linux/crash_dump.h	Wed Oct 20 16:22:21 2004
+@@ -15,15 +15,20 @@ extern void elf_kcore_store_hdr(char *, 
+ #ifdef CONFIG_CRASH_DUMP
+ extern ssize_t copy_oldmem_page(unsigned long, char *, size_t, int);
+ extern void __crash_machine_kexec(void);
+-extern void crash_enable_by_proc(void);
+-extern void crash_create_proc_entry(void);
+ extern int crash_dump_on;
+ static inline void crash_machine_kexec(void)
+ {
+ 	 __crash_machine_kexec();
+ }
+ #else
++#define crash_machine_kexec()	do { } while(0)
++#endif
++
++
++#if defined(CONFIG_CRASH_DUMP) && defined(CONFIG_PROC_FS)
++extern void crash_enable_by_proc(void);
++extern void crash_create_proc_entry(void);
++#else
+ #define crash_enable_by_proc() do { } while(0)
+ #define crash_create_proc_entry() do { } while(0)
+-#define crash_machine_kexec()	do { } while(0)
+ #endif
+diff -puN kernel/crash.c~crashdump-minor-bug-fixes-to-kexec-crashdump-code kernel/crash.c
+--- 25/kernel/crash.c~crashdump-minor-bug-fixes-to-kexec-crashdump-code	Wed Oct 20 16:22:21 2004
++++ 25-akpm/kernel/crash.c	Wed Oct 20 16:22:21 2004
+@@ -16,6 +16,7 @@
+ #include <asm/io.h>
+ #include <asm/uaccess.h>
+ 
++#ifdef CONFIG_PROC_FS
+ /*
+  * Enable kexec reboot upon panic; for dumping
+  */
+@@ -57,6 +58,8 @@ void crash_create_proc_entry(void)
+ 	}
+ }
+ 
++#endif /* CONFIG_PROC_FS */
++
+ void __crash_machine_kexec(void)
+ {
+ 	struct kimage *image;
+@@ -64,7 +67,7 @@ void __crash_machine_kexec(void)
+ 	if ((!crash_dump_on) || (crashed))
+ 		return;
+ 
+-	image = xchg(&kexec_image, 0);
++	image = xchg(&kexec_crash_image, 0);
+ 	if (image) {
+ 		crashed = 1;
+ 		printk(KERN_EMERG "kexec: opening parachute\n");
+_

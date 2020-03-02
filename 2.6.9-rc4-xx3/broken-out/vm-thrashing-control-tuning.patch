@@ -1,0 +1,83 @@
+
+From: Hideo AOKI <aoki@sdl.hitachi.co.jp>
+
+This patch adds "swap_token_timeout" parameter in /proc/sys/vm.  The
+parameter means expired time of token.  Unit of the value is HZ, and the
+default value is the same as current SWAP_TOKEN_TIMEOUT (i.e.  HZ * 300).
+
+Signed-off-by: Hideo Aoki <aoki@sdl.hitachi.co.jp>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/swap.h   |    1 +
+ 25-akpm/include/linux/sysctl.h |    1 +
+ 25-akpm/kernel/sysctl.c        |    9 +++++++++
+ 25-akpm/mm/thrash.c            |    5 +++--
+ 4 files changed, 14 insertions(+), 2 deletions(-)
+
+diff -puN include/linux/swap.h~vm-thrashing-control-tuning include/linux/swap.h
+--- 25/include/linux/swap.h~vm-thrashing-control-tuning	Wed Oct  6 15:48:32 2004
++++ 25-akpm/include/linux/swap.h	Wed Oct  6 15:48:32 2004
+@@ -230,6 +230,7 @@ extern spinlock_t swaplock;
+ 
+ /* linux/mm/thrash.c */
+ extern struct mm_struct * swap_token_mm;
++extern unsigned long swap_token_default_timeout;
+ extern void grab_swap_token(void);
+ extern void __put_swap_token(struct mm_struct *);
+ 
+diff -puN include/linux/sysctl.h~vm-thrashing-control-tuning include/linux/sysctl.h
+--- 25/include/linux/sysctl.h~vm-thrashing-control-tuning	Wed Oct  6 15:48:32 2004
++++ 25-akpm/include/linux/sysctl.h	Wed Oct  6 15:48:57 2004
+@@ -168,6 +168,7 @@ enum
+ 	VM_VFS_CACHE_PRESSURE=26, /* dcache/icache reclaim pressure */
+ 	VM_LEGACY_VA_LAYOUT=27, /* legacy/compatibility virtual address space layout */
+  	VM_HEAP_STACK_GAP=28,	/* int: page gap between heap and stack */
++	VM_SWAP_TOKEN_TIMEOUT=28, /* default time for token time out */
+ };
+ 
+ 
+diff -puN kernel/sysctl.c~vm-thrashing-control-tuning kernel/sysctl.c
+--- 25/kernel/sysctl.c~vm-thrashing-control-tuning	Wed Oct  6 15:48:32 2004
++++ 25-akpm/kernel/sysctl.c	Wed Oct  6 15:48:32 2004
+@@ -624,6 +624,15 @@ static ctl_table kern_table[] = {
+ 		.proc_handler   = &proc_unknown_nmi_panic,
+ 	},
+ #endif
++	{
++		.ctl_name	= VM_SWAP_TOKEN_TIMEOUT,
++		.procname	= "swap_token_timeout",
++		.data		= &swap_token_default_timeout,
++		.maxlen		= sizeof(swap_token_default_timeout),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec_jiffies,
++		.strategy	= &sysctl_jiffies,
++	},
+ 	{ .ctl_name = 0 }
+ };
+ 
+diff -puN mm/thrash.c~vm-thrashing-control-tuning mm/thrash.c
+--- 25/mm/thrash.c~vm-thrashing-control-tuning	Wed Oct  6 15:48:32 2004
++++ 25-akpm/mm/thrash.c	Wed Oct  6 15:48:32 2004
+@@ -20,6 +20,7 @@ struct mm_struct * swap_token_mm = &init
+ 
+ #define SWAP_TOKEN_CHECK_INTERVAL (HZ * 2)
+ #define SWAP_TOKEN_TIMEOUT (HZ * 300)
++unsigned long swap_token_default_timeout = SWAP_TOKEN_TIMEOUT;
+ 
+ /*
+  * Take the token away if the process had no page faults
+@@ -75,10 +76,10 @@ void grab_swap_token(void)
+ 		if ((reason = should_release_swap_token(mm))) {
+ 			unsigned long eligible = jiffies;
+ 			if (reason == SWAP_TOKEN_TIMED_OUT) {
+-				eligible += SWAP_TOKEN_TIMEOUT;
++				eligible += swap_token_default_timeout;
+ 			}
+ 			mm->swap_token_time = eligible;
+-			swap_token_timeout = jiffies + SWAP_TOKEN_TIMEOUT;
++			swap_token_timeout = jiffies + swap_token_default_timeout;
+ 			swap_token_mm = current->mm;
+ 		}
+ 		spin_unlock(&swap_token_lock);
+_

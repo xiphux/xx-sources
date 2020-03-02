@@ -1,0 +1,69 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+The main benefit is that with the default HZ=1000 nice +19 tasks now get 5
+msecs of timeslices, so the ratio of CPU use is linear.  (nice 0 task gets
+20 times more CPU time than a nice 19 task.  Prior this change the ratio
+was 1:10)
+
+another effect is that nice 0 tasks now get a round 100 msecs of timeslices
+(as intended), instead of 102 msecs.
+
+here's a table of old/new timeslice values, for HZ=1000 and 100:
+
+                      HZ=1000         (   HZ=100   )
+                    old    new        ( old    new )
+
+        nice -20:   200    200        ( 200    200 )
+        nice -19:   195    195        ( 190    190 )
+        ...
+        nice 0:     102    100        ( 100    100 )
+        nice 1:      97     95        (  90     90 )
+        nice 2:      92     90        (  90     90 )
+        ...
+        nice 17:     19     15        (  10     10 )
+        nice 18:     14     10        (  10     10 )
+        nice 19:     10      5        (  10     10 )
+
+i've tested the patch on x86.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/sched.c |   14 +++++++-------
+ 1 files changed, 7 insertions(+), 7 deletions(-)
+
+diff -puN kernel/sched.c~sched-timeslice-fix kernel/sched.c
+--- 25/kernel/sched.c~sched-timeslice-fix	Wed Aug  4 15:50:41 2004
++++ 25-akpm/kernel/sched.c	Wed Aug  4 15:50:41 2004
+@@ -80,11 +80,11 @@
+ /*
+  * These are the 'tuning knobs' of the scheduler:
+  *
+- * Minimum timeslice is 10 msecs, default timeslice is 100 msecs,
+- * maximum timeslice is 200 msecs. Timeslices get refilled after
+- * they expire.
++ * Minimum timeslice is 5 msecs (or 1 jiffy, whichever is larger),
++ * default timeslice is 100 msecs, maximum timeslice is 200 msecs.
++ * Timeslices get refilled after they expire.
+  */
+-#define MIN_TIMESLICE		( 10 * HZ / 1000)
++#define MIN_TIMESLICE		max(5 * HZ / 1000, 1)
+ #define MAX_TIMESLICE		(200 * HZ / 1000)
+ #define ON_RUNQUEUE_WEIGHT	 30
+ #define CHILD_PENALTY		 95
+@@ -172,9 +172,9 @@
+  * task_timeslice() is the interface that is used by the scheduler.
+  */
+ 
+-#define BASE_TIMESLICE(p) (MIN_TIMESLICE + \
+-		((MAX_TIMESLICE - MIN_TIMESLICE) * \
+-			(MAX_PRIO-1 - (p)->static_prio) / (MAX_USER_PRIO-1)))
++#define BASE_TIMESLICE(p) \
++	max(MAX_TIMESLICE * (MAX_PRIO - (p)->static_prio) / (MAX_USER_PRIO), \
++		MIN_TIMESLICE)
+ 
+ static unsigned int task_timeslice(task_t *p)
+ {
+_

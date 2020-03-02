@@ -1,0 +1,41 @@
+
+From: Anton Blanchard <anton@samba.org>
+
+I had a problem when compiling a 2.6 kernel with gcc 3.5 CVS.  The
+prototype for prio_tree_remove in mm/prio_tree.c is inside another
+function.  gcc 3.5 gets upset and removes the function completely. 
+Apparently this isnt valid C, so lets fix it up.
+
+Details can be found here:
+
+http://gcc.gnu.org/bugzilla/show_bug.cgi?id=17205
+
+Signed-off-by: Anton Blanchard <anton@samba.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/prio_tree.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN mm/prio_tree.c~remove-function-prototype-inside-function mm/prio_tree.c
+--- 25/mm/prio_tree.c~remove-function-prototype-inside-function	2004-08-27 02:13:01.128907176 -0700
++++ 25-akpm/mm/prio_tree.c	2004-08-27 02:13:01.132906568 -0700
+@@ -81,6 +81,8 @@ static inline unsigned long prio_tree_ma
+ 	return index_bits_to_maxindex[bits - 1];
+ }
+ 
++static void prio_tree_remove(struct prio_tree_root *, struct prio_tree_node *);
++
+ /*
+  * Extend a priority search tree so that it can store a node with heap_index
+  * max_heap_index. In the worst case, this algorithm takes O((log n)^2).
+@@ -90,8 +92,6 @@ static inline unsigned long prio_tree_ma
+ static struct prio_tree_node *prio_tree_expand(struct prio_tree_root *root,
+ 		struct prio_tree_node *node, unsigned long max_heap_index)
+ {
+-	static void prio_tree_remove(struct prio_tree_root *,
+-					struct prio_tree_node *);
+ 	struct prio_tree_node *first = NULL, *prev, *last = NULL;
+ 
+ 	if (max_heap_index > prio_tree_maxindex(root->index_bits))
+_

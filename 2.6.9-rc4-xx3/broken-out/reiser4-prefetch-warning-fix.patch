@@ -1,0 +1,38 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+fs/reiser4/jnode.c: In function `jload_prefetch':
+fs/reiser4/jnode.c:878: warning: passing arg 1 of `prefetchw' discards qualifiers from pointer target type
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/reiser4/jnode.c |    2 +-
+ 25-akpm/fs/reiser4/jnode.h |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN fs/reiser4/jnode.c~reiser4-prefetch-warning-fix fs/reiser4/jnode.c
+--- 25/fs/reiser4/jnode.c~reiser4-prefetch-warning-fix	Tue Aug 24 15:51:12 2004
++++ 25-akpm/fs/reiser4/jnode.c	Tue Aug 24 15:51:12 2004
+@@ -873,7 +873,7 @@ static void check_jload(jnode * node, st
+ /* prefetch jnode to speed up next call to jload. Call this when you are going
+  * to call jload() shortly. This will bring appropriate portion of jnode into
+  * CPU cache. */
+-reiser4_internal void jload_prefetch(const jnode * node)
++reiser4_internal void jload_prefetch(jnode *node)
+ {
+ 	prefetchw(&node->x_count);
+ }
+diff -puN fs/reiser4/jnode.h~reiser4-prefetch-warning-fix fs/reiser4/jnode.h
+--- 25/fs/reiser4/jnode.h~reiser4-prefetch-warning-fix	Tue Aug 24 15:51:12 2004
++++ 25-akpm/fs/reiser4/jnode.h	Tue Aug 24 15:51:12 2004
+@@ -569,7 +569,7 @@ extern int jstartio(jnode * node) NONNUL
+ extern void jdrop(jnode * node) NONNULL;
+ extern int jwait_io(jnode * node, int rw) NONNULL;
+ 
+-extern void jload_prefetch(const jnode * node);
++void jload_prefetch(jnode *);
+ 
+ extern jnode *alloc_io_head(const reiser4_block_nr * block) NONNULL;
+ extern void drop_io_head(jnode * node) NONNULL;
+_

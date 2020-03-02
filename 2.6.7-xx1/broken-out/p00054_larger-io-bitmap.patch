@@ -1,0 +1,94 @@
+
+From: Stas Sergeev <stsp@aknet.ru>
+
+The previous discussion was started here:
+http://www.uwsg.iu.edu/hypermail/linux/kernel/0211.0/0477.html but in 2.4
+times this was kind of problematic.
+
+Now, with the lazy bitmap allocation and per-CPU TSS, this will really not
+drain any resources I think.  8K TSS increase and 8K per process *that does
+ioperm()* - I think it is not very bad.
+
+The reasons why I need that, are described in the URL above.  Basically this
+will allow to use full-screen VESA under dosemu (without LFB though), and this
+may be also helpfull for the XFree project and some other projects:
+
+http://www.uwsg.iu.edu/hypermail/linux/kernel/9807.1/1079.html
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/asm-i386/desc.h        |    3 ++-
+ 25-akpm/include/asm-i386/processor.h   |    6 +++---
+ 25-akpm/include/asm-mips/processor.h   |    4 ++--
+ 25-akpm/include/asm-x86_64/processor.h |    4 ++--
+ 4 files changed, 9 insertions(+), 8 deletions(-)
+
+diff -puN include/asm-i386/desc.h~larger-io-bitmap include/asm-i386/desc.h
+--- 25/include/asm-i386/desc.h~larger-io-bitmap	Fri Jun 18 15:40:31 2004
++++ 25-akpm/include/asm-i386/desc.h	Fri Jun 18 15:40:31 2004
+@@ -44,7 +44,8 @@ __asm__ __volatile__ ("movw %w3,0(%2)\n\
+ 
+ static inline void __set_tss_desc(unsigned int cpu, unsigned int entry, void *addr)
+ {
+-	_set_tssldt_desc(&cpu_gdt_table[cpu][entry], (int)addr, 235, 0x89);
++	_set_tssldt_desc(&cpu_gdt_table[cpu][entry], (int)addr,
++		offsetof(struct tss_struct, __cacheline_filler) - 1, 0x89);
+ }
+ 
+ #define set_tss_desc(cpu,addr) __set_tss_desc(cpu, GDT_ENTRY_TSS, addr)
+diff -puN include/asm-i386/processor.h~larger-io-bitmap include/asm-i386/processor.h
+--- 25/include/asm-i386/processor.h~larger-io-bitmap	Fri Jun 18 15:40:31 2004
++++ 25-akpm/include/asm-i386/processor.h	Fri Jun 18 15:40:31 2004
+@@ -297,9 +297,9 @@ extern unsigned int mca_pentium_flag;
+ #define TASK_UNMAPPED_BASE	(PAGE_ALIGN(TASK_SIZE / 3))
+ 
+ /*
+- * Size of io_bitmap, covering ports 0 to 0x3ff.
++ * Size of io_bitmap.
+  */
+-#define IO_BITMAP_BITS  1024
++#define IO_BITMAP_BITS  65536
+ #define IO_BITMAP_BYTES (IO_BITMAP_BITS/8)
+ #define IO_BITMAP_LONGS (IO_BITMAP_BYTES/sizeof(long))
+ #define IO_BITMAP_OFFSET offsetof(struct tss_struct,io_bitmap)
+@@ -391,7 +391,7 @@ struct tss_struct {
+ 	/*
+ 	 * pads the TSS to be cacheline-aligned (size is 0x100)
+ 	 */
+-	unsigned long __cacheline_filler[5];
++	unsigned long __cacheline_filler[37];
+ 	/*
+ 	 * .. and then another 0x100 bytes for emergency kernel stack
+ 	 */
+diff -puN include/asm-mips/processor.h~larger-io-bitmap include/asm-mips/processor.h
+--- 25/include/asm-mips/processor.h~larger-io-bitmap	Fri Jun 18 15:40:31 2004
++++ 25-akpm/include/asm-mips/processor.h	Fri Jun 18 15:40:31 2004
+@@ -137,9 +137,9 @@ extern unsigned int vced_count, vcei_cou
+ #endif
+ 
+ /*
+- * Size of io_bitmap in longwords: 32 is ports 0-0x3ff.
++ * Size of io_bitmap in longwords.
+  */
+-#define IO_BITMAP_SIZE	32
++#define IO_BITMAP_SIZE	2048
+ 
+ #define NUM_FPU_REGS	32
+ 
+diff -puN include/asm-x86_64/processor.h~larger-io-bitmap include/asm-x86_64/processor.h
+--- 25/include/asm-x86_64/processor.h~larger-io-bitmap	Fri Jun 18 15:40:31 2004
++++ 25-akpm/include/asm-x86_64/processor.h	Fri Jun 18 15:40:31 2004
+@@ -178,9 +178,9 @@ static inline void clear_in_cr4 (unsigne
+ 	(test_thread_flag(TIF_IA32) ? TASK_UNMAPPED_32 : TASK_UNMAPPED_64)  
+ 
+ /*
+- * Size of io_bitmap, covering ports 0 to 0x3ff.
++ * Size of io_bitmap.
+  */
+-#define IO_BITMAP_BITS  1024
++#define IO_BITMAP_BITS  65536
+ #define IO_BITMAP_BYTES (IO_BITMAP_BITS/8)
+ #define IO_BITMAP_LONGS (IO_BITMAP_BYTES/sizeof(long))
+ #define IO_BITMAP_OFFSET offsetof(struct tss_struct,io_bitmap)
+_

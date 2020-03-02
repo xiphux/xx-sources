@@ -1,0 +1,59 @@
+
+From: Mikael Pettersson <mikpe@csd.uu.se>
+
+This patch fixes a "might sleep in illegal context" error in the
+per-process performance counter inheritance changes I sent a few days ago. 
+The write_lock_irq() in release_task() interferes with semaphore operations
+potentially done as a side-effect of freeing the task's perfctr state
+object.  The fix is to do the final freeing via schedule_work().
+
+CONFIG_DEBUG_SPINLOCK_SLEEP detects the error fairly quickly.
+
+Signed-off-by: Mikael Pettersson <mikpe@csd.uu.se>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/perfctr/virtual.c |   16 +++++++++++++++-
+ 1 files changed, 15 insertions(+), 1 deletion(-)
+
+diff -puN drivers/perfctr/virtual.c~perfctr-inheritance-illegal-sleep-bug drivers/perfctr/virtual.c
+--- 25/drivers/perfctr/virtual.c~perfctr-inheritance-illegal-sleep-bug	2004-07-26 16:51:39.059165576 -0700
++++ 25-akpm/drivers/perfctr/virtual.c	2004-07-26 16:51:39.064164816 -0700
+@@ -45,6 +45,7 @@ struct vperfctr {
+ 	/* protected by task_lock(owner) */
+ 	unsigned long long inheritance_id;
+ 	struct perfctr_sum_ctrs children;
++	struct work_struct free_work;
+ };
+ #define IS_RUNNING(perfctr)	perfctr_cstatus_enabled((perfctr)->cpu_state.cstatus)
+ 
+@@ -160,6 +161,19 @@ static void put_vperfctr(struct vperfctr
+ 		vperfctr_free(perfctr);
+ }
+ 
++static void scheduled_vperfctr_free(void *perfctr)
++{
++	vperfctr_free((struct vperfctr*)perfctr);
++}
++
++static void schedule_put_vperfctr(struct vperfctr *perfctr)
++{
++	if (!atomic_dec_and_test(&perfctr->count))
++		return;
++	INIT_WORK(&perfctr->free_work, scheduled_vperfctr_free, perfctr);
++	schedule_work(&perfctr->free_work);
++}
++
+ static unsigned long long new_inheritance_id(void)
+ {
+ 	static spinlock_t lock = SPIN_LOCK_UNLOCKED;
+@@ -383,7 +397,7 @@ void __vperfctr_release(struct task_stru
+ 	}
+ 	task_unlock(parent_tsk);
+ 	child_tsk->thread.perfctr = NULL;
+-	put_vperfctr(child_perfctr);
++	schedule_put_vperfctr(child_perfctr);
+ }
+ 
+ /* schedule() --> switch_to() --> .. --> __vperfctr_suspend().
+_

@@ -1,0 +1,85 @@
+
+From: Christoph Hellwig <hch@lst.de>
+
+Original patch from Herbert Xu, almost completely redone by me.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/ide/Kconfig   |    2 +-
+ 25-akpm/drivers/ide/Makefile  |    2 +-
+ 25-akpm/drivers/ide/ide-pnp.c |   18 ++++++++++++++++--
+ 25-akpm/drivers/ide/ide.c     |    2 +-
+ 4 files changed, 19 insertions(+), 5 deletions(-)
+
+diff -puN drivers/ide/ide.c~allow-modular-ide-pnp drivers/ide/ide.c
+--- 25/drivers/ide/ide.c~allow-modular-ide-pnp	2004-07-05 03:53:49.478746488 -0700
++++ 25-akpm/drivers/ide/ide.c	2004-07-05 03:53:49.489744816 -0700
+@@ -2027,7 +2027,7 @@ done:
+ 	return 1;
+ }
+ 
+-extern void pnpide_init(void);
++extern int pnpide_init(void);
+ extern void h8300_ide_init(void);
+ 
+ /*
+diff -puN drivers/ide/ide-pnp.c~allow-modular-ide-pnp drivers/ide/ide-pnp.c
+--- 25/drivers/ide/ide-pnp.c~allow-modular-ide-pnp	2004-07-05 03:53:49.479746336 -0700
++++ 25-akpm/drivers/ide/ide-pnp.c	2004-07-05 03:53:49.487745120 -0700
+@@ -69,7 +69,21 @@ static struct pnp_driver idepnp_driver =
+ 	.remove		= idepnp_remove,
+ };
+ 
+-void __init pnpide_init(void)
++int __init pnpide_init(void)
+ {
+-	pnp_register_driver(&idepnp_driver);
++	return pnp_register_driver(&idepnp_driver);
+ }
++
++#ifdef MODULE
++static void __exit pnpide_exit(void)
++{
++       pnp_unregister_driver(&idepnp_driver);
++}
++
++module_init(pnpide_init);
++module_exit(pnpide_exit);
++#endif
++
++MODULE_AUTHOR("Andrey Panin");
++MODULE_DESCRIPTION("Enabler for ISAPNP IDE devices");
++MODULE_LICENSE("GPL");
+diff -puN drivers/ide/Kconfig~allow-modular-ide-pnp drivers/ide/Kconfig
+--- 25/drivers/ide/Kconfig~allow-modular-ide-pnp	2004-07-05 03:53:49.481746032 -0700
++++ 25-akpm/drivers/ide/Kconfig	2004-07-05 03:53:49.486745272 -0700
+@@ -325,7 +325,7 @@ config BLK_DEV_CMD640_ENHANCED
+ 	  Otherwise say N.
+ 
+ config BLK_DEV_IDEPNP
+-	bool "PNP EIDE support"
++	tristate "PNP EIDE support"
+ 	depends on PNP
+ 	help
+ 	  If you have a PnP (Plug and Play) compatible EIDE card and
+diff -puN drivers/ide/Makefile~allow-modular-ide-pnp drivers/ide/Makefile
+--- 25/drivers/ide/Makefile~allow-modular-ide-pnp	2004-07-05 03:53:49.483745728 -0700
++++ 25-akpm/drivers/ide/Makefile	2004-07-05 03:53:49.487745120 -0700
+@@ -23,7 +23,6 @@ ide-core-$(CONFIG_BLK_DEV_IDEPCI)	+= set
+ ide-core-$(CONFIG_BLK_DEV_IDEDMA)	+= ide-dma.o
+ ide-core-$(CONFIG_BLK_DEV_IDE_TCQ)	+= ide-tcq.o
+ ide-core-$(CONFIG_PROC_FS)		+= ide-proc.o
+-ide-core-$(CONFIG_BLK_DEV_IDEPNP)	+= ide-pnp.o
+ 
+ # built-in only drivers from arm/
+ ide-core-$(CONFIG_IDE_ARM)		+= arm/ide_arm.o
+@@ -44,6 +43,7 @@ ide-core-$(CONFIG_H8300)		+= h8300/ide-h
+ 
+ obj-$(CONFIG_BLK_DEV_IDE)		+= ide-core.o
+ obj-$(CONFIG_IDE_GENERIC)		+= ide-generic.o
++obj-$(CONFIG_BLK_DEV_IDEPNP)		+= ide-pnp.o
+ 
+ obj-$(CONFIG_BLK_DEV_IDEDISK)		+= ide-disk.o
+ obj-$(CONFIG_BLK_DEV_IDECD)		+= ide-cd.o
+_

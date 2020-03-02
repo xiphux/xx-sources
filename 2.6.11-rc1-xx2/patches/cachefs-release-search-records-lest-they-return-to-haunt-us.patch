@@ -1,0 +1,102 @@
+
+From: David Howells <dhowells@redhat.com>
+
+The attached patch causes CacheFS to free cached search records when it
+destroys a cookie.  These were coming back to haunt us because the list
+isn't re-initialised when the cookie is re-allocated (the slab allocator
+func initialises it in the first place).
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/cachefs/interface.c |   34 ++++++++++++++++++++++++++--------
+ 1 files changed, 26 insertions(+), 8 deletions(-)
+
+diff -puN fs/cachefs/interface.c~cachefs-release-search-records-lest-they-return-to-haunt-us fs/cachefs/interface.c
+--- 25/fs/cachefs/interface.c~cachefs-release-search-records-lest-they-return-to-haunt-us	Thu Sep 30 17:29:18 2004
++++ 25-akpm/fs/cachefs/interface.c	Thu Sep 30 17:29:18 2004
+@@ -114,7 +114,8 @@ int __cachefs_register_netfs(struct cach
+ 	up_write(&cachefs_addremove_sem);
+ 
+ 	if (ret < 0) {
+-		kmem_cache_free(cachefs_cookie_jar, netfs->primary_index);
++		netfs->primary_index->iparent = NULL;
++		__cachefs_cookie_put(netfs->primary_index);
+ 		netfs->primary_index = NULL;
+ 	}
+ 
+@@ -275,8 +276,9 @@ void cachefs_withdraw_inode(struct cache
+ 	struct cachefs_search_result *srch;
+ 	struct cachefs_cookie *cookie, *xcookie = NULL;
+ 
+-	_enter("{ino=%lu cnt=%u}",
+-	       inode->vfs_inode.i_ino, atomic_read(&inode->vfs_inode.i_count));
++	_enter("{ino=%lu cnt=%u ck=%p}",
++	       inode->vfs_inode.i_ino, atomic_read(&inode->vfs_inode.i_count),
++	       inode->cookie);
+ 
+ 	/* first of all we have to break the links between the inode and the
+ 	 * cookie
+@@ -305,9 +307,11 @@ void cachefs_withdraw_inode(struct cache
+ 		 * cookie's list */
+ 		list_for_each_entry(srch, &cookie->search_results, link) {
+ 			if (srch->super == inode->vfs_inode.i_sb->s_fs_info)
+-				break;
++				goto found_record;
+ 		}
++		BUG();
+ 
++	found_record:
+ 		list_del(&srch->link);
+ 		dbgfree(srch);
+ 		kfree(srch);
+@@ -773,9 +777,8 @@ struct cachefs_cookie *__cachefs_acquire
+  error:
+ 	printk("CacheFS: error from cache fs: %d\n", ret);
+ 	if (cookie) {
+-		kmem_cache_free(cachefs_cookie_jar, cookie);
++		__cachefs_cookie_put(cookie);
+ 		cookie = CACHEFS_NEGATIVE_COOKIE;
+-		atomic_dec(&iparent->usage);
+ 		atomic_dec(&iparent->children);
+ 	}
+ 
+@@ -800,7 +803,8 @@ void __cachefs_relinquish_cookie(struct 
+ {
+ 	struct cachefs_inode *inode;
+ 
+-	_enter("{%s},%d",
++	_enter("%p{%s},%d",
++	       cookie,
+ 	       cookie && cookie->idef ? (char *) cookie->idef->name : "<file>",
+ 	       retire);
+ 
+@@ -955,11 +959,25 @@ static void cachefs_fsdef_index_update(v
+  */
+ static void __cachefs_cookie_put(struct cachefs_cookie *cookie)
+ {
+-	_enter("");
++	struct cachefs_search_result *srch;
++
++	_enter("%p", cookie);
+ 
+ 	if (cookie->iparent)
+ 		cachefs_cookie_put(cookie->iparent);
+ 
++	/* dispose of any cached search results */
++	while (!list_empty(&cookie->search_results)) {
++		srch = list_entry(cookie->search_results.next,
++				  struct cachefs_search_result,
++				  link);
++
++		list_del(&srch->link);
++		kfree(srch);
++	}
++
++	BUG_ON(!list_empty(&cookie->search_results));
++	BUG_ON(!list_empty(&cookie->backing_inodes));
+ 	kmem_cache_free(cachefs_cookie_jar, cookie);
+ 
+ 	_leave("");
+_

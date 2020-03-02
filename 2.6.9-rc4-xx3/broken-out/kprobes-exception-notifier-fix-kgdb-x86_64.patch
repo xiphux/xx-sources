@@ -1,0 +1,33 @@
+
+From: Prasanna S Panchamukhi <prasanna@in.ibm.com>
+
+This patch modifies the return value of kprobes exceptions notify handler. 
+The kprobes exception notifier returns NOTIFY_STOP on handling
+notification.  This patch helps other debuggers to co-exists with the
+Kprobes.  Other debuggers registered for exceptions notification must
+return NOTIFY_STOP on handling the notification.
+
+Signed-Off-By : Prasanna S Panchamukhi <prasanna@in.ibm.com>
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/x86_64/kernel/kgdb_stub.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN arch/x86_64/kernel/kgdb_stub.c~kprobes-exception-notifier-fix-kgdb-x86_64 arch/x86_64/kernel/kgdb_stub.c
+--- 25/arch/x86_64/kernel/kgdb_stub.c~kprobes-exception-notifier-fix-kgdb-x86_64	Thu Sep 30 15:02:16 2004
++++ 25-akpm/arch/x86_64/kernel/kgdb_stub.c	Thu Sep 30 15:02:16 2004
+@@ -2197,9 +2197,9 @@ static int kgdb_notify(struct notifier_b
+ 		return NOTIFY_DONE;
+ 	if (cmd == DIE_NMI_IPI) {
+ 		if (in_kgdb(d->regs))
+-			return NOTIFY_BAD;
++			return NOTIFY_STOP;
+ 	} else if (kgdb_handle_exception(d->trapnr, d->signr, d->err, d->regs))
+-		return NOTIFY_BAD; /* skip */
++		return NOTIFY_STOP; /* skip */
+ 
+ 	return NOTIFY_DONE;
+ }
+_

@@ -1,0 +1,43 @@
+
+From: <blaisorblade_spam@yahoo.it>
+
+That code comes from the out_of_memory section; in 2.4 it was correct to put
+it for "default:", since it was called when handle_mm_fault() return value was
+!= 0, 1, 2, i.e.  it was 3, OOM (but the i386 code put it out of line, for
+better performance).  Here, instead, the OOM case is handled on its own, so if
+handle_mm_fault() != from the listed cases we must BUG().
+
+Signed-off-by: Paolo 'Blaisorblade' Giarrusso <blaisorblade_spam@yahoo.it>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/um/kernel/trap_kern.c |    9 +--------
+ 1 files changed, 1 insertion(+), 8 deletions(-)
+
+diff -puN arch/um/kernel/trap_kern.c~uml-removes-dead-code-in-trap_kernc arch/um/kernel/trap_kern.c
+--- 25/arch/um/kernel/trap_kern.c~uml-removes-dead-code-in-trap_kernc	2004-07-05 16:00:49.833444616 -0700
++++ 25-akpm/arch/um/kernel/trap_kern.c	2004-07-05 16:00:49.837444008 -0700
+@@ -74,13 +74,7 @@ int handle_page_fault(unsigned long addr
+ 			err = -ENOMEM;
+ 			goto out_of_memory;
+ 		default:
+-			if (current->pid == 1) {
+-				up_read(&mm->mmap_sem);
+-				yield();
+-				down_read(&mm->mmap_sem);
+-				goto survive;
+-			}
+-			goto out;
++			BUG();
+ 		}
+ 		pte = pte_offset_kernel(pmd, page);
+ 	} while(!pte_present(*pte));
+@@ -103,7 +97,6 @@ out_of_memory:
+ 		down_read(&mm->mmap_sem);
+ 		goto survive;
+ 	}
+-	err = -ENOMEM;
+ 	goto out;
+ }
+ 
+_

@@ -1,0 +1,113 @@
+
+From: Hariprasad Nellitheertha <hari@in.ibm.com>
+
+This patch provides the interfaces necessary to read the dump contents,
+treating it as a high memory device.
+
+Signed off by Hariprasad Nellitheertha <hari@in.ibm.com>
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/mm/highmem.c     |   18 ++++++++++++++++++
+ 25-akpm/include/asm-i386/highmem.h |    1 +
+ 25-akpm/include/linux/highmem.h    |    1 +
+ 25-akpm/kernel/crash.c             |   31 +++++++++++++++++++++++++++++++
+ 4 files changed, 51 insertions(+)
+
+diff -puN arch/i386/mm/highmem.c~crashdump-routines-for-copying-dump-pages arch/i386/mm/highmem.c
+--- 25/arch/i386/mm/highmem.c~crashdump-routines-for-copying-dump-pages	Tue Sep 21 14:36:45 2004
++++ 25-akpm/arch/i386/mm/highmem.c	Tue Sep 21 14:36:45 2004
+@@ -74,6 +74,24 @@ void kunmap_atomic(void *kvaddr, enum km
+ 	preempt_check_resched();
+ }
+ 
++/* This is the same as kmap_atomic() but can map memory that doesn't
++ * have a struct page associated with it.
++ */
++void *kmap_atomic_pfn(unsigned long pfn, enum km_type type)
++{
++        enum fixed_addresses idx;
++        unsigned long vaddr;
++
++        inc_preempt_count();
++
++        idx = type + KM_TYPE_NR*smp_processor_id();
++        vaddr = __fix_to_virt(FIX_KMAP_BEGIN + idx);
++        set_pte(kmap_pte-idx, pfn_pte(pfn, kmap_prot));
++        __flush_tlb_one(vaddr);
++
++        return (void*) vaddr;
++}
++
+ struct page *kmap_atomic_to_page(void *ptr)
+ {
+ 	unsigned long idx, vaddr = (unsigned long)ptr;
+diff -puN include/asm-i386/highmem.h~crashdump-routines-for-copying-dump-pages include/asm-i386/highmem.h
+--- 25/include/asm-i386/highmem.h~crashdump-routines-for-copying-dump-pages	Tue Sep 21 14:36:45 2004
++++ 25-akpm/include/asm-i386/highmem.h	Tue Sep 21 14:36:45 2004
+@@ -61,6 +61,7 @@ void *kmap(struct page *page);
+ void kunmap(struct page *page);
+ void *kmap_atomic(struct page *page, enum km_type type);
+ void kunmap_atomic(void *kvaddr, enum km_type type);
++void *kmap_atomic_pfn(unsigned long pfn, enum km_type type);
+ struct page *kmap_atomic_to_page(void *ptr);
+ 
+ #define flush_cache_kmaps()	do { } while (0)
+diff -puN include/linux/highmem.h~crashdump-routines-for-copying-dump-pages include/linux/highmem.h
+--- 25/include/linux/highmem.h~crashdump-routines-for-copying-dump-pages	Tue Sep 21 14:36:45 2004
++++ 25-akpm/include/linux/highmem.h	Tue Sep 21 14:36:45 2004
+@@ -30,6 +30,7 @@ static inline void *kmap(struct page *pa
+ 
+ #define kmap_atomic(page, idx)		page_address(page)
+ #define kunmap_atomic(addr, idx)	do { } while (0)
++#define kmap_atomic_pfn(pfn, idx)	page_address(pfn_to_page(pfn))
+ #define kmap_atomic_to_page(ptr)	virt_to_page(ptr)
+ 
+ #endif /* CONFIG_HIGHMEM */
+diff -puN kernel/crash.c~crashdump-routines-for-copying-dump-pages kernel/crash.c
+--- 25/kernel/crash.c~crashdump-routines-for-copying-dump-pages	Tue Sep 21 14:36:45 2004
++++ 25-akpm/kernel/crash.c	Tue Sep 21 14:36:45 2004
+@@ -11,6 +11,7 @@
+ #include <linux/proc_fs.h>
+ #include <asm/io.h>
+ #include <asm/uaccess.h>
++#include <asm/highmem.h>
+ 
+ /*
+  * Enable kexec reboot upon panic; for dumping
+@@ -54,3 +55,33 @@ void __crash_machine_kexec(void)
+ 		printk(KERN_EMERG "kexec: No kernel image loaded!\n");
+ 	}
+ }
++
++/*
++ * Copy a page from "oldmem". For this page, there is no pte mapped
++ * in the current kernel. We stitch up a pte, similar to kmap_atomic.
++ */
++ssize_t copy_oldmem_page(unsigned long pfn, char *buf,
++				size_t csize, int userbuf)
++{
++	void *page, *vaddr;
++
++	if (!csize)
++		return 0;
++
++	page = kmalloc(PAGE_SIZE, GFP_KERNEL);
++
++	vaddr = kmap_atomic_pfn(pfn, KM_PTE0);
++	copy_page(page, vaddr);
++	kunmap_atomic(vaddr, KM_PTE0);
++
++	if (userbuf) {
++		if (copy_to_user(buf, page, csize)) {
++			kfree(page);
++			return -EFAULT;
++		}
++	} else
++		memcpy(buf, page, csize);
++	kfree(page);
++
++	return 0;
++}
+_

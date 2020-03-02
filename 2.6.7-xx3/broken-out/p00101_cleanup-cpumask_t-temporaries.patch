@@ -1,0 +1,186 @@
+
+From: Rusty Russell <rusty@rustcorp.com.au>
+
+Paul Jackson's cpumask tour-de-force allows us to get rid of those stupid
+temporaries which we used to hold CPU_MASK_ALL to hand them to functions. 
+This used to break NR_CPUS > BITS_PER_LONG.
+
+Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc64/kernel/irq.c                  |    3 +--
+ 25-akpm/arch/ppc64/kernel/rtasd.c                |    3 +--
+ 25-akpm/arch/ppc64/kernel/xics.c                 |    6 ++----
+ 25-akpm/include/asm-i386/mach-numaq/mach_apic.h  |    3 +--
+ 25-akpm/include/asm-i386/mach-summit/mach_apic.h |    3 +--
+ 25-akpm/kernel/kmod.c                            |    3 +--
+ 25-akpm/kernel/kthread.c                         |    3 +--
+ 25-akpm/kernel/sched.c                           |    5 ++---
+ 8 files changed, 10 insertions(+), 19 deletions(-)
+
+diff -puN arch/ppc64/kernel/irq.c~cleanup-cpumask_t-temporaries arch/ppc64/kernel/irq.c
+--- 25/arch/ppc64/kernel/irq.c~cleanup-cpumask_t-temporaries	2004-06-23 21:44:10.590455840 -0700
++++ 25-akpm/arch/ppc64/kernel/irq.c	2004-06-23 21:44:10.604453712 -0700
+@@ -738,7 +738,6 @@ static int irq_affinity_write_proc (stru
+ 	irq_desc_t *desc = get_irq_desc(irq);
+ 	int ret;
+ 	cpumask_t new_value, tmp;
+-	cpumask_t allcpus = CPU_MASK_ALL;
+ 
+ 	if (!desc->handler->set_affinity)
+ 		return -EIO;
+@@ -753,7 +752,7 @@ static int irq_affinity_write_proc (stru
+ 	 * NR_CPUS == 32 and cpumask is a long), so we mask it here to
+ 	 * be consistent.
+ 	 */
+-	cpus_and(new_value, new_value, allcpus);
++	cpus_and(new_value, new_value, CPU_MASK_ALL);
+ 
+ 	/*
+ 	 * Grab lock here so cpu_online_map can't change, and also
+diff -puN arch/ppc64/kernel/rtasd.c~cleanup-cpumask_t-temporaries arch/ppc64/kernel/rtasd.c
+--- 25/arch/ppc64/kernel/rtasd.c~cleanup-cpumask_t-temporaries	2004-06-23 21:44:10.591455688 -0700
++++ 25-akpm/arch/ppc64/kernel/rtasd.c	2004-06-23 21:44:10.604453712 -0700
+@@ -364,7 +364,6 @@ static int rtasd(void *unused)
+ 	unsigned int err_type;
+ 	int cpu = 0;
+ 	int event_scan = rtas_token("event-scan");
+-	cpumask_t all = CPU_MASK_ALL;
+ 	int rc;
+ 
+ 	daemonize("rtasd");
+@@ -419,7 +418,7 @@ static int rtasd(void *unused)
+ 	for (;;) {
+ 		set_cpus_allowed(current, cpumask_of_cpu(cpu));
+ 		do_event_scan(event_scan);
+-		set_cpus_allowed(current, all);
++		set_cpus_allowed(current, CPU_MASK_ALL);
+ 
+ 		/* Drop hotplug lock, and sleep for a bit (at least
+ 		 * one second since some machines have problems if we
+diff -puN arch/ppc64/kernel/xics.c~cleanup-cpumask_t-temporaries arch/ppc64/kernel/xics.c
+--- 25/arch/ppc64/kernel/xics.c~cleanup-cpumask_t-temporaries	2004-06-23 21:44:10.592455536 -0700
++++ 25-akpm/arch/ppc64/kernel/xics.c	2004-06-23 21:44:10.605453560 -0700
+@@ -240,14 +240,13 @@ static unsigned int real_irq_to_virt(uns
+ static int get_irq_server(unsigned int irq)
+ {
+ 	cpumask_t cpumask = irq_affinity[irq];
+-	cpumask_t allcpus = CPU_MASK_ALL;
+ 	cpumask_t tmp = CPU_MASK_NONE;
+ 	unsigned int server;
+ 
+ #ifdef CONFIG_IRQ_ALL_CPUS
+ 	/* For the moment only implement delivery to all cpus or one cpu */
+ 	if (smp_threads_ready) {
+-		if (cpus_equal(cpumask, allcpus)) {
++		if (cpus_equal(cpumask, CPU_MASK_ALL)) {
+ 			server = default_distrib_server;
+ 		} else {
+ 			cpus_and(tmp, cpu_online_map, cpumask);
+@@ -616,7 +615,6 @@ static void xics_set_affinity(unsigned i
+ 	long status;
+ 	unsigned long xics_status[2];
+ 	unsigned long newmask;
+-	cpumask_t allcpus = CPU_MASK_ALL;
+ 	cpumask_t tmp = CPU_MASK_NONE;
+ 
+ 	irq = virt_irq_to_real(irq_offset_down(virq));
+@@ -632,7 +630,7 @@ static void xics_set_affinity(unsigned i
+ 	}
+ 
+ 	/* For the moment only implement delivery to all cpus or one cpu */
+-	if (cpus_equal(cpumask, allcpus)) {
++	if (cpus_equal(cpumask, CPU_MASK_ALL)) {
+ 		newmask = default_distrib_server;
+ 	} else {
+ 		cpus_and(tmp, cpu_online_map, cpumask);
+diff -puN include/asm-i386/mach-numaq/mach_apic.h~cleanup-cpumask_t-temporaries include/asm-i386/mach-numaq/mach_apic.h
+--- 25/include/asm-i386/mach-numaq/mach_apic.h~cleanup-cpumask_t-temporaries	2004-06-23 21:44:10.594455232 -0700
++++ 25-akpm/include/asm-i386/mach-numaq/mach_apic.h	2004-06-23 21:44:10.606453408 -0700
+@@ -8,8 +8,7 @@
+ 
+ static inline cpumask_t target_cpus(void)
+ {
+-	cpumask_t tmp = CPU_MASK_ALL;
+-	return tmp;
++	return CPU_MASK_ALL;
+ }
+ 
+ #define TARGET_CPUS (target_cpus())
+diff -puN include/asm-i386/mach-summit/mach_apic.h~cleanup-cpumask_t-temporaries include/asm-i386/mach-summit/mach_apic.h
+--- 25/include/asm-i386/mach-summit/mach_apic.h~cleanup-cpumask_t-temporaries	2004-06-23 21:44:10.595455080 -0700
++++ 25-akpm/include/asm-i386/mach-summit/mach_apic.h	2004-06-23 21:44:10.606453408 -0700
+@@ -19,8 +19,7 @@
+ 
+ static inline cpumask_t target_cpus(void)
+ {
+-	cpumask_t tmp = CPU_MASK_ALL;
+-	return tmp;
++	return CPU_MASK_ALL;
+ } 
+ #define TARGET_CPUS	(target_cpus())
+ 
+diff -puN kernel/kmod.c~cleanup-cpumask_t-temporaries kernel/kmod.c
+--- 25/kernel/kmod.c~cleanup-cpumask_t-temporaries	2004-06-23 21:44:10.597454776 -0700
++++ 25-akpm/kernel/kmod.c	2004-06-23 21:44:10.606453408 -0700
+@@ -154,7 +154,6 @@ static int ____call_usermodehelper(void 
+ {
+ 	struct subprocess_info *sub_info = data;
+ 	int retval;
+-	cpumask_t mask = CPU_MASK_ALL;
+ 
+ 	/* Unblock all signals. */
+ 	flush_signals(current);
+@@ -165,7 +164,7 @@ static int ____call_usermodehelper(void 
+ 	spin_unlock_irq(&current->sighand->siglock);
+ 
+ 	/* We can run anywhere, unlike our parent keventd(). */
+-	set_cpus_allowed(current, mask);
++	set_cpus_allowed(current, CPU_MASK_ALL);
+ 
+ 	retval = -EPERM;
+ 	if (current->fs->root)
+diff -puN kernel/kthread.c~cleanup-cpumask_t-temporaries kernel/kthread.c
+--- 25/kernel/kthread.c~cleanup-cpumask_t-temporaries	2004-06-23 21:44:10.599454472 -0700
++++ 25-akpm/kernel/kthread.c	2004-06-23 21:44:10.607453256 -0700
+@@ -65,7 +65,6 @@ static int kthread(void *_create)
+ 	void *data;
+ 	sigset_t blocked;
+ 	int ret = -EINTR;
+-	cpumask_t mask = CPU_MASK_ALL;
+ 
+ 	kthread_exit_files();
+ 
+@@ -79,7 +78,7 @@ static int kthread(void *_create)
+ 	flush_signals(current);
+ 
+ 	/* By default we can run anywhere, unlike keventd. */
+-	set_cpus_allowed(current, mask);
++	set_cpus_allowed(current, CPU_MASK_ALL);
+ 
+ 	/* OK, tell user we're spawned, wait for stop or wakeup */
+ 	__set_current_state(TASK_INTERRUPTIBLE);
+diff -puN kernel/sched.c~cleanup-cpumask_t-temporaries kernel/sched.c
+--- 25/kernel/sched.c~cleanup-cpumask_t-temporaries	2004-06-23 21:44:10.600454320 -0700
++++ 25-akpm/kernel/sched.c	2004-06-23 21:44:10.610452800 -0700
+@@ -3920,16 +3920,15 @@ void __init sched_init(void)
+ 	/* Set up an initial dummy domain for early boot */
+ 	static struct sched_domain sched_domain_init;
+ 	static struct sched_group sched_group_init;
+-	cpumask_t cpu_mask_all = CPU_MASK_ALL;
+ 
+ 	memset(&sched_domain_init, 0, sizeof(struct sched_domain));
+-	sched_domain_init.span = cpu_mask_all;
++	sched_domain_init.span = CPU_MASK_ALL;
+ 	sched_domain_init.groups = &sched_group_init;
+ 	sched_domain_init.last_balance = jiffies;
+ 	sched_domain_init.balance_interval = INT_MAX; /* Don't balance */
+ 
+ 	memset(&sched_group_init, 0, sizeof(struct sched_group));
+-	sched_group_init.cpumask = cpu_mask_all;
++	sched_group_init.cpumask = CPU_MASK_ALL;
+ 	sched_group_init.next = &sched_group_init;
+ 	sched_group_init.cpu_power = SCHED_LOAD_SCALE;
+ #endif
+_

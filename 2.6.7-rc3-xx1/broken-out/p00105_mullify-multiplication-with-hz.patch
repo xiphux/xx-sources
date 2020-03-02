@@ -1,0 +1,32 @@
+Move the multiplication of (loops_per_jiffy * xloops) with HZ into
+the "mull" asm operation. This increases the accuracy of the delay functions
+largely:
+
+n usec delay on a 1500000 BogoMIPS system: 
+  n 	   before	  after
+  1	 1000 ticks	 1499 ticks
+ 10	14000 ticks	14999 ticks
+
+n usec delay on a 100000 BogoMIPS system: 
+ n 	   before	  after
+  1	    0 ticks	   99 ticks
+ 10	    0 ticks	  999 ticks
+100	 9000 ticks	 9999 ticks
+
+Signed-off-by: Dominik Brodowski <linux@brodo.de>
+
+
+diff -ruN linux-original/arch/i386/lib/delay.c linux/arch/i386/lib/delay.c
+--- linux-original/arch/i386/lib/delay.c	2004-06-07 22:01:46.608351088 +0200
++++ linux/arch/i386/lib/delay.c	2004-06-07 22:05:03.299449496 +0200
+@@ -33,8 +33,8 @@
+ 	int d0;
+ 	__asm__("mull %0"
+ 		:"=d" (xloops), "=&a" (d0)
+-		:"1" (xloops),"0" (current_cpu_data.loops_per_jiffy));
+-        __delay(xloops * HZ);
++		:"1" (xloops),"0" (current_cpu_data.loops_per_jiffy * HZ));
++        __delay(xloops);
+ }
+ 
+ void __udelay(unsigned long usecs)

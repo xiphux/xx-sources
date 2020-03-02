@@ -1,0 +1,110 @@
+
+From: John Levon <levon@movementarian.org>
+
+In 2.4, OProfile allowed normal users to trigger sample dumps (useful under
+low sample load).  The patch below, by Will Cohen, allows this for 2.6 too.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/oprofile/oprofile_files.c |    2 +-
+ 25-akpm/drivers/oprofile/oprofilefs.c     |   25 +++++++++++++++++++------
+ 25-akpm/include/linux/oprofile.h          |    3 +++
+ 3 files changed, 23 insertions(+), 7 deletions(-)
+
+diff -puN drivers/oprofile/oprofile_files.c~oprofile-allow-normal-user-to-trigger-sample-dumps drivers/oprofile/oprofile_files.c
+--- 25/drivers/oprofile/oprofile_files.c~oprofile-allow-normal-user-to-trigger-sample-dumps	2004-06-21 23:13:59.037880296 -0700
++++ 25-akpm/drivers/oprofile/oprofile_files.c	2004-06-21 23:13:59.045879080 -0700
+@@ -90,7 +90,7 @@ static struct file_operations dump_fops 
+ void oprofile_create_files(struct super_block * sb, struct dentry * root)
+ {
+ 	oprofilefs_create_file(sb, root, "enable", &enable_fops);
+-	oprofilefs_create_file(sb, root, "dump", &dump_fops);
++	oprofilefs_create_file_perm(sb, root, "dump", &dump_fops, 0666);
+ 	oprofilefs_create_file(sb, root, "buffer", &event_buffer_fops);
+ 	oprofilefs_create_ulong(sb, root, "buffer_size", &fs_buffer_size);
+ 	oprofilefs_create_ulong(sb, root, "buffer_watershed", &fs_buffer_watershed);
+diff -puN drivers/oprofile/oprofilefs.c~oprofile-allow-normal-user-to-trigger-sample-dumps drivers/oprofile/oprofilefs.c
+--- 25/drivers/oprofile/oprofilefs.c~oprofile-allow-normal-user-to-trigger-sample-dumps	2004-06-21 23:13:59.039879992 -0700
++++ 25-akpm/drivers/oprofile/oprofilefs.c	2004-06-21 23:13:59.046878928 -0700
+@@ -165,7 +165,8 @@ static struct file_operations ulong_ro_f
+ 
+ 
+ static struct dentry * __oprofilefs_create_file(struct super_block * sb,
+-	struct dentry * root, char const * name, struct file_operations * fops)
++	struct dentry * root, char const * name, struct file_operations * fops,
++	int perm)
+ {
+ 	struct dentry * dentry;
+ 	struct inode * inode;
+@@ -176,7 +177,7 @@ static struct dentry * __oprofilefs_crea
+ 	dentry = d_alloc(root, &qname);
+ 	if (!dentry)
+ 		return 0;
+-	inode = oprofilefs_get_inode(sb, S_IFREG | 0644);
++	inode = oprofilefs_get_inode(sb, S_IFREG | perm);
+ 	if (!inode) {
+ 		dput(dentry);
+ 		return 0;
+@@ -190,7 +191,8 @@ static struct dentry * __oprofilefs_crea
+ int oprofilefs_create_ulong(struct super_block * sb, struct dentry * root,
+ 	char const * name, unsigned long * val)
+ {
+-	struct dentry * d = __oprofilefs_create_file(sb, root, name, &ulong_fops);
++	struct dentry * d = __oprofilefs_create_file(sb, root, name,
++						     &ulong_fops, 0644);
+ 	if (!d)
+ 		return -EFAULT;
+ 
+@@ -202,7 +204,8 @@ int oprofilefs_create_ulong(struct super
+ int oprofilefs_create_ro_ulong(struct super_block * sb, struct dentry * root,
+ 	char const * name, unsigned long * val)
+ {
+-	struct dentry * d = __oprofilefs_create_file(sb, root, name, &ulong_ro_fops);
++	struct dentry * d = __oprofilefs_create_file(sb, root, name,
++						     &ulong_ro_fops, 0444);
+ 	if (!d)
+ 		return -EFAULT;
+ 
+@@ -227,7 +230,8 @@ static struct file_operations atomic_ro_
+ int oprofilefs_create_ro_atomic(struct super_block * sb, struct dentry * root,
+ 	char const * name, atomic_t * val)
+ {
+-	struct dentry * d = __oprofilefs_create_file(sb, root, name, &atomic_ro_fops);
++	struct dentry * d = __oprofilefs_create_file(sb, root, name,
++						     &atomic_ro_fops, 0444);
+ 	if (!d)
+ 		return -EFAULT;
+ 
+@@ -239,7 +243,16 @@ int oprofilefs_create_ro_atomic(struct s
+ int oprofilefs_create_file(struct super_block * sb, struct dentry * root,
+ 	char const * name, struct file_operations * fops)
+ {
+-	if (!__oprofilefs_create_file(sb, root, name, fops))
++	if (!__oprofilefs_create_file(sb, root, name, fops, 0644))
++		return -EFAULT;
++	return 0;
++}
++
++
++int oprofilefs_create_file_perm(struct super_block * sb, struct dentry * root,
++	char const * name, struct file_operations * fops, int perm)
++{
++	if (!__oprofilefs_create_file(sb, root, name, fops, perm))
+ 		return -EFAULT;
+ 	return 0;
+ }
+diff -puN include/linux/oprofile.h~oprofile-allow-normal-user-to-trigger-sample-dumps include/linux/oprofile.h
+--- 25/include/linux/oprofile.h~oprofile-allow-normal-user-to-trigger-sample-dumps	2004-06-21 23:13:59.041879688 -0700
++++ 25-akpm/include/linux/oprofile.h	2004-06-21 23:13:59.047878776 -0700
+@@ -65,6 +65,9 @@ extern void oprofile_add_sample(unsigned
+  */
+ int oprofilefs_create_file(struct super_block * sb, struct dentry * root,
+ 	char const * name, struct file_operations * fops);
++
++int oprofilefs_create_file_perm(struct super_block * sb, struct dentry * root,
++	char const * name, struct file_operations * fops, int perm);
+  
+ /** Create a file for read/write access to an unsigned long. */
+ int oprofilefs_create_ulong(struct super_block * sb, struct dentry * root,
+_

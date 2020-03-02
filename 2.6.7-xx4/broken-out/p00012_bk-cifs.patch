@@ -1,0 +1,508 @@
+---
+
+ linux-2.6.7-xx4-xiphux/fs/cifs/CHANGES     |    8 +++
+ linux-2.6.7-xx4-xiphux/fs/cifs/cifsfs.h    |    2 
+ linux-2.6.7-xx4-xiphux/fs/cifs/cifsproto.h |    4 -
+ linux-2.6.7-xx4-xiphux/fs/cifs/cifssmb.c   |    2 
+ linux-2.6.7-xx4-xiphux/fs/cifs/connect.c   |   60 ++++++++++++++---------------
+ linux-2.6.7-xx4-xiphux/fs/cifs/dir.c       |   10 ++--
+ linux-2.6.7-xx4-xiphux/fs/cifs/file.c      |   14 +++---
+ linux-2.6.7-xx4-xiphux/fs/cifs/inode.c     |   44 +++++++++------------
+ linux-2.6.7-xx4-xiphux/fs/cifs/link.c      |    4 -
+ linux-2.6.7-xx4-xiphux/fs/cifs/transport.c |    6 ++
+ 10 files changed, 78 insertions(+), 76 deletions(-)
+
+diff -puN fs/cifs/CHANGES~bk-cifs fs/cifs/CHANGES
+--- linux-2.6.7-xx4/fs/cifs/CHANGES~bk-cifs	2004-06-29 18:21:44.997258008 -0400
++++ linux-2.6.7-xx4-xiphux/fs/cifs/CHANGES	2004-06-29 18:21:45.044250864 -0400
+@@ -1,3 +1,8 @@
++Version 1.20
++------------
++Make transaction counts more consistent. Merge /proc/fs/cifs/SimultaneousOps
++info into /proc/fs/cifs/DebugData
++
+ Version 1.19
+ ------------
+ Fix /proc/fs/cifs/Stats and DebugData display to handle larger
+@@ -6,7 +11,8 @@ is the usual maximum active multiplex SM
+ Do not kill cifsd (and thus hurt the other SMB session) when more than one
+ session to the same server (but with different userids) exists and one
+ of the two user's smb sessions is being removed while leaving the other.
+-
++Do not loop reconnecting in cifsd demultiplex thread when admin
++kills the thread without going through unmount.
+ 
+ Version 1.18
+ ------------
+diff -puN fs/cifs/cifsfs.h~bk-cifs fs/cifs/cifsfs.h
+--- linux-2.6.7-xx4/fs/cifs/cifsfs.h~bk-cifs	2004-06-29 18:21:45.000257552 -0400
++++ linux-2.6.7-xx4-xiphux/fs/cifs/cifsfs.h	2004-06-29 18:21:45.045250712 -0400
+@@ -93,5 +93,5 @@ extern int 	cifs_setxattr(struct dentry 
+ 			 size_t, int);
+ extern ssize_t	cifs_getxattr(struct dentry *, const char *, void *, size_t);
+ extern ssize_t	cifs_listxattr(struct dentry *, char *, size_t);
+-#define CIFS_VERSION   "1.19"
++#define CIFS_VERSION   "1.20"
+ #endif				/* _CIFSFS_H */
+diff -puN fs/cifs/cifsproto.h~bk-cifs fs/cifs/cifsproto.h
+--- linux-2.6.7-xx4/fs/cifs/cifsproto.h~bk-cifs	2004-06-29 18:21:45.004256944 -0400
++++ linux-2.6.7-xx4-xiphux/fs/cifs/cifsproto.h	2004-06-29 18:21:45.046250560 -0400
+@@ -63,10 +63,10 @@ extern u64 cifs_UnixTimeToNT(struct time
+ extern int cifs_get_inode_info(struct inode **pinode,
+ 			const unsigned char *search_path, 
+ 			FILE_ALL_INFO * pfile_info,
+-			struct super_block *sb);
++			struct super_block *sb, int xid);
+ extern int cifs_get_inode_info_unix(struct inode **pinode,
+ 			const unsigned char *search_path,
+-			struct super_block *sb);
++			struct super_block *sb,int xid);
+ 
+ extern int cifs_setup_session(unsigned int xid, struct cifsSesInfo *pSesInfo, 
+ 			struct nls_table * nls_info);
+diff -puN fs/cifs/cifssmb.c~bk-cifs fs/cifs/cifssmb.c
+--- linux-2.6.7-xx4/fs/cifs/cifssmb.c~bk-cifs	2004-06-29 18:21:45.007256488 -0400
++++ linux-2.6.7-xx4-xiphux/fs/cifs/cifssmb.c	2004-06-29 18:21:45.049250104 -0400
+@@ -315,8 +315,6 @@ CIFSSMBTDis(const int xid, struct cifsTc
+ 		return 0;  
+ 	}
+ 
+-/* BB remove (from server) list of shares - but with smp safety  BB */
+-/* BB is ses active - do we need to check here - but how? BB */
+ 	if((tcon->ses == 0) || (tcon->ses->server == 0)) {    
+ 		up(&tcon->tconSem);
+ 		return -EIO;
+diff -puN fs/cifs/connect.c~bk-cifs fs/cifs/connect.c
+--- linux-2.6.7-xx4/fs/cifs/connect.c~bk-cifs	2004-06-29 18:21:45.019254664 -0400
++++ linux-2.6.7-xx4-xiphux/fs/cifs/connect.c	2004-06-29 18:21:45.055249192 -0400
+@@ -253,13 +253,12 @@ cifs_demultiplex_thread(struct TCP_Serve
+ 				/* some servers kill tcp session rather than returning
+ 					smb negprot error in which case reconnecting here is
+ 					not going to help - return error to mount */
+-				spin_lock(&GlobalMid_Lock);
+-				server->tcpStatus = CifsExiting;
+-				spin_unlock(&GlobalMid_Lock);
+-				wake_up(&server->response_q);
+ 				break;
+ 			}
+-
++			if(length == -EINTR) {
++				cFYI(1,("cifsd thread killed"));
++				break;
++			}
+ 			cFYI(1,("Reconnecting after unexpected peek error %d",length));
+ 			cifs_reconnect(server);
+ 			csocket = server->ssocket;
+@@ -292,11 +291,6 @@ cifs_demultiplex_thread(struct TCP_Serve
+ 					/* if nack on negprot (rather than 
+ 					ret of smb negprot error) reconnecting
+ 					not going to help, ret error to mount */
+-					spin_lock(&GlobalMid_Lock);
+-					server->tcpStatus = CifsExiting;
+-					spin_unlock(&GlobalMid_Lock);
+-					/* wake up thread doing negprot */
+-					wake_up(&server->response_q);
+ 					break;
+ 				} else {
+ 					/* give server a second to
+@@ -407,15 +401,19 @@ cifs_demultiplex_thread(struct TCP_Serve
+ 	}
+ 	spin_lock(&GlobalMid_Lock);
+ 	server->tcpStatus = CifsExiting;
+-	spin_unlock(&GlobalMid_Lock);
++	server->tsk = NULL;
+ 	atomic_set(&server->inFlight, 0);
++	spin_unlock(&GlobalMid_Lock);
+ 	/* Although there should not be any requests blocked on 
+ 	this queue it can not hurt to be paranoid and try to wake up requests
+ 	that may haven been blocked when more than 50 at time were on the wire 
+ 	to the same server - they now will see the session is in exit state
+ 	and get out of SendReceive.  */
+-	wake_up_all(&server->request_q);   
+-	server->tsk = NULL;
++	wake_up_all(&server->request_q);
++	/* give those requests time to exit */
++	set_current_state(TASK_INTERRUPTIBLE);
++	schedule_timeout(HZ/8);
++
+ 	if(server->ssocket) {
+ 		sock_release(csocket);
+ 		server->ssocket = NULL;
+@@ -1358,31 +1356,37 @@ cifs_mount(struct super_block *sb, struc
+ 			}
+ 		}
+ 	}
+-	if (pSesInfo->capabilities & CAP_LARGE_FILES) {
+-		cFYI(0, ("Large files supported "));
+-		sb->s_maxbytes = (u64) 1 << 63;
+-	} else
+-		sb->s_maxbytes = (u64) 1 << 31;	/* 2 GB */
++	if(pSesInfo) {
++		if (pSesInfo->capabilities & CAP_LARGE_FILES) {
++			sb->s_maxbytes = (u64) 1 << 63;
++		} else
++			sb->s_maxbytes = (u64) 1 << 31;	/* 2 GB */
++	}
+ 
+ /* on error free sesinfo and tcon struct if needed */
+ 	if (rc) {
++		/* if session setup failed, use count is zero but
++		we still need to free cifsd thread */
+ 		if(atomic_read(&srvTcp->socketUseCount) == 0) {
+ 			spin_lock(&GlobalMid_Lock);
+ 			srvTcp->tcpStatus = CifsExiting;
+ 			spin_unlock(&GlobalMid_Lock);
++			if(srvTcp->tsk)
++				send_sig(SIGKILL,srvTcp->tsk,1);
+ 		}
+ 		 /* If find_unc succeeded then rc == 0 so we can not end */
+-		if (tcon)  /* up here accidently freeing someone elses tcon struct */
++		if (tcon)  /* up accidently freeing someone elses tcon struct */
+ 			tconInfoFree(tcon);
+ 		if (existingCifsSes == 0) {
+ 			if (pSesInfo) {
+-				if (pSesInfo->server) {
+-					if (pSesInfo->Suid)
+-						CIFSSMBLogoff(xid, pSesInfo);
+-					if(pSesInfo->server->tsk)
++				if ((pSesInfo->server) &&
++				    (pSesInfo->status == CifsGood)) {
++					int temp_rc;
++					temp_rc = CIFSSMBLogoff(xid, pSesInfo);
++					/* if the socketUseCount is now zero */
++					if((temp_rc == -ESHUTDOWN) &&
++					   (pSesInfo->server->tsk))
+ 						send_sig(SIGKILL,pSesInfo->server->tsk,1);
+-					set_current_state(TASK_INTERRUPTIBLE);
+-					schedule_timeout(HZ / 4);	/* give captive thread time to exit */
+ 				} else
+ 					cFYI(1, ("No session or bad tcon"));
+ 				sesInfoFree(pSesInfo);
+@@ -2791,12 +2795,6 @@ cifs_umount(struct super_block *sb, stru
+ 				FreeXid(xid);
+ 				return 0;
+ 			} else if (rc == -ESHUTDOWN) {
+-			/* should we add wake_up_all(&server->request_q);
+-			   and add a check in  the check inFlight loop
+-			   for the session ending */
+-				set_current_state(TASK_INTERRUPTIBLE);
+-			/* give captive thread time to exit */
+-				schedule_timeout(HZ / 4);
+ 				cFYI(1,("Waking up socket by sending it signal"));
+ 				send_sig(SIGKILL,cifsd_task,1);
+ 				rc = 0;
+diff -puN fs/cifs/dir.c~bk-cifs fs/cifs/dir.c
+--- linux-2.6.7-xx4/fs/cifs/dir.c~bk-cifs	2004-06-29 18:21:45.022254208 -0400
++++ linux-2.6.7-xx4-xiphux/fs/cifs/dir.c	2004-06-29 18:21:45.057248888 -0400
+@@ -233,10 +233,10 @@ cifs_create(struct inode *inode, struct 
+ 	/* BB server might mask mode so we have to query for Unix case*/
+ 		if (pTcon->ses->capabilities & CAP_UNIX)
+ 			rc = cifs_get_inode_info_unix(&newinode, full_path,
+-						 inode->i_sb);
++						 inode->i_sb,xid);
+ 		else {
+ 			rc = cifs_get_inode_info(&newinode, full_path,
+-						 buf, inode->i_sb);
++						 buf, inode->i_sb,xid);
+ 			if(newinode)
+ 				newinode->i_mode = mode;
+ 		}
+@@ -329,7 +329,7 @@ int cifs_mknod(struct inode *inode, stru
+ 			device_number, cifs_sb->local_nls);
+ 		if(!rc) {
+ 			rc = cifs_get_inode_info_unix(&newinode, full_path,
+-						inode->i_sb);
++						inode->i_sb,xid);
+ 			direntry->d_op = &cifs_dentry_ops;
+ 			if(rc == 0)
+ 				d_instantiate(direntry, newinode);
+@@ -389,10 +389,10 @@ cifs_lookup(struct inode *parent_dir_ino
+ 
+ 	if (pTcon->ses->capabilities & CAP_UNIX)
+ 		rc = cifs_get_inode_info_unix(&newInode, full_path,
+-					      parent_dir_inode->i_sb);
++					      parent_dir_inode->i_sb,xid);
+ 	else
+ 		rc = cifs_get_inode_info(&newInode, full_path, NULL,
+-					 parent_dir_inode->i_sb);
++					 parent_dir_inode->i_sb,xid);
+ 
+ 	if ((rc == 0) && (newInode != NULL)) {
+ 		direntry->d_op = &cifs_dentry_ops;
+diff -puN fs/cifs/file.c~bk-cifs fs/cifs/file.c
+--- linux-2.6.7-xx4/fs/cifs/file.c~bk-cifs	2004-06-29 18:21:45.025253752 -0400
++++ linux-2.6.7-xx4-xiphux/fs/cifs/file.c	2004-06-29 18:21:45.061248280 -0400
+@@ -215,10 +215,10 @@ cifs_open(struct inode *inode, struct fi
+ 				}
+ 				if (pTcon->ses->capabilities & CAP_UNIX)
+ 					rc = cifs_get_inode_info_unix(&file->f_dentry->d_inode,
+-						full_path, inode->i_sb);
++						full_path, inode->i_sb,xid);
+ 				else
+ 					rc = cifs_get_inode_info(&file->f_dentry->d_inode,
+-						full_path, buf, inode->i_sb);
++						full_path, buf, inode->i_sb,xid);
+ 
+ 				if((oplock & 0xF) == OPLOCK_EXCLUSIVE) {
+ 					pCifsInode->clientCanCacheAll = TRUE;
+@@ -367,10 +367,10 @@ and we can never tell if the caller alre
+ 				pCifsInode->clientCanCacheRead = FALSE;
+ 				if (pTcon->ses->capabilities & CAP_UNIX)
+ 					rc = cifs_get_inode_info_unix(&inode,
+-						full_path, inode->i_sb);
++						full_path, inode->i_sb,xid);
+ 				else
+ 					rc = cifs_get_inode_info(&inode,
+-						full_path, NULL, inode->i_sb);
++						full_path, NULL, inode->i_sb,xid);
+ 			} /* else we are writing out data to server already
+ 			and could deadlock if we tried to flush data, and 
+ 			since we do not know if we have data that would
+@@ -627,7 +627,6 @@ cifs_write(struct file * file, const cha
+ 			while we blocked so return what we managed to write */
+ 				return total_written;
+ 			}
+-                        open_file = (struct cifsFileInfo *) file->private_data;
+ 			if(open_file->closePend) {
+ 				FreeXid(xid);
+ 				if(total_written)
+@@ -1535,6 +1534,7 @@ construct_dentry(struct qstr *qstring, s
+ 			if(*ptmp_inode == NULL)
+ 				return;
+ 			d_instantiate(tmp_dentry, *ptmp_inode);
++			insert_inode_hash(*ptmp_inode);
+ 		}
+ 	} else {
+ 		tmp_dentry = d_alloc(file->f_dentry, qstring);
+@@ -1546,12 +1546,11 @@ construct_dentry(struct qstr *qstring, s
+ 			
+ 		*ptmp_inode = new_inode(file->f_dentry->d_sb);
+ 		tmp_dentry->d_op = &cifs_dentry_ops;
+-		cFYI(0, (" instantiate dentry 0x%p with inode 0x%p ",
+-			 tmp_dentry, *ptmp_inode));
+ 		if(*ptmp_inode == NULL)
+ 			return;
+ 		d_instantiate(tmp_dentry, *ptmp_inode);
+ 		d_rehash(tmp_dentry);
++		insert_inode_hash(*ptmp_inode);
+ 	}
+ 
+ 	tmp_dentry->d_time = jiffies;
+@@ -2137,6 +2136,7 @@ struct address_space_operations cifs_add
+ 	.writepage = cifs_writepage,
+ 	.prepare_write = cifs_prepare_write, 
+ 	.commit_write = cifs_commit_write,
++	.set_page_dirty = __set_page_dirty_nobuffers,
+    /* .sync_page = cifs_sync_page, */
+ 	/*.direct_IO = */
+ };
+diff -puN fs/cifs/inode.c~bk-cifs fs/cifs/inode.c
+--- linux-2.6.7-xx4/fs/cifs/inode.c~bk-cifs	2004-06-29 18:21:45.032252688 -0400
++++ linux-2.6.7-xx4-xiphux/fs/cifs/inode.c	2004-06-29 18:21:45.063247976 -0400
+@@ -35,9 +35,8 @@ extern int is_size_safe_to_change(struct
+ int
+ cifs_get_inode_info_unix(struct inode **pinode,
+ 			 const unsigned char *search_path,
+-			 struct super_block *sb)
++			 struct super_block *sb,int xid)
+ {
+-	int xid;
+ 	int rc = 0;
+ 	FILE_UNIX_BASIC_INFO findData;
+ 	struct cifsTconInfo *pTcon;
+@@ -45,8 +44,6 @@ cifs_get_inode_info_unix(struct inode **
+ 	struct cifs_sb_info *cifs_sb = CIFS_SB(sb);
+ 	char *tmp_path;
+ 
+-	xid = GetXid();
+-
+ 	pTcon = cifs_sb->tcon;
+ 	cFYI(1, (" Getting info on %s ", search_path));
+ 	/* we could have done a find first instead but this returns more info */
+@@ -62,7 +59,6 @@ cifs_get_inode_info_unix(struct inode **
+ 				    strnlen(search_path, MAX_PATHCONF) + 1,
+ 				    GFP_KERNEL);
+ 			if (tmp_path == NULL) {
+-				FreeXid(xid);
+ 				return -ENOMEM;
+ 			}
+         /* have to skip first of the double backslash of UNC name */
+@@ -75,7 +71,6 @@ cifs_get_inode_info_unix(struct inode **
+ 
+ 			/* BB fix up inode etc. */
+ 		} else if (rc) {
+-			FreeXid(xid);
+ 			return rc;
+ 		}
+ 
+@@ -85,9 +80,12 @@ cifs_get_inode_info_unix(struct inode **
+ 		/* get new inode */
+ 		if (*pinode == NULL) {
+ 			*pinode = new_inode(sb);
++			if(*pinode == NULL)
++				return -ENOMEM;
++			insert_inode_hash(*pinode);
+ 		}
+-		inode = *pinode;
+ 
++		inode = *pinode;
+ 		cifsInfo = CIFS_I(inode);
+ 
+ 		cFYI(1, (" Old time %ld ", cifsInfo->time));
+@@ -172,15 +170,13 @@ cifs_get_inode_info_unix(struct inode **
+ 					   inode->i_rdev);
+ 		}
+ 	}
+-	FreeXid(xid);
+ 	return rc;
+ }
+ 
+ int
+ cifs_get_inode_info(struct inode **pinode, const unsigned char *search_path, 
+-		FILE_ALL_INFO * pfindData, struct super_block *sb)
++		FILE_ALL_INFO * pfindData, struct super_block *sb, int xid)
+ {
+-	int xid;
+ 	int rc = 0;
+ 	struct cifsTconInfo *pTcon;
+ 	struct inode *inode;
+@@ -188,15 +184,12 @@ cifs_get_inode_info(struct inode **pinod
+ 	char *tmp_path;
+ 	char *buf = NULL;
+ 
+-	xid = GetXid();
+-
+ 	pTcon = cifs_sb->tcon;
+ 	cFYI(1,("Getting info on %s ", search_path));
+ 
+ 	if((pfindData == NULL) && (*pinode != NULL)) {
+ 		if(CIFS_I(*pinode)->clientCanCacheRead) {
+ 			cFYI(1,("No need to revalidate inode sizes on cached file "));
+-			FreeXid(xid);
+ 			return rc;
+ 		}
+ 	}
+@@ -221,7 +214,6 @@ cifs_get_inode_info(struct inode **pinod
+ 			if (tmp_path == NULL) {
+ 				if(buf)
+ 					kfree(buf);
+-				FreeXid(xid);
+ 				return -ENOMEM;
+ 			}
+ 
+@@ -235,7 +227,6 @@ cifs_get_inode_info(struct inode **pinod
+ 		} else if (rc) {
+ 			if(buf)
+ 				kfree(buf);
+-			FreeXid(xid);
+ 			return rc;
+ 		}
+ 	} else {
+@@ -244,8 +235,10 @@ cifs_get_inode_info(struct inode **pinod
+ 		/* get new inode */
+ 		if (*pinode == NULL) {
+ 			*pinode = new_inode(sb);
++			if(*pinode == NULL)
++				return -ENOMEM;
++			insert_inode_hash(*pinode);
+ 		}
+-
+ 		inode = *pinode;
+ 		cifsInfo = CIFS_I(inode);
+ 		pfindData->Attributes = le32_to_cpu(pfindData->Attributes);
+@@ -332,22 +325,23 @@ cifs_get_inode_info(struct inode **pinod
+ 	}
+ 	if(buf)
+ 	    kfree(buf);
+-	FreeXid(xid);
+ 	return rc;
+ }
+ 
+ void
+ cifs_read_inode(struct inode *inode)
+ {				/* gets root inode */
+-
++	int xid;
+ 	struct cifs_sb_info *cifs_sb;
+ 
+ 	cifs_sb = CIFS_SB(inode->i_sb);
+-
++	xid = GetXid();
+ 	if (cifs_sb->tcon->ses->capabilities & CAP_UNIX)
+-		cifs_get_inode_info_unix(&inode, "", inode->i_sb);
++		cifs_get_inode_info_unix(&inode, "", inode->i_sb,xid);
+ 	else
+-		cifs_get_inode_info(&inode, "", NULL, inode->i_sb);
++		cifs_get_inode_info(&inode, "", NULL, inode->i_sb,xid);
++	/* can not call macro FreeXid here since in a void func */
++	_FreeXid(xid);
+ }
+ 
+ int
+@@ -473,10 +467,10 @@ cifs_mkdir(struct inode *inode, struct d
+ 		inode->i_nlink++;
+ 		if (pTcon->ses->capabilities & CAP_UNIX)
+ 			rc = cifs_get_inode_info_unix(&newinode, full_path,
+-						      inode->i_sb);
++						      inode->i_sb,xid);
+ 		else
+ 			rc = cifs_get_inode_info(&newinode, full_path,NULL,
+-						 inode->i_sb);
++						 inode->i_sb,xid);
+ 
+ 		direntry->d_op = &cifs_dentry_ops;
+ 		d_instantiate(direntry, newinode);
+@@ -698,7 +692,7 @@ cifs_revalidate(struct dentry *direntry)
+ 
+ 	if (cifs_sb->tcon->ses->capabilities & CAP_UNIX) {
+ 		rc = cifs_get_inode_info_unix(&direntry->d_inode, full_path,
+-					 direntry->d_sb);
++					 direntry->d_sb,xid);
+ 		if(rc) {
+ 			cFYI(1,("error on getting revalidate info %d",rc));
+ /*			if(rc != -ENOENT)
+@@ -706,7 +700,7 @@ cifs_revalidate(struct dentry *direntry)
+ 		}
+ 	} else {
+ 		rc = cifs_get_inode_info(&direntry->d_inode, full_path, NULL,
+-				    direntry->d_sb);
++				    direntry->d_sb,xid);
+ 		if(rc) {
+ 			cFYI(1,("error on getting revalidate info %d",rc));
+ /*			if(rc != -ENOENT)
+diff -puN fs/cifs/link.c~bk-cifs fs/cifs/link.c
+--- linux-2.6.7-xx4/fs/cifs/link.c~bk-cifs	2004-06-29 18:21:45.035252232 -0400
++++ linux-2.6.7-xx4-xiphux/fs/cifs/link.c	2004-06-29 18:21:45.064247824 -0400
+@@ -188,10 +188,10 @@ cifs_symlink(struct inode *inode, struct
+ 	if (rc == 0) {
+ 		if (pTcon->ses->capabilities & CAP_UNIX)
+ 			rc = cifs_get_inode_info_unix(&newinode, full_path,
+-						      inode->i_sb);
++						      inode->i_sb,xid);
+ 		else
+ 			rc = cifs_get_inode_info(&newinode, full_path, NULL,
+-						 inode->i_sb);
++						 inode->i_sb,xid);
+ 
+ 		if (rc != 0) {
+ 			cFYI(1,
+diff -puN fs/cifs/transport.c~bk-cifs fs/cifs/transport.c
+--- linux-2.6.7-xx4/fs/cifs/transport.c~bk-cifs	2004-06-29 18:21:45.038251776 -0400
++++ linux-2.6.7-xx4-xiphux/fs/cifs/transport.c	2004-06-29 18:21:45.066247520 -0400
+@@ -215,8 +215,14 @@ SendReceive(const unsigned int xid, stru
+ 					 < CIFS_MAX_REQ);
+ 				spin_lock(&GlobalMid_Lock);
+ 			} else {
++				if(ses->server->tcpStatus == CifsExiting) {
++					spin_unlock(&GlobalMid_Lock);
++					return -ENOENT;
++				}
++
+ 			/* can not count locking commands against total since
+ 			   they are allowed to block on server */
++
+ 				if(long_op < 3) {
+ 				/* update # of requests on the wire to server */
+ 					atomic_inc(&ses->server->inFlight);
+
+_

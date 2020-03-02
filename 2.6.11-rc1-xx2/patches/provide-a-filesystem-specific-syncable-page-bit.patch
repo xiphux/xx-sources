@@ -1,0 +1,90 @@
+
+From: David Howells <dhowells@redhat.com>
+
+The attached patch provides a filesystem-specific page bit that a
+filesystem can synchronise upon.  This can be used, for example, by a netfs
+to synchronise with CacheFS writing its pages to disc.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/page-flags.h |   10 ++++++++++
+ 25-akpm/include/linux/pagemap.h    |   11 +++++++++++
+ 25-akpm/mm/filemap.c               |   17 +++++++++++++++++
+ 3 files changed, 38 insertions(+)
+
+diff -puN include/linux/page-flags.h~provide-a-filesystem-specific-syncable-page-bit include/linux/page-flags.h
+--- 25/include/linux/page-flags.h~provide-a-filesystem-specific-syncable-page-bit	2005-01-10 21:15:05.472621616 -0800
++++ 25-akpm/include/linux/page-flags.h	2005-01-10 21:15:05.478620704 -0800
+@@ -62,6 +62,7 @@
+ #define PG_slab			 7	/* slab debug (Suparna wants this) */
+ 
+ #define PG_highmem		 8
++#define PG_fs_misc		 9	/* Filesystem specific bit */
+ #define PG_checked		 9	/* kill me in 2.5.<early>. */
+ #define PG_arch_1		10
+ #define PG_reserved		11
+@@ -326,4 +327,13 @@ static inline void set_page_writeback(st
+ 	test_set_page_writeback(page);
+ }
+ 
++/*
++ * Filesystem-specific page bit testing
++ */
++#define PageFsMisc(page)		test_bit(PG_fs_misc, &(page)->flags)
++#define SetPageFsMisc(page)		set_bit(PG_fs_misc, &(page)->flags)
++#define TestSetPageFsMisc(page)		test_and_set_bit(PG_fs_misc, &(page)->flags)
++#define ClearPageFsMisc(page)		clear_bit(PG_fs_misc, &(page)->flags)
++#define TestClearPageFsMisc(page)	test_and_clear_bit(PG_fs_misc, &(page)->flags)
++
+ #endif	/* PAGE_FLAGS_H */
+diff -puN include/linux/pagemap.h~provide-a-filesystem-specific-syncable-page-bit include/linux/pagemap.h
+--- 25/include/linux/pagemap.h~provide-a-filesystem-specific-syncable-page-bit	2005-01-10 21:15:05.473621464 -0800
++++ 25-akpm/include/linux/pagemap.h	2005-01-10 21:15:05.479620552 -0800
+@@ -192,6 +192,17 @@ static inline void wait_on_page_writebac
+ extern void end_page_writeback(struct page *page);
+ 
+ /*
++ * Wait for filesystem-specific page synchronisation to complete
++ */
++static inline void wait_on_page_fs_misc(struct page *page)
++{
++	if (PageFsMisc(page))
++		wait_on_page_bit(page, PG_fs_misc);
++}
++
++extern void fastcall end_page_fs_misc(struct page *page);
++
++/*
+  * Fault a userspace page into pagetables.  Return non-zero on a fault.
+  *
+  * This assumes that two userspace pages are always sufficient.  That's
+diff -puN mm/filemap.c~provide-a-filesystem-specific-syncable-page-bit mm/filemap.c
+--- 25/mm/filemap.c~provide-a-filesystem-specific-syncable-page-bit	2005-01-10 21:15:05.475621160 -0800
++++ 25-akpm/mm/filemap.c	2005-01-10 21:15:05.520614320 -0800
+@@ -465,6 +465,23 @@ void fastcall __lock_page(struct page *p
+ EXPORT_SYMBOL(__lock_page);
+ 
+ /*
++ * Note completion of filesystem specific page synchronisation
++ *
++ * This is used to allow a page to be written to a filesystem cache in the
++ * background without holding up the completion of readpage
++ */
++void fastcall end_page_fs_misc(struct page *page)
++{
++	smp_mb__before_clear_bit();
++	if (!TestClearPageFsMisc(page))
++		BUG();
++	smp_mb__after_clear_bit();
++	wake_up_page(page, PG_fs_misc);
++}
++
++EXPORT_SYMBOL(end_page_fs_misc);
++
++/*
+  * a rather lightweight function, finding and getting a reference to a
+  * hashed page atomically.
+  */
+_

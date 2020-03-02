@@ -1,0 +1,135 @@
+
+From: <viro@parcelfarce.linux.theplanet.co.uk>
+
+cases that can simply reuse ext2 helpers (page_follow_link_light() and
+page_put_link()).
+
+
+---
+
+ 25-akpm/fs/affs/symlink.c   |    5 +++--
+ 25-akpm/fs/coda/cnode.c     |    5 +++--
+ 25-akpm/fs/ext3/symlink.c   |   19 +++++++------------
+ 25-akpm/fs/minix/inode.c    |    5 +++--
+ 25-akpm/fs/reiserfs/namei.c |    5 +++--
+ 25-akpm/fs/sysv/inode.c     |    5 +++--
+ 6 files changed, 22 insertions(+), 22 deletions(-)
+
+diff -puN fs/affs/symlink.c~SL3-page-RC6-bk5 fs/affs/symlink.c
+--- 25/fs/affs/symlink.c~SL3-page-RC6-bk5	2004-05-19 20:50:39.970111136 -0700
++++ 25-akpm/fs/affs/symlink.c	2004-05-19 20:50:39.988108400 -0700
+@@ -78,7 +78,8 @@ struct address_space_operations affs_sym
+ };
+ 
+ struct inode_operations affs_symlink_inode_operations = {
+-	.readlink	= page_readlink,
+-	.follow_link	= page_follow_link,
++	.readlink	= generic_readlink,
++	.follow_link	= page_follow_link_light,
++	.put_link	= page_put_link,
+ 	.setattr	= affs_notify_change,
+ };
+diff -puN fs/coda/cnode.c~SL3-page-RC6-bk5 fs/coda/cnode.c
+--- 25/fs/coda/cnode.c~SL3-page-RC6-bk5	2004-05-19 20:50:39.971110984 -0700
++++ 25-akpm/fs/coda/cnode.c	2004-05-19 20:50:39.989108248 -0700
+@@ -17,8 +17,9 @@ inline int coda_fideq(struct CodaFid *fi
+ }
+ 
+ static struct inode_operations coda_symlink_inode_operations = {
+-	.readlink	= page_readlink,
+-	.follow_link	= page_follow_link,
++	.readlink	= generic_readlink,
++	.follow_link	= page_follow_link_light,
++	.put_link	= page_put_link,
+ 	.setattr	= coda_setattr,
+ };
+ 
+diff -puN fs/ext3/symlink.c~SL3-page-RC6-bk5 fs/ext3/symlink.c
+--- 25/fs/ext3/symlink.c~SL3-page-RC6-bk5	2004-05-19 20:50:39.973110680 -0700
++++ 25-akpm/fs/ext3/symlink.c	2004-05-19 20:50:39.989108248 -0700
+@@ -22,22 +22,17 @@
+ #include <linux/ext3_fs.h>
+ #include "xattr.h"
+ 
+-static int
+-ext3_readlink(struct dentry *dentry, char __user *buffer, int buflen)
+-{
+-	struct ext3_inode_info *ei = EXT3_I(dentry->d_inode);
+-	return vfs_readlink(dentry, buffer, buflen, (char*)ei->i_data);
+-}
+-
+ static int ext3_follow_link(struct dentry *dentry, struct nameidata *nd)
+ {
+ 	struct ext3_inode_info *ei = EXT3_I(dentry->d_inode);
+-	return vfs_follow_link(nd, (char*)ei->i_data);
++	nd_set_link(nd, (char*)ei->i_data);
++	return 0;
+ }
+ 
+ struct inode_operations ext3_symlink_inode_operations = {
+-	.readlink	= page_readlink,
+-	.follow_link	= page_follow_link,
++	.readlink	= generic_readlink,
++	.follow_link	= page_follow_link_light,
++	.put_link	= page_put_link,
+ 	.setxattr	= ext3_setxattr,
+ 	.getxattr	= ext3_getxattr,
+ 	.listxattr	= ext3_listxattr,
+@@ -45,8 +40,8 @@ struct inode_operations ext3_symlink_ino
+ };
+ 
+ struct inode_operations ext3_fast_symlink_inode_operations = {
+-	.readlink	= ext3_readlink,	/* BKL not held.  Don't need */
+-	.follow_link	= ext3_follow_link,	/* BKL not held.  Don't need */
++	.readlink	= generic_readlink,
++	.follow_link	= ext3_follow_link,
+ 	.setxattr	= ext3_setxattr,
+ 	.getxattr	= ext3_getxattr,
+ 	.listxattr	= ext3_listxattr,
+diff -puN fs/minix/inode.c~SL3-page-RC6-bk5 fs/minix/inode.c
+--- 25/fs/minix/inode.c~SL3-page-RC6-bk5	2004-05-19 20:50:39.974110528 -0700
++++ 25-akpm/fs/minix/inode.c	2004-05-19 20:50:39.990108096 -0700
+@@ -343,8 +343,9 @@ static struct address_space_operations m
+ };
+ 
+ static struct inode_operations minix_symlink_inode_operations = {
+-	.readlink	= page_readlink,
+-	.follow_link	= page_follow_link,
++	.readlink	= generic_readlink,
++	.follow_link	= page_follow_link_light,
++	.put_link	= page_put_link,
+ 	.getattr	= minix_getattr,
+ };
+ 
+diff -puN fs/reiserfs/namei.c~SL3-page-RC6-bk5 fs/reiserfs/namei.c
+--- 25/fs/reiserfs/namei.c~SL3-page-RC6-bk5	2004-05-19 20:50:39.975110376 -0700
++++ 25-akpm/fs/reiserfs/namei.c	2004-05-19 20:50:39.991107944 -0700
+@@ -1389,8 +1389,9 @@ struct inode_operations reiserfs_dir_ino
+  * stuff added
+  */
+ struct inode_operations reiserfs_symlink_inode_operations = {
+-    .readlink       = page_readlink,
+-    .follow_link    = page_follow_link,
++    .readlink       = generic_readlink,
++    .follow_link    = page_follow_link_light,
++    .put_link       = page_put_link,
+     .setattr        = reiserfs_setattr,
+     .setxattr       = reiserfs_setxattr,
+     .getxattr       = reiserfs_getxattr,
+diff -puN fs/sysv/inode.c~SL3-page-RC6-bk5 fs/sysv/inode.c
+--- 25/fs/sysv/inode.c~SL3-page-RC6-bk5	2004-05-19 20:50:39.986108704 -0700
++++ 25-akpm/fs/sysv/inode.c	2004-05-19 20:50:39.992107792 -0700
+@@ -142,8 +142,9 @@ static inline void write3byte(struct sys
+ }
+ 
+ static struct inode_operations sysv_symlink_inode_operations = {
+-	.readlink	= page_readlink,
+-	.follow_link	= page_follow_link,
++	.readlink	= generic_readlink,
++	.follow_link	= page_follow_link_light,
++	.put_link	= page_put_link,
+ 	.getattr	= sysv_getattr,
+ };
+ 
+
+_

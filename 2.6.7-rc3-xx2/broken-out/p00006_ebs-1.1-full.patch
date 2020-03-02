@@ -1,0 +1,3487 @@
+---
+
+ linux-2.6.7-rc3-xx1-xiphux/arch/i386/Kconfig           |   65 
+ linux-2.6.7-rc3-xx1-xiphux/fs/proc/array.c             |    8 
+ linux-2.6.7-rc3-xx1-xiphux/fs/proc/base.c              |  168 +
+ linux-2.6.7-rc3-xx1-xiphux/fs/proc/proc_misc.c         |    8 
+ linux-2.6.7-rc3-xx1-xiphux/fs/proc/root.c              |    6 
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/init_task.h   |  164 +
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/kernel_stat.h |    3 
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/list.h        |   46 
+ linux-2.6.7-rc3-xx1-xiphux/include/linux/sched.h       |  186 +
+ linux-2.6.7-rc3-xx1-xiphux/kernel/exit.c               |    2 
+ linux-2.6.7-rc3-xx1-xiphux/kernel/fork.c               |    4 
+ linux-2.6.7-rc3-xx1-xiphux/kernel/sched.c              | 1629 +++++++++++++++--
+ linux-2.6.7-rc3-xx1-xiphux/kernel/timer.c              |    4 
+ 13 files changed, 2183 insertions(+), 110 deletions(-)
+
+diff -puN fs/proc/array.c~ebs-1.1-full fs/proc/array.c
+--- linux-2.6.7-rc3-xx1/fs/proc/array.c~ebs-1.1-full	2004-06-11 01:54:49.472321792 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/fs/proc/array.c	2004-06-11 01:54:49.525313736 -0400
+@@ -155,7 +155,9 @@ static inline char * task_state(struct t
+ 	read_lock(&tasklist_lock);
+ 	buffer += sprintf(buffer,
+ 		"State:\t%s\n"
+-#ifdef CONFIG_NICKSCHED
++#ifdef CONFIG_EBS
++		"CpuRate:\t%lu%%\n"
++#elif defined(CONFIG_NICKSCHED)
+ 		"sleep_avg:\t%lu\n"
+ 		"sleep_time:\t%lu\n"
+ 		"total_time:\t%lu\n"
+@@ -169,7 +171,9 @@ static inline char * task_state(struct t
+ 		"Uid:\t%d\t%d\t%d\t%d\n"
+ 		"Gid:\t%d\t%d\t%d\t%d\n",
+ 		get_task_state(p),
+-#ifdef CONFIG_NICKSCHED
++#ifdef CONFIG_EBS
++		(unsigned long)((p->cpu_rate_per_share * p->cpu_shares) / (EBS_ONE / 1000000)),
++#elif defined(CONFIG_NICKSCHED)
+ 		p->sleep_avg, p->sleep_time, p->total_time,
+ #elif !defined(CONFIG_SPA_STAIRCASE)
+ 		(p->sleep_avg/1024)*100/(1020000000/1024),
+diff -puN fs/proc/base.c~ebs-1.1-full fs/proc/base.c
+--- linux-2.6.7-rc3-xx1/fs/proc/base.c~ebs-1.1-full	2004-06-11 01:54:49.476321184 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/fs/proc/base.c	2004-06-11 01:54:49.532312672 -0400
+@@ -67,6 +67,13 @@ enum pid_directory_inos {
+ 	PROC_TGID_ATTR_EXEC,
+ 	PROC_TGID_ATTR_FSCREATE,
+ #endif
++#ifdef CONFIG_EBS
++#ifdef CONFIG_SCHED_STATS
++	PROC_TGID_CPU,
++#endif
++	PROC_TGID_CPU_RATE_CAP,
++	PROC_TGID_CPU_SHARES,
++#endif
+ 	PROC_TGID_FD_DIR,
+ 	PROC_TID_INO,
+ 	PROC_TID_STATUS,
+@@ -90,6 +97,13 @@ enum pid_directory_inos {
+ 	PROC_TID_ATTR_EXEC,
+ 	PROC_TID_ATTR_FSCREATE,
+ #endif
++#ifdef CONFIG_EBS
++#ifdef CONFIG_SCHED_STATS
++	PROC_TID_CPU,
++#endif
++	PROC_TID_CPU_RATE_CAP,
++	PROC_TID_CPU_SHARES,
++#endif
+ 	PROC_TID_FD_DIR = 0x8000,	/* 0x8000-0xffff */
+ };
+ 
+@@ -123,6 +137,13 @@ static struct pid_entry tgid_base_stuff[
+ #ifdef CONFIG_KALLSYMS
+ 	E(PROC_TGID_WCHAN,     "wchan",   S_IFREG|S_IRUGO),
+ #endif
++#ifdef CONFIG_EBS
++#ifdef CONFIG_SCHED_STATS
++	E(PROC_TGID_CPU,        "cpu",    S_IFREG|S_IRUGO),
++#endif
++  	E(PROC_TGID_CPU_RATE_CAP,"cpu_rate_cap",	S_IFREG|S_IRUGO|S_IWUSR),
++  	E(PROC_TGID_CPU_SHARES,	"cpu_shares",	S_IFREG|S_IRUGO|S_IWUSR),
++#endif
+ 	{0,0,NULL,0}
+ };
+ static struct pid_entry tid_base_stuff[] = {
+@@ -145,6 +166,13 @@ static struct pid_entry tid_base_stuff[]
+ #ifdef CONFIG_KALLSYMS
+ 	E(PROC_TID_WCHAN,      "wchan",   S_IFREG|S_IRUGO),
+ #endif
++#ifdef CONFIG_EBS
++#ifdef CONFIG_SCHED_STATS
++	E(PROC_TID_CPU,         "cpu",    S_IFREG|S_IRUGO),
++#endif
++  	E(PROC_TID_CPU_RATE_CAP,"cpu_rate_cap",	S_IFREG|S_IRUGO|S_IWUSR),
++  	E(PROC_TID_CPU_SHARES,	"cpu_shares",	S_IFREG|S_IRUGO|S_IWUSR),
++#endif
+ 	{0,0,NULL,0}
+ };
+ 
+@@ -180,7 +208,9 @@ static inline int proc_type(struct inode
+ int proc_pid_stat(struct task_struct*,char*);
+ int proc_pid_status(struct task_struct*,char*);
+ int proc_pid_statm(struct task_struct*,char*);
++#ifdef CONFIG_SCHED_STATS
+ int proc_pid_cpu(struct task_struct*,char*);
++#endif
+ 
+ static int proc_fd_link(struct inode *inode, struct dentry **dentry, struct vfsmount **mnt)
+ {
+@@ -551,6 +581,127 @@ static struct file_operations proc_info_
+ 	.read		= proc_info_read,
+ };
+ 
++#ifdef CONFIG_EBS
++/*
++ * Entitlement Based Scheduler (EBS) per task parameters
++ */
++static ssize_t cpu_rate_cap_read(struct file * file, char * buf,
++			size_t count, loff_t *ppos)
++{
++	struct task_struct *task = proc_task(file->f_dentry->d_inode);
++	char buffer[64];
++	size_t len;
++	uint32_t enu = task->cpu_rate_cap;
++	uint32_t den = EBS_ONE;
++	char *qual = (task->cpu_ebs_flags & EBS_CPU_RATE_CAP_IS_HARD) ? " !" : "";
++	int i;
++
++	if (*ppos)
++		return 0;
++	for (i = 0; (i < EBS_OFFSET) && !(enu & 1); i++) {
++		enu >>= 1;
++		den >>= 1;
++	}
++	*ppos = len = sprintf(buffer, "%u / %u%s\n", enu, den, qual);
++	if (copy_to_user(buf, buffer, len))
++		return -EFAULT;
++
++	return len;
++}
++
++static ssize_t cpu_rate_cap_write(struct file * file, const char * buf,
++			 size_t count, loff_t *ppos)
++{
++	struct task_struct *task = proc_task(file->f_dentry->d_inode);
++	char buffer[128] = "";
++	char *endptr = NULL;
++	char *bptr = buffer;
++	unsigned long enu, den, hard = 0;
++	int res;
++
++	if ((count > 127) || *ppos)
++		return -EFBIG;
++	if (copy_from_user(buffer, buf, count))
++		return -EFAULT;
++	enu = simple_strtoul(buffer, &endptr, 0);
++	if ((endptr == buffer) || (enu == ULONG_MAX))
++		return -EINVAL;
++	while ((*endptr != '\0') && ((*endptr == ' ') || (*endptr == '\t')))
++		endptr++;
++	if (*endptr != '/')
++		return -EINVAL;
++	endptr++;
++	bptr = endptr;
++	den = simple_strtoul(bptr, &endptr, 0);
++	if ((endptr == bptr) || (den == ULONG_MAX))
++		return -EINVAL;
++	while ((*endptr != '\0') && ((*endptr == ' ') || (*endptr == '\t') || (*endptr == '\n')))
++		endptr++;
++	if (*endptr == '!') {
++		hard = 1;
++		endptr++;
++	}
++	while ((*endptr != '\0') && ((*endptr == ' ') || (*endptr == '\t') || (*endptr == '\n')))
++		endptr++;
++	if (*endptr != '\0')
++		return -EINVAL;
++
++	if ((res = set_cpu_rate_cap_fm_frac(task, enu, den, hard)) != 0)
++		return res;
++
++	return count;
++}
++
++static struct file_operations proc_cpu_rate_cap_operations = {
++	read:		cpu_rate_cap_read,
++	write:		cpu_rate_cap_write,
++};
++
++static ssize_t cpu_shares_read(struct file * file, char * buf,
++			size_t count, loff_t *ppos)
++{
++	struct task_struct *task = proc_task(file->f_dentry->d_inode);
++	char buffer[64];
++	size_t len;
++
++	if (*ppos)
++		return 0;
++	*ppos = len = sprintf(buffer, "%u\n", task->cpu_shares);
++	if (copy_to_user(buf, buffer, len))
++		return -EFAULT;
++
++	return len;
++}
++
++static ssize_t cpu_shares_write(struct file * file, const char * buf,
++			 size_t count, loff_t *ppos)
++{
++	struct task_struct *task = proc_task(file->f_dentry->d_inode);
++	char buffer[64] = "";
++	char *endptr = NULL;
++	unsigned long shares;
++	int res;
++
++	if ((count > 63) || *ppos)
++		return -EFBIG;
++	if (copy_from_user(buffer, buf, count))
++		return -EFAULT;
++	shares = simple_strtoul(buffer, &endptr, 0);
++	if ((endptr == buffer) || (shares == ULONG_MAX))
++		return -EINVAL;
++
++	if ((res = set_cpu_shares(task, shares)) != 0)
++		return res;
++
++	return count;
++}
++
++static struct file_operations proc_cpu_shares_operations = {
++	read:		cpu_shares_read,
++	write:		cpu_shares_write,
++};
++#endif
++
+ static int mem_open(struct inode* inode, struct file* file)
+ {
+ 	file->private_data = (void*)((long)current->self_exec_id);
+@@ -1368,6 +1519,16 @@ static struct dentry *proc_pident_lookup
+ 			inode->i_fop = &proc_pid_attr_operations;
+ 			break;
+ #endif
++#ifdef CONFIG_EBS
++		case PROC_TGID_CPU_RATE_CAP:
++		case PROC_TID_CPU_RATE_CAP:
++			inode->i_fop = &proc_cpu_rate_cap_operations;
++			break;
++		case PROC_TGID_CPU_SHARES:
++		case PROC_TID_CPU_SHARES:
++			inode->i_fop = &proc_cpu_shares_operations;
++			break;
++#endif
+ #ifdef CONFIG_KALLSYMS
+ 		case PROC_TID_WCHAN:
+ 		case PROC_TGID_WCHAN:
+@@ -1375,6 +1536,13 @@ static struct dentry *proc_pident_lookup
+ 			ei->op.proc_read = proc_pid_wchan;
+ 			break;
+ #endif
++#ifdef CONFIG_SCHED_STATS
++		case PROC_TID_CPU:
++		case PROC_TGID_CPU:
++			inode->i_fop = &proc_info_file_operations;
++			ei->op.proc_read = proc_pid_cpu;
++			break;
++#endif
+ 		default:
+ 			printk("procfs: impossible type (%d)",p->type);
+ 			iput(inode);
+diff -puN fs/proc/proc_misc.c~ebs-1.1-full fs/proc/proc_misc.c
+--- linux-2.6.7-rc3-xx1/fs/proc/proc_misc.c~ebs-1.1-full	2004-06-11 01:54:49.479320728 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/fs/proc/proc_misc.c	2004-06-11 01:54:49.534312368 -0400
+@@ -683,6 +683,11 @@ static struct file_operations proc_lockm
+ };
+ #endif  /* CONFIG_LOCKMETER */
+ 
++#ifdef CONFIG_SCHED_STATS
++extern int cpustats_read_proc(char *page, char **start, off_t off, int count,
++			      int *eof, void *data);
++#endif
++
+ void __init proc_misc_init(void)
+ {
+ 	struct proc_dir_entry *entry;
+@@ -708,6 +713,9 @@ void __init proc_misc_init(void)
+ #endif
+ 		{"locks",	locks_read_proc},
+ 		{"execdomains",	execdomains_read_proc},
++#ifdef CONFIG_SCHED_STATS
++		{"cpustats", 	cpustats_read_proc},
++#endif
+ 		{NULL,}
+ 	};
+ 	for (p = simple_ones; p->name; p++)
+diff -puN fs/proc/root.c~ebs-1.1-full fs/proc/root.c
+--- linux-2.6.7-rc3-xx1/fs/proc/root.c~ebs-1.1-full	2004-06-11 01:54:49.482320272 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/fs/proc/root.c	2004-06-11 01:54:49.535312216 -0400
+@@ -75,6 +75,12 @@ void __init proc_root_init(void)
+ 	proc_device_tree_init();
+ #endif
+ 	proc_bus = proc_mkdir("bus", 0);
++#ifdef CONFIG_SCHED_DYNAMIC_TIME_SLICE
++	init_cpu_time_slice_file();
++#endif
++#ifdef CONFIG_SCHED_DYNAMIC_HALF_LIFE
++	init_cpu_half_life_file();
++#endif
+ }
+ 
+ static struct dentry *proc_root_lookup(struct inode * dir, struct dentry * dentry, struct nameidata *nd)
+diff -puN include/linux/init_task.h~ebs-1.1-full include/linux/init_task.h
+--- linux-2.6.7-rc3-xx1/include/linux/init_task.h~ebs-1.1-full	2004-06-11 01:54:49.485319816 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/init_task.h	2004-06-11 01:54:49.536312064 -0400
+@@ -67,7 +67,7 @@ extern struct group_info init_groups;
+ 
+ #ifdef CONFIG_NICKSCHED
+ #define SCHED_PRIO .prio = MAX_PRIO-29,
+-#elif defined(CONFIG_SPA_STAIRCASE)
++#elif defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ #define SCHED_PRIO
+ #else
+ #define SCHED_PRIO .prio = MAX_PRIO-20,
+@@ -75,6 +75,8 @@ extern struct group_info init_groups;
+ 
+ #ifdef CONFIG_NICKSCHED
+ #define SCHED_STATIC_PRIO .static_prio = MAX_PRIO-29,
++#elif defined(CONFIG_EBS)
++#define SCHED_STATIC_PRIO
+ #else
+ #define SCHED_STATIC_PRIO .static_prio = MAX_PRIO-20,
+ #endif
+@@ -85,6 +87,91 @@ extern struct group_info init_groups;
+ #define SCHED_TIME_SLICE .time_slice = HZ,
+ #endif
+ 
++/* Nice */
++#ifdef CONFIG_EBS
++#define SCHED_NICE .nice = 0,
++#else
++#define SCHED_NICE
++#endif
++
++/* CPU Shares */
++#ifdef CONFIG_EBS
++#define SCHED_CPU_SHARES .cpu_shares = EBS_DEFAULT_SHARES,
++#else
++#define SCHED_CPU_SHARES
++#endif
++
++/* CPU Rate Cap */
++#ifdef CONFIG_EBS
++#define SCHED_CPU_RATE_CAP .cpu_rate_cap = EBS_ONE,
++#else
++#define SCHED_CPU_RATE_CAP
++#endif
++
++/* CPU EBS Flags */
++#ifdef CONFIG_EBS
++#define SCHED_CPU_EBS_FLAGS .cpu_ebs_flags = EBS_FLAGS_DEFAULT,
++#else
++#define SCHED_CPU_EBS_FLAGS
++#endif
++
++/* CPU Increment per tick */
++#ifdef CONFIG_EBS
++#define SCHED_CPU_INCR_PER_TICK .cpu_incr_per_tick = EBS_INIT_INCR_PER_SHARE(EBS_DEFAULT_SHARES),
++#else
++#define SCHED_CPU_INCR_PER_TICK
++#endif
++
++/* CPU Rate Cap per share */
++#ifdef CONFIG_EBS
++#define SCHED_CPU_RATE_CAP_PER_SHARE .cpu_rate_cap_per_share = (EBS_ONE / EBS_DEFAULT_SHARES),
++#else
++#define SCHED_CPU_RATE_CAP_PER_SHARE
++#endif
++
++/* CPU Rate Timestamp */
++#ifdef CONFIG_EBS
++#define SCHED_CPU_RATE_TIMESTAMP .cpu_rate_timestamp = INITIAL_JIFFIES,
++#else
++#define SCHED_CPU_RATE_TIMESTAMP
++#endif
++
++/* Start time */
++#ifdef CONFIG_EBS
++#define SCHED_START_TIME .start_time = INITIAL_JIFFIES,
++#else
++#define SCHED_START_TIME
++#endif
++
++/* Prom List
++#ifdef CONFIG_EBS
++#define SCHED_PROM_LIST .prom_list = LIST_HEAD_INIT(tsk.prom_list),
++#else
++#define SCHED_PROM_LIST
++#endif */
++
++/* Sinbin timer */
++#ifdef CONFIG_EBS
++#define SCHED_SINBIN_TIMER .sinbin_timer = { .function = ebs_sinbin_fn },
++#else
++#define SCHED_SINBIN_TIMER
++#endif
++
++/* Memcache timestamp */
++#if defined(CONFIG_SMP) && defined(CONFIG_EBS)
++#define INIT_TASK_MEM_CACHE_TIMESTAMP() .mem_cache_timestamp = INITIAL_JIFFIES,
++#else
++#define INIT_TASK_MEM_CACHE_TIMESTAMP()
++#endif
++
++/* Runnable timestamp */
++#if defined(CONFIG_SCHED_STATS) && defined(CONFIG_EBS)
++#define INIT_TASK_RUNNABLE_TIMESTAMP() .runnable_timestamp = INITIAL_JIFFIES,
++#else
++#define INIT_TASK_RUNNABLE_TIMESTAMP()
++#endif
++
++#ifdef CONFIG_EBS
+ #define INIT_TASK(tsk)	\
+ {									\
+ 	.state		= 0,						\
+@@ -94,11 +181,20 @@ extern struct group_info init_groups;
+ 	.lock_depth	= -1,						\
+ 	SCHED_PRIO							\
+ 	SCHED_STATIC_PRIO						\
++	SCHED_NICE							\
+ 	.policy		= SCHED_NORMAL,					\
++	SCHED_CPU_SHARES						\
++	SCHED_CPU_RATE_CAP						\
++	SCHED_CPU_EBS_FLAGS						\
++	SCHED_CPU_INCR_PER_TICK						\
++	SCHED_CPU_RATE_CAP_PER_SHARE					\
++	SCHED_CPU_RATE_TIMESTAMP					\
++	SCHED_START_TIME						\
+ 	.cpus_allowed	= CPU_MASK_ALL,					\
+ 	.mm		= NULL,						\
+ 	.active_mm	= &init_mm,					\
+ 	.run_list	= LIST_HEAD_INIT(tsk.run_list),			\
++	.prom_list 	= LIST_HEAD_INIT(tsk.prom_list),		\
+ 	SCHED_TIME_SLICE						\
+ 	.tasks		= LIST_HEAD_INIT(tsk.tasks),			\
+ 	.ptrace_children= LIST_HEAD_INIT(tsk.ptrace_children),		\
+@@ -109,6 +205,7 @@ extern struct group_info init_groups;
+ 	.sibling	= LIST_HEAD_INIT(tsk.sibling),			\
+ 	.group_leader	= &tsk,						\
+ 	.wait_chldexit	= __WAIT_QUEUE_HEAD_INITIALIZER(tsk.wait_chldexit),\
++	SCHED_SINBIN_TIMER						\
+ 	.real_timer	= {						\
+ 		.function	= it_real_fn				\
+ 	},								\
+@@ -133,8 +230,71 @@ extern struct group_info init_groups;
+ 	.proc_lock	= SPIN_LOCK_UNLOCKED,				\
+ 	.switch_lock	= SPIN_LOCK_UNLOCKED,				\
+ 	.journal_info	= NULL,						\
++	INIT_TASK_MEM_CACHE_TIMESTAMP()					\
++	INIT_TASK_RUNNABLE_TIMESTAMP()					\
+ }
+-
++#else
++#define INIT_TASK(tsk)	\
++{									\
++	.state		= 0,						\
++	.thread_info	= &init_thread_info,				\
++	.usage		= ATOMIC_INIT(2),				\
++	.flags		= 0,						\
++	.lock_depth	= -1,						\
++	SCHED_PRIO							\
++	SCHED_STATIC_PRIO						\
++	SCHED_NICE							\
++	.policy		= SCHED_NORMAL,					\
++	SCHED_CPU_SHARES						\
++	SCHED_CPU_RATE_CAP						\
++	SCHED_CPU_EBS_FLAGS						\
++	SCHED_CPU_INCR_PER_TICK						\
++	SCHED_CPU_RATE_CAP_PER_SHARE					\
++	SCHED_CPU_RATE_TIMESTAMP					\
++	SCHED_START_TIME						\
++	.cpus_allowed	= CPU_MASK_ALL,					\
++	.mm		= NULL,						\
++	.active_mm	= &init_mm,					\
++	.run_list	= LIST_HEAD_INIT(tsk.run_list),			\
++	SCHED_TIME_SLICE						\
++	.tasks		= LIST_HEAD_INIT(tsk.tasks),			\
++	.ptrace_children= LIST_HEAD_INIT(tsk.ptrace_children),		\
++	.ptrace_list	= LIST_HEAD_INIT(tsk.ptrace_list),		\
++	.real_parent	= &tsk,						\
++	.parent		= &tsk,						\
++	.children	= LIST_HEAD_INIT(tsk.children),			\
++	.sibling	= LIST_HEAD_INIT(tsk.sibling),			\
++	.group_leader	= &tsk,						\
++	.wait_chldexit	= __WAIT_QUEUE_HEAD_INITIALIZER(tsk.wait_chldexit),\
++	SCHED_SINBIN_TIMER						\
++	.real_timer	= {						\
++		.function	= it_real_fn				\
++	},								\
++	.group_info	= &init_groups,					\
++	.cap_effective	= CAP_INIT_EFF_SET,				\
++	.cap_inheritable = CAP_INIT_INH_SET,				\
++	.cap_permitted	= CAP_FULL_SET,					\
++	.keep_capabilities = 0,						\
++	.rlim		= INIT_RLIMITS,					\
++	.user		= INIT_USER,					\
++	.comm		= "swapper",					\
++	.thread		= INIT_THREAD,					\
++	.fs		= &init_fs,					\
++	.files		= &init_files,					\
++	.signal		= &init_signals,				\
++	.sighand	= &init_sighand,				\
++	.pending	= {						\
++		.list = LIST_HEAD_INIT(tsk.pending.list),		\
++		.signal = {{0}}},					\
++	.blocked	= {{0}},					\
++	.alloc_lock	= SPIN_LOCK_UNLOCKED,				\
++	.proc_lock	= SPIN_LOCK_UNLOCKED,				\
++	.switch_lock	= SPIN_LOCK_UNLOCKED,				\
++	.journal_info	= NULL,						\
++	INIT_TASK_MEM_CACHE_TIMESTAMP()					\
++	INIT_TASK_RUNNABLE_TIMESTAMP()					\
++}
++#endif
+ 
+ 
+ #endif
+diff -puN include/linux/kernel_stat.h~ebs-1.1-full include/linux/kernel_stat.h
+--- linux-2.6.7-rc3-xx1/include/linux/kernel_stat.h~ebs-1.1-full	2004-06-11 01:54:49.487319512 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/kernel_stat.h	2004-06-11 01:54:49.536312064 -0400
+@@ -17,6 +17,9 @@ struct cpu_usage_stat {
+ 	u64 user;
+ 	u64 nice;
+ 	u64 system;
++#ifdef CONFIG_SCHED_STATS
++	u64 runnable;
++#endif
+ 	u64 softirq;
+ 	u64 irq;
+ 	u64 idle;
+diff -puN include/linux/list.h~ebs-1.1-full include/linux/list.h
+--- linux-2.6.7-rc3-xx1/include/linux/list.h~ebs-1.1-full	2004-06-11 01:54:49.490319056 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/list.h	2004-06-11 01:54:49.540311456 -0400
+@@ -283,6 +283,52 @@ static inline void list_splice(struct li
+ 		__list_splice(list, head);
+ }
+ 
++#ifdef CONFIG_EBS
++/**
++ * __list_extract_slice - extracts a slice from a given list
++ * @slice: the new sub-list to return
++ * @head:  head of the slice to extract
++ * @tail:  tail of the slice to extract
++ *
++ * Assumes head and tail are not empty and are in the same list.
++ */
++static inline void __list_extract_slice(struct list_head *slice,
++					struct list_head *head,
++					struct list_head *tail)
++{
++	struct list_head *before = head->prev;
++	struct list_head *after = tail->next;
++
++	slice->next = head;
++	head->prev = slice;
++	slice->prev = tail;
++	tail->next = slice;
++
++	before->next = after;
++	after->prev = before;
++}
++
++/*
++ * __list_extract_slice - extracts a slice from a given list
++ * @slice: the new sub-list to return
++ * @head:  head of the slice to extract
++ * @tail:  tail of the slice to extract
++ *
++ * Assumes head and tail are in the same list.
++ */
++static inline void list_extract_slice(struct list_head *slice,
++				      struct list_head *head,
++				      struct list_head *tail)
++{
++	if (list_empty(head)) {
++		INIT_LIST_HEAD(slice);
++		return;
++	}
++
++	__list_extract_slice(slice, head, tail);
++}
++#endif
++
+ /**
+  * list_splice_init - join two lists and reinitialise the emptied list.
+  * @list: the new list to add.
+diff -puN include/linux/sched.h~ebs-1.1-full include/linux/sched.h
+--- linux-2.6.7-rc3-xx1/include/linux/sched.h~ebs-1.1-full	2004-06-11 01:54:49.493318600 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/include/linux/sched.h	2004-06-11 01:54:49.546310544 -0400
+@@ -54,12 +54,19 @@ struct exec_domain;
+ #define CLONE_UNTRACED		0x00800000	/* set if the tracing process can't force CLONE_PTRACE on this clone */
+ #define CLONE_CHILD_SETTID	0x01000000	/* set the TID in the child */
+ #define CLONE_STOPPED		0x02000000	/* Start in stopped state */
++#ifdef CONFIG_EBS
++#define CLONE_RESET_CPU_USAGE	0x04000000	/* Don't inherit parent's CPU usage rate */
++#endif
+ 
+ /*
+  * List of flags we want to share for kernel threads,
+  * if only because they are not used by them anyway.
+  */
++#ifdef CONFIG_EBS
++#define CLONE_KERNEL	(CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_RESET_CPU_USAGE)
++#else
+ #define CLONE_KERNEL	(CLONE_FS | CLONE_FILES | CLONE_SIGHAND)
++#endif
+ 
+ /*
+  * These are the constant used to fake the fixed-point load-average
+@@ -320,7 +327,7 @@ struct signal_struct {
+ #define MAX_PRIO		(MAX_RT_PRIO + 40)
+ #endif
+ 
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ #define rt_task(p)		((p)->policy != SCHED_NORMAL)
+ #else
+ #define rt_task(p)		((p)->prio < MAX_RT_PRIO)
+@@ -419,15 +426,45 @@ struct task_struct {
+ 
+ 	int lock_depth;		/* Lock depth */
+ 
++#ifndef CONFIG_EBS
+ #ifndef CONFIG_SPA_STAIRCASE
+ 	int prio;
+ #endif
+ 	int static_prio;
++#endif
+ 	struct list_head run_list;
+-#ifndef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	struct list_head prom_list;
++#elif !defined(CONFIG_SPA_STAIRCASE)
+ 	prio_array_t *array;
+ #endif
+ 
++#ifdef CONFIG_EBS
++	unsigned int cpu_ebs_flags;
++	uint32_t cpu_rate_per_share;
++	/*
++	 * These next two fields hold (relatively) constant values that depend
++	 * on the number of shares the task has and its CPU cap
++	 */
++	uint32_t cpu_incr_per_tick;
++	uint32_t cpu_rate_cap_per_share;
++	unsigned int time_slice;
++	unsigned long cpu_rate_timestamp;
++
++#ifdef CONFIG_SMP
++	unsigned long mem_cache_timestamp;
++#endif
++	struct timer_list sinbin_timer;
++	unsigned long sinbin_timestamp;
++#ifdef CONFIG_SMP
++	unsigned long per_cpu_sinbin_ticks[NR_CPUS];
++#else
++	unsigned long sinbin_ticks;
++#endif
++	unsigned int cpu_shares;
++	uint32_t cpu_rate_cap;
++	int nice;
++#else
+ #ifdef CONFIG_NICKSCHED
+ 	unsigned long array_sequence;
+ #elif defined(CONFIG_SPA_STAIRCASE)
+@@ -441,6 +478,7 @@ struct task_struct {
+ 	unsigned long sleep_avg;
+ #endif
+ 	unsigned long long timestamp;
++#endif
+ 
+ 	unsigned long policy;
+ 	cpumask_t cpus_allowed;
+@@ -450,7 +488,9 @@ struct task_struct {
+ #elif defined(CONFIG_SPA_STAIRCASE)
+ 	unsigned int slice;
+ #endif
++#ifndef CONFIG_EBS
+ 	unsigned int time_slice, first_time_slice;
++#endif
+ 
+ 	struct list_head tasks;
+ 	struct list_head ptrace_children;
+@@ -492,6 +532,17 @@ struct task_struct {
+ 	struct timer_list real_timer;
+ 	unsigned long utime, stime, cutime, cstime;
+ 	unsigned long nvcsw, nivcsw, cnvcsw, cnivcsw; /* context switch counts */
++#ifdef CONFIG_SCHED_STATS
++	unsigned long runnable_timestamp;
++#ifdef CONFIG_SMP
++	unsigned long long per_cpu_utime[NR_CPUS];
++	unsigned long long per_cpu_stime[NR_CPUS];
++	unsigned long long per_cpu_slices[NR_CPUS];
++	unsigned long long per_cpu_runnable[NR_CPUS];
++#else
++	unsigned long long slices, runnable;
++#endif
++#endif
+ 	u64 start_time;
+ /* mm fault and swap info: this can arguably be seen as either mm-specific or thread-specific */
+ 	unsigned long min_flt, maj_flt, cmin_flt, cmaj_flt;
+@@ -599,6 +650,79 @@ do { if (atomic_dec_and_test(&(tsk)->usa
+ #define PF_LESS_THROTTLE 0x00100000	/* Throttle me less: I clean memory */
+ #define PF_SYNCWRITE	0x00200000	/* I am doing a sync write */
+ 
++#ifdef CONFIG_EBS
++/*
++ * Entitlement based scheduling (EBS) only applies to SCHED_NORMAL tasks and
++ * therefore only uses the SCHED_NORMAL priority slots
++ */
++#define EBS_MIN_PRI MAX_RT_PRIO
++#define EBS_MAX_PRI (MAX_PRIO - 2)
++#define EBS_BGND_PRI  (MAX_PRIO - 1)
++#define EBS_SLOPE ((EBS_MAX_PRI - EBS_MIN_PRI) / 2)
++#define EBS_MEAN_PRI ((EBS_MAX_PRI + EBS_MIN_PRI) / 2)
++/*
++ * Share range is chosen to map cleanly onto nice values and provide roughly
++ * the same power (20 times) above and below the default.  Going much beyond
++ * this would require FULL 64 bit arithmetic which is not available on all
++ * systems
++ */
++#define EBS_MIN_SHARES 1
++#define EBS_MAX_SHARES 420
++#define EBS_DEFAULT_SHARES 20
++#define EBS_NICE_TO_SHARES(n) \
++	((n >= 0) ? (EBS_DEFAULT_SHARES - n) : (EBS_DEFAULT_SHARES + (n * n)))
++/*
++ * Denominator for rational numbers is chosen so as to give the maximum
++ * resolution while at the same time covering the required range of values
++ */
++#define EBS_OFFSET 27
++#define EBS_ONE ((uint32_t)1 << EBS_OFFSET)
++/*
++ * The half life is a key control value for the EBS scheduler and is set at
++ * compile time (may become runtime settable at some future date)
++ */
++#define EBS_INIT_HALF_LIFE_MSECS ((uint32_t)5000)
++#define EBS_INIT_HALF_LIFE_TICKS ((EBS_INIT_HALF_LIFE_MSECS * HZ) / 1000)
++/*
++ * decay per tick is exp(ln(0.5) / "half life in ticks")
++ * Evaluated using polynomila approximation with coefficients from
++ * "Handbook of Mathematical Functions" by Abromowitz and Stegun (1972)
++ * Equation 4.2.45, page 71
++ * For maximum accuracy do this with 2**32 as denominator and then convert the
++ * final result to a value consistent with 2 ** EBS_OFFSET as denominator
++ */
++#define EBS_LOG_2 ((uint32_t)0xb17217f7)
++#define EBS_A_1 ((uint64_t)0xfffffffd)
++#define EBS_A_2 ((uint64_t)0x7ffffeaa)
++#define EBS_A_3 ((uint64_t)0x2aa993c5)
++#define EBS_A_4 ((uint64_t)0x0aaa0e51)
++#define EBS_A_5 ((uint64_t)0x022009b4)
++#define EBS_A_6 ((uint64_t)0x005727b7)
++#define EBS_A_7 ((uint64_t)0x000942e4)
++#define EBS_MUL_32(a, b) (((uint64_t)(a) * (uint64_t)(b)) >> 32)
++#define EBS_POLY(x) \
++(uint32_t)((EBS_MUL_32(x, \
++	EBS_A_1 - EBS_MUL_32(x, \
++		EBS_A_2 - EBS_MUL_32(x, \
++			EBS_A_3 - EBS_MUL_32(x, \
++				EBS_A_4 - EBS_MUL_32(x, \
++					EBS_A_5 - EBS_MUL_32(x, \
++						EBS_A_6 - EBS_MUL_32(x, \
++							EBS_A_7)))))))) \
++								>> (32 - EBS_OFFSET))
++#define EBS_INIT_INCR_PER_TICK (EBS_POLY(EBS_LOG_2 / EBS_INIT_HALF_LIFE_TICKS))
++#define EBS_INIT_DECAY_PER_TICK (EBS_ONE - EBS_INIT_INCR_PER_TICK)
++#define EBS_INIT_INCR_PER_SHARE(s) (EBS_INIT_INCR_PER_TICK / s)
++
++/*
++ * Flags for cpu rate capping
++ */
++#define EBS_NEEDS_PRIO_RECALC		(1<<0)
++#define EBS_CPU_RATE_CAP_IS_HARD	(1<<1)
++#define EBS_CPU_RATE_CAP_SINBIN		(1<<2)
++#define EBS_FLAGS_DEFAULT 0
++#endif
++
+ #ifdef CONFIG_SMP
+ #define SCHED_LOAD_SCALE	128UL	/* increase resolution of load */
+ 
+@@ -840,8 +964,12 @@ extern void FASTCALL(wake_up_forked_proc
+ 	wake_up_forked_process(tsk);
+  }
+ #endif
++#ifdef CONFIG_EBS
++extern void FASTCALL(sched_fork(task_t * p, unsigned long clone_flags));
++#else
+ extern void FASTCALL(sched_fork(task_t * p));
+ extern void FASTCALL(sched_exit(task_t * p));
++#endif
+ 
+ extern int in_group_p(gid_t);
+ extern int in_egroup_p(gid_t);
+@@ -1169,6 +1297,60 @@ static inline void set_task_cpu(struct t
+ 
+ #endif /* CONFIG_SMP */
+ 
++#ifdef CONFIG_EBS
++/*
++ * Function for sinbin timer -- releases a task from the sinbin
++ */
++void ebs_sinbin_fn(unsigned long arg);
++
++/*
++ * Require: (0x7fffffff >= den > 0) and (enu <= den and ((den != 0) or (not hard))
++ */
++int set_cpu_rate_cap_fm_frac(struct task_struct *p, uint32_t enu, uint32_t den, int hard);
++/*
++ * Require: 0 <= cap <= EBS_ONE and ((cap != 0) or (not hard))
++ */
++int set_cpu_rate_cap(struct task_struct *p, uint32_t new_cap, int hard);
++/*
++ * Require: 1 <= shares <= EBS_MAX_SHARES
++ */
++int set_cpu_shares(struct task_struct *p, unsigned int shares);
++
++#ifdef CONFIG_SCHED_DYNAMIC_TIME_SLICE
++/*
++ * Require: 1 <= time_slice_msecs <= EBS_MAX_TIME_SLICE
++ */
++int set_cpu_time_slice_msecs(unsigned int time_slice_msecs);
++
++/*
++ * Return the value of CPU time slice in msecs
++ */
++unsigned int get_cpu_time_slice_msecs(void);
++
++#ifdef CONFIG_PROC_FS
++void init_cpu_time_slice_file(void);
++#endif
++#endif
++
++#ifdef CONFIG_SCHED_DYNAMIC_HALF_LIFE
++#define EBS_MIN_HALF_LIFE_MSECS 1000
++#define EBS_MAX_HALF_LIFE_MSECS 100000
++/*
++ * Require: EBS_MIN_HALF_LIFE_MSECS <= half_life_msecs <= EBS_MAX_HALF_LIFE_MSECS
++ */
++int set_cpu_half_life_msecs(unsigned int half_life_msecs);
++
++/*
++ * Return the value of CPU half life in msecs
++ */
++unsigned int get_cpu_half_life_msecs(void);
++
++#ifdef CONFIG_PROC_FS
++void init_cpu_half_life_file(void);
++#endif
++#endif
++#endif
++
+ #endif /* __KERNEL__ */
+ 
+ #endif
+diff -puN arch/i386/Kconfig~ebs-1.1-full arch/i386/Kconfig
+--- linux-2.6.7-rc3-xx1/arch/i386/Kconfig~ebs-1.1-full	2004-06-11 01:54:49.498317840 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/arch/i386/Kconfig	2004-06-11 01:54:49.557308872 -0400
+@@ -1663,10 +1663,71 @@ config SPA_STAIRCASE
+ 	  staircase, but its best deadline will be higher than the other
+ 	  task's.  Tasks will also regain deadline due to bonuses.
+ 
++config EBS
++	bool "Entitlement Based Scheduling"
++	help
++	  The fundamental concept of entitlement based sharing is that
++	  each task is entitled to a certain amount of CPU resources,
++	  determined by the number of shares it holds.  The scheduler
++	  will allocate CPU to tasks so that the rate at which they
++	  receive CPU time is consistent with their entitlement.
++	  Each task's priority is continually adjusted to achieve this.
++	  Tasks' nice values are also automatically converted to an
++	  appropriate number of shares.
+ 
++endchoice
+ 
++#
++# CPU scheduling options
++#
++menu "EBS Scheduler Options"
++	depends on EBS
++
++config SCHED_DYNAMIC_HALF_LIFE
++	bool "Dynamic EBS scheduler response half life"
++	default y
++	---help---
++	Dynamic CPU Scheduler Response Half Life
++	  Saying yes here allows the CPU scheduler half life to be set dynamically on a
++	  running system.
++
++config SCHED_DYNAMIC_TIME_SLICE
++	bool "EBS scheduler dynamic time slice setting"
++	default y
++	---help---
++	  CPU Scheduler Dynamic Time Slice Setting
++	  Saying yes here will allow size the time slice received by tasks to be altered
++	  dynamically on a running system
++
++config SCHED_STATS
++	bool "EBS scheduler statistics"
++	default y
++	---help---
++	  CPU Scheduler Statistics
++	  If you say yes here you get per CPU and per task scheduler
++	  statistics (including time spent on run queues).
++
++	  Per CPU statistics are displayed in the file /proc/cpustats. The
++	  first line contains the total for all CPUs on the system in the
++	  following format:
++
++	  cpu <user-ticks> <system-ticks> <idle-ticks> <runqueue-ticks>
++	  <switches> @ <timestamp>
++
++	  and subsequent lines hold the same statistics for each individual
++	  CPU minus the timestamp which is valid for the entire file.
++
++	  Per task statistics are displayed in the file /proc/<pid>/cpu. The
++	  first line contains the totals (for all CPUs) for this task in the
++	  following format:
++
++	  cpu <user-ticks> <system-ticks> <runqueue-ticks> <num-runs>
++	  <sleep-ticks> @ <timestamp>
++
++	  and subsequent lines hold the same statistics for each individual
++	  CPU minus sleep-ticks (which can't sensibly be attributed to any
++	  CPU) and the timestamp which is valid for the whole file.
+ 
+-
+-endchoice
++endmenu
+ 
+ endmenu
+diff -puN kernel/exit.c~ebs-1.1-full kernel/exit.c
+--- linux-2.6.7-rc3-xx1/kernel/exit.c~ebs-1.1-full	2004-06-11 01:54:49.505316776 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/kernel/exit.c	2004-06-11 01:54:49.562308112 -0400
+@@ -96,7 +96,9 @@ repeat: 
+ 	p->parent->cmaj_flt += p->maj_flt + p->cmaj_flt;
+ 	p->parent->cnvcsw += p->nvcsw + p->cnvcsw;
+ 	p->parent->cnivcsw += p->nivcsw + p->cnivcsw;
++#ifndef CONFIG_EBS
+ 	sched_exit(p);
++#endif
+ 	write_unlock_irq(&tasklist_lock);
+ 	spin_unlock(&p->proc_lock);
+ 	proc_pid_flush(proc_dentry);
+diff -puN kernel/fork.c~ebs-1.1-full kernel/fork.c
+--- linux-2.6.7-rc3-xx1/kernel/fork.c~ebs-1.1-full	2004-06-11 01:54:49.509316168 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/kernel/fork.c	2004-06-11 01:54:49.567307352 -0400
+@@ -1019,7 +1019,11 @@ struct task_struct *copy_process(unsigne
+ 	p->pdeath_signal = 0;
+ 
+ 	/* Perform scheduler related setup */
++#ifdef CONFIG_EBS
++	sched_fork(p, clone_flags);
++#else
+ 	sched_fork(p);
++#endif
+ 
+ 	/*
+ 	 * Ok, make it visible to the rest of the system.
+diff -puN kernel/sched.c~ebs-1.1-full kernel/sched.c
+--- linux-2.6.7-rc3-xx1/kernel/sched.c~ebs-1.1-full	2004-06-11 01:54:49.514315408 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/kernel/sched.c	2004-06-11 01:56:01.697341920 -0400
+@@ -20,6 +20,8 @@
+  *		from William Lee Irwin III & Zwane Mwaikambo.
+  *  2004-06-03	Single priority array by Peter Williams
+  * 		(Courtesy of Aurema Pty Ltd, www.aurema.com)
++ *  2003-12-13	Entitlement based scheduling by Peter Williams, John Lee,
++ *		and Kingsley Cheung.
+  */
+ 
+ #include <linux/mm.h>
+@@ -48,6 +50,9 @@
+ #include <linux/kthread.h>
+ #include <linux/seq_file.h>
+ #include <linux/times.h>
++#ifdef CONFIG_EBS
++#include <linux/proc_fs.h>
++#endif
+ 
+ #include <asm/unistd.h>
+ 
+@@ -59,6 +64,7 @@
+ #endif
+ #endif
+ 
++#ifndef CONFIG_EBS
+ /*
+  * Convert user-nice values [ -20 ... 0 ... 19 ]
+  * to static priority [ MAX_RT_PRIO..MAX_PRIO-1 ],
+@@ -95,8 +101,348 @@
+ #define JIFFIES_TO_NS(TIME)	((TIME) * (1000000000 / HZ))
+ #endif
+ #endif
++#endif
+ 
+-#ifdef CONFIG_NICKSCHED
++#ifdef CONFIG_EBS
++#define TASK_NICE(p)		(p)->nice
++
++#define TASK_PREEMPTS_CURR(p, rq) \
++	((p) < (rq)->current_prio_slot->prio)
++
++#define EBS_DEFAULT_TIME_SLICE_MSECS 100
++static unsigned int time_slice_ticks = \
++	((EBS_DEFAULT_TIME_SLICE_MSECS * HZ) / 1000) ? \
++	((EBS_DEFAULT_TIME_SLICE_MSECS * HZ) / 1000) : 1;
++
++#define EBS_MAX_TIME_SLICE 500
++/*
++ * task_timeslice() is the interface that is used by the scheduler.
++ * TODO: modify time slice when system gets busy
++ */
++static inline unsigned int task_timeslice(task_t *p)
++{
++	return time_slice_ticks;
++}
++
++#ifdef CONFIG_SCHED_DYNAMIC_TIME_SLICE
++/*
++ * Require: 1 <= time_slice_msecs <= EBS_MAX_TIME_SLICE
++ */
++int set_cpu_time_slice_msecs(unsigned int time_slice_msecs)
++{
++	unsigned int new_time_slice;
++
++	if ((time_slice_msecs > EBS_MAX_TIME_SLICE) || (time_slice_msecs < 1))
++		return -EINVAL;
++
++	if (!capable(CAP_SYS_ADMIN))
++		return -EPERM;
++
++	new_time_slice = ((time_slice_msecs * HZ) / 1000);
++	/*
++	 * Assignment should be atomic so there's no need for locking
++	 */
++	time_slice_ticks = new_time_slice ? new_time_slice : 1;
++
++	return 0;
++}
++
++/*
++ * Return the value of CPU time slice in msecs
++ */
++unsigned int get_cpu_time_slice_msecs(void)
++{
++	return (time_slice_ticks * 1000) / HZ;
++}
++
++EXPORT_SYMBOL(set_cpu_time_slice_msecs);
++EXPORT_SYMBOL(get_cpu_time_slice_msecs);
++
++#ifdef CONFIG_PROC_FS
++static int
++read_cpu_time_slice_fn(char *page, char **start, off_t off, int count, int *eof, void *data)
++{
++	int len;
++
++	len = sprintf(page, "%u\n", get_cpu_time_slice_msecs());
++
++	return len;
++}
++
++static int
++write_cpu_time_slice_fn(struct file *file, const char __user *buffer, unsigned long count, void *data)
++{
++	char kbuf[32] = "";
++	char *endptr = NULL;
++	unsigned long time_slice_msecs;
++	int res;
++
++	if (count > 32)
++		return -EFBIG;
++	if (copy_from_user(kbuf, buffer, count))
++		return -EFAULT;
++	time_slice_msecs = simple_strtoul(kbuf, &endptr, 0);
++	if ((endptr == kbuf) || (time_slice_msecs == ULONG_MAX))
++		return -EINVAL;
++
++	res = set_cpu_time_slice_msecs(time_slice_msecs);
++
++	return res ? res : count;
++}
++
++static struct proc_dir_entry *cpu_time_slice_file = NULL;
++
++void __init init_cpu_time_slice_file(void)
++{
++	if (!(cpu_time_slice_file = create_proc_entry("cpu_time_slice", 0644, NULL)))
++		return;
++	cpu_time_slice_file->read_proc = read_cpu_time_slice_fn;
++	cpu_time_slice_file->write_proc = write_cpu_time_slice_fn;
++}
++#endif
++#endif
++
++/*
++ * Get time elapsed allowing for jiffies wrap
++ * 1. the true type for ts should be an unsigned long or this may break
++ * 2. should only be used where interval is expected to be <= ULONG_MAX
++ */
++#define jiffies_since(ts) ((unsigned long)((long)jiffies - (long)(ts)))
++
++/*
++ * O(1) Entitlement Based Scheduler (EBS) Utilities
++ */
++/*
++ * We need 64 bit intermediate values to prevent overflow during multiply
++ */
++#define EBS_MUL(a, b) \
++	((uint32_t)(((uint64_t)(a) * (uint64_t)(b)) >> EBS_OFFSET))
++#define EBS_DECAYED_FOR_TICK(v) EBS_MUL(v, ebs_decay_per_tick)
++/*
++ * For this abbreviated fixed denominator rational number operation to be valid
++ * "a" must be less than or equal to EBS_ONE, "b" must be greater than or equal
++ * to "a" and greater than zero
++ */
++#define EBS_MAP_SCALE(a, b) (((a) * EBS_SLOPE) / (b))
++
++static unsigned long ebs_half_life_ticks = EBS_INIT_HALF_LIFE_TICKS;
++static uint32_t ebs_decay_per_tick = EBS_INIT_DECAY_PER_TICK;
++static uint32_t ebs_incr_per_tick = EBS_INIT_INCR_PER_TICK;
++#define EBS_INCR_PER_SHARE(s) (ebs_incr_per_tick / s)
++
++/*
++ * This is a cached array of decay values (trading memory space for speed)
++ * when i > 0: ebs_decay_cache[i] == ((ebs_decay_cache[i - 1] * EBS_DECAY_PER_TICK) >> EBS_OFFSET)
++ * when i == 0: ebs_decay_cache[i] == EBS_DECAY_PER_TICK
++ * NB The bigger this array is the quicker decay calculations will be
++ */
++#define SCHED_DECAY_CACHE_SIZE 1024
++static uint32_t ebs_decay_cache[SCHED_DECAY_CACHE_SIZE] ____cacheline_maxaligned_in_smp;
++
++/*
++ * Make this usable for run time settable half life in a future enhancement
++ */
++static void init_decay_cache(unsigned long decay_per_tick)
++{
++	int i;
++
++	ebs_decay_cache[0] = decay_per_tick;
++	for (i = 1; i < SCHED_DECAY_CACHE_SIZE; i++)
++		ebs_decay_cache[i] = EBS_MUL(ebs_decay_cache[i - 1], decay_per_tick);
++}
++
++static inline uint32_t ebs_decayed_value(uint32_t val, unsigned long n)
++{
++	/*
++	 * Assert: n is always greater than zero
++	 */
++	if (n <= SCHED_DECAY_CACHE_SIZE) {
++		return EBS_MUL(val, ebs_decay_cache[n - 1]);
++	} else {
++		unsigned long a = n / SCHED_DECAY_CACHE_SIZE;
++		uint64_t tmp = ebs_decay_cache[SCHED_DECAY_CACHE_SIZE - 1];
++		uint32_t res = EBS_MUL(val, ebs_decay_cache[n % SCHED_DECAY_CACHE_SIZE]);
++
++		while (1) {
++			if (a & 1)
++				res = EBS_MUL(res, tmp);
++			if ((res == 0) || ((a /= 2) == 0))
++				break;
++			tmp = EBS_MUL(tmp, tmp);
++		}
++
++		return res;
++	}
++}
++
++/*
++ * A task's priority is a function of the ratio of its usage rate to its
++ * entitlement.  Because its usage rate decays with time it will be entitled
++ * to promotion in the unlikely event (except on very busy systems) that it
++ * gets stuck on a run queue (without receiving any ticks) for long enough.
++ * The minimum interval for promotion to be deserved is a function of the half
++ * life and the number available SCHED_OTHER priority slots. A rounded value
++ * in ticks (for 40 SCHED_OTHER slots) is:
++ */
++#define EBS_PROMOTION_INTERVAL_COEFF ((uint32_t)0x9fbfc7)
++static unsigned long ebs_promotion_interval = EBS_MUL(EBS_INIT_HALF_LIFE_TICKS, EBS_PROMOTION_INTERVAL_COEFF);
++/*
++ * The number of such intervals a task must wait before promotion is a
++ * function of the task's actual priority.  And is determined from the
++ * following table and associated function.  The first entry is for
++ * EBS_MIN_PRIO, which is never promoted.
++ */
++#define SCHED_OTHER_SLOTS (MAX_PRIO - MAX_RT_PRIO)
++static const int ebs_prom_table[SCHED_OTHER_SLOTS / 2] ____cacheline_maxaligned_in_smp =
++	{ 26, 26, 13, 7, 5, 4, 3, 3, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1 };
++#define EBS_NUM_PROM_INTERVALS 27
++
++/*
++ * A task that is exceeding its hard cap needs to be "sinbinned" for a while
++ */
++static const uint32_t ebs_sinbin_table_coeff[SCHED_OTHER_SLOTS / 2] ____cacheline_maxaligned_in_smp = {
++	(uint32_t)0x9fbfc7,
++	(uint32_t)0x148a1b3,
++	(uint32_t)0x1fbc16b,
++	(uint32_t)0x2ba7190,
++	(uint32_t)0x3864aec,
++	(uint32_t)0x4614147,
++	(uint32_t)0x54dc099,
++	(uint32_t)0x64ed6ef,
++	(uint32_t)0x7687262,
++	(uint32_t)0x89fffc7,
++	(uint32_t)0x9fbc16b,
++	(uint32_t)0xb864aec,
++	(uint32_t)0xd4dc099,
++	(uint32_t)0xf687262,
++	(uint32_t)0x11fbc168,
++	(uint32_t)0x154dc099,
++	(uint32_t)0x19fbc16b,
++	(uint32_t)0x21fbc16b,
++	(uint32_t)0x43f782d6,
++	(uint32_t)0x87ef05ac /* should never be used */
++};
++
++static unsigned long ebs_sinbin_table[SCHED_OTHER_SLOTS / 2] ____cacheline_maxaligned_in_smp;
++
++#define EBS_SINBIN_DURN(prio) (((prio) <= EBS_MEAN_PRI) ? 0 : \
++	(ebs_sinbin_table[(prio) - (EBS_MEAN_PRI + 1)]))
++
++/*
++ * Make this usable for run time settable half life in a future enhancement
++ */
++static void init_sinbin_table(unsigned long half_life_ticks)
++{
++	int i;
++
++	for (i = 0; i < (SCHED_OTHER_SLOTS / 2); i++)
++		ebs_sinbin_table[i] = EBS_MUL(ebs_sinbin_table_coeff[i], half_life_ticks);
++}
++
++#ifdef CONFIG_SCHED_DYNAMIC_HALF_LIFE
++
++/*
++ * We need to ensure that half life changes are atomic
++ */
++static spinlock_t ebs_half_life_lock = SPIN_LOCK_UNLOCKED;
++
++/*
++ * Require: EBS_MIN_HALF_LIFE_MSECS <= half_life_msecs <= EBS_MAX_HALF_LIFE_MSECS
++ */
++int set_cpu_half_life_msecs(unsigned int half_life_msecs)
++{
++	unsigned long new_half_life_ticks;
++	unsigned long new_promotion_interval;
++	uint32_t new_decay_per_tick;
++	uint32_t new_incr_per_tick;
++	struct task_struct *tp;
++
++	if ((half_life_msecs > EBS_MAX_HALF_LIFE_MSECS) || (half_life_msecs < EBS_MIN_HALF_LIFE_MSECS))
++		return -EINVAL;
++
++	if (!capable(CAP_SYS_ADMIN))
++		return -EPERM;
++
++	new_half_life_ticks = ((half_life_msecs * HZ) / 1000);
++	new_incr_per_tick = EBS_POLY(EBS_LOG_2 / new_half_life_ticks);
++	new_decay_per_tick = (EBS_ONE - new_incr_per_tick);
++	new_promotion_interval = EBS_MUL(new_half_life_ticks, EBS_PROMOTION_INTERVAL_COEFF);
++	/*
++	 * We've got a fair bit to do here which we'd like to be atomic so we'll
++	 * need some locking
++	 */
++	spin_lock(&ebs_half_life_lock);
++	ebs_half_life_ticks = new_half_life_ticks;
++	ebs_incr_per_tick = new_incr_per_tick;
++	ebs_decay_per_tick = new_decay_per_tick;
++	ebs_promotion_interval = new_promotion_interval;
++	init_decay_cache(ebs_decay_per_tick);
++	init_sinbin_table(ebs_half_life_ticks);
++	write_lock(&tasklist_lock);
++	for_each_process(tp) {
++		tp->cpu_incr_per_tick = EBS_INCR_PER_SHARE(tp->cpu_shares);
++	}
++	write_unlock(&tasklist_lock);
++	spin_unlock(&ebs_half_life_lock);
++
++	return 0;
++}
++
++/*
++ * Return the value of CPU half life in msec
++ */
++unsigned int get_cpu_half_life_msecs(void)
++{
++	return (ebs_half_life_ticks * 1000) / HZ;
++}
++
++EXPORT_SYMBOL(set_cpu_half_life_msecs);
++EXPORT_SYMBOL(get_cpu_half_life_msecs);
++
++#ifdef CONFIG_PROC_FS
++static int
++read_cpu_half_life_fn(char *page, char **start, off_t off, int count, int *eof, void *data)
++{
++	int len;
++
++	len = sprintf(page, "%u\n", get_cpu_half_life_msecs());
++
++	return len;
++}
++
++static int
++write_cpu_half_life_fn(struct file *file, const char __user *buffer, unsigned long count, void *data)
++{
++	char kbuf[32] = "";
++	char *endptr = NULL;
++	unsigned long half_life_msecs;
++	int res;
++
++	if (count > 32)
++		return -EFBIG;
++	if (copy_from_user(kbuf, buffer, count))
++		return -EFAULT;
++	half_life_msecs = simple_strtoul(kbuf, &endptr, 0);
++	if ((endptr == kbuf) || (half_life_msecs == ULONG_MAX))
++		return -EINVAL;
++
++	res = set_cpu_half_life_msecs(half_life_msecs);
++
++	return res ? res : count;
++}
++
++static struct proc_dir_entry *cpu_half_life_file = NULL;
++
++void __init init_cpu_half_life_file(void)
++{
++	if (!(cpu_half_life_file = create_proc_entry("cpu_half_life", 0644, NULL)))
++		return;
++	cpu_half_life_file->read_proc = read_cpu_half_life_fn;
++	cpu_half_life_file->write_proc = write_cpu_half_life_fn;
++}
++#endif
++#endif
++#elif defined(CONFIG_NICKSCHED)
+ /*
+  * MIN_TIMESLICE is the timeslice that a minimum priority process gets if there
+  * is a maximum priority process runnable. MAX_TIMESLICE is derived from the
+@@ -233,7 +579,7 @@ int compute = 0;
+ #ifdef CONFIG_SPA_STAIRCASE
+ #define PRIO_PREEMPTS_CURR(p, rq) \
+ 	((p) < (rq)->current_prio_slot->prio)
+-#else
++#elif !defined(CONFIG_EBS)
+ #define TASK_PREEMPTS_CURR(p, rq) \
+ 	((p)->prio < (rq)->curr->prio)
+ #endif
+@@ -246,7 +592,7 @@ int compute = 0;
+ #define TIME_SLICE_TICKS \
+ 	(((TIME_SLICE_MSECS * HZ) / 1000) ? ((TIME_SLICE_MSECS * HZ) / 1000) : 1)
+ 
+-#elif !defined(CONFIG_NICKSCHED)
++#elif !defined(CONFIG_NICKSCHED) && !defined(CONFIG_EBS)
+ /*
+  * BASE_TIMESLICE scales user-nice values [ -20 ... 19 ]
+  * to time slice values.
+@@ -275,9 +621,6 @@ static unsigned int task_timeslice(task_
+  */
+ 
+ #ifdef CONFIG_SPA_STAIRCASE
+-/*
+- * These are the runqueue data structures:
+- */
+ #define IDLE_PRIO MAX_PRIO
+ 
+ /*
+@@ -302,7 +645,7 @@ static unsigned int task_timeslice(task_
+ 
+ typedef struct runqueue runqueue_t;
+ 
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ struct prio_slot {
+ 	unsigned int prio;
+ 	struct list_head queue;
+@@ -318,6 +661,10 @@ struct prio_array {
+ };
+ #endif
+ 
++#ifdef CONFIG_EBS
++typedef struct prio_slot prio_slot_t;
++#endif
++
+ /*
+  * This is the main, per-CPU runqueue data structure.
+  *
+@@ -337,7 +684,9 @@ struct runqueue {
+ 	unsigned long cpu_load;
+ #endif
+ 	unsigned long long nr_switches;
+-#ifdef CONFIG_NICKSCHED
++#ifdef CONFIG_EBS
++	uint32_t eff_ent_per_share;
++#elif defined(CONFIG_NICKSCHED)
+ 	unsigned long array_sequence;
+ #elif !defined(CONFIG_SPA_STAIRCASE)
+ 	unsigned long expired_timestamp;
+@@ -347,7 +696,20 @@ struct runqueue {
+ 	task_t *curr, *idle;
+ 
+ 	struct mm_struct *prev_mm;
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	unsigned long bitmap[BITMAP_SIZE];
++	prio_slot_t queues[MAX_PRIO + 1];
++	prio_slot_t *current_prio_slot;
++	unsigned int next_prom_list;
++	struct list_head for_promotion[EBS_NUM_PROM_INTERVALS][SCHED_OTHER_SLOTS];
++	unsigned long nr_sinbinned;
++	unsigned long long sinbinned_ticks;
++	/*
++	 * Can't trust the timers enough to use jiffies % ebs_promotion_interval
++	 */
++	unsigned long next_prom_due;
++	int prev_cpu_load[NR_CPUS];
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	unsigned long bitmap[BITS_TO_LONGS(IDLE_PRIO+1)];
+ 	struct prio_slot queues[IDLE_PRIO + 1];
+ 	struct prio_slot *current_prio_slot;
+@@ -565,25 +927,32 @@ static inline int task_queued(const task
+  * Adding/removing a task to/from a priority array:
+  */
+ static void dequeue_task(struct task_struct *p
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 		, prio_array_t *array
+ #endif
+ 		)
+ {
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 	/*
+ 	 * If p is the last task in this priority slot then slotp will be
+ 	 * a pointer to the head of the list in the sunqueue structure
+ 	 */
+ 	struct list_head *slotp = p->run_list.next;
+ 
++#ifdef CONFIG_EBS
++	list_del_init(&p->prom_list);
++#endif
+ 	/*
+ 	 * Initialize after removal from the list so that list_empty() works
+ 	 * as a means for testing whether the task is runnable
+ 	 */
+ 	list_del_init(&p->run_list);
+ 	if (list_empty(slotp))
++#ifdef CONFIG_EBS
++		__clear_bit(list_entry(slotp, prio_slot_t, queue)->prio, task_rq(p)->bitmap);
++#else
+ 		__clear_bit(list_entry(slotp, struct prio_slot, queue)->prio, task_rq(p)->bitmap);
++#endif
+ #else
+ 	array->nr_active--;
+ 	list_del(&p->run_list);
+@@ -592,18 +961,31 @@ static void dequeue_task(struct task_str
+ #endif
+ }
+ 
++#ifdef CONFIG_EBS
++static inline void schedule_promotion(struct task_struct *p, runqueue_t *rq, int prio)
++{
++	if (likely((prio > EBS_MIN_PRI) && (prio <= EBS_BGND_PRI))) {
++		int slot = prio - EBS_MIN_PRI;
++		int pinv = (EBS_MEAN_PRI >= prio) ? slot : EBS_BGND_PRI - prio;
++
++		pinv = (rq->next_prom_list + ebs_prom_table[pinv]) % EBS_NUM_PROM_INTERVALS;
++		list_add_tail(&p->prom_list, &rq->for_promotion[pinv][slot]);
++	}
++}
++#endif
++
+ static void enqueue_task(struct task_struct *p,
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 		runqueue_t *rq
+ #else
+ 		prio_array_t *array
+ #endif
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 		, int prio
+ #endif
+ 		)
+ {
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 	list_add_tail(&p->run_list, &rq->queues[prio].queue);
+ 	__set_bit(prio, rq->bitmap);
+ #else
+@@ -612,6 +994,9 @@ static void enqueue_task(struct task_str
+ 	array->nr_active++;
+ 	p->array = array;
+ #endif
++#ifdef CONFIG_EBS
++	schedule_promotion(p, rq, prio);
++#endif
+ }
+ 
+ /*
+@@ -620,17 +1005,17 @@ static void enqueue_task(struct task_str
+  * local queue:
+  */
+ static inline void enqueue_task_head(struct task_struct *p,
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 		runqueue_t *rq
+ #else
+ 		prio_array_t *array
+ #endif
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 		, int prio
+ #endif
+ 		)
+ {
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 	list_add(&p->run_list, &rq->queues[prio].queue);
+ 	__set_bit(prio, rq->bitmap);
+ #else
+@@ -639,6 +1024,9 @@ static inline void enqueue_task_head(str
+ 	array->nr_active++;
+ 	p->array = array;
+ #endif
++#ifdef CONFIG_EBS
++	schedule_promotion(p, rq, prio);
++#endif
+ }
+ 
+ #ifdef CONFIG_NICKSCHED
+@@ -724,7 +1112,122 @@ static unsigned int task_timeslice(task_
+ }
+ #endif
+ 
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++/*
++ * Update the task's CPU usage rate data to the current time
++ */
++static inline void update_cpu_rate_stats(task_t *p)
++{
++	/* cope with jiffy wrap */
++	unsigned long delta = jiffies_since(p->cpu_rate_timestamp);
++
++	if (likely(delta)) {
++		p->cpu_rate_per_share =
++			ebs_decayed_value(p->cpu_rate_per_share, delta);
++		p->cpu_rate_timestamp += delta;
++	}
++}
++
++/*
++ * Effective priority for tasks in the real time classes
++ */
++static inline int rt_effective_prio(task_t *p)
++{
++	return (MAX_RT_PRIO - 1) - p->rt_priority;
++}
++
++/*
++ * Effective priority for tasks in the SCHED_NORMAL class wrt a particular CPU
++ * Assumes that the processes usages are up to date and only uses 32 bit arithmetic
++ */
++static inline int sched_normal_effective_prio(task_t *p, runqueue_t *rq)
++{
++	uint32_t eps;
++
++	if (unlikely(p->cpu_rate_cap_per_share == 0))
++		return EBS_BGND_PRI;
++	if (unlikely(p->cpu_rate_cap_per_share < rq->eff_ent_per_share))
++		eps = p->cpu_rate_cap_per_share;
++	else
++		eps = rq->eff_ent_per_share;
++	if (p->cpu_rate_per_share == eps)
++		return EBS_MEAN_PRI;
++	/* At least one of eps or p->cpu_rate_per_share is greater than zero */
++	if (likely(p->cpu_rate_per_share < eps))
++		return EBS_MIN_PRI + EBS_MAP_SCALE(p->cpu_rate_per_share, eps);
++	return EBS_MAX_PRI - EBS_MAP_SCALE(eps, p->cpu_rate_per_share);
++}
++
++static inline int effective_prio(task_t *p)
++{
++	if (rt_task(p))
++		return rt_effective_prio(p);
++
++	return sched_normal_effective_prio(p, task_rq(p));
++}
++
++/*
++ * Assume runqueue lock is already held.
++ */
++static void do_promotions(runqueue_t *rq)
++{
++	struct list_head *tmp, *head, *tail, slice;
++	int new_prio, pinv, slot, idx = EBS_MIN_PRI;
++
++	spin_lock(&rq->lock);
++	rq->next_prom_list = (rq->next_prom_list + 1) % EBS_NUM_PROM_INTERVALS;
++	for (;;) {
++		idx = find_next_bit(rq->bitmap, MAX_PRIO, idx + 1);
++		if (EBS_BGND_PRI < idx)
++			break;
++
++		tmp = rq->for_promotion[rq->next_prom_list] + (idx - EBS_MIN_PRI);
++		if (!list_empty(tmp)) {
++			new_prio = idx - 1;
++			head = &list_entry(tmp->next, task_t, prom_list)->run_list;
++			tail = &list_entry(tmp->prev, task_t, prom_list)->run_list;
++
++			/*
++			 * Anything on the promotion list must be on
++			 * the runqueue such that head or tail cannot
++			 * be empty.
++			 */
++			__list_extract_slice(&slice, head, tail);
++			__list_splice(&slice, rq->queues[new_prio].queue.prev);
++			if (list_empty(&rq->queues[idx].queue))
++				__clear_bit(idx, rq->bitmap);
++			__set_bit(new_prio, rq->bitmap);
++
++			/*
++			 * If promotion occurs from the slot
++			 * associated with rq->current_prio_slot then the
++			 * current task will be one of those promoted
++			 * so we should update rq->current_prio_slot
++			 */
++			if (idx == rq->current_prio_slot->prio)
++				rq->current_prio_slot = rq->queues + new_prio;
++
++			/*
++			 * A priority of EBS_MIN_PRIO cannot be
++			 * promoted any further, but we have to move
++			 * them somewhere or their prom_list would be
++			 * invalid.  We do not remove them from the
++			 * list as that would be an O(n) operation.
++			 * This will happen eventually.
++			 */
++			slot = new_prio - EBS_MIN_PRI;
++			pinv = (EBS_MEAN_PRI >= new_prio) ? slot :
++				EBS_BGND_PRI - new_prio;
++			pinv = (rq->next_prom_list + ebs_prom_table[pinv]) %
++				EBS_NUM_PROM_INTERVALS;
++			__list_splice(tmp, rq->for_promotion[pinv][slot].prev);
++			INIT_LIST_HEAD(tmp);
++		}
++	}
++	rq->next_prom_due += ebs_promotion_interval;
++	spin_unlock(&rq->lock);
++}
++#elif defined(CONFIG_SPA_STAIRCASE)
+ /*
+  * burst - extra intervals an interactive task can run for at best priority
+  */
+@@ -877,7 +1380,7 @@ effective_prio
+ static inline void __activate_task(task_t *p, runqueue_t *rq
+ #ifdef CONFIG_NICKSCHED
+ 		, prio_array_t *array
+-#elif defined(CONFIG_SPA_STAIRCASE)
++#elif defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 		, int prio
+ #endif
+ 		)
+@@ -886,12 +1389,15 @@ static inline void __activate_task(task_
+ 	if (unlikely(p->prio < array->min_prio))
+ 		array->min_prio = p->prio;
+ 	enqueue_task(p, array);
+-#elif defined(CONFIG_SPA_STAIRCASE)
++#elif defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 	enqueue_task(p, rq, prio);
+ #else
+ 	enqueue_task(p, rq->active);
+ #endif
+ 	rq->nr_running++;
++#ifdef CONFIG_SCHED_STATS
++	p->runnable_timestamp = jiffies;
++#endif
+ }
+ 
+ /*
+@@ -900,7 +1406,7 @@ static inline void __activate_task(task_
+ static inline void __activate_idle_task(task_t *p, runqueue_t *rq
+ #ifdef CONFIG_NICKSCHED
+ 		, prio_array_t *array
+-#elif defined(CONFIG_SPA_STAIRCASE)
++#elif defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 		, int prio
+ #endif
+ 		)
+@@ -909,7 +1415,7 @@ static inline void __activate_idle_task(
+ 	if (unlikely(p->prio < array->min_prio))
+ 		array->min_prio = p->prio;
+ 	enqueue_task_head(p, array);
+-#elif defined(CONFIG_SPA_STAIRCASE)
++#elif defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 	enqueue_task_head(p, rq, prio);
+ #else
+ 	enqueue_task_head(p, rq->active);
+@@ -917,7 +1423,7 @@ static inline void __activate_idle_task(
+ 	rq->nr_running++;
+ }
+ 
+-#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_NICKSCHED)
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_NICKSCHED) && !defined(CONFIG_EBS)
+ static void recalc_task_prio(task_t *p, unsigned long long now)
+ {
+ 	unsigned long long __sleep_time = now - p->timestamp;
+@@ -1000,7 +1506,7 @@ static void recalc_task_prio(task_t *p, 
+  * calculation, priority modifiers, etc.)
+  */
+ static
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ int
+ #else
+ void
+@@ -1010,7 +1516,7 @@ activate_task(task_t *p, runqueue_t *rq,
+ #ifdef CONFIG_NICKSCHED
+ 	prio_array_t *array;
+ 	unsigned long long sleep;
+-#elif defined(CONFIG_SPA_STAIRCASE)
++#elif defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 	int prio;
+ #endif
+ 	unsigned long long now;
+@@ -1032,14 +1538,32 @@ activate_task(task_t *p, runqueue_t *rq,
+ 	p->timestamp = now;
+ 	add_task_time(p, sleep, STIME_SLEEP);
+ 	p->prio = task_priority(p);
+-#else
++#elif !defined(CONFIG_EBS)
+ 	recalc_task_prio(p, now);
+ #endif
+ #ifdef CONFIG_SPA_STAIRCASE
+ 	prio = effective_prio(p);
+ #endif
+ 
+-#ifdef CONFIG_NICKSCHED
++#ifdef CONFIG_EBS
++	if (likely(!rt_task(p))) {
++		/*
++		 * This task is probably hasn't been on the CPU for a while
++		 * so update its usage rate to get a more relevant priority
++		 */
++		update_cpu_rate_stats(p);
++		prio = sched_normal_effective_prio(p, rq);
++		if (in_interrupt() && (prio != EBS_MIN_PRI)) {
++			/* This task is probably an interactive task
++			 * responding to user input so "fast track" it.
++			 */
++			prio = EBS_MIN_PRI;
++			p->time_slice = 2;
++		} else
++			p->time_slice = task_timeslice(p);
++	} else
++		prio = rt_effective_prio(p);
++#elif defined(CONFIG_NICKSCHED)
+ 	/*
+ 	 * If we have slept through an active/expired array switch, restart
+ 	 * our timeslice too.
+@@ -1082,8 +1606,10 @@ activate_task(task_t *p, runqueue_t *rq,
+ #ifdef CONFIG_NICKSCHED
+ 	__activate_task(p, rq, array);
+ #else
++#ifndef CONFIG_EBS
+ 	p->timestamp = now;
+-#ifdef CONFIG_SPA_STAIRCASE
++#endif
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 	__activate_task(p, rq, prio);
+ 	return prio;
+ #else
+@@ -1092,6 +1618,24 @@ activate_task(task_t *p, runqueue_t *rq,
+ #endif
+ }
+ 
++#ifdef CONFIG_SCHED_STATS
++/*
++ * Update statistics on task deactivation.
++ */
++static inline void update_cpu_stats_on_deactivation(task_t *p)
++{
++	unsigned long delta_runnable = jiffies_since(p->runnable_timestamp);
++
++#ifdef CONFIG_SMP
++	p->per_cpu_runnable[task_cpu(p)] += delta_runnable;
++	p->per_cpu_slices[task_cpu(p)]++;
++#else
++	p->runnable += delta_runnable;
++	p->slices++;
++#endif
++}
++#endif
++
+ /*
+  * deactivate_task - remove a task from the runqueue.
+  */
+@@ -1111,8 +1655,11 @@ static void deactivate_task(struct task_
+ 			p->burst--;
+ #endif
+ 	}
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 	dequeue_task(p);
++#ifdef CONFIG_SCHED_STATS
++	update_cpu_stats_on_deactivation(p);
++#endif
+ #else
+ 	dequeue_task(p, p->array);
+ 	p->array = NULL;
+@@ -1148,6 +1695,39 @@ static inline void resched_task(task_t *
+ }
+ #endif
+ 
++#ifdef CONFIG_EBS
++static inline void requeue_sinbinned_task(task_t *p, runqueue_t *rq)
++{
++	unsigned long delta;
++
++	/*
++	 * Don't bother updating usage and recalculating priority
++	 * completely as usage should have decayed to entitlement, so
++	 * adjust priority accordingly. Any error due to this short cut
++	 * will be self correcting.
++	 */
++	p->cpu_ebs_flags &= ~EBS_CPU_RATE_CAP_SINBIN;
++	delta = jiffies_since(p->sinbin_timestamp);
++#ifdef CONFIG_SMP
++	p->per_cpu_sinbin_ticks[task_cpu(p)] += delta;
++#else
++	p->sinbin_ticks += delta;
++#endif
++	__activate_task(p, rq, !rt_task(p) ? EBS_MEAN_PRI : rt_effective_prio(p));
++	rq->nr_sinbinned--;
++}
++
++void ebs_sinbin_fn(unsigned long arg)
++{
++	unsigned long flags;
++	struct task_struct *p = (struct task_struct*)arg;
++	runqueue_t *rq = task_rq_lock(p, &flags);
++
++	requeue_sinbinned_task(p, rq);
++	task_rq_unlock(rq, &flags);
++}
++#endif
++
+ /**
+  * task_curr - is this task currently executing on a CPU?
+  * @p: the task in question.
+@@ -1190,7 +1770,9 @@ static int migrate_task(task_t *p, int d
+ 	 * it is sufficient to simply update the task's cpu field.
+ 	 */
+ 	if (
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++			list_empty(&p->run_list)
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 			!task_queued(p)
+ #else
+ 			!p->array
+@@ -1226,7 +1808,9 @@ void wait_task_inactive(task_t * p)
+ repeat:
+ 	rq = task_rq_lock(p, &flags);
+ 	/* Must be off runqueue entirely, not preempted. */
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	if (unlikely(!list_empty(&p->run_list)))
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	if (unlikely(task_queued(p)))
+ #else
+ 	if (unlikely(p->array))
+@@ -1349,7 +1933,7 @@ static int try_to_wake_up(task_t * p, un
+ 	unsigned long flags;
+ 	long old_state;
+ 	runqueue_t *rq;
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 	int prio;
+ #endif
+ #ifdef CONFIG_SMP
+@@ -1363,7 +1947,9 @@ static int try_to_wake_up(task_t * p, un
+ 	if (!(old_state & state))
+ 		goto out;
+ 
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	if (!list_empty(&p->run_list))
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	if (task_queued(p))
+ #else
+ 	if (p->array)
+@@ -1429,7 +2015,12 @@ static int try_to_wake_up(task_t * p, un
+ 		imbalance = sd->imbalance_pct + (sd->imbalance_pct - 100) / 2;
+ 
+ 		if ( ((sd->flags & SD_WAKE_AFFINE) &&
+-				!task_hot(p, rq->timestamp_last_tick, sd))
++#ifdef CONFIG_EBS
++				!(jiffies_since(p->mem_cache_timestamp) <= sd->cache_hot_time)
++#else
++				!task_hot(p, rq->timestamp_last_tick, sd)
++#endif
++		     )
+ 			|| ((sd->flags & SD_WAKE_BALANCE) &&
+ 				imbalance*this_load <= 100*load) ) {
+ 
+@@ -1462,7 +2053,9 @@ out_set_cpu:
+ 		old_state = p->state;
+ 		if (!(old_state & state))
+ 			goto out;
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++		if (!list_empty(&p->run_list))
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 		if (task_queued(p))
+ #else
+ 		if (p->array)
+@@ -1477,7 +2070,7 @@ out_activate:
+ #endif /* CONFIG_SMP */
+ 	if (old_state == TASK_UNINTERRUPTIBLE) {
+ 		rq->nr_uninterruptible--;
+-#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_NICKSCHED)
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_NICKSCHED) && !defined(CONFIG_EBS)
+ 		/*
+ 		 * Tasks on involuntary sleep don't earn
+ 		 * sleep_avg beyond just interactive state.
+@@ -1494,13 +2087,15 @@ out_activate:
+ 	 * the waker guarantees that the freshly woken up task is going
+ 	 * to be considered on this CPU.)
+ 	 */
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 	prio = activate_task(p, rq, cpu == this_cpu);
+ #else
+ 	activate_task(p, rq, cpu == this_cpu);
+ #endif
+ 	if (!sync || cpu != this_cpu) {
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++		if (TASK_PREEMPTS_CURR(prio, rq))
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 		if (PRIO_PREEMPTS_CURR(prio, rq))
+ #else
+ 		if (TASK_PREEMPTS_CURR(p, rq))
+@@ -1534,7 +2129,11 @@ int fastcall wake_up_state(task_t *p, un
+  * Perform scheduler related setup for a newly forked process p.
+  * p is forked by current.
+  */
+-void fastcall sched_fork(task_t *p)
++void fastcall sched_fork(task_t *p
++#ifdef CONFIG_EBS
++		, unsigned long clone_flags
++#endif
++		)
+ {
+ #ifdef CONFIG_NICKSCHED
+ 	unsigned long ts;
+@@ -1547,12 +2146,40 @@ void fastcall sched_fork(task_t *p)
+ 	 * nobody will actually run it, and a signal or other external
+ 	 * event cannot wake it up and insert it on the runqueue either.
+ 	 */
++#ifdef CONFIG_EBS
++	init_timer(&p->sinbin_timer);
++	p->sinbin_timer.data = (unsigned long) p;
++#endif
+ 	p->state = TASK_RUNNING;
+ 	INIT_LIST_HEAD(&p->run_list);
+-#ifndef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	INIT_LIST_HEAD(&p->prom_list);
++#elif !defined(CONFIG_SPA_STAIRCASE)
+ 	p->array = NULL;
+ #endif
+ 	spin_lock_init(&p->switch_lock);
++#ifdef CONFIG_EBS
++#ifdef CONFIG_SMP
++	{
++		int i;
++
++		for (i = 0; i < NR_CPUS; i++) {
++			p->per_cpu_sinbin_ticks[i] = 0;
++#ifdef CONFIG_SCHED_STATS
++			p->per_cpu_utime[i] = 0;
++			p->per_cpu_stime[i] = 0;
++			p->per_cpu_runnable[i] = 0;
++			p->per_cpu_slices[i] = 0;
++#endif
++		}
++	}
++#else
++	p->sinbin_ticks = 0;
++#ifdef CONFIG_SCHED_STATS
++	p->slices = p->runnable = 0;
++#endif
++#endif
++#endif
+ #ifdef CONFIG_PREEMPT
+ 	/*
+ 	 * During context-switch we hold precisely one spinlock, which
+@@ -1562,7 +2189,29 @@ void fastcall sched_fork(task_t *p)
+ 	 */
+ 	p->thread_info->preempt_count = 1;
+ #endif
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	/*
++	 * To mollify ramp up effect to some extent (in particular, the swamping
++	 * of a parent by its children) we'll leave the child with the maximum
++	 * of its parent's CPU usage rate and a predifined fraction of the
++	 * maximumusage rate on this CPU and with the same timestamp as its
++	 * parent UNLESS a reset is specifically requested (e.g. for kernel
++	 * threads).  This should not adversely effect tasks run inreactively
++	 * from a terminal as they will still get a higher priority than the
++	 * current yardstick.
++	 */
++	if (clone_flags & CLONE_RESET_CPU_USAGE)
++		p->cpu_rate_per_share = 0;
++	else {
++		uint32_t init_usg_per_share = task_rq(p)->eff_ent_per_share / 2;
++
++		if (init_usg_per_share > p->cpu_rate_per_share)
++			p->cpu_rate_per_share = init_usg_per_share;
++	}
++	/*
++	 * New tasks will be given a new timeslice when they become active
++	 */
++#elif defined(CONFIG_SPA_STAIRCASE)
+ #ifndef DONT_SHARE_TIME_SLICES
+ 	/*
+ 	 * Share the timeslice between parent and child, thus the
+@@ -1670,7 +2319,16 @@ void fastcall wake_up_forked_process(tas
+ #endif
+ 	BUG_ON(p->state != TASK_RUNNING);
+ 
+-#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_NICKSCHED)
++#ifdef CONFIG_EBS
++	/*
++	 * Give new tasks a complete time slice
++	 */
++	p->time_slice = task_timeslice(p);
++	/*
++	 * The child has had no ticks yet
++	 */
++	p->cpu_ebs_flags &= ~EBS_NEEDS_PRIO_RECALC;
++#elif !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_NICKSCHED)
+ 	/*
+ 	 * We decrease the sleep average of forking parents
+ 	 * and children as well, to keep max-interactive tasks
+@@ -1687,7 +2345,19 @@ void fastcall wake_up_forked_process(tas
+ #endif
+ 	set_task_cpu(p, smp_processor_id());
+ 
+-#ifdef CONFIG_NICKSCHED
++#ifdef CONFIG_EBS
++	/*
++	 * Now that the idle task is back on the run queue we need extra care
++	 * to make sure that its one and only fork() doesn't end up in the idle
++	 * priority slot.  Just testing for empty run list is no longer adequate.
++	 */
++	if (unlikely(list_empty(&current->run_list) || (rq->current_prio_slot->prio == MAX_PRIO))) {
++		if (unlikely(rt_task(p)))
++			__activate_task(p, rq, rt_effective_prio(p));
++		else
++			__activate_task(p, rq, EBS_MIN_PRI);
++	}
++#elif defined(CONFIG_NICKSCHED)
+ 	/*
+ 	 *  Get only 1/10th of the parents history. Limited by MIN_HISTORY.
+ 	 */
+@@ -1724,19 +2394,26 @@ void fastcall wake_up_forked_process(tas
+ 		__activate_task(p, rq);
+ #endif
+ 	else {
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 		p->prio = current->prio;
+ #endif
+ 		list_add_tail(&p->run_list, &current->run_list);
+-#ifndef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++		if (likely(!list_empty(&current->prom_list)))
++			list_add_tail(&p->prom_list, &current->prom_list);
++#elif !defined(CONFIG_SPA_STAIRCASE)
+ 		p->array = current->array;
+ 		p->array->nr_active++;
+ #endif
+ 		rq->nr_running++;
++#ifdef CONFIG_SCHED_STATS
++		p->runnable_timestamp = jiffies;
++#endif
+ 	}
+ 	task_rq_unlock(rq, &flags);
+ }
+ 
++#ifndef CONFIG_EBS
+ /*
+  * Potentially available exiting-child timeslices are
+  * retrieved here - this way the parent does not get
+@@ -1804,6 +2481,7 @@ void fastcall sched_exit(task_t * p)
+ 	task_rq_unlock(rq, &flags);
+ #endif
+ }
++#endif
+ 
+ /**
+  * finish_task_switch - clean up after a task-switch
+@@ -2069,7 +2747,7 @@ lock_again:
+ 		double_rq_unlock(this_rq, rq);
+ 		goto lock_again;
+ 	}
+-#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_NICKSCHED)
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_NICKSCHED) && !defined(CONFIG_EBS)
+ 	/*
+ 	 * We decrease the sleep average of forking parents
+ 	 * and children as well, to keep max-interactive tasks
+@@ -2113,39 +2791,71 @@ lock_again:
+ #endif
+ 
+ 	if (cpu == this_cpu) {
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++		if (unlikely(list_empty(&current->run_list) || (rq->current_prio_slot->prio == MAX_PRIO)))
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 		if (unlikely(!task_queued(current) || RUNQUEUE_IDLE(rq)))
+ 			__activate_task(p, rq, effective_prio(p));
+ #else
+ 		if (unlikely(!current->array))
+-#ifdef CONFIG_NICKSCHED
++#endif
++#ifdef CONFIG_EBS
++			if (unlikely(rt_task(p)))
++				__activate_task(p, rq, rt_effective_prio(p));
++			else
++				__activate_task(p, rq, EBS_MIN_PRI);
++#elif defined(CONFIG_NICKSCHED)
+ 			__activate_task(p, rq, rq->active);
+-#else
++#elif !defined(CONFIG_SPA_STAIRCASE)
+ 			__activate_task(p, rq);
+ #endif
+-#endif
+ 		else {
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 			p->prio = current->prio;
+ #endif
+ 			list_add_tail(&p->run_list, &current->run_list);
+-#ifndef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++			if (likely(!list_empty(&current->prom_list)))
++				list_add_tail(&p->prom_list, &current->prom_list);
++#elif !defined(CONFIG_SPA_STAIRCASE)
+ 			p->array = current->array;
+ 			p->array->nr_active++;
+ #endif
+ 			rq->nr_running++;
++	#ifdef CONFIG_SCHED_STATS
++			p->runnable_timestamp = jiffies;
++	#endif
+ 		}
+ 	} else {
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++		p->time_slice = task_timeslice(p);
++#endif
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 		int prio = effective_prio(p);
+ #endif
+ 		schedstat_inc(sd, sbc_pushed);
++#ifdef CONFIG_EBS
++	if (unlikely(rt_task(p)))
++		prio = rt_effective_prio(p);
++	else {
++		/*
++		 * task priority depends on the CPU as well as the task itself
++		 */
++	 	update_cpu_rate_stats(p);
++		prio = sched_normal_effective_prio(p, this_rq);
++	}
++#else
+ 		/* Not the local CPU - must adjust timestamp */
+ 		p->timestamp = (p->timestamp - this_rq->timestamp_last_tick)
+ 					+ rq->timestamp_last_tick;
+-#ifdef CONFIG_SPA_STAIRCASE
++#endif
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 		__activate_task(p, rq, prio);
++#ifdef CONFIG_EBS
++		if (TASK_PREEMPTS_CURR(prio, rq))
++#else
+ 		if (PRIO_PREEMPTS_CURR(prio, rq))
++#endif
+ #else
+ #ifdef CONFIG_NICKSCHED
+ 		__activate_task(p, rq, rq->active);
+@@ -2243,17 +2953,30 @@ static void double_lock_balance(runqueue
+ 	}
+ }
+ 
++#ifdef CONFIG_SCHED_STATS
++/*
++ * Update statistics on task migration.
++ */
++static inline void update_cpu_stats_on_migration(task_t *p)
++{
++	unsigned long delta_runnable = jiffies_since(p->runnable_timestamp);
++
++	p->runnable_timestamp += delta_runnable;
++	p->per_cpu_runnable[task_cpu(p)] += delta_runnable;
++}
++#endif
++
+ /*
+  * pull_task - move a task from a remote runqueue to the local runqueue.
+  * Both runqueues must be locked.
+  */
+ static inline
+ void pull_task(runqueue_t *src_rq,
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 		prio_array_t *src_array,
+ #endif
+ 		task_t *p, runqueue_t *this_rq,
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 		prio_array_t *this_array,
+ #endif
+ 		int this_cpu
+@@ -2262,14 +2985,32 @@ void pull_task(runqueue_t *src_rq,
+ #endif
+ 		)
+ {
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	int prio;
++#endif
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 	dequeue_task(p);
+ #else
+ 	dequeue_task(p, src_array);
+ #endif
+ 	src_rq->nr_running--;
++#ifdef CONFIG_SCHED_STATS
++	update_cpu_stats_on_migration(p);
++#endif
+ 	set_task_cpu(p, this_cpu);
+ 	this_rq->nr_running++;
++#ifdef CONFIG_EBS
++	if (unlikely(rt_task(p)))
++		prio = rt_effective_prio(p);
++	else {
++		/*
++		 * task priority depends on the CPU as well as the task itself
++		 */
++	 	update_cpu_rate_stats(p);
++		prio = sched_normal_effective_prio(p, this_rq);
++	}
++	enqueue_task(p, this_rq, prio);
++#else
+ #ifdef CONFIG_SPA_STAIRCASE
+ 	enqueue_task(p, this_rq, prio);
+ #else
+@@ -2277,11 +3018,14 @@ void pull_task(runqueue_t *src_rq,
+ #endif
+ 	p->timestamp = (p->timestamp - src_rq->timestamp_last_tick)
+ 				+ this_rq->timestamp_last_tick;
++#endif
+ 	/*
+ 	 * Note that idle threads have a prio of MAX_PRIO, for this test
+ 	 * to be always true for them.
+ 	 */
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	if (TASK_PREEMPTS_CURR(prio, this_rq))
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	if (PRIO_PREEMPTS_CURR(prio, this_rq))
+ #else
+ 	if (TASK_PREEMPTS_CURR(p, this_rq))
+@@ -2314,7 +3058,11 @@ int can_migrate_task(
+ 	/* Aggressive migration if we've failed balancing */
+ 	if (idle == NEWLY_IDLE ||
+ 			sd->nr_balance_failed < sd->cache_nice_tries) {
++#ifdef CONFIG_EBS
++		if (jiffies_since(p->mem_cache_timestamp) <= sd->cache_hot_time)
++#else
+ 		if (task_hot(p, rq->timestamp_last_tick, sd))
++#endif
+ 			return 0;
+ 	}
+ 
+@@ -2339,7 +3087,7 @@ static int move_tasks(runqueue_t *this_r
+ 		      unsigned long max_nr_move, struct sched_domain *sd,
+ 		      enum idle_type idle)
+ {
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 	prio_array_t *array, *dst_array;
+ #endif
+ 	struct list_head *head, *curr;
+@@ -2348,8 +3096,7 @@ static int move_tasks(runqueue_t *this_r
+ 
+ 	if (max_nr_move <= 0 || busiest->nr_running <= 1)
+ 		goto out;
+-
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 	/*
+ 	 * We first consider expired tasks. Those will likely not be
+ 	 * executed in the near future, and they are most likely to
+@@ -2370,17 +3117,26 @@ new_array:
+ 	idx = 0;
+ skip_bitmap:
+ 	if (!idx)
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 		idx = sched_find_first_bit(busiest->bitmap);
+ #else
+ 		idx = sched_find_first_bit(array->bitmap);
+ #endif
+ 	else
+-#ifndef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++		idx = find_next_bit(busiest->bitmap, MAX_PRIO, idx);
++#elif defined(CONFIG_SPA_STAIRCASE)
++		idx = find_next_bit(busiest->bitmap, IDLE_PRIO, idx);
++#else
+ 		idx = find_next_bit(array->bitmap, MAX_PRIO, idx);
+ #endif
+-	if (idx >= MAX_PRIO) {
+-#ifndef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_SPA_STAIRCASE
++	if (idx >= IDLE_PRIO)
++#else
++	if (idx >= MAX_PRIO)
++#endif
++	{
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 		if (array == busiest->expired && busiest->active->nr_active) {
+ 			array = busiest->active;
+ 			dst_array = this_rq->active;
+@@ -2389,7 +3145,7 @@ skip_bitmap:
+ #endif
+ 		goto out;
+ 	}
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 	head = &busiest->queues[idx].queue;
+ #else
+ 	head = array->queue + idx;
+@@ -2406,7 +3162,9 @@ skip_queue:
+ 		idx++;
+ 		goto skip_bitmap;
+ 	}
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	pull_task(busiest, tmp, this_rq, this_cpu);
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	pull_task(busiest, tmp, this_rq, this_cpu, idx);
+ #else
+ 	pull_task(busiest, array, tmp, this_rq, dst_array, this_cpu);
+@@ -2961,7 +3719,7 @@ DEFINE_PER_CPU(struct kernel_stat, kstat
+ 
+ EXPORT_PER_CPU_SYMBOL(kstat);
+ 
+-#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_NICKSCHED)
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_NICKSCHED) && !defined(CONFIG_EBS)
+ /*
+  * We place interactive tasks back into the active array, if possible.
+  *
+@@ -2995,9 +3753,9 @@ void scheduler_tick(int user_ticks, int 
+ 	struct cpu_usage_stat *cpustat = &kstat_this_cpu.cpustat;
+ 	runqueue_t *rq = this_rq();
+ 	task_t *p = current;
+-
++#ifndef CONFIG_EBS
+ 	rq->timestamp_last_tick = clock_us();
+-
++#endif
+ 	if (rcu_pending(cpu))
+ 		rcu_check_callbacks(cpu, user_ticks);
+ 
+@@ -3014,6 +3772,23 @@ void scheduler_tick(int user_ticks, int 
+ 	cpu_status = NOT_IDLE;
+ #endif
+ 	if (p == rq->idle) {
++#ifdef CONFIG_EBS
++		/*
++		 * Decay the effective entitlement per share for this CPU
++		 * Is this lock necessary?
++		 */
++		spin_lock(&rq->lock);
++		rq->eff_ent_per_share = EBS_DECAYED_FOR_TICK(rq->eff_ent_per_share);
++		/*
++		 * There should be no tasks to promote so just update where we're
++		 * up to
++		 */
++		if (unlikely(time_after_eq(jiffies, rq->next_prom_due))) {
++			rq->next_prom_list = (rq->next_prom_list + 1) % EBS_NUM_PROM_INTERVALS;
++			rq->next_prom_due += ebs_promotion_interval;
++		}
++		spin_unlock(&rq->lock);
++#endif
+ 		if (atomic_read(&rq->nr_iowait) > 0)
+ 			cpustat->iowait += sys_ticks;
+ 		else
+@@ -3022,8 +3797,10 @@ void scheduler_tick(int user_ticks, int 
+ 		cpu_status = IDLE;
+ 		goto out;
+ #else
++#ifndef CONFIG_EBS
+ 		if (wake_priority_sleeper(rq))
+ 			goto out;
++#endif
+ 		rebalance_tick(cpu, rq, IDLE);
+ 		return;
+ #endif
+@@ -3034,7 +3811,7 @@ void scheduler_tick(int user_ticks, int 
+ 		cpustat->user += user_ticks;
+ 	cpustat->system += sys_ticks;
+ 
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 	/* Task might have expired already, but not scheduled off yet */
+ #ifdef CONFIG_NICKSCHED
+ 	if (unlikely(p->used_slice == -1))
+@@ -3046,6 +3823,9 @@ void scheduler_tick(int user_ticks, int 
+ 		goto out;
+ 	}
+ #endif
++#ifdef CONFIG_SCHED_STATS
++	cpustat->runnable += rq->nr_running;
++#endif
+ #ifndef CONFIG_NICKSCHED
+ 	spin_lock(&rq->lock);
+ #endif
+@@ -3074,6 +3854,12 @@ void scheduler_tick(int user_ticks, int 
+ 	 * requeued with a lower priority && RR_INTERVAL time_slice.
+ 	 */
+ #else
++#ifdef CONFIG_EBS
++	/*
++	 * Decay the effective entitlement per share for this CPU
++	 */
++	rq->eff_ent_per_share = EBS_DECAYED_FOR_TICK(rq->eff_ent_per_share);
++#endif
+ 	/*
+ 	 * The task was running during this tick - update the
+ 	 * time slice counter. Note: we do not update a thread's
+@@ -3095,12 +3881,19 @@ void scheduler_tick(int user_ticks, int 
+ #else
+ 		if ((p->policy == SCHED_RR) && !--p->time_slice) {
+ 			p->time_slice = task_timeslice(p);
++#ifndef CONFIG_EBS
+ 			p->first_time_slice = 0;
++#endif
+ 			set_tsk_need_resched(p);
+ 
+ 			/* put it at the end of the queue: */
++#ifdef CONFIG_EBS
++			dequeue_task(p);
++			enqueue_task(p, rq, rq->current_prio_slot->prio);
++#else
+ 			dequeue_task(p, rq->active);
+ 			enqueue_task(p, rq->active);
++#endif
+ 		}
+ 		goto out_unlock;
+ #endif
+@@ -3113,7 +3906,24 @@ void scheduler_tick(int user_ticks, int 
+ 		set_tsk_need_resched(p);
+ 	}
+ #else
+-	if (!--p->time_slice) {
++#ifdef CONFIG_EBS
++	if (EBS_NEEDS_PRIO_RECALC & p->cpu_ebs_flags)
++#else
++	if (!--p->time_slice)
++#endif
++	{
++#ifdef CONFIG_EBS
++		p->cpu_rate_timestamp = jiffies;
++		p->cpu_rate_per_share = EBS_DECAYED_FOR_TICK(p->cpu_rate_per_share);
++	} else {
++		/*
++		 * This is the first tick this time slice so update CPU usage
++		 * rate stats to allow simplified per tick update on future
++		 * ticks.
++		 */
++		update_cpu_rate_stats(p);
++		p->cpu_ebs_flags |= EBS_NEEDS_PRIO_RECALC;
++#else
+ #ifdef CONFIG_SPA_STAIRCASE
+ 		dequeue_task(p);
+ #else
+@@ -3168,17 +3978,30 @@ void scheduler_tick(int user_ticks, int 
+ 			enqueue_task(p, rq->active);
+ 		}
+ #endif
++#endif
+ 	}
++#ifdef CONFIG_EBS
++	p->cpu_rate_per_share += p->cpu_incr_per_tick;
++	if ((p->cpu_rate_per_share > rq->eff_ent_per_share) && likely(p->cpu_rate_per_share <= p->cpu_rate_cap_per_share))
++		rq->eff_ent_per_share = p->cpu_rate_per_share;
++	if (!--p->time_slice)
++		set_tsk_need_resched(p);
++#endif
+ out_unlock:
+ 	spin_unlock(&rq->lock);
+ #endif
++#ifndef CONFIG_EBS
+ out:
++#endif
+ #ifdef CONFIG_NICKSCHED
+ 	rebalance_tick(cpu, rq, cpu_status);
+ #else
+ 	rebalance_tick(cpu, rq, NOT_IDLE);
+ #endif
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	if (unlikely(time_after_eq(jiffies, rq->next_prom_due)))
++		do_promotions(rq);
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	if (unlikely(promotions_due(rq))) {
+ 		/*
+ 		 * If there's less than 2 SCHED_OTHER tasks defer the next promotion
+@@ -3310,6 +4133,9 @@ asmlinkage void __sched schedule(void)
+ 	long *switch_count;
+ 	task_t *prev, *next;
+ 	runqueue_t *rq;
++#ifdef CONFIG_EBS
++	unsigned long now = jiffies;
++#else
+ #ifndef CONFIG_SPA_STAIRCASE
+ 	prio_array_t *array;
+ 	struct list_head *queue;
+@@ -3322,6 +4148,7 @@ asmlinkage void __sched schedule(void)
+ #ifndef CONFIG_SPA_STAIRCASE
+ 	int idx;
+ #endif
++#endif
+ 
+ 	/*
+ 	 * Test if we are atomic.  Since do_exit() needs to call into
+@@ -3350,6 +4177,7 @@ need_resched:
+ 
+ 	release_kernel_lock(prev);
+  	schedstat_inc(rq, sched_cnt);
++#ifndef CONFIG_EBS
+ 	now = clock_us();
+ #ifdef CONFIG_NICKSCHED
+ 	run_time = now - prev->timestamp;
+@@ -3371,7 +4199,7 @@ need_resched:
+ 	if (HIGH_CREDIT(prev))
+ 		run_time /= (CURRENT_BONUS(prev) ? : 1);
+ #endif
+-
++#endif
+ 	spin_lock_irq(&rq->lock);
+ 
+ #ifdef CONFIG_NICKSCHED
+@@ -3397,6 +4225,26 @@ need_resched:
+ 	 * to picking the next task.
+ 	 */
+ 	switch_count = &prev->nivcsw;
++#ifdef CONFIG_EBS
++	if (likely(prev->state)) {
++		if (preempt_count() & PREEMPT_ACTIVE) {
++			prev->cpu_ebs_flags &= ~EBS_NEEDS_PRIO_RECALC;
++		} else {
++			switch_count = &prev->nvcsw;
++			if (unlikely((prev->state & TASK_INTERRUPTIBLE) &&
++					unlikely(signal_pending(prev))))
++				prev->state = TASK_RUNNING;
++			else {
++				/*
++				 * Priority will be calculated when the task
++				 * is reactivated
++				 */
++				prev->cpu_ebs_flags &= ~EBS_NEEDS_PRIO_RECALC;
++				deactivate_task(prev, rq);
++			}
++		}
++	}
++#else
+ 	if (prev->state && !(preempt_count() & PREEMPT_ACTIVE)) {
+ 		switch_count = &prev->nvcsw;
+ 		if (unlikely((prev->state & TASK_INTERRUPTIBLE) &&
+@@ -3432,7 +4280,36 @@ need_resched:
+ 		}
+ #endif
+ 	}
+-
++#endif
++#ifdef CONFIG_EBS
++	/*
++	 * This test will always fail for idle and real time tasks
++	 */
++	if (unlikely(prev->cpu_ebs_flags & EBS_NEEDS_PRIO_RECALC)) {
++		prev->cpu_ebs_flags &= ~EBS_NEEDS_PRIO_RECALC;
++		dequeue_task(prev);
++		prev->time_slice = task_timeslice(prev);
++		/*
++		 *  no need to update usage rate stats as we've just come off a CPU
++		 */
++		rq->current_prio_slot = rq->queues + sched_normal_effective_prio(prev, rq);
++		if (unlikely(prev->cpu_ebs_flags & EBS_CPU_RATE_CAP_IS_HARD)) {
++			unsigned int sbt = EBS_SINBIN_DURN(rq->current_prio_slot->prio);
++
++			if (sbt) {
++				rq->nr_running--;
++				prev->cpu_ebs_flags |= EBS_CPU_RATE_CAP_SINBIN;
++				prev->sinbin_timestamp = now;
++				rq->nr_sinbinned++;
++				prev->sinbin_timer.expires = now + sbt;
++				add_timer(&prev->sinbin_timer);
++			}
++			else
++				enqueue_task(prev, rq, rq->current_prio_slot->prio);
++		} else
++			enqueue_task(prev, rq, rq->current_prio_slot->prio);
++	}
++#else
+ #ifdef CONFIG_SPA_STAIRCASE
+ 	rq->current_prio_slot = rq->queues + sched_find_first_bit(rq->bitmap);
+ 	next = list_entry(rq->current_prio_slot->queue.next, task_t, run_list);
+@@ -3462,14 +4339,14 @@ need_resched:
+ #endif
+ 	}
+ #endif
+-
+-#ifndef CONFIG_SPA_STAIRCASE
++#endif
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 	idx = sched_find_first_bit(array->bitmap);
+ 	queue = array->queue + idx;
+ 	next = list_entry(queue->next, task_t, run_list);
+ #endif
+ 
+-#ifndef CONFIG_NICKSCHED
++#if !defined(CONFIG_NICKSCHED) && !defined(CONFIG_EBS)
+ 	if (dependent_sleeper(cpu, rq, next)) {
+ #ifdef CONFIG_SPA_STAIRCASE
+ 		rq->current_prio_slot = rq->queues + IDLE_PRIO;
+@@ -3480,7 +4357,7 @@ need_resched:
+ #endif
+ 	}
+ 
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 	if (!rt_task(next) && next->activated > 0) {
+ 		unsigned long long delta = now - next->timestamp;
+ 
+@@ -3495,12 +4372,22 @@ need_resched:
+ 	next->activated = 0;
+ #endif
+ #endif
++#ifdef CONFIG_EBS
++#ifdef CONFIG_SMP
++	if (unlikely(!rq->nr_running))
++		idle_balance(smp_processor_id(), rq);
++	prev->mem_cache_timestamp = now;
++#endif
++	rq->current_prio_slot = rq->queues + sched_find_first_bit(rq->bitmap);
++	next = list_entry(rq->current_prio_slot->queue.next, task_t, run_list);
++#else
+ switch_tasks:
++#endif
+ 	prefetch(next);
+ 	clear_tsk_need_resched(prev);
+ 	RCU_qsctr(task_cpu(prev))++;
+ 
+-#ifndef CONFIG_NICKSCHED
++#if !defined(CONFIG_NICKSCHED) && !defined(CONFIG_EBS)
+ #ifndef CONFIG_SPA_STAIRCASE
+ 	prev->sleep_avg -= run_time;
+ 	if ((long)prev->sleep_avg <= 0) {
+@@ -3516,7 +4403,9 @@ switch_tasks:
+ #ifdef CONFIG_NICKSCHED
+ 		add_task_time(next, now - next->timestamp, STIME_WAIT);
+ #endif
++#ifndef CONFIG_EBS
+ 		next->timestamp = now;
++#endif
+ 		rq->nr_switches++;
+ 		rq->curr = next;
+ 		++*switch_count;
+@@ -3779,17 +4668,245 @@ long fastcall __sched sleep_on_timeout(w
+ 
+ EXPORT_SYMBOL(sleep_on_timeout);
+ 
++#ifdef CONFIG_EBS
++/*
++ * A little bit of long division
++ */
++#define EBS_UINT32_MAX ((uint32_t)0xffffffff)
++#define EBS_UINT32_HIBIT ((uint32_t)0x80000000)
++static inline uint32_t cap_fm_fraction(uint32_t x, uint32_t y)
++{
++	uint32_t res = 0;
++	int k = 0;
++
++	while (x && (k < EBS_OFFSET)) {
++		uint32_t term;
++		int j;
++
++		for (; (k < EBS_OFFSET) && !(x & EBS_UINT32_HIBIT); k++)
++			x <<= 1;
++		term = x / y;
++		for (j = 0; j < (EBS_OFFSET - k); j++)
++			term <<= 1;
++		res += term;
++		x %= y;
++	}
++
++	return res;
++}
++
++/*
++ * Require: (0x7fffffff >= den > 0) and (enu <= den and ((den != 0) or (not hard))
++ */
++int set_cpu_rate_cap_fm_frac(struct task_struct *p, uint32_t enu, uint32_t den, int hard)
++{
++	/*
++	 * Division by zero or too big a denominator will break the long division routine
++	 * The fraction must represent a real number in the range 0 to 1
++	 */
++	if (!den || (den > 0x7fffffff) || (den < enu))
++		return -EDOM;
++
++	return set_cpu_rate_cap(p, cap_fm_fraction(enu, den), hard);
++}
++
++static inline int sched_normal_needs_requeue(task_t *p)
++{
++	return !rt_task(p) && !list_empty(&p->run_list);
++}
++
++/*
++ * Assumes delta is the difference between the new and old share,
++ * nice, or cap setting.  Task must have been dequeued.  Must not be
++ * called for a real time task.
++ */
++static void sched_normal_requeue(task_t *p, runqueue_t *rq, int delta)
++{
++	int new_prio = sched_normal_effective_prio(p, rq);
++
++	enqueue_task(p, rq, new_prio);
++	if (task_running(rq, p))
++		rq->current_prio_slot = rq->queues + new_prio;
++
++	/*
++	 * If the task increased its setting or is running and lowered
++	 * its setting, then reschedule its CPU:
++	 */
++	if ((delta > 0) || ((delta < 0) && task_running(rq, p)))
++		resched_task(rq->curr);
++}
++
++/*
++ * Require: 0 <= cap <= EBS_ONE and ((cap != 0) or (not hard))
++ */
++int set_cpu_rate_cap(struct task_struct *p, uint32_t new_cap, int hard)
++{
++	int is_allowed;
++	unsigned long flags;
++	int requeue_required;
++	runqueue_t *rq;
++	int32_t delta;
++
++	if ((new_cap > EBS_ONE) || (hard && !new_cap)) /* zero hard caps are not allowed */
++		return -EINVAL;
++	is_allowed = capable(CAP_SYS_NICE);
++	/*
++	 * We have to be careful, if called from /proc code,
++	 * the task might be in the middle of scheduling on another CPU.
++	 */
++	rq = task_rq_lock(p, &flags);
++	if (!is_allowed) {
++		/*
++		 * Ordinary users can set/change caps on their own tasks provided
++		 * that the new setting is MORE constraining
++		 */
++		if (((current->euid != p->uid) && (current->uid != p->uid)) ||
++		    (new_cap > p->cpu_rate_cap) ||
++		    (!hard && (p->cpu_ebs_flags & EBS_CPU_RATE_CAP_IS_HARD))) {
++			task_rq_unlock(rq, &flags);
++			return -EPERM;
++		}
++	}
++	/*
++	 * The RT tasks don't have caps, but we still allow the caps to be
++	 * set - but as expected it wont have any effect on scheduling until the
++	 *  task becomes SCHED_NORMAL:
++	 */
++	if ((requeue_required = sched_normal_needs_requeue(p)))
++		dequeue_task(p);
++	delta = new_cap - p->cpu_rate_cap;
++	p->cpu_rate_cap = new_cap;
++	p->cpu_rate_cap_per_share = (p->cpu_rate_cap / p->cpu_shares);
++	if (hard)
++		p->cpu_ebs_flags |= EBS_CPU_RATE_CAP_IS_HARD;
++	else
++		p->cpu_ebs_flags &= ~EBS_CPU_RATE_CAP_IS_HARD;
++	if (requeue_required)
++		sched_normal_requeue(p, rq, delta);
++	else if ((p->cpu_ebs_flags & EBS_CPU_RATE_CAP_SINBIN) &&
++		 del_timer_sync(&p->sinbin_timer))
++		requeue_sinbinned_task(p, rq);
++	task_rq_unlock(rq, &flags);
++	return 0;
++}
++
++EXPORT_SYMBOL(set_cpu_rate_cap);
++
++static inline int shares_to_nice(unsigned int shares)
++{
++#define SQRT_LOOP(valid) \
++	do { \
++		uint32_t	temp; \
++ \
++		if (rmdr >= (temp = (((res << 1) + b) << bshft--))) { \
++			res += b; \
++			rmdr -= temp; \
++		} \
++ \
++		b >>= 1; \
++	} while (valid)
++
++	uint32_t	res = 0;
++	uint32_t	b = 0x00008000;
++	int		bshft = 15;
++	uint32_t	rmdr;
++
++	if (shares <= 20)
++		return (20 - shares);
++
++	rmdr = ((shares - 20) << 16);
++	SQRT_LOOP(((rmdr > 0xffff) && b));
++	SQRT_LOOP(rmdr && (bshft > 7));
++	/*
++	 * It should be safe to multiply by the square root of the denominator now
++	 */
++
++	res <<= 8;
++	/*
++	 * If the remainder is zero there's no sense going on
++	 */
++	if (!rmdr)
++		return (res);
++
++	rmdr <<= 16;
++	b <<= 8;
++	bshft += 8;
++
++	SQRT_LOOP(rmdr && b);
++
++	return ((res + 0x00008000) >> 16);
++}
++
++/*
++ * Require: 1 <= shares <= EBS_MAX_SHARES
++ */
++int set_cpu_shares(struct task_struct *p, unsigned int shares)
++{
++	int is_allowed;
++	unsigned long flags;
++	int requeue_required;
++	runqueue_t *rq;
++	int delta;
++
++	if ((shares > EBS_MAX_SHARES) || (shares < 1))
++		return -EINVAL;
++	is_allowed = capable(CAP_SYS_NICE);
++	/*
++	 * We have to be careful, if called from /proc code,
++	 * the task might be in the middle of scheduling on another CPU.
++	 */
++	rq = task_rq_lock(p, &flags);
++	if (!is_allowed) {
++		/*
++		 * Ordinary users can set/change shares on their own tasks provided
++		 * that the new setting is less than their current shares
++		 */
++		if (((current->euid != p->uid) && (current->uid != p->uid)) ||
++		    (shares > p->cpu_shares)) {
++			task_rq_unlock(rq, &flags);
++			return -EPERM;
++		}
++	}
++	/*
++	 * The RT tasks don't have shares, but we still allow the shares to be
++	 * set - but as expected it wont have any effect on scheduling until the
++	 *  task becomes SCHED_NORMAL:
++	 */
++	if ((requeue_required = sched_normal_needs_requeue(p)))
++		dequeue_task(p);
++	delta = shares - p->cpu_shares;
++	p->cpu_rate_per_share *= p->cpu_shares;
++	p->cpu_shares = shares;
++	p->cpu_rate_per_share /= p->cpu_shares;
++	p->cpu_incr_per_tick = EBS_INCR_PER_SHARE(p->cpu_shares);
++	p->cpu_rate_cap_per_share = (p->cpu_rate_cap / p->cpu_shares);
++	/*
++	 * Set nice to the nearest value so that reported nice reflects shares
++	 * to some degree
++	 */
++	p->nice = shares_to_nice(shares);
++	if (requeue_required)
++		sched_normal_requeue(p, rq, delta);
++	task_rq_unlock(rq, &flags);
++	return 0;
++}
++
++EXPORT_SYMBOL(set_cpu_shares);
++#endif
++
+ void set_user_nice(task_t *p, long nice)
+ {
+ 	unsigned long flags;
+-#ifndef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	int requeue_required;
++#elif !defined(CONFIG_SPA_STAIRCASE)
+ 	prio_array_t *array;
+ #endif
+ 	runqueue_t *rq;
+ 	int delta;
+ #ifdef CONFIG_SPA_STAIRCASE
+ 	int queued;
+-#else
++#elif !defined(CONFIG_EBS)
+ 	int old_prio, new_prio;
+ #endif
+ 
+@@ -3806,6 +4923,10 @@ void set_user_nice(task_t *p, long nice)
+ 	 * it wont have any effect on scheduling until the task is
+ 	 * not SCHED_NORMAL:
+ 	 */
++#ifdef CONFIG_EBS
++	if ((requeue_required = sched_normal_needs_requeue(p)))
++		dequeue_task(p);
++#else
+ #ifdef CONFIG_SPA_STAIRCASE
+ 	if ((queued = (!rt_task(p) && task_queued(p))))
+ 		dequeue_task(p);
+@@ -3833,7 +4954,20 @@ void set_user_nice(task_t *p, long nice)
+ #ifndef CONFIG_SPA_STAIRCASE
+ 	p->prio += delta;
+ #endif
++#endif
+ 
++#ifdef CONFIG_EBS
++	delta = p->nice - nice;
++	p->nice = nice;
++	p->cpu_rate_per_share *= p->cpu_shares;
++	p->cpu_shares = EBS_NICE_TO_SHARES(nice);
++	p->cpu_rate_per_share /= p->cpu_shares;
++	p->cpu_incr_per_tick = EBS_INCR_PER_SHARE(p->cpu_shares);
++	p->cpu_rate_cap_per_share = (p->cpu_rate_cap / p->cpu_shares);
++
++	if (requeue_required)
++		sched_normal_requeue(p, rq, delta);
++#else
+ #ifdef CONFIG_SPA_STAIRCASE
+ 	if (queued)
+ #else
+@@ -3862,6 +4996,7 @@ void set_user_nice(task_t *p, long nice)
+ #ifndef CONFIG_SPA_STAIRCASE
+ out_unlock:
+ #endif
++#endif
+ 	task_rq_unlock(rq, &flags);
+ }
+ 
+@@ -3902,7 +5037,11 @@ asmlinkage long sys_nice(int increment)
+ 	if (increment > 40)
+ 		increment = 40;
+ 
++#ifdef CONFIG_EBS
++	nice = current->nice + increment;
++#else
+ 	nice = PRIO_TO_NICE(current->static_prio) + increment;
++#endif
+ 	if (nice < -20)
+ 		nice = -20;
+ 	if (nice > 19)
+@@ -3928,7 +5067,25 @@ asmlinkage long sys_nice(int increment)
+  */
+ int task_prio(task_t *p)
+ {
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	int prio;
++
++	if (unlikely(rt_task(p)))
++		prio = rt_effective_prio(p);
++	else {
++		unsigned long flags;
++		/*
++		 * This function is called outside locks so we'll do the honours
++		 */
++		runqueue_t *rq = task_rq_lock(p, &flags);
++
++		update_cpu_rate_stats(p);
++		prio = sched_normal_effective_prio(p, rq);
++		task_rq_unlock(rq, &flags);
++	}
++
++	return prio - MAX_RT_PRIO;
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	return effective_prio(p) - MAX_RT_PRIO;
+ #else
+ 	return p->prio - MAX_RT_PRIO;
+@@ -3969,14 +5126,16 @@ static inline task_t *find_process_by_pi
+ /* Actually do priority change: must hold rq lock. */
+ static void __setscheduler(struct task_struct *p, int policy, int prio)
+ {
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	BUG_ON(!list_empty(&p->run_list));
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	BUG_ON(task_queued(p));
+ #else
+ 	BUG_ON(p->array);
+ #endif
+ 	p->policy = policy;
+ 	p->rt_priority = prio;
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 	if (policy != SCHED_NORMAL)
+ 		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
+ 	else
+@@ -3991,7 +5150,9 @@ static int setscheduler(pid_t pid, int p
+ {
+ 	struct sched_param lp;
+ 	int retval = -EINVAL;
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	int is_on_runq;
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	int queued;
+ #else
+ 	int oldprio;
+@@ -4056,7 +5217,10 @@ static int setscheduler(pid_t pid, int p
+ 	if (retval)
+ 		goto out_unlock;
+ 
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	is_on_runq = !list_empty(&p->run_list);
++	if (is_on_runq)
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	if ((queued = task_queued(p)))
+ #else
+ 	array = p->array;
+@@ -4068,11 +5232,20 @@ static int setscheduler(pid_t pid, int p
+ 		deactivate_task(p, task_rq(p));
+ #endif
+ 	retval = 0;
+-#ifndef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	if ((p->policy = policy) != SCHED_NORMAL) {
++		p->cpu_ebs_flags &= ~EBS_NEEDS_PRIO_RECALC;
++		if ((p->cpu_ebs_flags & EBS_CPU_RATE_CAP_SINBIN) &&
++		    del_timer_sync(&p->sinbin_timer))
++			requeue_sinbinned_task(p, task_rq(p));
++	}
++#elif !defined(CONFIG_SPA_STAIRCASE)
+ 	oldprio = p->prio;
+ #endif
+ 	__setscheduler(p, policy, lp.sched_priority);
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	if (is_on_runq)
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	if (queued)
+ #else
+ 	if (array)
+@@ -4080,7 +5253,7 @@ static int setscheduler(pid_t pid, int p
+ 	{
+ #ifdef CONFIG_NICKSCHED
+ 		__activate_task(p, rq, array);
+-#elif defined(CONFIG_SPA_STAIRCASE)
++#elif defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 		int prio = effective_prio(p);
+ 		__activate_task(p, task_rq(p), prio);
+ #else
+@@ -4091,7 +5264,13 @@ static int setscheduler(pid_t pid, int p
+ 		 * our priority decreased, or if we are not currently running on
+ 		 * this runqueue and our priority is higher than the current's
+ 		 */
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++		if (rq->curr == p) {
++			if (prio > rq->current_prio_slot->prio)
++ 				resched_task(rq->curr);
++			rq->current_prio_slot = rq->queues + prio;
++		} else if (TASK_PREEMPTS_CURR(prio, rq))
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 		if (PRIO_PREEMPTS_CURR(prio, rq))
+ #else
+ 		if (task_running(rq, p)) {
+@@ -4317,7 +5496,7 @@ out_unlock:
+ asmlinkage long sys_sched_yield(void)
+ {
+ 	runqueue_t *rq = this_rq_lock();
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 	prio_array_t *array = current->array;
+ 	prio_array_t *target = rq->expired;
+ #endif
+@@ -4330,7 +5509,28 @@ asmlinkage long sys_sched_yield(void)
+ 	 * (special rule: RT tasks will just roundrobin in the active
+ 	 *  array.)
+ 	 */
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	if (likely(!rt_task(current))) {
++		/* If there's other tasks on this CPU make sure that as many of
++		 * them as possible/judicious get some CPU before this task
++		 */
++		dequeue_task(current);
++		rq->current_prio_slot = rq->queues + sched_normal_effective_prio(current, rq);
++		if (likely(rq->current_prio_slot->prio < EBS_BGND_PRI)) {
++			int next_prio = sched_find_first_bit(rq->bitmap);
++
++			if ((next_prio == MAX_PRIO) || (next_prio < EBS_BGND_PRI))
++				rq->current_prio_slot = rq->queues + EBS_MAX_PRI;
++			else
++				rq->current_prio_slot = rq->queues + EBS_BGND_PRI;
++		}
++		enqueue_task(current, rq, rq->current_prio_slot->prio);
++		current->cpu_ebs_flags &= ~EBS_NEEDS_PRIO_RECALC;
++	} else {
++		list_del_init(&current->run_list);
++		list_add_tail(&current->run_list, &rq->current_prio_slot->queue);
++	}
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	dequeue_task(current);
+ 	current->slice = slice(current);
+ 	current->time_slice = current->slice;
+@@ -4614,9 +5814,25 @@ void __devinit init_idle(task_t *idle, i
+ 	local_irq_save(flags);
+ 	double_rq_lock(idle_rq, rq);
+ 
++#ifdef CONFIG_EBS
++	/*
++	 * Make sure that we don't accidentally change the idle task's priority
++	 * during schedule()
++	 */
++	idle->cpu_ebs_flags = EBS_FLAGS_DEFAULT;
++#endif
+ 	idle_rq->curr = idle_rq->idle = idle;
+ 	deactivate_task(idle, rq);
+-#ifndef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	/*
++	 * Initialising the prom_list enables us to use list_del_init()
++	 * on any task without the overhead of checking whether OK to do so
++	 */
++	INIT_LIST_HEAD(&idle->prom_list);
++	/*
++	 * Should be no need to initialise other EBS fields as they shouldn't be used
++	 */
++#elif !defined(CONFIG_SPA_STAIRCASE)
+ 	idle->array = NULL;
+ 	idle->prio = MAX_PRIO;
+ #endif
+@@ -4625,7 +5841,10 @@ void __devinit init_idle(task_t *idle, i
+ 	idle->burst = 0;
+ #endif
+ 	set_task_cpu(idle, cpu);
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	list_add_tail(&idle->run_list, &idle_rq->queues[MAX_PRIO].queue);
++	idle_rq->current_prio_slot = idle_rq->queues + MAX_PRIO;
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	/*
+ 	 * Putting the idle process onto a run queue simplifies the selection of
+ 	 * the next task to run in schedule().
+@@ -4745,13 +5964,18 @@ static void __migrate_task(struct task_s
+ 	if (!cpu_isset(dest_cpu, p->cpus_allowed))
+ 		goto out;
+ 
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++	if (!list_empty(&p->run_list))
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 	if (task_queued(p))
+ #else
+ 	set_task_cpu(p, dest_cpu);
+ 	if (p->array)
+ #endif
+ 	{
++#ifdef CONFIG_EBS
++	 	update_cpu_rate_stats(p);
++#else
+ 		/*
+ 		 * Sync timestamp with rq_dest's before activating.
+ 		 * The same thing could be achieved by doing this step
+@@ -4760,8 +5984,16 @@ static void __migrate_task(struct task_s
+ 		 */
+ 		p->timestamp = p->timestamp - rq_src->timestamp_last_tick
+ 				+ rq_dest->timestamp_last_tick;
++#endif
+ 		deactivate_task(p, rq_src);
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++		/*
++		 * Do set_task_cpu() AFTER we dequeue the task, since
++		 * dequeue_task() relies on task_cpu() always being accurate.
++		 */
++		set_task_cpu(p, dest_cpu);
++		if (TASK_PREEMPTS_CURR(activate_task(p, rq_dest, 0), rq_dest))
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 		set_task_cpu(p, dest_cpu);
+ 		if (PRIO_PREEMPTS_CURR(activate_task(p, rq_dest, 0), rq_dest))
+ #else
+@@ -4770,7 +6002,7 @@ static void __migrate_task(struct task_s
+ #endif
+ 			resched_task(rq_dest->curr);
+ 	}
+-#ifdef CONFIG_SPA_STAIRCASE
++#if defined(CONFIG_SPA_STAIRCASE) || defined(CONFIG_EBS)
+ 	else
+ 		set_task_cpu(p, dest_cpu);
+ #endif
+@@ -5296,7 +6528,7 @@ void __init sched_init(void)
+ {
+ 	runqueue_t *rq;
+ 	int i, j;
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 	int k;
+ #endif
+ 
+@@ -5317,14 +6549,18 @@ void __init sched_init(void)
+ 	sched_group_init.cpu_power = SCHED_LOAD_SCALE;
+ #endif
+ 
++#ifdef CONFIG_EBS
++	init_decay_cache(ebs_decay_per_tick);
++	init_sinbin_table(ebs_half_life_ticks);
++#endif
+ 	for (i = 0; i < NR_CPUS; i++) {
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 		prio_array_t *array;
+ #endif
+ 
+ 		rq = cpu_rq(i);
+ 		spin_lock_init(&rq->lock);
+-#ifndef CONFIG_SPA_STAIRCASE
++#if !defined(CONFIG_SPA_STAIRCASE) && !defined(CONFIG_EBS)
+ 		rq->active = rq->arrays;
+ 		rq->expired = rq->arrays + 1;
+ #ifndef CONFIG_NICKSCHED
+@@ -5342,7 +6578,27 @@ void __init sched_init(void)
+ #endif
+ 		atomic_set(&rq->nr_iowait, 0);
+ 
+-#ifdef CONFIG_SPA_STAIRCASE
++#ifdef CONFIG_EBS
++		for (j = 0; j <= MAX_PRIO; j++) {
++			rq->queues[j].prio = j;
++			INIT_LIST_HEAD(&rq->queues[j].queue);
++			__clear_bit(j, rq->bitmap);
++		}
++		// delimiter for bitsearch
++		__set_bit(MAX_PRIO, rq->bitmap);
++		for (j = 0; j < EBS_NUM_PROM_INTERVALS; j++) {
++			int k;
++
++			for (k = 0; k < SCHED_OTHER_SLOTS; k++)
++				INIT_LIST_HEAD(&rq->for_promotion[j][k]);
++		}
++		rq->next_prom_list = 0;
++		rq->eff_ent_per_share = 1; /* as small as possible without being zero */
++		rq->nr_sinbinned = 0;
++		rq->sinbinned_ticks = 0;
++		rq->current_prio_slot = rq->queues + (MAX_PRIO - 20);
++		rq->next_prom_due = jiffies + ebs_promotion_interval;
++#elif defined(CONFIG_SPA_STAIRCASE)
+ 		for (j = 0; j <= IDLE_PRIO; j++) {
+ 			rq->queues[j].prio = j;
+ 			INIT_LIST_HEAD(&rq->queues[j].queue);
+@@ -5451,3 +6707,172 @@ void __sched __preempt_write_lock(rwlock
+ 
+ EXPORT_SYMBOL(__preempt_write_lock);
+ #endif /* defined(CONFIG_SMP) && defined(CONFIG_PREEMPT) */
++
++#ifdef CONFIG_SCHED_STATS
++struct task_cpu_stats {
++	unsigned long long utime;
++	unsigned long long stime;
++	unsigned long long runnable;
++	unsigned long long sinbinned;
++	unsigned long long slices;
++};
++
++/*
++ * Invoked whenever /proc/<pid>/cpu is read.
++ */
++int proc_pid_cpu(struct task_struct *p, char *buffer)
++{
++	unsigned long delta_q = jiffies_since(p->runnable_timestamp);
++	u64 now = jiffies_64_to_clock_t(get_jiffies_64() - INITIAL_JIFFIES);
++	struct task_cpu_stats total;
++#ifdef CONFIG_SMP
++	struct task_cpu_stats cpu[NR_CPUS];
++	int i;
++#endif
++	unsigned long long runnable;
++	int len;
++
++#ifdef CONFIG_SMP
++	/* Take the sample as quickly as possible to maximise validity */
++	for (i = 0 ; i < NR_CPUS; i++) {
++		if (!cpu_online(i))
++			continue;
++		cpu[i].utime = jiffies_64_to_clock_t(p->per_cpu_utime[i]);
++		cpu[i].stime = jiffies_64_to_clock_t(p->per_cpu_stime[i]);
++		cpu[i].runnable = jiffies_64_to_clock_t(p->per_cpu_runnable[i]);
++		cpu[i].sinbinned = jiffies_to_clock_t(p->per_cpu_sinbin_ticks[i]);
++		cpu[i].slices = p->per_cpu_slices[i];
++	}
++
++	/* be noncommital about status of current tick */
++	if ((delta_q > 1) && !list_empty(&p->run_list))
++		cpu[task_cpu(p)].runnable += jiffies_64_to_clock_t(delta_q - 1);
++	/* Sum data, update run queue time, and determine sleep time */
++	memset(&total, 0, sizeof(total));
++	for (i = 0 ; i < NR_CPUS; i++) {
++		if (!cpu_online(i))
++			continue;
++		total.utime += cpu[i].utime;
++		total.stime += cpu[i].stime;
++		if ((runnable = cpu[i].utime + cpu[i].stime) > cpu[i].runnable)
++			cpu[i].runnable = runnable;
++		total.runnable += cpu[i].runnable;
++		total.sinbinned += cpu[i].sinbinned;
++		total.slices += cpu[i].slices;
++	}
++#else
++	total.utime = jiffies_64_to_clock_t(p->utime);
++	total.stime = jiffies_64_to_clock_t(p->stime);
++	total.runnable = jiffies_64_to_clock_t(p->runnable);
++	total.sinbinned = jiffies_to_clock_t(p->sinbin_ticks);
++	total.slices = p->slices;
++
++	/* be noncommital about status of current tick */
++	if ((delta_q > 1) && !list_empty(&p->run_list))
++		total.runnable += jiffies_64_to_clock_t(delta_q - 1);
++
++	if ((runnable = total.utime + total.stime) > total.runnable)
++		total.runnable = runnable;
++#endif
++	/* Print total to buffer and per cpu statistics */
++	len = sprintf(buffer, "cpu  %llu %llu %llu %llu %llu @ %llu\n",
++		      total.utime, total.stime, total.runnable,
++		      total.sinbinned, total.slices, now);
++
++#ifdef CONFIG_SMP
++	if (num_online_cpus() > 1) {
++		for (i = 0 ; i < NR_CPUS; i++) {
++			if (!cpu_online(i))
++				continue;
++			len += sprintf(buffer + len,
++				       "cpu%d  %llu %llu %llu %llu %llu\n",
++				       i, cpu[i].utime, cpu[i].stime,
++				       cpu[i].runnable, cpu[i].sinbinned,
++				       cpu[i].slices);
++		}
++	}
++#endif
++
++	return len;
++}
++
++
++/*
++ * With multiple CPUs some of these totals can easily get to big to
++ * fit in a long on 32 bit machines so use u64.
++ */
++struct system_cpu_stats {
++	u64 user;
++	u64 system;
++	u64 runnable;
++	u64 idle;
++	u64 iowait;
++	u64 nr_switches;
++};
++
++/*
++ * Invoked whenever /proc/cpustats is read.
++ */
++int cpustats_read_proc(char *page, char **start, off_t off, int count,
++		       int *eof, void *data)
++{
++	struct system_cpu_stats total, cpu[NR_CPUS];
++	u64 now = jiffies_64_to_clock_t(get_jiffies_64() - INITIAL_JIFFIES);
++	runqueue_t *rq;
++	int i, len;
++
++	/* Take a snapshot as briefly as possible to maximise validity */
++	for (i = 0; i < NR_CPUS; i++) {
++		if (!cpu_online(i))
++			continue;
++		rq = cpu_rq(i);
++		cpu[i].user = jiffies_64_to_clock_t(kstat_cpu(i).cpustat.user);
++		cpu[i].user += jiffies_64_to_clock_t(kstat_cpu(i).cpustat.nice);
++		cpu[i].system = jiffies_64_to_clock_t(kstat_cpu(i).cpustat.system);
++		cpu[i].runnable = jiffies_64_to_clock_t(kstat_cpu(i).cpustat.runnable);
++		cpu[i].idle = jiffies_64_to_clock_t(kstat_cpu(i).cpustat.idle);
++		cpu[i].iowait = jiffies_64_to_clock_t(kstat_cpu(i).cpustat.iowait);
++		cpu[i].nr_switches = rq->nr_switches;
++	}
++
++	/* Work out the totals */
++	memset(&total, 0, sizeof(total));
++	for (i = 0 ; i < NR_CPUS; i++) {
++		if (!cpu_online(i))
++			continue;
++		total.user += cpu[i].user;
++		total.system += cpu[i].system;
++		total.runnable += cpu[i].runnable;
++		total.idle += cpu[i].idle;
++		total.iowait += cpu[i].iowait;
++		total.nr_switches += cpu[i].nr_switches;
++	}
++
++	/* Print totals to buffer followed by per cpu statistics */
++	len = sprintf(page, "cpu  %llu %llu %llu %llu %llu %llu @ %llu\n",
++		      total.user, total.system, total.runnable, total.idle,
++		      total.iowait, total.nr_switches, now);
++
++	if (num_online_cpus() > 1) {
++		for (i = 0 ; i < NR_CPUS; i++) {
++			if (!cpu_online(i))
++				continue;
++			len += sprintf(page + len,
++				       "cpu%d %llu %llu %llu %llu %llu %llu\n",
++				       i, cpu[i].user, cpu[i].system,
++				       cpu[i].runnable, cpu[i].idle,
++				       cpu[i].iowait, cpu[i].nr_switches);
++		}
++	}
++
++	if (len <= off + count)
++		*eof = 1;
++	*start = page + off;
++	len -= off;
++	if (len > count)
++		len = count;
++	if (len < 0)
++		len = 0;
++	return len;
++}
++#endif
+diff -puN kernel/timer.c~ebs-1.1-full kernel/timer.c
+--- linux-2.6.7-rc3-xx1/kernel/timer.c~ebs-1.1-full	2004-06-11 01:54:49.518314800 -0400
++++ linux-2.6.7-rc3-xx1-xiphux/kernel/timer.c	2004-06-11 01:54:49.602302032 -0400
+@@ -833,6 +833,10 @@ static inline void do_it_prof(struct tas
+ void update_one_process(struct task_struct *p, unsigned long user,
+ 			unsigned long system, int cpu)
+ {
++#if defined(CONFIG_SCHED_STATS) && defined(CONFIG_SMP)
++	p->per_cpu_utime[cpu] += user;
++	p->per_cpu_stime[cpu] += system;
++#endif
+ 	do_process_times(p, user, system);
+ 	do_it_virt(p, user);
+ 	do_it_prof(p);
+
+_

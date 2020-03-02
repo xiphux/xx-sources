@@ -1,0 +1,59 @@
+
+
+The generation counters were removed from the idr code.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/lib/idr.c |   28 ++++------------------------
+ 1 files changed, 4 insertions(+), 24 deletions(-)
+
+diff -puN lib/idr.c~idr-stale-comment lib/idr.c
+--- 25/lib/idr.c~idr-stale-comment	2004-07-07 04:05:03.673660304 -0700
++++ 25-akpm/lib/idr.c	2004-07-07 04:05:35.573810744 -0700
+@@ -27,22 +27,6 @@
+  * so you don't need to be too concerned about locking and conflicts
+  * with the slab allocator.
+ 
+- * What you need to do is, since we don't keep the counter as part of
+- * id / ptr pair, to keep a copy of it in the pointed to structure
+- * (or else where) so that when you ask for a ptr you can varify that
+- * the returned ptr is correct by comparing the id it contains with the one
+- * you asked for.  In other words, we only did half the reuse protection.
+- * Since the code depends on your code doing this check, we ignore high
+- * order bits in the id, not just the count, but bits that would, if used,
+- * index outside of the allocated ids.  In other words, if the largest id
+- * currently allocated is 32 a look up will only look at the low 5 bits of
+- * the id.  Since you will want to keep this id in the structure anyway
+- * (if for no other reason than to be able to eliminate the id when the
+- * structure is found in some other way) this seems reasonable.  If you
+- * really think otherwise, the code to check these bits here, it is just
+- * disabled with a #if 0.
+-
+-
+  * So here are the complete details:
+ 
+  *  include <linux/idr.h>
+@@ -372,17 +356,13 @@ void *idr_find(struct idr *idp, int id)
+ 
+ 	n = idp->layers * IDR_BITS;
+ 	p = idp->top;
+-#if 0
+-	/*
+-	 * This tests to see if bits outside the current tree are
+-	 * present.  If so, tain't one of ours!
+-	 */
+-	if ( unlikely( (id & ~(~0 << MAX_ID_SHIFT)) >> (n + IDR_BITS)))
+-	     return NULL;
+-#endif
++
+ 	/* Mask off upper bits we don't use for the search. */
+ 	id &= MAX_ID_MASK;
+ 
++	if (id >= (1 << n))
++		return NULL;
++
+ 	while (n > 0 && p) {
+ 		n -= IDR_BITS;
+ 		p = p->ary[(id >> n) & IDR_MASK];
+_

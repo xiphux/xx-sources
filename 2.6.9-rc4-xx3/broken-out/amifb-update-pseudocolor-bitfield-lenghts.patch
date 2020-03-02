@@ -1,0 +1,46 @@
+
+From: Geert Uytterhoeven <geert@linux-m68k.org>
+
+Amiga frame buffer: The new convention (introduced in 2.6.9-rc1) requires that
+the usable color depth for pseudocolor visuals is indicated by the lengths of
+the color bitfields.  Update amifb for this convention, and add a special case
+for HAM (Hold-and-Modify) mode (colormap has 16 (HAM6) or 64 (HAM8) entries).
+
+Signed-off-by: Geert Uytterhoeven <geert@linux-m68k.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/video/amifb.c |   20 +++++---------------
+ 1 files changed, 5 insertions(+), 15 deletions(-)
+
+diff -puN drivers/video/amifb.c~amifb-update-pseudocolor-bitfield-lenghts drivers/video/amifb.c
+--- 25/drivers/video/amifb.c~amifb-update-pseudocolor-bitfield-lenghts	2004-10-02 18:40:59.269915432 -0700
++++ 25-akpm/drivers/video/amifb.c	2004-10-02 18:40:59.276914368 -0700
+@@ -2956,21 +2956,11 @@ static int ami_encode_var(struct fb_var_
+ 	var->bits_per_pixel = par->bpp;
+ 	var->grayscale = 0;
+ 
+-	if (IS_AGA) {
+-		var->red.offset = 0;
+-		var->red.length = 8;
+-		var->red.msb_right = 0;
+-	} else {
+-		if (clk_shift == TAG_SHRES) {
+-			var->red.offset = 0;
+-			var->red.length = 2;
+-			var->red.msb_right = 0;
+-		} else {
+-			var->red.offset = 0;
+-			var->red.length = 4;
+-			var->red.msb_right = 0;
+-		}
+-	}
++	var->red.offset = 0;
++	var->red.msb_right = 0;
++	var->red.length = par->bpp;
++	if (par->bplcon0 & BPC0_HAM)
++	    var->red.length -= 2;
+ 	var->blue = var->green = var->red;
+ 	var->transp.offset = 0;
+ 	var->transp.length = 0;
+_

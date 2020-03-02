@@ -1,0 +1,89 @@
+
+From: Jens Axboe <axboe@suse.de>
+
+The io contexts needs to hold a reference to the cfq_data structure in cfq
+as well, otherwise an exiting task will try to access freed memory.
+
+Signed-off-by: Jens Axboe <axboe@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/cfq-iosched.c |   19 +++++++++++++++++--
+ 1 files changed, 17 insertions(+), 2 deletions(-)
+
+diff -puN drivers/block/cfq-iosched.c~cfq-v2-pin-cfq_data-from-io_context drivers/block/cfq-iosched.c
+--- 25/drivers/block/cfq-iosched.c~cfq-v2-pin-cfq_data-from-io_context	Thu Sep 30 15:46:26 2004
++++ 25-akpm/drivers/block/cfq-iosched.c	Thu Sep 30 15:46:26 2004
+@@ -114,6 +114,8 @@ struct cfq_data {
+ 
+ 	unsigned int max_queued;
+ 
++	atomic_t ref;
++
+ 	int key_type;
+ 
+ 	mempool_t *crq_pool;
+@@ -199,6 +201,7 @@ struct cfq_rq {
+ static struct cfq_queue *cfq_find_cfq_hash(struct cfq_data *, unsigned long);
+ static void cfq_dispatch_sort(request_queue_t *, struct cfq_rq *);
+ static void cfq_update_next_crq(struct cfq_rq *);
++static void cfq_put_cfqd(struct cfq_data *cfqd);
+ 
+ /*
+  * what the fairness is based on (ie how processes are grouped and
+@@ -969,6 +972,8 @@ static void cfq_put_queue(struct cfq_que
+ 	BUG_ON(rb_first(&cfqq->sort_list));
+ 	BUG_ON(cfqq->on_rr);
+ 
++	cfq_put_cfqd(cfqq->cfqd);
++
+ 	/*
+ 	 * it's on the empty list and still hashed
+ 	 */
+@@ -1209,6 +1214,7 @@ retry:
+ 		hlist_add_head(&cfqq->cfq_hash, &cfqd->cfq_hash[hashval]);
+ 		atomic_set(&cfqq->ref, 0);
+ 		cfqq->cfqd = cfqd;
++		atomic_inc(&cfqd->ref);
+ 		cfqq->key_type = cfqd->key_type;
+ 		cfqq->service_start = ~0UL;
+ 	}
+@@ -1473,12 +1479,15 @@ out_lock:
+ 	return 1;
+ }
+ 
+-static void cfq_exit_queue(elevator_t *e)
++static void cfq_put_cfqd(struct cfq_data *cfqd)
+ {
+-	struct cfq_data *cfqd = e->elevator_data;
+ 	request_queue_t *q = cfqd->queue;
++	elevator_t *e = q->elevator;
+ 	struct cfq_queue *cfqq;
+ 
++	if (!atomic_dec_and_test(&cfqd->ref))
++		return;
++
+ 	/*
+ 	 * kill spare queue, getting it means we have two refences to it.
+ 	 * drop both
+@@ -1498,6 +1507,11 @@ static void cfq_exit_queue(elevator_t *e
+ 	kfree(cfqd);
+ }
+ 
++static void cfq_exit_queue(elevator_t *e)
++{
++	cfq_put_cfqd(e->elevator_data);
++}
++
+ static int cfq_init_queue(request_queue_t *q, elevator_t *e)
+ {
+ 	struct cfq_data *cfqd;
+@@ -1550,6 +1564,7 @@ static int cfq_init_queue(request_queue_
+ 	q->nr_batching = cfq_queued;
+ 	cfqd->key_type = CFQ_KEY_TGID;
+ 	cfqd->find_best_crq = 1;
++	atomic_set(&cfqd->ref, 1);
+ 
+ 	cfqd->cfq_queued = cfq_queued;
+ 	cfqd->cfq_quantum = cfq_quantum;
+_

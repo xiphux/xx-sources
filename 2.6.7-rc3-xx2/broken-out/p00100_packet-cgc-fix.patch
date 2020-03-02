@@ -1,0 +1,140 @@
+---
+
+ linux-2.6.7-rc3-xx2-xiphux/drivers/block/pktcdvd.c |   30 ++++++++++-----------
+ 1 files changed, 15 insertions(+), 15 deletions(-)
+
+diff -puN drivers/block/pktcdvd.c~packet-cgc-fix drivers/block/pktcdvd.c
+--- linux-2.6.7-rc3-xx2/drivers/block/pktcdvd.c~packet-cgc-fix	2004-06-12 11:04:24.000000000 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/drivers/block/pktcdvd.c	2004-06-12 11:06:15.968671024 -0400
+@@ -306,10 +306,10 @@ static inline struct bio *pkt_get_list_f
+ }
+ 
+ /*
+- * Send a cdrom_generic_command to the underlying block device and
++ * Send a packet_command to the underlying block device and
+  * wait for completion.
+  */
+-static int pkt_generic_packet(struct pktcdvd_device *pd, struct cdrom_generic_command *cgc)
++static int pkt_generic_packet(struct pktcdvd_device *pd, struct packet_command *cgc)
+ {
+ 	char sense[SCSI_SENSE_BUFFERSIZE];
+ 	request_queue_t *q;
+@@ -361,7 +361,7 @@ static int pkt_generic_packet(struct pkt
+  * A generic sense dump / resolve mechanism should be implemented across
+  * all ATAPI + SCSI devices.
+  */
+-static void pkt_dump_sense(struct cdrom_generic_command *cgc)
++static void pkt_dump_sense(struct packet_command *cgc)
+ {
+ 	static char *info[9] = { "No sense", "Recovered error", "Not ready",
+ 				 "Medium error", "Hardware error", "Illegal request",
+@@ -394,7 +394,7 @@ static void pkt_dump_sense(struct cdrom_
+  */
+ static int pkt_flush_cache(struct pktcdvd_device *pd)
+ {
+-	struct cdrom_generic_command cgc;
++	struct packet_command cgc;
+ 
+ 	init_cdrom_command(&cgc, NULL, 0, CGC_DATA_NONE);
+ 	cgc.cmd[0] = GPCMD_FLUSH_CACHE;
+@@ -415,7 +415,7 @@ static int pkt_flush_cache(struct pktcdv
+  */
+ static int pkt_set_speed(struct pktcdvd_device *pd, unsigned write_speed, unsigned read_speed)
+ {
+-	struct cdrom_generic_command cgc;
++	struct packet_command cgc;
+ 	struct request_sense sense;
+ 	int ret;
+ 
+@@ -1287,7 +1287,7 @@ static void pkt_print_settings(struct pk
+ 	printk("Mode-%c disc\n", pd->settings.block_mode == 8 ? '1' : '2');
+ }
+ 
+-static int pkt_mode_sense(struct pktcdvd_device *pd, struct cdrom_generic_command *cgc,
++static int pkt_mode_sense(struct pktcdvd_device *pd, struct packet_command *cgc,
+ 			  int page_code, int page_control)
+ {
+ 	memset(cgc->cmd, 0, sizeof(cgc->cmd));
+@@ -1300,7 +1300,7 @@ static int pkt_mode_sense(struct pktcdvd
+ 	return pkt_generic_packet(pd, cgc);
+ }
+ 
+-static int pkt_mode_select(struct pktcdvd_device *pd, struct cdrom_generic_command *cgc)
++static int pkt_mode_select(struct pktcdvd_device *pd, struct packet_command *cgc)
+ {
+ 	memset(cgc->cmd, 0, sizeof(cgc->cmd));
+ 	memset(cgc->buffer, 0, 2);
+@@ -1314,7 +1314,7 @@ static int pkt_mode_select(struct pktcdv
+ 
+ static int pkt_get_disc_info(struct pktcdvd_device *pd, disc_information *di)
+ {
+-	struct cdrom_generic_command cgc;
++	struct packet_command cgc;
+ 	int ret;
+ 
+ 	/* set up command and get the disc info */
+@@ -1341,7 +1341,7 @@ static int pkt_get_disc_info(struct pktc
+ 
+ static int pkt_get_track_info(struct pktcdvd_device *pd, __u16 track, __u8 type, track_information *ti)
+ {
+-	struct cdrom_generic_command cgc;
++	struct packet_command cgc;
+ 	int ret;
+ 
+ 	init_cdrom_command(&cgc, ti, 8, CGC_DATA_READ);
+@@ -1404,7 +1404,7 @@ static int pkt_get_last_written(struct p
+  */
+ static int pkt_set_write_settings(struct pktcdvd_device *pd)
+ {
+-	struct cdrom_generic_command cgc;
++	struct packet_command cgc;
+ 	struct request_sense sense;
+ 	write_param_page *wp;
+ 	char buffer[128];
+@@ -1632,7 +1632,7 @@ static int pkt_probe_settings(struct pkt
+  */
+ static int pkt_write_caching(struct pktcdvd_device *pd, int set)
+ {
+-	struct cdrom_generic_command cgc;
++	struct packet_command cgc;
+ 	struct request_sense sense;
+ 	unsigned char buf[64];
+ 	int ret;
+@@ -1664,7 +1664,7 @@ static int pkt_write_caching(struct pktc
+ 
+ static int pkt_lock_door(struct pktcdvd_device *pd, int lockflag)
+ {
+-	struct cdrom_generic_command cgc;
++	struct packet_command cgc;
+ 
+ 	init_cdrom_command(&cgc, NULL, 0, CGC_DATA_NONE);
+ 	cgc.cmd[0] = GPCMD_PREVENT_ALLOW_MEDIUM_REMOVAL;
+@@ -1677,7 +1677,7 @@ static int pkt_lock_door(struct pktcdvd_
+  */
+ static int pkt_get_max_speed(struct pktcdvd_device *pd, unsigned *write_speed)
+ {
+-	struct cdrom_generic_command cgc;
++	struct packet_command cgc;
+ 	struct request_sense sense;
+ 	unsigned char buf[256+18];
+ 	unsigned char *cap_buf;
+@@ -1738,7 +1738,7 @@ static char us_clv_to_speed[16] = {
+  */
+ static int pkt_media_speed(struct pktcdvd_device *pd, unsigned *speed)
+ {
+-	struct cdrom_generic_command cgc;
++	struct packet_command cgc;
+ 	struct request_sense sense;
+ 	unsigned char buf[64];
+ 	unsigned int size, st, sp;
+@@ -1810,7 +1810,7 @@ static int pkt_media_speed(struct pktcdv
+ 
+ static int pkt_perform_opc(struct pktcdvd_device *pd)
+ {
+-	struct cdrom_generic_command cgc;
++	struct packet_command cgc;
+ 	struct request_sense sense;
+ 	int ret;
+ 
+
+_

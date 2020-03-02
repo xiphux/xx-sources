@@ -1,0 +1,116 @@
+
+From: <blaisorblade_spam@yahoo.it>
+
+From: Alex Züpke <azu@sysgo.de>, and me
+
+SKAS mode is like 4G/4G (here we have actually 3G/3G) for guest processes, so
+when checking for kernel stack overflow, we must first make sure we are
+checking a kernel-space address.  Also, correctly test for stack overflows
+(i.e.  check if there is less than 1k of stack left; see
+arch/i386/kernel/irq.c:do_IRQ()).  And also, THREAD_SIZE != PAGE_SIZE * 2, in
+general (though this setting is almost never changed, so we didn't notice
+this1).  Thanks to the good eye of Alex Züpke <azu@sysgo.de> for first seeing
+this bug, and providing a test program:
+
+/*
+ * trigger.c - triggers panic("Kernel stack overflow") in UML
+ *
+ * 20040630, azu@sysgo.de
+ */
+
+#include <stdio.h>
+#include <setjmp.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+
+#define LOW  0xa0000000
+#define HIGH 0xb0000000
+
+int main(int argc, char **argv)
+{
+	unsigned long addr;
+	int fd;
+
+	fd = open("/dev/zero", O_RDWR);
+
+	printf("This may take some time ... one more cup of coffee ...\n");
+
+	for(addr = LOW; addr < HIGH; addr += 0x1000)
+	{
+		pid_t p;
+		if(mmap((void*)addr, 0x1000, PROT_READ, MAP_SHARED | MAP_FIXED, fd, 0) == MAP_FAILED)
+			printf("mmap failed\n");
+
+		p = fork();
+		if(p == -1)
+			printf("fork failed\n");
+
+		if(p == 0)
+		{
+			/* child context */
+			int *p = (int *)addr;
+			volatile int x;
+
+			x = *p;
+			return 0;
+		}
+		/* father context */
+		waitpid(p, 0, 0);
+
+		if(munmap((void*)addr, 0x1000) == -1)
+			printf("munmap failed\n");
+	}
+
+	close(fd);
+	printf("done\n");
+}
+
+Signed-off-by: Paolo 'Blaisorblade' Giarrusso <blaisorblade_spam@yahoo.it>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/um/kernel/process_kern.c |    2 +-
+ 25-akpm/arch/um/kernel/skas/uaccess.c |    2 +-
+ 25-akpm/arch/um/kernel/trap_kern.c    |    2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff -puN arch/um/kernel/process_kern.c~uml-avoids-a-panic-for-a-legal-situation arch/um/kernel/process_kern.c
+--- 25/arch/um/kernel/process_kern.c~uml-avoids-a-panic-for-a-legal-situation	2004-07-05 16:00:49.100556032 -0700
++++ 25-akpm/arch/um/kernel/process_kern.c	2004-07-05 16:00:49.106555120 -0700
+@@ -165,7 +165,7 @@ int copy_thread(int nr, unsigned long cl
+ {
+ 	p->thread = (struct thread_struct) INIT_THREAD;
+ 	p->thread.kernel_stack = 
+-		(unsigned long) p->thread_info + 2 * PAGE_SIZE;
++		(unsigned long) p->thread_info + THREAD_SIZE;
+ 	return(CHOOSE_MODE_PROC(copy_thread_tt, copy_thread_skas, nr, 
+ 				clone_flags, sp, stack_top, p, regs));
+ }
+diff -puN arch/um/kernel/skas/uaccess.c~uml-avoids-a-panic-for-a-legal-situation arch/um/kernel/skas/uaccess.c
+--- 25/arch/um/kernel/skas/uaccess.c~uml-avoids-a-panic-for-a-legal-situation	2004-07-05 16:00:49.101555880 -0700
++++ 25-akpm/arch/um/kernel/skas/uaccess.c	2004-07-05 16:00:49.107554968 -0700
+@@ -25,7 +25,7 @@ static unsigned long maybe_map(unsigned 
+ 	int dummy_code;
+ 
+ 	if(IS_ERR(phys) || (is_write && !pte_write(pte))){
+-		err = handle_page_fault(virt, 0, is_write, 0, &dummy_code);
++		err = handle_page_fault(virt, 0, is_write, 1, &dummy_code);
+ 		if(err)
+ 			return(0);
+ 		phys = um_virt_to_phys(current, virt, NULL);
+diff -puN arch/um/kernel/trap_kern.c~uml-avoids-a-panic-for-a-legal-situation arch/um/kernel/trap_kern.c
+--- 25/arch/um/kernel/trap_kern.c~uml-avoids-a-panic-for-a-legal-situation	2004-07-05 16:00:49.103555576 -0700
++++ 25-akpm/arch/um/kernel/trap_kern.c	2004-07-05 16:00:49.107554968 -0700
+@@ -54,7 +54,7 @@ int handle_page_fault(unsigned long addr
+ 	if(is_write && !(vma->vm_flags & VM_WRITE)) 
+ 		goto out;
+ 	page = address & PAGE_MASK;
+-	if(page == (unsigned long) current_thread + PAGE_SIZE)
++	if(address < (unsigned long) current_thread + 1024 && !is_user)
+ 		panic("Kernel stack overflow");
+ 	pgd = pgd_offset(mm, page);
+ 	pmd = pmd_offset(pgd, page);
+_

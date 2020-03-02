@@ -1,0 +1,82 @@
+
+
+Dumb identifier to put into sched.h.  Breaks about ten drivers.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/sched.h |    2 +-
+ 25-akpm/kernel/sched.c        |   13 +++++++------
+ 2 files changed, 8 insertions(+), 7 deletions(-)
+
+diff -puN include/linux/sched.h~sched-make-domain-setup-overridable-rename include/linux/sched.h
+--- 25/include/linux/sched.h~sched-make-domain-setup-overridable-rename	2004-10-05 02:09:48.634436776 -0700
++++ 25-akpm/include/linux/sched.h	2004-10-05 02:09:48.640435864 -0700
+@@ -408,7 +408,7 @@ extern struct file_operations proc_sched
+ 
+ enum idle_type
+ {
+-	IDLE,
++	SCHED_IDLE,
+ 	NOT_IDLE,
+ 	NEWLY_IDLE,
+ 	MAX_IDLE_TYPES
+diff -puN kernel/sched.c~sched-make-domain-setup-overridable-rename kernel/sched.c
+--- 25/kernel/sched.c~sched-make-domain-setup-overridable-rename	2004-10-05 02:09:48.636436472 -0700
++++ 25-akpm/kernel/sched.c	2004-10-05 02:09:48.643435408 -0700
+@@ -360,7 +360,7 @@ static int show_schedstat(struct seq_fil
+ 		    rq->smt_cnt, rq->sbe_cnt, rq->rq_sched_info.cpu_time,
+ 		    rq->rq_sched_info.run_delay, rq->rq_sched_info.pcnt);
+ 
+-		for (itype = IDLE; itype < MAX_IDLE_TYPES; itype++)
++		for (itype = SCHED_IDLE; itype < MAX_IDLE_TYPES; itype++)
+ 			seq_printf(seq, " %lu %lu", rq->pt_gained[itype],
+ 						    rq->pt_lost[itype]);
+ 		seq_printf(seq, "\n");
+@@ -372,7 +372,8 @@ static int show_schedstat(struct seq_fil
+ 
+ 			cpumask_scnprintf(mask_str, NR_CPUS, sd->span);
+ 			seq_printf(seq, "domain%d %s", dcnt++, mask_str);
+-			for (itype = IDLE; itype < MAX_IDLE_TYPES; itype++) {
++			for (itype = SCHED_IDLE; itype < MAX_IDLE_TYPES;
++						itype++) {
+ 				seq_printf(seq, " %lu %lu %lu %lu %lu",
+ 				    sd->lb_cnt[itype],
+ 				    sd->lb_failed[itype],
+@@ -1864,7 +1865,7 @@ nextgroup:
+ 
+ out_balanced:
+ 	if (busiest && (idle == NEWLY_IDLE ||
+-			(idle == IDLE && max_load > SCHED_LOAD_SCALE)) ) {
++			(idle == SCHED_IDLE && max_load > SCHED_LOAD_SCALE)) ) {
+ 		*imbalance = 1;
+ 		return busiest;
+ 	}
+@@ -2106,7 +2107,7 @@ static void active_load_balance(runqueue
+ 		if (unlikely(busiest == rq))
+ 			goto next_group;
+ 		double_lock_balance(busiest, rq);
+-		if (move_tasks(rq, push_cpu, busiest, 1, sd, IDLE)) {
++		if (move_tasks(rq, push_cpu, busiest, 1, sd, SCHED_IDLE)) {
+ 			schedstat_inc(busiest, alb_lost);
+ 			schedstat_inc(rq, alb_gained);
+ 		} else {
+@@ -2156,7 +2157,7 @@ static void rebalance_tick(int this_cpu,
+ 			continue;
+ 
+ 		interval = sd->balance_interval;
+-		if (idle != IDLE)
++		if (idle != SCHED_IDLE)
+ 			interval *= sd->busy_factor;
+ 
+ 		/* scale ms to jiffies */
+@@ -2258,7 +2259,7 @@ void scheduler_tick(int user_ticks, int 
+ 			cpustat->idle += sys_ticks;
+ 		if (wake_priority_sleeper(rq))
+ 			goto out;
+-		rebalance_tick(cpu, rq, IDLE);
++		rebalance_tick(cpu, rq, SCHED_IDLE);
+ 		return;
+ 	}
+ 	if (TASK_NICE(p) > 0)
+_

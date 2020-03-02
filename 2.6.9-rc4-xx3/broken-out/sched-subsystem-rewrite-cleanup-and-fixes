@@ -1,0 +1,805 @@
+Index: xx-sources/include/linux/scheduler.h
+===================================================================
+--- xx-sources.orig/include/linux/scheduler.h	2004-10-07 10:13:53.413989608 -0400
++++ xx-sources/include/linux/scheduler.h	2004-10-07 10:14:02.243647296 -0400
+@@ -60,9 +60,6 @@
+ typedef void (lock_kernel_fn) (void);
+ typedef void (unlock_kernel_fn) (void);
+ #endif
+-#if defined(CONFIG_PREEMPT)
+-typedef asmlinkage void (preempt_schedule_fn) (void);
+-#endif
+ #if defined(CONFIG_SYSCTL)
+ typedef void (sysctl_register_fn)(void);
+ #endif
+@@ -128,9 +125,6 @@
+ 	lock_kernel_fn *lock_kernel_fn;
+ 	unlock_kernel_fn *unlock_kernel_fn;
+ #endif
+-#if defined(CONFIG_PREEMPT)
+-	preempt_schedule_fn *preempt_schedule_fn;
+-#endif
+ #if defined(CONFIG_SYSCTL)
+ 	sysctl_register_fn *sysctl_register_fn;
+ #endif
+@@ -142,9 +136,17 @@
+ 
+ typedef struct scheduler_s scheduler_t;
+ 
++#if defined(CONFIG_SCHED_NONE)
+ extern scheduler_t sched_default;
++#endif
++#if defined(CONFIG_NICKSCHED)
+ extern scheduler_t sched_nicksched;
++#endif
++#if defined(CONFIG_STAIRCASE)
+ extern scheduler_t sched_staircase;
++#endif
++#if defined(CONFIG_XSCHED)
+ extern scheduler_t sched_xsched;
++#endif
+ 
+ #endif
+Index: xx-sources/init/main.c
+===================================================================
+--- xx-sources.orig/init/main.c	2004-10-07 10:13:53.415989304 -0400
++++ xx-sources/init/main.c	2004-10-07 10:14:02.244647144 -0400
+@@ -370,7 +370,6 @@
+ #endif
+ 
+ static inline void setup_per_cpu_areas(void) { }
+-#if defined(CONFIG_XSCHED)
+ unsigned long cache_decay_ticks;
+ static void smp_prepare_cpus(unsigned int maxcpus)
+ {
+@@ -379,9 +378,6 @@
+ 	printk("Generic cache decay timeout: %ld msecs.\n",
+ 		(cache_decay_ticks * 1000 / HZ));
+ }
+-#else
+-static inline void smp_prepare_cpus(unsigned int maxcpus) { }
+-#endif
+ 
+ #else
+ 
+Index: xx-sources/kernel/default-sched.c
+===================================================================
+--- xx-sources.orig/kernel/default-sched.c	2004-10-07 10:13:53.420988544 -0400
++++ xx-sources/kernel/default-sched.c	2004-10-07 10:15:02.742450080 -0400
+@@ -2783,54 +2783,6 @@
+ 		goto need_resched;
+ }
+ 
+-#ifdef CONFIG_PREEMPT
+-/*
+- * this is is the entry point to schedule() from in-kernel preemption
+- * off of preempt_enable.  Kernel preemptions off return from interrupt
+- * occur there and call schedule directly.
+- */
+-asmlinkage void __sched default_preempt_schedule(void)
+-{
+-	struct thread_info *ti = current_thread_info();
+-#ifdef CONFIG_PREEMPT_BKL
+-	struct task_struct *task = current;
+-	int saved_lock_depth;
+-#endif
+-
+-
+-
+-	/*
+-	 * If there is a non-zero preempt_count or interrupts are disabled,
+-	 * we do not want to preempt the current task.  Just return..
+-	 */
+-	if (unlikely(ti->preempt_count || irqs_disabled()))
+-		return;
+-
+-need_resched:
+-	add_preempt_count(PREEMPT_ACTIVE);
+-	/*
+-	 * We keep the big kernel semaphore locked, but we
+-	 * clear ->lock_depth so that schedule() doesnt
+-	 * auto-release the semaphore:
+-	 */
+-#ifdef CONFIG_PREEMPT_BKL
+-	saved_lock_depth = task->lock_depth;
+-	task->lock_depth = -1;
+-#endif
+-	default_schedule();
+-#ifdef CONFIG_PREEMPT_BKL
+-	task->lock_depth = saved_lock_depth;
+-#endif
+-	sub_preempt_count(PREEMPT_ACTIVE);
+-
+-	/* we could miss a preemption opportunity between schedule and now */
+-	barrier();
+-	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
+-		goto need_resched;
+-}
+-
+-#endif /* CONFIG_PREEMPT */
+-
+ int default_default_wake_function(wait_queue_t *curr, unsigned mode, int sync, void *key)
+ {
+ 	task_t *p = curr->task;
+@@ -4449,28 +4401,6 @@
+ 	default_init_idle(current, smp_processor_id());
+ }
+ 
+-#ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
+-void __might_sleep(char *file, int line)
+-{
+-#if defined(in_atomic)
+-	static unsigned long prev_jiffy;	/* ratelimiting */
+-
+-	if ((in_atomic() || irqs_disabled()) &&
+-	    system_state == SYSTEM_RUNNING) {
+-		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
+-			return;
+-		prev_jiffy = jiffies;
+-		printk(KERN_ERR "Debug: sleeping function called from invalid"
+-				" context at %s:%d\n", file, line);
+-		printk("in_atomic():%d, irqs_disabled():%d\n",
+-			in_atomic(), irqs_disabled());
+-		dump_stack();
+-	}
+-#endif
+-}
+-EXPORT_SYMBOL(__might_sleep);
+-#endif
+-
+ scheduler_t sched_default = {
+ 	.schedule_tail_fn = 			default_schedule_tail,
+ 	.schedule_fn =				default_schedule,
+@@ -4499,7 +4429,9 @@
+ 	.nr_uninterruptible_fn = 		default_nr_uninterruptible,
+ 	.nr_iowait_fn = 			default_nr_iowait,
+ 	.nr_context_switches_fn = 		default_nr_context_switches,
++#if defined(CONFIG_SMP)
+ 	.sched_exec_fn = 			default_sched_exec,
++#endif
+ 	.sched_setaffinity_fn = 		default_sched_setaffinity,
+ 	.sched_getaffinity_fn =			default_sched_getaffinity,
+ 	.sys_nice_fn = 				default_sys_nice,
+@@ -4512,7 +4444,9 @@
+ 	.sys_sched_rr_get_interval_fn = 	default_sys_sched_rr_get_interval,
+ 	.sched_init_fn = 			default_sched_init,
+ 	.sched_init_smp_fn = 			default_sched_init_smp,
++#if defined(CONFIG_SMP)
+ 	.migration_init_fn = 			default_migration_init,
++#endif
+ 	.sched_fork_fn = 			default_sched_fork,
+ 	.sched_exit_fn = 			default_sched_exit,
+ 	.init_idle_fn = 			default_init_idle,
+@@ -4530,9 +4464,6 @@
+ 	.lock_kernel_fn = 			default_lock_kernel,
+ 	.unlock_kernel_fn = 			default_unlock_kernel,
+ #endif
+-#if defined(CONFIG_PREEMPT)
+-	.preempt_schedule_fn = 			default_preempt_schedule,
+-#endif
+ 	.name = 				DEFAULT_SCHEDULER_NAME,
+ 	.version = 				DEFAULT_SCHEDULER_VERSION,
+ 	.type = 				SCHED_DEFAULT,
+Index: xx-sources/kernel/nicksched-sched.c
+===================================================================
+--- xx-sources.orig/kernel/nicksched-sched.c	2004-10-07 10:13:53.424987936 -0400
++++ xx-sources/kernel/nicksched-sched.c	2004-10-07 10:15:29.524378608 -0400
+@@ -2607,55 +2607,6 @@
+ 
+ EXPORT_SYMBOL(nicksched_schedule);
+ 
+-#ifdef CONFIG_PREEMPT
+-/*
+- * this is is the entry point to nicksched_schedule() from in-kernel preemption
+- * off of preempt_enable.  Kernel preemptions off return from interrupt
+- * occur there and call nicksched_schedule directly.
+- */
+-asmlinkage void __sched nicksched_preempt_schedule(void)
+-{
+-	struct thread_info *ti = current_thread_info();
+-#ifdef CONFIG_PREEMPT_BKL
+-	struct task_struct *task = current;
+-	int saved_lock_depth;
+-#endif
+-
+-
+-
+-	/*
+-	 * If there is a non-zero preempt_count or interrupts are disabled,
+-	 * we do not want to preempt the current task.  Just return..
+-	 */
+-	if (unlikely(ti->preempt_count || irqs_disabled()))
+-		return;
+-
+-need_resched:
+-	add_preempt_count(PREEMPT_ACTIVE);
+-	/*
+-	 * We keep the big kernel semaphore locked, but we
+-	 * clear ->lock_depth so that nicksched_schedule() doesnt
+-	 * auto-release the semaphore:
+-	 */
+-#ifdef CONFIG_PREEMPT_BKL
+-	saved_lock_depth = task->lock_depth;
+-	task->lock_depth = -1;
+-#endif
+-	nicksched_schedule();
+-#ifdef CONFIG_PREEMPT_BKL
+-	task->lock_depth = saved_lock_depth;
+-#endif
+-	sub_preempt_count(PREEMPT_ACTIVE);
+-
+-	/* we could miss a preemption opportunity between schedule and now */
+-	barrier();
+-	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
+-		goto need_resched;
+-}
+-
+-EXPORT_SYMBOL(nicksched_preempt_schedule);
+-#endif /* CONFIG_PREEMPT */
+-
+ int nicksched_default_wake_function(wait_queue_t *curr, unsigned mode, int sync, void *key)
+ {
+ 	task_t *p = curr->task;
+@@ -4332,28 +4283,6 @@
+ }
+ #endif
+ 
+-#ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
+-void __might_sleep(char *file, int line)
+-{
+-#if defined(in_atomic)
+-	static unsigned long prev_jiffy;	/* ratelimiting */
+-
+-	if ((in_atomic() || irqs_disabled()) &&
+-	    system_state == SYSTEM_RUNNING) {
+-		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
+-			return;
+-		prev_jiffy = jiffies;
+-		printk(KERN_ERR "Debug: sleeping function called from invalid"
+-				" context at %s:%d\n", file, line);
+-		printk("in_atomic():%d, irqs_disabled():%d\n",
+-			in_atomic(), irqs_disabled());
+-		dump_stack();
+-	}
+-#endif
+-}
+-EXPORT_SYMBOL(__might_sleep);
+-#endif
+-
+ scheduler_t sched_nicksched = {
+ 	.schedule_tail_fn = 			nicksched_schedule_tail,
+ 	.schedule_fn =				nicksched_schedule,
+@@ -4382,7 +4311,9 @@
+ 	.nr_uninterruptible_fn = 		nicksched_nr_uninterruptible,
+ 	.nr_iowait_fn = 			nicksched_nr_iowait,
+ 	.nr_context_switches_fn = 		nicksched_nr_context_switches,
++#if defined(CONFIG_SMP)
+ 	.sched_exec_fn = 			nicksched_sched_exec,
++#endif
+ 	.sched_setaffinity_fn = 		nicksched_sched_setaffinity,
+ 	.sched_getaffinity_fn = 		nicksched_sched_getaffinity,
+ 	.sys_nice_fn = 				nicksched_sys_nice,
+@@ -4395,7 +4326,9 @@
+ 	.sys_sched_rr_get_interval_fn = 	nicksched_sys_sched_rr_get_interval,
+ 	.sched_init_fn = 			nicksched_sched_init,
+ 	.sched_init_smp_fn = 			nicksched_sched_init_smp,
++#if defined(CONFIG_SMP)
+ 	.migration_init_fn = 			nicksched_migration_init,
++#endif
+ 	.sched_fork_fn = 			nicksched_sched_fork,
+ 	.sched_exit_fn = 			nicksched_sched_exit,
+ 	.init_idle_fn = 			nicksched_init_idle,
+@@ -4413,9 +4346,6 @@
+ 	.lock_kernel_fn = 			nicksched_lock_kernel,
+ 	.unlock_kernel_fn = 			nicksched_unlock_kernel,
+ #endif
+-#if defined(CONFIG_PREEMPT)
+-	.preempt_schedule_fn = 			nicksched_preempt_schedule,
+-#endif
+ #if defined(CONFIG_SYSCTL)
+ 	.sysctl_register_fn = 			nicksched_sysctl_register,
+ #endif
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-10-07 10:13:53.426987632 -0400
++++ xx-sources/kernel/sched.c	2004-10-07 10:15:07.823677616 -0400
+@@ -65,41 +65,6 @@
+ #error "You must have at least 1 process scheduler selected"
+ #endif
+ 
+-static int __init scheduler_setup(char *str)
+-{
+-#if defined(CONFIG_NICKSCHED)
+-	if (!strcmp(str, "nicksched")) {
+-		init_idle(current, smp_processor_id());
+-		current_scheduler = &sched_nicksched;
+-		sched_init();
+-	}
+-#endif
+-#if defined(CONFIG_STAIRCASE)
+-	if (!strcmp(str, "staircase")) {
+-		init_idle(current, smp_processor_id());
+-		current_scheduler = &sched_staircase;
+-		sched_init();
+-	}
+-#endif
+-#if defined(CONFIG_STAIRCASE)
+-	if (!strcmp(str, "xsched")) {
+-		init_idle(current, smp_processor_id());
+-		current_scheduler = &sched_xsched;
+-		sched_init();
+-	}
+-#endif
+-#if defined(CONFIG_SCHED_NONE)
+-	if (!strcmp(str, "default")) {
+-		init_idle(current, smp_processor_id());
+-		current_scheduler = &sched_default;
+-		sched_init();
+-	}
+-#endif
+-	return 1;
+-}
+-
+-__setup("scheduler=", scheduler_setup);
+-
+ 
+ inline int task_curr(const task_t *p)
+ {
+@@ -108,13 +73,13 @@
+ 	return 0;
+ }
+ 
++#if defined(CONFIG_SMP)
+ inline void wait_task_inactive(task_t * p)
+ {
+ 	if (current_scheduler->wait_task_inactive_fn)
+ 		current_scheduler->wait_task_inactive_fn(p);
+ }
+ 
+-#if defined(CONFIG_SMP)
+ inline void kick_process(task_t *p)
+ {
+ 	if (current_scheduler->kick_process_fn)
+@@ -138,14 +103,12 @@
+ 
+ inline void fastcall sched_fork(task_t *p)
+ {
+-	if (current_scheduler->sched_fork_fn)
+-		current_scheduler->sched_fork_fn(p);
++	current_scheduler->sched_fork_fn(p);
+ }
+ 
+ inline void fastcall wake_up_new_task(task_t * p, unsigned long clone_flags)
+ {
+-	if (current_scheduler->wake_up_new_task_fn)
+-		current_scheduler->wake_up_new_task_fn(p, clone_flags);
++	current_scheduler->wake_up_new_task_fn(p, clone_flags);
+ }
+ 
+ inline void fastcall sched_exit(task_t * p)
+@@ -162,8 +125,7 @@
+ 
+ inline asmlinkage void schedule_tail(task_t *prev)
+ {
+-	if (current_scheduler->schedule_tail_fn)
+-		current_scheduler->schedule_tail_fn(prev);
++	current_scheduler->schedule_tail_fn(prev);
+ }
+ 
+ inline unsigned long nr_running(void)
+@@ -204,8 +166,7 @@
+ 
+ inline void scheduler_tick(int user_ticks, int sys_ticks)
+ {
+-	if (current_scheduler->scheduler_tick_fn)
+-		current_scheduler->scheduler_tick_fn(user_ticks, sys_ticks);
++	current_scheduler->scheduler_tick_fn(user_ticks, sys_ticks);
+ }
+ 
+ 
+@@ -234,18 +195,9 @@
+ 
+ inline asmlinkage void __sched schedule(void)
+ {
+-	if (current_scheduler->schedule_fn)
+-		current_scheduler->schedule_fn();
++	current_scheduler->schedule_fn();
+ }
+ 
+-#if defined(CONFIG_PREEMPT)
+-asmlinkage void __sched preempt_schedule(void)
+-{
+-	if (current_scheduler->preempt_schedule_fn)
+-		current_scheduler->preempt_schedule_fn();
+-}
+-#endif
+-
+ int default_wake_function(wait_queue_t *curr, unsigned mode, int sync, void *key)
+ {
+ 	if (current_scheduler->default_wake_function_fn)
+@@ -444,7 +396,6 @@
+ 		return current_scheduler->set_cpus_allowed_fn(p, new_mask);
+ 	return 0;
+ }
+-#endif
+ 
+ inline int __init migration_init(void)
+ {
+@@ -452,18 +403,19 @@
+ 		return current_scheduler->migration_init_fn();
+ 	return 0;
+ }
++#endif
+ 
+ void __init sched_init(void)
+ {
+-	if (current_scheduler->sched_init_fn)
+-		current_scheduler->sched_init_fn();
++	current_scheduler->sched_init_fn();
+ }
+ 
++#if defined(CONFIG_SMP)
+ void __init sched_init_smp(void)
+ {
+-	if (current_scheduler->sched_init_smp_fn)
+-		current_scheduler->sched_init_smp_fn();
++	current_scheduler->sched_init_smp_fn();
+ }
++#endif
+ 
+ void __init sched_misc_init(void)
+ {
+@@ -564,6 +516,54 @@
+ 
+ #endif /* PREEMPT && DEBUG_PREEMPT */
+ 
++#ifdef CONFIG_PREEMPT
++/*
++ * this is is the entry point to schedule() from in-kernel preemption
++ * off of preempt_enable.  Kernel preemptions off return from interrupt
++ * occur there and call schedule directly.
++ */
++asmlinkage void __sched preempt_schedule(void)
++{
++	struct thread_info *ti = current_thread_info();
++#ifdef CONFIG_PREEMPT_BKL
++	struct task_struct *task = current;
++	int saved_lock_depth;
++#endif
++
++
++
++	/*
++	 * If there is a non-zero preempt_count or interrupts are disabled,
++	 * we do not want to preempt the current task.  Just return..
++	 */
++	if (unlikely(ti->preempt_count || irqs_disabled()))
++		return;
++
++need_resched:
++	add_preempt_count(PREEMPT_ACTIVE);
++	/*
++	 * We keep the big kernel semaphore locked, but we
++	 * clear ->lock_depth so that schedule() doesnt
++	 * auto-release the semaphore:
++	 */
++#ifdef CONFIG_PREEMPT_BKL
++	saved_lock_depth = task->lock_depth;
++	task->lock_depth = -1;
++#endif
++	schedule();
++#ifdef CONFIG_PREEMPT_BKL
++	task->lock_depth = saved_lock_depth;
++#endif
++	sub_preempt_count(PREEMPT_ACTIVE);
++
++	/* we could miss a preemption opportunity between schedule and now */
++	barrier();
++	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
++		goto need_resched;
++}
++
++#endif /* CONFIG_PREEMPT */
++
+ DEFINE_PER_CPU(struct kernel_stat, kstat);
+ 
+ EXPORT_PER_CPU_SYMBOL(kstat);
+@@ -843,9 +843,32 @@
+ 		&& addr < (unsigned long)__sched_text_end);
+ }
+ 
++#ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
++void __might_sleep(char *file, int line)
++{
++#if defined(in_atomic)
++	static unsigned long prev_jiffy;	/* ratelimiting */
++
++	if ((in_atomic() || irqs_disabled()) &&
++	    system_state == SYSTEM_RUNNING) {
++		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
++			return;
++		prev_jiffy = jiffies;
++		printk(KERN_ERR "Debug: sleeping function called from invalid"
++				" context at %s:%d\n", file, line);
++		printk("in_atomic():%d, irqs_disabled():%d\n",
++			in_atomic(), irqs_disabled());
++		dump_stack();
++	}
++#endif
++}
++EXPORT_SYMBOL(__might_sleep);
++#endif
++
+ 
+ EXPORT_SYMBOL(default_wake_function);
+ EXPORT_SYMBOL(wait_for_completion);
++EXPORT_SYMBOL(task_nice);
+ EXPORT_SYMBOL(set_user_nice);
+ #if defined(CONFIG_SMP) || defined(CONFIG_PREEMPT)
+ EXPORT_SYMBOL(lock_kernel);
+@@ -860,7 +883,12 @@
+ EXPORT_SYMBOL_GPL(__wake_up_sync);
+ EXPORT_SYMBOL(interruptible_sleep_on);
+ EXPORT_SYMBOL(interruptible_sleep_on_timeout);
++EXPORT_SYMBOL(sleep_on);
++EXPORT_SYMBOL(sleep_on_timeout);
+ EXPORT_SYMBOL(complete);
++EXPORT_SYMBOL(complete_all);
++EXPORT_SYMBOL(yield);
++EXPORT_SYMBOL(io_schedule);
+ EXPORT_SYMBOL_GPL(idle_cpu);
+ #if defined(CONFIG_SMP)
+ EXPORT_SYMBOL_GPL(set_cpus_allowed);
+Index: xx-sources/kernel/staircase-sched.c
+===================================================================
+--- xx-sources.orig/kernel/staircase-sched.c	2004-10-07 10:13:53.430987024 -0400
++++ xx-sources/kernel/staircase-sched.c	2004-10-07 10:15:40.425721352 -0400
+@@ -2491,54 +2491,6 @@
+ 
+ EXPORT_SYMBOL(schedule);
+ 
+-#ifdef CONFIG_PREEMPT
+-/*
+- * this is is the entry point to schedule() from in-kernel preemption
+- * off of preempt_enable.  Kernel preemptions off return from interrupt
+- * occur there and call schedule directly.
+- */
+-asmlinkage void __sched staircase_preempt_schedule(void)
+-{
+-	struct thread_info *ti = current_thread_info();
+-#ifdef CONFIG_PREEMPT_BKL
+-	struct task_struct *task = current;
+-	int saved_lock_depth;
+-#endif
+-
+-
+-
+-	/*
+-	 * If there is a non-zero preempt_count or interrupts are disabled,
+-	 * we do not want to preempt the current task.  Just return..
+-	 */
+-	if (unlikely(ti->preempt_count || irqs_disabled()))
+-		return;
+-
+-need_resched:
+-	add_preempt_count(PREEMPT_ACTIVE);
+-	/*
+-	 * We keep the big kernel semaphore locked, but we
+-	 * clear ->lock_depth so that schedule() doesnt
+-	 * auto-release the semaphore:
+-	 */
+-#ifdef CONFIG_PREEMPT_BKL
+-	saved_lock_depth = task->lock_depth;
+-	task->lock_depth = -1;
+-#endif
+-	staircase_schedule();
+-#ifdef CONFIG_PREEMPT_BKL
+-	task->lock_depth = saved_lock_depth;
+-#endif
+-	sub_preempt_count(PREEMPT_ACTIVE);
+-
+-	/* we could miss a preemption opportunity between schedule and now */
+-	barrier();
+-	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
+-		goto need_resched;
+-}
+-
+-#endif /* CONFIG_PREEMPT */
+-
+ int staircase_default_wake_function(wait_queue_t *curr, unsigned mode, int sync, void *key)
+ {
+ 	task_t *p = curr->task;
+@@ -4181,28 +4133,6 @@
+ }
+ #endif
+ 
+-#ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
+-void __might_sleep(char *file, int line)
+-{
+-#if defined(in_atomic)
+-	static unsigned long prev_jiffy;	/* ratelimiting */
+-
+-	if ((in_atomic() || irqs_disabled()) &&
+-	    system_state == SYSTEM_RUNNING) {
+-		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
+-			return;
+-		prev_jiffy = jiffies;
+-		printk(KERN_ERR "Debug: sleeping function called from invalid"
+-				" context at %s:%d\n", file, line);
+-		printk("in_atomic():%d, irqs_disabled():%d\n",
+-			in_atomic(), irqs_disabled());
+-		dump_stack();
+-	}
+-#endif
+-}
+-EXPORT_SYMBOL(__might_sleep);
+-#endif
+-
+ scheduler_t sched_staircase = {
+ 	.schedule_tail_fn = 			staircase_schedule_tail,
+ 	.schedule_fn =				staircase_schedule,
+@@ -4231,7 +4161,9 @@
+ 	.nr_uninterruptible_fn = 		staircase_nr_uninterruptible,
+ 	.nr_iowait_fn = 			staircase_nr_iowait,
+ 	.nr_context_switches_fn = 		staircase_nr_context_switches,
++#if defined(CONFIG_SMP)
+ 	.sched_exec_fn = 			staircase_sched_exec,
++#endif
+ 	.sched_setaffinity_fn = 		staircase_sched_setaffinity,
+ 	.sched_getaffinity_fn = 		staircase_sched_getaffinity,
+ 	.sys_nice_fn = 				staircase_sys_nice,
+@@ -4244,7 +4176,9 @@
+ 	.sys_sched_rr_get_interval_fn = 	staircase_sys_sched_rr_get_interval,
+ 	.sched_init_fn = 			staircase_sched_init,
+ 	.sched_init_smp_fn = 			staircase_sched_init_smp,
++#if defined(CONFIG_SMP)
+ 	.migration_init_fn = 			staircase_migration_init,
++#endif
+ 	.sched_fork_fn = 			staircase_sched_fork,
+ 	.init_idle_fn = 			staircase_init_idle,
+ 	.wake_up_new_task_fn = 			staircase_wake_up_new_task,
+@@ -4261,9 +4195,6 @@
+ 	.lock_kernel_fn = 			staircase_lock_kernel,
+ 	.unlock_kernel_fn = 			staircase_unlock_kernel,
+ #endif
+-#if defined(CONFIG_PREEMPT)
+-	.preempt_schedule_fn = 			staircase_preempt_schedule,
+-#endif
+ #if defined(CONFIG_SYSCTL)
+ 	.sysctl_register_fn = 			staircase_sysctl_register,
+ #endif
+Index: xx-sources/kernel/xsched-sched.c
+===================================================================
+--- xx-sources.orig/kernel/xsched-sched.c	2004-10-07 10:13:53.436986112 -0400
++++ xx-sources/kernel/xsched-sched.c	2004-10-07 10:15:53.887674824 -0400
+@@ -2708,54 +2708,6 @@
+ 		goto need_resched;
+ }
+ 
+-#ifdef CONFIG_PREEMPT
+-/*
+- * this is is the entry point to schedule() from in-kernel preemption
+- * off of preempt_enable.  Kernel preemptions off return from interrupt
+- * occur there and call schedule directly.
+- */
+-asmlinkage void __sched xsched_preempt_schedule(void)
+-{
+-	struct thread_info *ti = current_thread_info();
+-#ifdef CONFIG_PREEMPT_BKL
+-	struct task_struct *task = current;
+-	int saved_lock_depth;
+-#endif
+-
+-
+-
+-	/*
+-	 * If there is a non-zero preempt_count or interrupts are disabled,
+-	 * we do not want to preempt the current task.  Just return..
+-	 */
+-	if (unlikely(ti->preempt_count || irqs_disabled()))
+-		return;
+-
+-need_resched:
+-	add_preempt_count(PREEMPT_ACTIVE);
+-	/*
+-	 * We keep the big kernel semaphore locked, but we
+-	 * clear ->lock_depth so that schedule() doesnt
+-	 * auto-release the semaphore:
+-	 */
+-#ifdef CONFIG_PREEMPT_BKL
+-	saved_lock_depth = task->lock_depth;
+-	task->lock_depth = -1;
+-#endif
+-	xsched_schedule();
+-#ifdef CONFIG_PREEMPT_BKL
+-	task->lock_depth = saved_lock_depth;
+-#endif
+-	sub_preempt_count(PREEMPT_ACTIVE);
+-
+-	/* we could miss a preemption opportunity between schedule and now */
+-	barrier();
+-	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
+-		goto need_resched;
+-}
+-
+-#endif /* CONFIG_PREEMPT */
+-
+ int xsched_default_wake_function(wait_queue_t *curr, unsigned mode, int sync, void *key)
+ {
+ 	task_t *p = curr->task;
+@@ -4606,28 +4558,6 @@
+ }
+ #endif
+ 
+-#ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
+-void __might_sleep(char *file, int line)
+-{
+-#if defined(in_atomic)
+-	static unsigned long prev_jiffy;	/* ratelimiting */
+-
+-	if ((in_atomic() || irqs_disabled()) &&
+-	    system_state == SYSTEM_RUNNING) {
+-		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
+-			return;
+-		prev_jiffy = jiffies;
+-		printk(KERN_ERR "Debug: sleeping function called from invalid"
+-				" context at %s:%d\n", file, line);
+-		printk("in_atomic():%d, irqs_disabled():%d\n",
+-			in_atomic(), irqs_disabled());
+-		dump_stack();
+-	}
+-#endif
+-}
+-EXPORT_SYMBOL(__might_sleep);
+-#endif
+-
+ scheduler_t sched_xsched = {
+ 	.schedule_tail_fn = 			xsched_schedule_tail,
+ 	.schedule_fn =				xsched_schedule,
+@@ -4656,7 +4586,9 @@
+ 	.nr_uninterruptible_fn = 		xsched_nr_uninterruptible,
+ 	.nr_iowait_fn = 			xsched_nr_iowait,
+ 	.nr_context_switches_fn = 		xsched_nr_context_switches,
++#if defined(CONFIG_SMP)
+ 	.sched_exec_fn = 			xsched_sched_exec,
++#endif
+ 	.sched_setaffinity_fn = 		xsched_sched_setaffinity,
+ 	.sched_getaffinity_fn = 		xsched_sched_getaffinity,
+ 	.sys_nice_fn = 				xsched_sys_nice,
+@@ -4669,7 +4601,9 @@
+ 	.sys_sched_rr_get_interval_fn = 	xsched_sys_sched_rr_get_interval,
+ 	.sched_init_fn = 			xsched_sched_init,
+ 	.sched_init_smp_fn = 			xsched_sched_init_smp,
++#if defined(CONFIG_SMP)
+ 	.migration_init_fn = 			xsched_migration_init,
++#endif
+ 	.sched_fork_fn = 			xsched_sched_fork,
+ 	.sched_exit_fn = 			xsched_sched_exit,
+ 	.init_idle_fn = 			xsched_init_idle,
+@@ -4687,9 +4621,6 @@
+ 	.lock_kernel_fn = 			xsched_lock_kernel,
+ 	.unlock_kernel_fn = 			xsched_unlock_kernel,
+ #endif
+-#if defined(CONFIG_PREEMPT)
+-	.preempt_schedule_fn = 			xsched_preempt_schedule,
+-#endif
+ #if defined(CONFIG_SYSCTL)
+ 	.sysctl_register_fn = 			xsched_sysctl_register,
+ #endif
+Index: xx-sources/mm/oom_kill.c
+===================================================================
+--- xx-sources.orig/mm/oom_kill.c	2004-10-07 10:01:20.990375384 -0400
++++ xx-sources/mm/oom_kill.c	2004-10-07 10:14:02.299638784 -0400
+@@ -155,9 +155,9 @@
+ 	 * all the memory it needs. That way it should be able to
+ 	 * exit() and clear out its resources quickly...
+ 	 */
+-#if !defined(CONFIG_NICKSCHED) && !defined(CONFIG_XSCHED)
+-	p->time_slice = HZ;
+-#endif
++	p->default_data.time_slice = HZ;
++	p->staircase_data.time_slice = HZ;
++	p->xsched_data.time_slice = HZ;
+ 	p->flags |= PF_MEMALLOC | PF_MEMDIE;
+ 
+ 	/* This process has hardware access, be more careful. */

@@ -1,0 +1,40 @@
+
+
+If ever that function is called, this will certainly help track the
+reason for it.
+
+Signed-off-by: Nicolas Pitre <nico@cam.org>
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/smc91x.c |   13 +++++++++++++
+ 1 files changed, 13 insertions(+)
+
+diff -puN drivers/net/smc91x.c~smc91x-display-pertinent-register-values-from-the drivers/net/smc91x.c
+--- 25/drivers/net/smc91x.c~smc91x-display-pertinent-register-values-from-the	Thu Sep 23 15:00:15 2004
++++ 25-akpm/drivers/net/smc91x.c	Thu Sep 23 15:00:15 2004
+@@ -1265,9 +1265,22 @@ static irqreturn_t smc_interrupt(int irq
+ static void smc_timeout(struct net_device *dev)
+ {
+ 	struct smc_local *lp = netdev_priv(dev);
++	unsigned long ioaddr = dev->base_addr;
++	int status, mask, meminfo, fifo;
+ 
+ 	DBG(2, "%s: %s\n", dev->name, __FUNCTION__);
+ 
++	spin_lock_irq(&lp->lock);
++	status = SMC_GET_INT();
++	mask = SMC_GET_INT_MASK();
++	fifo = SMC_GET_FIFO();
++	SMC_SELECT_BANK(0);
++	meminfo = SMC_GET_MIR();
++	SMC_SELECT_BANK(2);
++	spin_unlock_irq(&lp->lock);
++	PRINTK( "%s: INT 0x%02x MASK 0x%02x MEM 0x%04x FIFO 0x%04x\n",
++		dev->name, status, mask, meminfo, fifo );
++
+ 	smc_reset(dev);
+ 	smc_enable(dev);
+ 
+_

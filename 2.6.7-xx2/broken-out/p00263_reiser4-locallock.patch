@@ -1,0 +1,260 @@
+
+
+This patch adds "local-spin" locking primitive locallock_t. locallock_t has
+exactly the same interface and semantics as spinlock_t. The difference is in
+the implementation that tries to address some problems with spin-locks that
+arise when large number of processors is used.
+
+Specifically, problem with normal spinlocks is that when multiple waiters
+constantly re-check lock value, its cache-line is bounced between difference
+processors. To alleviate this various types of "lock-spin" algorithms were
+developed. In these, each waiter spins on its own memory location, thus
+avoiding cache-line bouncing.
+
+This patch implements algorithm from
+
+T. Anderson. The performance of spin lock alternatives for shared-memory
+multiprocessors. IEEE Transactions on Parallel and Distributed Systems,
+1(1):6-16, January, 1990.
+
+reproduced as TA algorithm in
+
+James H. Anderson, Yong-Jik Kim. Shared-memory Mutual Exclusion: Major
+Research Trends Since 1986.
+
+(http://citeseer.nj.nec.com/anderson01sharedmemory.html)
+
+Later also contains a bibliography on the subject.
+
+Notes:
+
+ 1. local-spin locks only make sense when contention is high. Number of
+ processors starting from which is advantageous to use local-lock depends on
+ contention for the particular lock. For simplicity current code fixes this
+ number once for all locks.
+
+ 2. locallock_t is _HUGE_. It has array of NR_CPUS ____cacheline_aligned
+ counters. It is clearly not very suitable to be placed into dynamically
+ allocated structure like inode.
+
+
+
+
+
+---
+
+ linux-2.6.5-xx21-xiphux/include/linux/locallock.h |  206 ++++++++++++++++++++++
+ 1 files changed, 206 insertions(+)
+
+diff -puN /dev/null include/linux/locallock.h
+--- /dev/null	2004-04-03 08:05:03.000000000 -0500
++++ linux-2.6.5-xx21-xiphux/include/linux/locallock.h	2004-05-07 15:26:15.639645720 -0400
+@@ -0,0 +1,206 @@
++#ifndef __LINUX_LOCALLOCK_H
++#define __LINUX_LOCALLOCK_H
++
++/*
++ * include/linux/locallock.h - local-spin lock.
++ *
++ * This file implements locking primitive locallock_t. locallock_t has exactly
++ * the same interface and semantics as spinlock_t. The difference is in the
++ * implementation that tries to address some problems with spin-locks that
++ * arise when large number of processors is used.
++ *
++ * Specifically, problem with normal spinlocks is that when multiple waiters
++ * constantly re-check lock value, its cache-line is bounced between
++ * difference processors. To alleviate this various types of "lock-spin"
++ * algorithms were developed. In these, each waiter spins on its own memory
++ * location, thus avoiding cache-line bouncing.
++ *
++ * This patch implements algorithm from
++ *
++ * T. Anderson. The performance of spin lock alternatives for shared-memory
++ * multiprocessors. IEEE Transactions on Parallel and Distributed Systems,
++ * 1(1):6-16, January, 1990.
++ *
++ * reproduced as TA algorithm in
++ *
++ * James H. Anderson, Yong-Jik Kim. Shared-memory Mutual Exclusion: Major
++ * Research Trends Since 1986.
++ *
++ * (http://citeseer.nj.nec.com/anderson01sharedmemory.html)
++ *
++ * Later also contains a bibliography on the subject.
++ *
++ * Notes:
++ *
++ *  1. local-spin locks only make sense when contention is high. Number of
++ *  processors starting from which is advantageous to use local-lock depends
++ *  on contention for the particular lock. For simplicity current code fixes
++ *  this number once for all locks.
++ *
++ *  2. locallock_t is _HUGE_. It has array of NR_CPUS ____cacheline_aligned
++ *  counters. It is clearly not very suitable to be placed into dynamically
++ *  allocated structure like inode.
++ *
++ */
++
++#include <linux/spinlock.h>
++
++/*
++ * Our implementation requires compare-and-swap (CAS, CMPXCHG). Fall back to
++ * the spin-locks if hardware doesn't support CAS, or if number of processors
++ * is not large enough.
++ */
++#if NR_CPUS > 32 && defined(__HAVE_ARCH_CMPXCHG)
++#define USE_LOCALLOCK (1)
++#else
++#define USE_LOCALLOCK (0)
++#endif
++
++#if USE_LOCALLOCK
++
++struct aligned_lock {
++	volatile int guard;
++} ____cacheline_aligned;
++
++typedef struct {
++	volatile int next;
++	struct aligned_lock lock[NR_CPUS];
++	volatile int place;
++} locallock_t;
++
++
++/* fetch-and-inc implemented through CAS */
++static inline int fetch_and_inc(volatile int *value)
++{
++	int s;
++
++	do
++		s = *value;
++	while (unlikely(cmpxchg(value, s, s + 1) != s));
++	return s;
++}
++
++/* we cannot use atomic_sub(), because it is only atomic against other
++ * atomic_* operations and, hence, is not guaranteed to work nicely with our
++ * fetch-and-inc */
++static inline void cas_sub(volatile int *value, int delta)
++{
++	int s;
++	do
++		s = *value;
++	while (unlikely(cmpxchg(value, s, s - delta) != s));
++}
++
++/* static initializer */
++#define LOCAL_LOCK_UNLOCKED					\
++	{							\
++		.next = 0,					\
++		.lock = {					\
++			[ 0 ]                 = { .guard = 1 },	\
++			[ 1 ... NR_CPUS - 1 ] = { .guard = 0 }	\
++		},						\
++		.place = 0					\
++	}
++
++static inline void local_lock_init(locallock_t *lock)
++{
++	int i;
++
++	lock->next = 0;
++
++	lock->lock[0].guard = 1;
++	for (i = 1; i < NR_CPUS; ++i)
++		lock->lock[i].guard = 0;
++}
++
++static inline void local_lock(locallock_t *lock)
++{
++	int place;
++
++	preempt_disable();
++	place = fetch_and_inc(&lock->next);
++	if (place == NR_CPUS) {
++		place = 0;
++		cas_sub(&lock->next, NR_CPUS);
++	} else if (place > NR_CPUS)
++		place -= NR_CPUS;
++	while (unlikely(lock->lock[place].guard == 0))
++		;
++	lock->lock[place].guard = 0;
++	/* critical section starts here */
++	lock->place = place;
++}
++
++static inline void local_unlock(locallock_t *lock)
++{
++	int place;
++
++	place = lock->place;
++	++ place;
++	if (place == NR_CPUS)
++		place = 0;
++	lock->lock[place].guard = 1;
++	/* critical section ends here */
++	preempt_enable();
++}
++
++#define local_lock_irqsave(lock, flags)		\
++({						\
++	local_irq_save(flags);			\
++	local_lock(lock);			\
++})
++
++#define local_unlock_irqrestore(lock, flags)	\
++({						\
++	local_unlock(lock);			\
++	local_irq_restore(flags);		\
++})
++
++static inline void local_lock_irq(locallock_t *lock)
++{
++	local_irq_disable();
++	local_lock(lock);
++}
++
++static inline void local_unlock_irq(locallock_t *lock)
++{
++	local_unlock(lock);
++	local_irq_enable();
++}
++
++/* USE_LOCALLOCK */
++#else
++
++/* fall back to spin locks */
++
++typedef spinlock_t locallock_t;
++
++#define LOCAL_LOCK_UNLOCKED SPIN_LOCK_UNLOCKED
++
++#define local_lock_init(lock) spin_lock_init(lock)
++#define local_lock(lock) spin_lock(lock)
++#define local_unlock(lock) spin_unlock(lock)
++
++#define local_lock_irqsave(lock, flags)	spin_lock_irqsave(lock, flags)
++#define local_unlock_irqrestore(lock, flags) spin_unlock_irqrestore(lock, flags)
++
++#define local_lock_irq(lock) spin_lock_irq(lock)
++#define local_unlock_irq(lock) spin_unlock_irq(lock)
++
++/* USE_LOCALLOCK */
++#endif
++
++/* __LINUX_LOCALLOCK_H */
++#endif
++
++/*
++ * Make Linus happy.
++ * Local variables:
++ * c-indentation-style: "K&R"
++ * mode-name: "LC"
++ * c-basic-offset: 8
++ * tab-width: 8
++ * fill-column: 80
++ * scroll-step: 1
++ * End:
++ */
+
+_

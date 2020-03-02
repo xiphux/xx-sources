@@ -1,0 +1,43 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+The remove-bkl patch is looking good so far.  The patch below extends its
+reach by enabling it everywhere where the BKL is used, i.e.  not only on
+PREEMPT (UP or SMP) but on !PREEMPT+SMP kernels too.
+
+I have test-compiled and test-booted x86 and x64 on SMP+!PREEMPT,
+everything is working fine (as expected).
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/Kconfig   |    2 +-
+ 25-akpm/arch/x86_64/Kconfig |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN arch/i386/Kconfig~enable-preempt_bkl-on-smp-too arch/i386/Kconfig
+--- 25/arch/i386/Kconfig~enable-preempt_bkl-on-smp-too	2004-10-03 16:27:51.424456032 -0700
++++ 25-akpm/arch/i386/Kconfig	2004-10-03 16:27:51.431454968 -0700
+@@ -509,7 +509,7 @@ config PREEMPT
+ 
+ config PREEMPT_BKL
+ 	bool "Preempt The Big Kernel Lock"
+-	depends on PREEMPT
++	depends on PREEMPT || SMP
+ 	default y
+ 	help
+ 	  This option reduces the latency of the kernel by making the
+diff -puN arch/x86_64/Kconfig~enable-preempt_bkl-on-smp-too arch/x86_64/Kconfig
+--- 25/arch/x86_64/Kconfig~enable-preempt_bkl-on-smp-too	2004-10-03 16:27:51.425455880 -0700
++++ 25-akpm/arch/x86_64/Kconfig	2004-10-03 16:27:51.429455272 -0700
+@@ -245,7 +245,7 @@ config PREEMPT
+ 
+ config PREEMPT_BKL
+ 	bool "Preempt The Big Kernel Lock"
+-	depends on PREEMPT
++	depends on PREEMPT || SMP
+ 	default y
+ 	help
+ 	  This option reduces the latency of the kernel by making the
+_

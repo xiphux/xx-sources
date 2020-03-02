@@ -1,0 +1,110 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Still having some trouble with ia64 domain setup on the Altixes.  Jesse
+hasn't had much time to look into it, and I'm lacking an Altix, so I'm not
+sure if this is right or not...
+
+Anyway, it again does the right thing on the NUMAQ, and fixes some real
+bugs, so can you include it please?
+
+* Increase SD_NODES_PER_DOMAIN to 6 from 4 to better match Altix's
+   topology. A setting of 4 will include this node, the other one
+   in the brick, and the 2 nodes in the next closest brick, while 6
+   will catch 2 other bricks. Probably it could be increased even
+   more.
+
+* Work correctly with sparse and not completely full node maps.
+
+* Nasty typo fixed in find_next_best_node:
+	-               val = node_distance(node, i);
+	+               val = node_distance(node, n);
+
+* Ensure all nodes are themselves a member of their numa balancing
+   domain. This is more a precaution against creative implementations
+   of node_distance.. but it makes the setup easier to verify without
+   having to look at a table of node_distance's, which is possibly
+   generated at runtime.
+
+So again, I'm not too sure if this will fix the Altix setup or not.  But if
+you do a release, it will surely be less broken than it was before.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ia64/kernel/domain.c |   22 ++++++++++++++--------
+ 1 files changed, 14 insertions(+), 8 deletions(-)
+
+diff -puN arch/ia64/kernel/domain.c~sched-fixes-for-ia64-domain-setup arch/ia64/kernel/domain.c
+--- 25/arch/ia64/kernel/domain.c~sched-fixes-for-ia64-domain-setup	Mon Oct  4 13:48:31 2004
++++ 25-akpm/arch/ia64/kernel/domain.c	Mon Oct  4 13:48:31 2004
+@@ -13,7 +13,7 @@
+ #include <linux/topology.h>
+ #include <asm/processor.h>
+ 
+-#define SD_NODES_PER_DOMAIN 4
++#define SD_NODES_PER_DOMAIN 6
+ 
+ #ifdef CONFIG_NUMA
+ /**
+@@ -36,12 +36,15 @@ static int __devinit find_next_best_node
+ 		/* Start at @node */
+ 		n = (node + i) % MAX_NUMNODES;
+ 
++		if (!nr_cpus_node(n))
++			continue;
++
+ 		/* Skip already used nodes */
+ 		if (test_bit(n, used_nodes))
+ 			continue;
+ 
+ 		/* Simple min distance search */
+-		val = node_distance(node, i);
++		val = node_distance(node, n);
+ 
+ 		if (val < min_val) {
+ 			min_val = val;
+@@ -65,16 +68,18 @@ static int __devinit find_next_best_node
+ static cpumask_t __devinit sched_domain_node_span(int node)
+ {
+ 	int i;
+-	cpumask_t span;
++	cpumask_t span, nodemask;
+ 	DECLARE_BITMAP(used_nodes, MAX_NUMNODES);
+ 
+ 	cpus_clear(span);
+ 	bitmap_zero(used_nodes, MAX_NUMNODES);
+ 
+-	for (i = 0; i < SD_NODES_PER_DOMAIN; i++) {
+-		int next_node = find_next_best_node(node, used_nodes);
+-		cpumask_t  nodemask;
++	nodemask = node_to_cpumask(node);
++	cpus_or(span, span, nodemask);
++	set_bit(node, used_nodes);
+ 
++	for (i = 1; i < SD_NODES_PER_DOMAIN; i++) {
++		int next_node = find_next_best_node(node, used_nodes);
+ 		nodemask = node_to_cpumask(next_node);
+ 		cpus_or(span, span, nodemask);
+ 	}
+@@ -137,16 +142,17 @@ void __devinit arch_init_sched_domains(v
+ 	 * Set up domains. Isolated domains just stay on the dummy domain.
+ 	 */
+ 	for_each_cpu_mask(i, cpu_default_map) {
++		int node = cpu_to_node(i);
+ 		int group;
+ 		struct sched_domain *sd = NULL, *p;
+-		cpumask_t nodemask = node_to_cpumask(cpu_to_node(i));
++		cpumask_t nodemask = node_to_cpumask(node);
+ 
+ 		cpus_and(nodemask, nodemask, cpu_default_map);
+ 
+ #ifdef CONFIG_NUMA
+ 		sd = &per_cpu(node_domains, i);
+ 		*sd = SD_NODE_INIT;
+-		sd->span = sched_domain_node_span(cpu_to_node(i));
++		sd->span = sched_domain_node_span(node);
+ 		cpus_and(sd->span, sd->span, cpu_default_map);
+ #endif
+ 
+_

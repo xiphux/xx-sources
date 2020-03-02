@@ -1,0 +1,99 @@
+---
+
+ linux-2.6.7-rc2-xx3-xiphux/drivers/serial/8250.c |   26 ++++++++++++-----------
+ 1 files changed, 14 insertions(+), 12 deletions(-)
+
+diff -puN drivers/serial/8250.c~21-software-suspend-linux-2.6.6-test09-incremental drivers/serial/8250.c
+--- linux-2.6.7-rc2-xx3/drivers/serial/8250.c~21-software-suspend-linux-2.6.6-test09-incremental	2004-06-04 00:05:51.628205160 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/drivers/serial/8250.c	2004-06-04 00:05:51.649201968 -0400
+@@ -63,7 +63,7 @@ static const char *kdb_serial_ptr = kdb_
+  */
+ unsigned int share_irqs = SERIAL8250_SHARE_IRQS;
+ 
+-#if defined(CONFIG_SERIAL_CONSOLE) && defined(CONFIG_SOFTWARE_SUSPEND2)
++#if defined(CONFIG_SERIAL_CORE_CONSOLE) && defined(CONFIG_SOFTWARE_SUSPEND2)
+ #include <linux/suspend.h>
+ #include <linux/suspend-debug.h>
+ extern void wakeup_suspend(void);
+@@ -840,11 +840,11 @@ static void serial8250_enable_ms(struct 
+ 	serial_out(up, UART_IER, up->ier);
+ }
+ 
+-#if defined(CONFIG_SOFTWARE_SUSPEND2) && defined(CONFIG_SERIAL_CONSOLE)
++#if defined(CONFIG_SERIAL_CORE_CONSOLE) && defined(CONFIG_SOFTWARE_SUSPEND2)
+ static inline void suspend_handle_character(unsigned char ch)
+ {
+ 	extern void prepare_status(int printalways, int clearbar, const char *fmt, ...);
+-	extern unsigned long swsusp_action;
++	extern unsigned long suspend_action;
+ 	extern void request_abort_suspend(void);
+ 	extern void machine_restart(char * __unused);
+ 
+@@ -881,32 +881,35 @@ static inline void suspend_handle_charac
+ 			console_loglevel = 0;
+ 			wakeup_suspend();
+ 			break;
++		case 32:
++			wakeup_suspend();
++			break;
+ #ifdef CONFIG_SOFTWARE_SUSPEND_DEBUG
+ 		case 80:
+ 		case 112:
+ 			/* During suspend, toggle pausing with Pause or Break if kdb active */
+-			swsusp_action ^= (1 << SUSPEND_PAUSE);
++			suspend_action ^= (1 << SUSPEND_PAUSE);
+ 			schedule_suspend_message(1);
+ 			wakeup_suspend();
+ 			break;
+ 		case 82:
+ 		case 114:
+ 			/* Otherwise, if R pressed, toggle rebooting */
+-			swsusp_action ^= (1 << SUSPEND_REBOOT);
++			suspend_action ^= (1 << SUSPEND_REBOOT);
+ 			schedule_suspend_message(2);
+ 			wakeup_suspend();
+ 			break;
+ 		case 83:
+ 		case 115:
+ 			/* Otherwise, if S pressed, toggle single-stepping */
+-			swsusp_action ^= (1 << SUSPEND_SINGLESTEP);
++			suspend_action ^= (1 << SUSPEND_SINGLESTEP);
+ 			schedule_suspend_message(3);
+ 			wakeup_suspend();
+ 			break;
+ 		case 76:
+ 		case 108:
+ 			/* Otherwise, if L pressed, toggle logging everything */
+-			swsusp_action ^= (1 << SUSPEND_LOGALL);
++			suspend_action ^= (1 << SUSPEND_LOGALL);
+ 			schedule_suspend_message(4);
+ 			wakeup_suspend();
+ 			break;
+@@ -919,13 +922,12 @@ static inline void suspend_handle_charac
+ 			console_loglevel = ((ch - 48));
+ 			wakeup_suspend();
+ 			break;
++		default:
++			printk("Unhandled character %d.\n", ch);
+ #endif
+ 	}
+-
+-	if (ch == 32)
+-		wakeup_suspend();
+ }
+-#endif /* CONFIG_SOFTWARE_SUSPEND2 && SERIAL_CONSOLE */
++#endif /* #if defined(CONFIG_SERIAL_CORE_CONSOLE) && defined(CONFIG_SOFTWARE_SUSPEND2) */
+ 
+ static _INLINE_ void
+ receive_chars(struct uart_8250_port *up, int *status, struct pt_regs *regs)
+@@ -1003,7 +1005,7 @@ receive_chars(struct uart_8250_port *up,
+ 		if (uart_handle_sysrq_char(&up->port, ch, regs))
+ 			goto ignore_char;
+ 
+-#if defined(CONFIG_SOFTWARE_SUSPEND2) && defined(CONFIG_SERIAL_CONSOLE)
++#if defined(CONFIG_SERIAL_CORE_CONSOLE) && defined(CONFIG_SOFTWARE_SUSPEND2)
+ 		if (software_suspend_state &
+ 			(SOFTWARE_SUSPEND_SANITY_CHECK_PROMPT |
+ 		     	 SOFTWARE_SUSPEND_RUNNING)) {
+
+_

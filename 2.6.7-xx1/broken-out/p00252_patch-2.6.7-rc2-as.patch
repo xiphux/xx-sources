@@ -1,0 +1,103 @@
+---
+
+ linux-2.6.7-xx1-xiphux/include/linux/swap.h   |    1 
+ linux-2.6.7-xx1-xiphux/include/linux/sysctl.h |    1 
+ linux-2.6.7-xx1-xiphux/kernel/sysctl.c        |    8 +++++
+ linux-2.6.7-xx1-xiphux/mm/vmscan.c            |   36 ++++++++++++++++++++++++++
+ 4 files changed, 46 insertions(+)
+
+diff -puN include/linux/swap.h~patch-2.6.7-rc2-as include/linux/swap.h
+--- linux-2.6.7-xx1/include/linux/swap.h~patch-2.6.7-rc2-as	2004-06-20 22:23:23.070514840 -0400
++++ linux-2.6.7-xx1-xiphux/include/linux/swap.h	2004-06-20 22:23:23.089511952 -0400
+@@ -175,6 +175,7 @@ extern void swap_setup(void);
+ extern int try_to_free_pages(struct zone **, unsigned int, unsigned int);
+ extern int shrink_all_memory(int);
+ extern int vm_swappiness;
++extern int auto_swappiness;
+ 
+ #ifdef CONFIG_MMU
+ /* linux/mm/shmem.c */
+diff -puN include/linux/sysctl.h~patch-2.6.7-rc2-as include/linux/sysctl.h
+--- linux-2.6.7-xx1/include/linux/sysctl.h~patch-2.6.7-rc2-as	2004-06-20 22:23:23.073514384 -0400
++++ linux-2.6.7-xx1-xiphux/include/linux/sysctl.h	2004-06-20 22:23:41.519710136 -0400
+@@ -168,6 +168,7 @@ enum
+ 	VM_BLOCK_DUMP=24,	/* block dump mode */
+ 	VM_HUGETLB_GROUP=25,	/* permitted hugetlb group */
+ 	VM_VFS_CACHE_PRESSURE=26, /* dcache/icache reclaim pressure */
++	VM_AUTO_SWAPPINESS=27,	/* Make vm_swappiness autoregulated */
+ };
+ 
+ 
+diff -puN kernel/sysctl.c~patch-2.6.7-rc2-as kernel/sysctl.c
+--- linux-2.6.7-xx1/kernel/sysctl.c~patch-2.6.7-rc2-as	2004-06-20 22:23:23.075514080 -0400
++++ linux-2.6.7-xx1-xiphux/kernel/sysctl.c	2004-06-20 22:23:23.113508304 -0400
+@@ -743,6 +743,14 @@ static ctl_table vm_table[] = {
+ 		.extra1		= &zero,
+ 		.extra2		= &one_hundred,
+ 	},
++	{
++		.ctl_name	= VM_AUTO_SWAPPINESS,
++		.procname	= "autoswappiness",
++		.data		= &auto_swappiness,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
+ #ifdef CONFIG_HUGETLB_PAGE
+ 	 {
+ 		.ctl_name	= VM_HUGETLB_PAGES,
+diff -puN mm/vmscan.c~patch-2.6.7-rc2-as mm/vmscan.c
+--- linux-2.6.7-xx1/mm/vmscan.c~patch-2.6.7-rc2-as	2004-06-20 22:23:23.078513624 -0400
++++ linux-2.6.7-xx1-xiphux/mm/vmscan.c	2004-06-20 22:23:23.134505112 -0400
+@@ -119,6 +119,7 @@ struct shrinker {
+  * From 0 .. 100.  Higher means more swappy.
+  */
+ int vm_swappiness = 60;
++int auto_swappiness = 1;
+ static long total_memory;
+ 
+ static LIST_HEAD(shrinker_list);
+@@ -707,6 +708,41 @@ refill_inactive_zone(struct zone *zone, 
+ 	 */
+ 	swap_tendency = mapped_ratio / 2 + distress + vm_swappiness;
+ 
++	if (auto_swappiness) {
++#ifdef CONFIG_SWAP
++		int app_percent;
++		struct sysinfo i;
++
++		si_swapinfo(&i);
++
++		if (likely(i.totalswap >= 100)) {
++			int swap_centile;
++
++			/*
++			 * app_percent is the percentage of physical ram used
++			 * by application pages.
++			 */
++			si_meminfo(&i);
++			app_percent = 100 - ((i.freeram + get_page_cache_size() -
++				swapper_space.nrpages) / (i.totalram / 100));
++
++			/*
++			 * swap_centile is the percentage of the last (sizeof physical
++			 * ram) of swap free.
++			 */
++			swap_centile = i.freeswap /
++				(min(i.totalswap, i.totalram) / 100);
++			/*
++			 * Autoregulate vm_swappiness to be equal to the lowest of
++			 * app_percent and swap_centile.  Bias it downwards -ck
++			 */
++			vm_swappiness = min(app_percent, swap_centile);
++			vm_swappiness = vm_swappiness * vm_swappiness / 100;
++		} else
++			vm_swappiness = 0;
++#endif
++	}
++
+ 	/*
+ 	 * Now use this metric to decide whether to start moving mapped memory
+ 	 * onto the inactive list.
+
+_

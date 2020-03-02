@@ -1,0 +1,45 @@
+
+From: Hans Reiser <reiser@namesys.com>
+
+This fixes inialization of max number of processes which may flush an atom.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/reiser4/reiser4.h |    3 +++
+ 25-akpm/fs/reiser4/vfs_ops.c |    2 +-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff -puN fs/reiser4/reiser4.h~reiser4-init-max_atom_flusers fs/reiser4/reiser4.h
+--- 25/fs/reiser4/reiser4.h~reiser4-init-max_atom_flusers	2004-09-20 11:05:40.344581224 -0700
++++ 25-akpm/fs/reiser4/reiser4.h	2004-09-20 11:05:40.351580160 -0700
+@@ -420,6 +420,9 @@ extern const int REISER4_MAGIC_OFFSET;	/
+ /* The maximum number of nodes to scan left on a level during flush. */
+ #define FLUSH_SCAN_MAXNODES 10000
+ 
++/* per-atom limit of flushers */
++#define ATOM_MAX_FLUSHERS (1)
++
+ /* default tracing buffer size */
+ #define REISER4_TRACE_BUF_SIZE (1 << 15)
+ 
+diff -puN fs/reiser4/vfs_ops.c~reiser4-init-max_atom_flusers fs/reiser4/vfs_ops.c
+--- 25/fs/reiser4/vfs_ops.c~reiser4-init-max_atom_flusers	2004-09-20 11:05:40.346580920 -0700
++++ 25-akpm/fs/reiser4/vfs_ops.c	2004-09-20 11:05:40.352580008 -0700
+@@ -1028,6 +1028,7 @@ reiser4_parse_options(struct super_block
+ 
+ 	sbinfo->tmgr.atom_max_size = txnmgr_get_max_atom_size(s);
+ 	sbinfo->tmgr.atom_max_age = REISER4_ATOM_MAX_AGE / HZ;
++	sbinfo->tmgr.atom_max_flushers = ATOM_MAX_FLUSHERS;
+ 
+ 	sbinfo->tree.cbk_cache.nr_slots = CBK_CACHE_SLOTS;
+ 
+@@ -1036,7 +1037,6 @@ reiser4_parse_options(struct super_block
+ 	sbinfo->flush.written_threshold = FLUSH_WRITTEN_THRESHOLD;
+ 	sbinfo->flush.scan_maxnodes = FLUSH_SCAN_MAXNODES;
+ 
+-
+ 	sbinfo->optimal_io_size = REISER4_OPTIMAL_IO_SIZE;
+ 
+ 	sbinfo->tree.carry.new_node_flags = REISER4_NEW_NODE_FLAGS;
+_

@@ -1,0 +1,60 @@
+diff -ruN software-suspend-core-2.0.0.78/include/linux/suspend-debug.h software-suspend-core-2.0.0.79/include/linux/suspend-debug.h
+--- software-suspend-core-2.0.0.78/include/linux/suspend-debug.h	2004-05-20 11:30:46.183235080 +1000
++++ software-suspend-core-2.0.0.79/include/linux/suspend-debug.h	2004-05-20 11:31:03.186650168 +1000
+@@ -5,7 +5,7 @@
+ /* Solely for comparison with the version specific patch revision */
+ #define SWSUSP_CORE_REVISION 0x201
+ 
+-#define SWSUSP_CORE_VERSION "2.0.0.78"
++#define SWSUSP_CORE_VERSION "2.0.0.79"
+ #define name_suspend "Software Suspend " SWSUSP_CORE_VERSION ": "
+ 
+ /* Same length to ensure one overwrites the other */
+diff -ruN software-suspend-core-2.0.0.78/kernel/power/process.c software-suspend-core-2.0.0.79/kernel/power/process.c
+--- software-suspend-core-2.0.0.78/kernel/power/process.c	2004-05-20 11:30:46.367207112 +1000
++++ software-suspend-core-2.0.0.79/kernel/power/process.c	2004-05-20 11:31:03.912539816 +1000
+@@ -50,6 +50,11 @@
+ unsigned long suspend_action = 0;
+ unsigned long suspend_result = 0;
+ 
++/* Timeouts when freezing */
++#define FREEZER_TOTAL_TIMEOUT (5 * HZ)
++#define FREEZER_CHECK_TIMEOUT (HZ)
++
++
+ /* Locks */
+ spinlock_t suspend_irq_lock = SPIN_LOCK_UNLOCKED;
+ unsigned long suspendirqflags;
+@@ -320,7 +325,7 @@
+ 		read_unlock(&tasklist_lock);
+ 
+ 		if ((TEST_RESULT_STATE(SUSPEND_ABORTED)) ||
+-		   ((jiffies - start_time) > 3 * HZ)) {
++		   ((jiffies - start_time) > FREEZER_TOTAL_TIMEOUT)) {
+ 			read_lock(&tasklist_lock);
+ 			SET_RESULT_STATE(SUSPEND_ABORTED);
+ 			FOR_EACH_THREAD_START {
+@@ -347,7 +352,7 @@
+ 			return todo;
+ 		}
+ 		set_task_state(current, TASK_UNINTERRUPTIBLE);
+-		schedule_timeout(HZ/5);
++		schedule_timeout(FREEZER_CHECK_TIMEOUT);
+ 		if (atomic_read(&suspend_num_active) < lastnum_active) {
+ 			lastnum_active = atomic_read(&suspend_num_active);
+ 			if (!no_progress)
+@@ -356,11 +361,11 @@
+ 				lastnum_active);
+ 			last_time = jiffies;
+ 			showidlelist=1;
+-		} else if (jiffies > last_time + (HZ / 4)) {
++		} else if (jiffies > (last_time + FREEZER_CHECK_TIMEOUT)) {
+ 			idletimeout = 1;
+-			printk("suspend_num_active is %d, Idle for %d jiffies\n",
++			printk("suspend_num_active is %d, Was idle for %ld jiffies\n",
+ 				atomic_read(&suspend_num_active),
+-				HZ / 4);
++				jiffies - last_time);
+ 			if (showidlelist) {
+ 				showidlelist = 0;
+ 				show_state();

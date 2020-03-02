@@ -1,0 +1,247 @@
+
+From: Paul Jackson <pj@sgi.com>
+
+Make use of for_each_cpu_mask() macro to simplify and optimize a couple of
+sparc64 per-CPU loops.
+
+Optimize a bit of cpumask code for asm-i386/mach-es7000
+
+Convert physids_complement() to use both args in the files
+include/asm-i386/mpspec.h, include/asm-x86_64/mpspec.h.
+
+Remove cpumask hack from asm-x86_64/topology.h routine pcibus_to_cpumask().
+
+Clarify and slightly optimize several cpumask manipulations in kernel/sched.c
+
+Signed-off-by: Paul Jackson <pj@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/sparc64/kernel/smp.c               |   66 ++++++++----------------
+ 25-akpm/include/asm-i386/mach-es7000/mach_ipi.h |    5 -
+ 25-akpm/include/asm-i386/mpspec.h               |    2 
+ 25-akpm/include/asm-x86_64/mpspec.h             |    2 
+ 25-akpm/include/asm-x86_64/topology.h           |    6 +-
+ 25-akpm/kernel/sched.c                          |   18 ++----
+ 6 files changed, 39 insertions(+), 60 deletions(-)
+
+diff -puN arch/sparc64/kernel/smp.c~cpumask-10-10-optimize-various-uses-of-new-cpumasks arch/sparc64/kernel/smp.c
+--- 25/arch/sparc64/kernel/smp.c~cpumask-10-10-optimize-various-uses-of-new-cpumasks	2004-06-23 21:44:08.849720472 -0700
++++ 25-akpm/arch/sparc64/kernel/smp.c	2004-06-23 21:44:08.861718648 -0700
+@@ -406,14 +406,8 @@ static __inline__ void spitfire_xcall_de
+ 	int i;
+ 
+ 	__asm__ __volatile__("rdpr %%pstate, %0" : "=r" (pstate));
+-	for (i = 0; i < NR_CPUS; i++) {
+-		if (cpu_isset(i, mask)) {
+-			spitfire_xcall_helper(data0, data1, data2, pstate, i);
+-			cpu_clear(i, mask);
+-			if (cpus_empty(mask))
+-				break;
+-		}
+-	}
++	for_each_cpu_mask(i, mask)
++		spitfire_xcall_helper(data0, data1, data2, pstate, i);
+ }
+ 
+ /* Cheetah now allows to send the whole 64-bytes of data in the interrupt
+@@ -456,25 +450,19 @@ retry:
+ 
+ 	nack_busy_id = 0;
+ 	{
+-		cpumask_t work_mask = mask;
+ 		int i;
+ 
+-		for (i = 0; i < NR_CPUS; i++) {
+-			if (cpu_isset(i, work_mask)) {
+-				u64 target = (i << 14) | 0x70;
+-
+-				if (!is_jalapeno)
+-					target |= (nack_busy_id << 24);
+-				__asm__ __volatile__(
+-					"stxa	%%g0, [%0] %1\n\t"
+-					"membar	#Sync\n\t"
+-					: /* no outputs */
+-					: "r" (target), "i" (ASI_INTR_W));
+-				nack_busy_id++;
+- 				cpu_clear(i, work_mask);
+-				if (cpus_empty(work_mask))
+-					break;
+-			}
++		for_each_cpu_mask(i, mask) {
++			u64 target = (i << 14) | 0x70;
++
++			if (!is_jalapeno)
++				target |= (nack_busy_id << 24);
++			__asm__ __volatile__(
++				"stxa	%%g0, [%0] %1\n\t"
++				"membar	#Sync\n\t"
++				: /* no outputs */
++				: "r" (target), "i" (ASI_INTR_W));
++			nack_busy_id++;
+ 		}
+ 	}
+ 
+@@ -507,7 +495,6 @@ retry:
+ 			printk("CPU[%d]: mondo stuckage result[%016lx]\n",
+ 			       smp_processor_id(), dispatch_stat);
+ 		} else {
+-			cpumask_t work_mask = mask;
+ 			int i, this_busy_nack = 0;
+ 
+ 			/* Delay some random time with interrupts enabled
+@@ -518,22 +505,17 @@ retry:
+ 			/* Clear out the mask bits for cpus which did not
+ 			 * NACK us.
+ 			 */
+-			for (i = 0; i < NR_CPUS; i++) {
+-				if (cpu_isset(i, work_mask)) {
+-					u64 check_mask;
+-
+-					if (is_jalapeno)
+-						check_mask = (0x2UL << (2*i));
+-					else
+-						check_mask = (0x2UL <<
+-							      this_busy_nack);
+-					if ((dispatch_stat & check_mask) == 0)
+-						cpu_clear(i, mask);
+-					this_busy_nack += 2;
+-					cpu_clear(i, work_mask);
+-					if (cpus_empty(work_mask))
+-						break;
+-				}
++			for_each_cpu_mask(i, mask) {
++				u64 check_mask;
++
++				if (is_jalapeno)
++					check_mask = (0x2UL << (2*i));
++				else
++					check_mask = (0x2UL <<
++						      this_busy_nack);
++				if ((dispatch_stat & check_mask) == 0)
++					cpu_clear(i, mask);
++				this_busy_nack += 2;
+ 			}
+ 
+ 			goto retry;
+diff -puN include/asm-i386/mach-es7000/mach_ipi.h~cpumask-10-10-optimize-various-uses-of-new-cpumasks include/asm-i386/mach-es7000/mach_ipi.h
+--- 25/include/asm-i386/mach-es7000/mach_ipi.h~cpumask-10-10-optimize-various-uses-of-new-cpumasks	2004-06-23 21:44:08.850720320 -0700
++++ 25-akpm/include/asm-i386/mach-es7000/mach_ipi.h	2004-06-23 21:44:08.861718648 -0700
+@@ -10,9 +10,8 @@ static inline void send_IPI_mask(cpumask
+ 
+ static inline void send_IPI_allbutself(int vector)
+ {
+-	cpumask_t mask = cpumask_of_cpu(smp_processor_id());
+-	cpus_complement(mask);
+-	cpus_and(mask, mask, cpu_online_map);
++	cpumask_t mask = cpu_online_map;
++	cpu_clear(smp_processor_id(), mask);
+ 	if (!cpus_empty(mask))
+ 		send_IPI_mask(mask, vector);
+ }
+diff -puN include/asm-i386/mpspec.h~cpumask-10-10-optimize-various-uses-of-new-cpumasks include/asm-i386/mpspec.h
+--- 25/include/asm-i386/mpspec.h~cpumask-10-10-optimize-various-uses-of-new-cpumasks	2004-06-23 21:44:08.851720168 -0700
++++ 25-akpm/include/asm-i386/mpspec.h	2004-06-23 21:44:08.862718496 -0700
+@@ -53,7 +53,7 @@ typedef struct physid_mask physid_mask_t
+ #define physids_and(dst, src1, src2)		bitmap_and((dst).mask, (src1).mask, (src2).mask, MAX_APICS)
+ #define physids_or(dst, src1, src2)		bitmap_or((dst).mask, (src1).mask, (src2).mask, MAX_APICS)
+ #define physids_clear(map)			bitmap_zero((map).mask, MAX_APICS)
+-#define physids_complement(map)			bitmap_complement((map).mask, (map).mask, MAX_APICS)
++#define physids_complement(dst, src)		bitmap_complement((dst).mask,(src).mask, MAX_APICS)
+ #define physids_empty(map)			bitmap_empty((map).mask, MAX_APICS)
+ #define physids_equal(map1, map2)		bitmap_equal((map1).mask, (map2).mask, MAX_APICS)
+ #define physids_weight(map)			bitmap_weight((map).mask, MAX_APICS)
+diff -puN include/asm-x86_64/mpspec.h~cpumask-10-10-optimize-various-uses-of-new-cpumasks include/asm-x86_64/mpspec.h
+--- 25/include/asm-x86_64/mpspec.h~cpumask-10-10-optimize-various-uses-of-new-cpumasks	2004-06-23 21:44:08.853719864 -0700
++++ 25-akpm/include/asm-x86_64/mpspec.h	2004-06-23 21:44:08.862718496 -0700
+@@ -212,7 +212,7 @@ typedef struct physid_mask physid_mask_t
+ #define physids_and(dst, src1, src2)		bitmap_and((dst).mask, (src1).mask, (src2).mask, MAX_APICS)
+ #define physids_or(dst, src1, src2)		bitmap_or((dst).mask, (src1).mask, (src2).mask, MAX_APICS)
+ #define physids_clear(map)			bitmap_zero((map).mask, MAX_APICS)
+-#define physids_complement(map)			bitmap_complement((map).mask, (map).mask, MAX_APICS)
++#define physids_complement(dst, src)		bitmap_complement((dst).mask, (src).mask, MAX_APICS)
+ #define physids_empty(map)			bitmap_empty((map).mask, MAX_APICS)
+ #define physids_equal(map1, map2)		bitmap_equal((map1).mask, (map2).mask, MAX_APICS)
+ #define physids_weight(map)			bitmap_weight((map).mask, MAX_APICS)
+diff -puN include/asm-x86_64/topology.h~cpumask-10-10-optimize-various-uses-of-new-cpumasks include/asm-x86_64/topology.h
+--- 25/include/asm-x86_64/topology.h~cpumask-10-10-optimize-various-uses-of-new-cpumasks	2004-06-23 21:44:08.855719560 -0700
++++ 25-akpm/include/asm-x86_64/topology.h	2004-06-23 21:44:08.862718496 -0700
+@@ -20,9 +20,11 @@ extern cpumask_t     node_to_cpumask[];
+ #define node_to_first_cpu(node) 	(__ffs(node_to_cpumask[node]))
+ #define node_to_cpumask(node)		(node_to_cpumask[node])
+ 
+-static inline unsigned long pcibus_to_cpumask(int bus)
++static inline cpumask_t pcibus_to_cpumask(int bus)
+ {
+-	return mp_bus_to_cpumask[bus] & cpu_online_map; 
++	cpumask_t tmp;
++	cpus_and(tmp, mp_bus_to_cpumask[bus], cpu_online_map);
++	return tmp;
+ }
+ 
+ #define NODE_BALANCE_RATE 30	/* CHECKME */ 
+diff -puN kernel/sched.c~cpumask-10-10-optimize-various-uses-of-new-cpumasks kernel/sched.c
+--- 25/kernel/sched.c~cpumask-10-10-optimize-various-uses-of-new-cpumasks	2004-06-23 21:44:08.857719256 -0700
++++ 25-akpm/kernel/sched.c	2004-06-23 21:44:08.865718040 -0700
+@@ -696,10 +696,9 @@ static int wake_idle(int cpu, task_t *p)
+ 		return cpu;
+ 
+ 	cpus_and(tmp, sd->span, cpu_online_map);
+-	for_each_cpu_mask(i, tmp) {
+-		if (!cpu_isset(i, p->cpus_allowed))
+-			continue;
++	cpus_and(tmp, tmp, p->cpus_allowed);
+ 
++	for_each_cpu_mask(i, tmp) {
+ 		if (idle_cpu(i))
+ 			return i;
+ 	}
+@@ -3342,7 +3341,7 @@ int set_cpus_allowed(task_t *p, cpumask_
+ 	runqueue_t *rq;
+ 
+ 	rq = task_rq_lock(p, &flags);
+-	if (any_online_cpu(new_mask) == NR_CPUS) {
++	if (!cpus_intersects(new_mask, cpu_online_map)) {
+ 		ret = -EINVAL;
+ 		goto out;
+ 	}
+@@ -3517,8 +3516,7 @@ static void migrate_all_tasks(int src_cp
+ 		if (dest_cpu == NR_CPUS)
+ 			dest_cpu = any_online_cpu(tsk->cpus_allowed);
+ 		if (dest_cpu == NR_CPUS) {
+-			cpus_clear(tsk->cpus_allowed);
+-			cpus_complement(tsk->cpus_allowed);
++			cpus_setall(tsk->cpus_allowed);
+ 			dest_cpu = any_online_cpu(tsk->cpus_allowed);
+ 
+ 			/* Don't tell them about moving exiting tasks
+@@ -3834,7 +3832,7 @@ void sched_domain_debug(void)
+ 			int j;
+ 			char str[NR_CPUS];
+ 			struct sched_group *group = sd->groups;
+-			cpumask_t groupmask, tmp;
++			cpumask_t groupmask;
+ 
+ 			cpumask_scnprintf(str, NR_CPUS, sd->span);
+ 			cpus_clear(groupmask);
+@@ -3864,8 +3862,7 @@ void sched_domain_debug(void)
+ 				if (!cpus_weight(group->cpumask))
+ 					printk(" ERROR empty group:");
+ 
+-				cpus_and(tmp, groupmask, group->cpumask);
+-				if (cpus_weight(tmp) > 0)
++				if (cpus_intersects(groupmask, group->cpumask))
+ 					printk(" ERROR repeated CPUs:");
+ 
+ 				cpus_or(groupmask, groupmask, group->cpumask);
+@@ -3884,8 +3881,7 @@ void sched_domain_debug(void)
+ 			sd = sd->parent;
+ 
+ 			if (sd) {
+-				cpus_and(tmp, groupmask, sd->span);
+-				if (!cpus_equal(tmp, groupmask))
++				if (!cpus_subset(groupmask, sd->span))
+ 					printk(KERN_DEBUG "ERROR parent span is not a superset of domain->span\n");
+ 			}
+ 
+_

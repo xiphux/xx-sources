@@ -1,0 +1,921 @@
+
+From: Paul Mundt <lethal@Linux-SH.ORG>
+
+This adds support for the Renesas Technology Sales HS7751RVoIP board.
+
+Signed-off-by: Paul Mundt <lethal@linux-sh.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/Makefile |   12 
+ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/io.c     |  310 ++++++++++++++++++++
+ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/irq.c    |  122 +++++++
+ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/led.c    |   27 +
+ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/mach.c   |   55 +++
+ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/pci.c    |  150 +++++++++
+ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/setup.c  |   89 +++++
+ 25-akpm/include/asm-sh/hs7751rvoip/hs7751rvoip.h    |   47 +++
+ 25-akpm/include/asm-sh/hs7751rvoip/ide.h            |    8 
+ 25-akpm/include/asm-sh/hs7751rvoip/io.h             |   39 ++
+ 10 files changed, 859 insertions(+)
+
+diff -puN /dev/null arch/sh/boards/renesas/hs7751rvoip/io.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/io.c	2004-06-23 20:00:16.400196816 -0700
+@@ -0,0 +1,310 @@
++/*
++ * linux/arch/sh/kernel/io_hs7751rvoip.c
++ *
++ * Copyright (C) 2001  Ian da Silva, Jeremy Siegel
++ * Based largely on io_se.c.
++ *
++ * I/O routine for Renesas Technology sales HS7751RVoIP
++ *
++ * Initial version only to support LAN access; some
++ * placeholder code from io_hs7751rvoip.c left in with the
++ * expectation of later SuperIO and PCMCIA access.
++ */
++
++#include <linux/config.h>
++#include <linux/kernel.h>
++#include <linux/types.h>
++#include <asm/io.h>
++#include <asm/hs7751rvoip/hs7751rvoip.h>
++#include <asm/addrspace.h>
++
++#include <linux/module.h>
++#include <linux/pci.h>
++#include "../../../drivers/pci/pci-sh7751.h"
++
++extern void *area5_io8_base;	/* Area 5 8bit I/O Base address */
++extern void *area6_io8_base;	/* Area 6 8bit I/O Base address */
++extern void *area5_io16_base;	/* Area 5 16bit I/O Base address */
++extern void *area6_io16_base;	/* Area 6 16bit I/O Base address */
++
++/*
++ * The 7751R HS7751RVoIP uses the built-in PCI controller (PCIC)
++ * of the 7751R processor, and has a SuperIO accessible via the PCI.
++ * The board also includes a PCMCIA controller on its memory bus,
++ * like the other Solution Engine boards.
++ */
++
++#define PCIIOBR		(volatile long *)PCI_REG(SH7751_PCIIOBR)
++#define PCIMBR          (volatile long *)PCI_REG(SH7751_PCIMBR)
++#define PCI_IO_AREA	SH7751_PCI_IO_BASE
++#define PCI_MEM_AREA	SH7751_PCI_CONFIG_BASE
++
++#define PCI_IOMAP(adr)	(PCI_IO_AREA + (adr & ~SH7751_PCIIOBR_MASK))
++
++#if defined(CONFIG_HS7751RVOIP_CODEC)
++#define CODEC_IO_BASE	0x1000
++#endif
++
++#define maybebadio(name,port) \
++  printk("bad PC-like io %s for port 0x%lx at 0x%08x\n", \
++	 #name, (port), (__u32) __builtin_return_address(0))
++
++static inline void delay(void)
++{
++	ctrl_inw(0xa0000000);
++}
++
++static inline unsigned long port2adr(unsigned int port)
++{
++	if ((0x1f0 <= port && port < 0x1f8) || port == 0x3f6)
++		if (port == 0x3f6)
++			return ((unsigned long)area5_io16_base + 0x0c);
++		else
++			return ((unsigned long)area5_io16_base + 0x800 + ((port-0x1f0) << 1));
++	else
++		maybebadio(port2adr, (unsigned long)port);
++	return port;
++}
++
++/* The 7751R HS7751RVoIP seems to have everything hooked */
++/* up pretty normally (nothing on high-bytes only...) so this */
++/* shouldn't be needed */
++static inline int shifted_port(unsigned long port)
++{
++	/* For IDE registers, value is not shifted */
++	if ((0x1f0 <= port && port < 0x1f8) || port == 0x3f6)
++		return 0;
++	else
++		return 1;
++}
++
++#if defined(CONFIG_HS7751RVOIP_CODEC)
++static inline int
++codec_port(unsigned long port)
++{
++	if (CODEC_IO_BASE <= port && port < (CODEC_IO_BASE+0x20))
++		return 1;
++	else
++		return 0;
++}
++#endif
++
++/* In case someone configures the kernel w/o PCI support: in that */
++/* scenario, don't ever bother to check for PCI-window addresses */
++
++/* NOTE: WINDOW CHECK MAY BE A BIT OFF, HIGH PCIBIOS_MIN_IO WRAPS? */
++#if defined(CONFIG_PCI)
++#define CHECK_SH7751_PCIIO(port) \
++  ((port >= PCIBIOS_MIN_IO) && (port < (PCIBIOS_MIN_IO + SH7751_PCI_IO_SIZE)))
++#else
++#define CHECK_SH7751_PCIIO(port) (0)
++#endif
++
++/*
++ * General outline: remap really low stuff [eventually] to SuperIO,
++ * stuff in PCI IO space (at or above window at pci.h:PCIBIOS_MIN_IO)
++ * is mapped through the PCI IO window.  Stuff with high bits (PXSEG)
++ * should be way beyond the window, and is used  w/o translation for
++ * compatibility.
++ */
++unsigned char hs7751rvoip_inb(unsigned long port)
++{
++	if (PXSEG(port))
++		return *(volatile unsigned char *)port;
++#if defined(CONFIG_HS7751RVOIP_CODEC)
++	else if (codec_port(port))
++		return *(volatile unsigned char *)((unsigned long)area6_io8_base+(port-CODEC_IO_BASE));
++#endif
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++		return *(volatile unsigned char *)PCI_IOMAP(port);
++	else
++		return (*(volatile unsigned short *)port2adr(port) & 0xff);
++}
++
++unsigned char hs7751rvoip_inb_p(unsigned long port)
++{
++	unsigned char v;
++
++        if (PXSEG(port))
++                v = *(volatile unsigned char *)port;
++#if defined(CONFIG_HS7751RVOIP_CODEC)
++	else if (codec_port(port))
++		v = *(volatile unsigned char *)((unsigned long)area6_io8_base+(port-CODEC_IO_BASE));
++#endif
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++                v = *(volatile unsigned char *)PCI_IOMAP(port);
++	else
++		v = (*(volatile unsigned short *)port2adr(port) & 0xff);
++	delay();
++	return v;
++}
++
++unsigned short hs7751rvoip_inw(unsigned long port)
++{
++        if (PXSEG(port))
++                return *(volatile unsigned short *)port;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++                return *(volatile unsigned short *)PCI_IOMAP(port);
++	else
++		maybebadio(inw, port);
++	return 0;
++}
++
++unsigned int hs7751rvoip_inl(unsigned long port)
++{
++        if (PXSEG(port))
++                return *(volatile unsigned long *)port;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++                return *(volatile unsigned long *)PCI_IOMAP(port);
++	else
++		maybebadio(inl, port);
++	return 0;
++}
++
++void hs7751rvoip_outb(unsigned char value, unsigned long port)
++{
++
++        if (PXSEG(port))
++                *(volatile unsigned char *)port = value;
++#if defined(CONFIG_HS7751RVOIP_CIDEC)
++	else if (codec_port(port))
++		*(volatile unsigned cjar *)((unsigned long)area6_io8_base+(port-CODEC_IO_BASE)) = value;
++#endif
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++        	*(unsigned char *)PCI_IOMAP(port) = value;
++	else
++		*(volatile unsigned short *)port2adr(port) = value;
++}
++
++void hs7751rvoip_outb_p(unsigned char value, unsigned long port)
++{
++        if (PXSEG(port))
++                *(volatile unsigned char *)port = value;
++#if defined(CONFIG_HS7751RVOIP_CIDEC)
++	else if (codec_port(port))
++		*(volatile unsigned cjar *)((unsigned long)area6_io8_base+(port-CODEC_IO_BASE)) = value;
++#endif
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++        	*(unsigned char *)PCI_IOMAP(port) = value;
++	else
++		*(volatile unsigned short *)port2adr(port) = value;
++	delay();
++}
++
++void hs7751rvoip_outw(unsigned short value, unsigned long port)
++{
++        if (PXSEG(port))
++                *(volatile unsigned short *)port = value;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++        	*(unsigned short *)PCI_IOMAP(port) = value;
++	else
++		maybebadio(outw, port);
++}
++
++void hs7751rvoip_outl(unsigned int value, unsigned long port)
++{
++        if (PXSEG(port))
++                *(volatile unsigned long *)port = value;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++        	*((unsigned long *)PCI_IOMAP(port)) = value;
++	else
++		maybebadio(outl, port);
++}
++
++void hs7751rvoip_insb(unsigned long port, void *addr, unsigned long count)
++{
++	if (PXSEG(port))
++		while (count--) *((unsigned char *) addr)++ = *(volatile unsigned char *)port;
++#if defined(CONFIG_HS7751RVOIP_CODEC)
++	else if (codec_port(port))
++		while (count--) *((unsigned char *) addr)++ = *(volatile unsigned char *)((unsigned long)area6_io8_base+(port-CODEC_IO_BASE));
++#endif
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port)) {
++		volatile __u8 *bp = (__u8 *)PCI_IOMAP(port);
++
++		while (count--) *((volatile unsigned char *) addr)++ = *bp;
++	} else {
++		volatile __u16 *p = (volatile unsigned short *)port2adr(port);
++
++		while (count--) *((unsigned char *) addr)++ = *p & 0xff;
++	}
++}
++
++void hs7751rvoip_insw(unsigned long port, void *addr, unsigned long count)
++{
++	volatile __u16 *p;
++
++	if (PXSEG(port))
++		p = (volatile unsigned short *)port;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++		p = (volatile unsigned short *)PCI_IOMAP(port);
++	else
++		p = (volatile unsigned short *)port2adr(port);
++	while (count--) *((__u16 *) addr)++ = *p;
++}
++
++void hs7751rvoip_insl(unsigned long port, void *addr, unsigned long count)
++{
++	if (CHECK_SH7751_PCIIO(port) || shifted_port(port)) {
++		volatile __u32 *p = (__u32 *)PCI_IOMAP(port);
++
++		while (count--) *((__u32 *) addr)++ = *p;
++	} else
++		maybebadio(insl, port);
++}
++
++void hs7751rvoip_outsb(unsigned long port, const void *addr, unsigned long count)
++{
++	if (PXSEG(port))
++		while (count--) *(volatile unsigned char *)port = *((unsigned char *) addr)++;
++#if defined(CONFIG_HS7751RVOIP_CODEC)
++	else if (codec_port(port))
++		while (count--) *(volatile unsigned char *)((unsigned long)area6_io8_base+(port-CODEC_IO_BASE)) = *((unsigned char *) addr)++;
++#endif
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port)) {
++		volatile __u8 *bp = (__u8 *)PCI_IOMAP(port);
++
++		while (count--) *bp = *((volatile unsigned char *) addr)++;
++	} else {
++		volatile __u16 *p = (volatile unsigned short *)port2adr(port);
++
++		while (count--) *p = *((unsigned char *) addr)++;
++	}
++}
++
++void hs7751rvoip_outsw(unsigned long port, const void *addr, unsigned long count)
++{
++	volatile __u16 *p;
++
++	if (PXSEG(port))
++		p = (volatile unsigned short *)port;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++		p = (volatile unsigned short *)PCI_IOMAP(port);
++	else
++		p = (volatile unsigned short *)port2adr(port);
++	while (count--) *p = *((__u16 *) addr)++;
++}
++
++void hs7751rvoip_outsl(unsigned long port, const void *addr, unsigned long count)
++{
++	if (CHECK_SH7751_PCIIO(port) || shifted_port(port)) {
++		volatile __u32 *p = (__u32 *)PCI_IOMAP(port);
++
++		while (count--) *p = *((__u32 *) addr)++;
++	} else
++		maybebadio(outsl, port);
++}
++
++void *hs7751rvoip_ioremap(unsigned long offset, unsigned long size)
++{
++	if (offset >= 0xfd000000)
++		return (void *)offset;
++	else
++		return (void *)P2SEGADDR(offset);
++}
++EXPORT_SYMBOL(hs7751rvoip_ioremap);
++
++unsigned long hs7751rvoip_isa_port2addr(unsigned long offset)
++{
++	return port2adr(offset);
++}
+diff -puN /dev/null arch/sh/boards/renesas/hs7751rvoip/irq.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/irq.c	2004-06-23 20:00:16.401196664 -0700
+@@ -0,0 +1,122 @@
++/*
++ * linux/arch/sh/boards/renesas/hs7751rvoip/irq.c
++ *
++ * Copyright (C) 2000  Kazumoto Kojima
++ *
++ * Renesas Technology Sales HS7751RVoIP Support.
++ *
++ * Modified for HS7751RVoIP by
++ * Atom Create Engineering Co., Ltd. 2002.
++ * Lineo uSolutions, Inc. 2003.
++ */
++
++#include <linux/config.h>
++#include <linux/init.h>
++#include <linux/irq.h>
++#include <asm/io.h>
++#include <asm/irq.h>
++#include <asm/hs7751rvoip/hs7751rvoip.h>
++
++static int mask_pos[] = {8, 9, 10, 11, 12, 13, 0, 1, 2, 3, 4, 5, 6, 7};
++
++static void enable_hs7751rvoip_irq(unsigned int irq);
++static void disable_hs7751rvoip_irq(unsigned int irq);
++
++/* shutdown is same as "disable" */
++#define shutdown_hs7751rvoip_irq disable_hs7751rvoip_irq
++
++static void ack_hs7751rvoip_irq(unsigned int irq);
++static void end_hs7751rvoip_irq(unsigned int irq);
++
++static unsigned int startup_hs7751rvoip_irq(unsigned int irq)
++{
++	enable_hs7751rvoip_irq(irq);
++	return 0; /* never anything pending */
++}
++
++static void disable_hs7751rvoip_irq(unsigned int irq)
++{
++	unsigned long flags;
++	unsigned short val;
++	unsigned short mask = 0xffff ^ (0x0001 << mask_pos[irq]);
++
++	/* Set the priority in IPR to 0 */
++	local_irq_save(flags);
++	val = ctrl_inw(IRLCNTR3);
++	val &= mask;
++	ctrl_outw(val, IRLCNTR3);
++	local_irq_restore(flags);
++}
++
++static void enable_hs7751rvoip_irq(unsigned int irq)
++{
++	unsigned long flags;
++	unsigned short val;
++	unsigned short value = (0x0001 << mask_pos[irq]);
++
++	/* Set priority in IPR back to original value */
++	local_irq_save(flags);
++	val = ctrl_inw(IRLCNTR3);
++	val |= value;
++	ctrl_outw(val, IRLCNTR3);
++	local_irq_restore(flags);
++}
++
++static void ack_hs7751rvoip_irq(unsigned int irq)
++{
++	disable_hs7751rvoip_irq(irq);
++}
++
++static void end_hs7751rvoip_irq(unsigned int irq)
++{
++	if (!(irq_desc[irq].status & (IRQ_DISABLED|IRQ_INPROGRESS)))
++		enable_hs7751rvoip_irq(irq);
++}
++
++static struct hw_interrupt_type hs7751rvoip_irq_type = {
++	"HS7751RVoIP IRQ",
++	startup_hs7751rvoip_irq,
++	shutdown_hs7751rvoip_irq,
++	enable_hs7751rvoip_irq,
++	disable_hs7751rvoip_irq,
++	ack_hs7751rvoip_irq,
++	end_hs7751rvoip_irq,
++};
++
++static void make_hs7751rvoip_irq(unsigned int irq)
++{
++	disable_irq_nosync(irq);
++	irq_desc[irq].handler = &hs7751rvoip_irq_type;
++	disable_hs7751rvoip_irq(irq);
++}
++
++/*
++ * Initialize IRQ setting
++ */
++void __init init_hs7751rvoip_IRQ(void)
++{
++	int i;
++
++	/* IRL0=ON HOOK1
++	 * IRL1=OFF HOOK1
++	 * IRL2=ON HOOK2
++	 * IRL3=OFF HOOK2
++	 * IRL4=Ringing Detection
++	 * IRL5=CODEC
++	 * IRL6=Ethernet
++	 * IRL7=Ethernet Hub
++	 * IRL8=USB Communication
++	 * IRL9=USB Connection
++	 * IRL10=USB DMA
++	 * IRL11=CF Card
++	 * IRL12=PCMCIA
++	 * IRL13=PCI Slot
++	 */
++	ctrl_outw(0x9876, IRLCNTR1);
++	ctrl_outw(0xdcba, IRLCNTR2);
++	ctrl_outw(0x0050, IRLCNTR4);
++	ctrl_outw(0x4321, IRLCNTR5);
++
++	for (i=0; i<14; i++)
++		make_hs7751rvoip_irq(i);
++}
+diff -puN /dev/null arch/sh/boards/renesas/hs7751rvoip/led.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/led.c	2004-06-23 20:00:16.401196664 -0700
+@@ -0,0 +1,27 @@
++/*
++ * linux/arch/sh/kernel/setup_hs7751rvoip.c
++ *
++ * Copyright (C) 2000  Kazumoto Kojima
++ *
++ * Renesas Technology Sales HS7751RVoIP Support.
++ *
++ * Modified for HS7751RVoIP by
++ * Atom Create Engineering Co., Ltd. 2002.
++ * Lineo uSolutions, Inc. 2003.
++ */
++
++#include <linux/config.h>
++#include <asm/io.h>
++#include <asm/hs7751rvoip/hs7751rvoip.h>
++
++extern unsigned int debug_counter;
++
++void debug_led_disp(void)
++{
++	unsigned short value;
++
++	value = (unsigned char)debug_counter++;
++	ctrl_outb((0xf0|value), PA_OUTPORTR);
++	if (value == 0x0f)
++		debug_counter = 0;
++}
+diff -puN /dev/null arch/sh/boards/renesas/hs7751rvoip/mach.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/mach.c	2004-06-23 20:00:16.402196512 -0700
+@@ -0,0 +1,55 @@
++/*
++ * linux/arch/sh/kernel/mach_hs7751rvoip.c
++ *
++ * Minor tweak of mach_se.c file to reference hs7751rvoip-specific items.
++ *
++ * May be copied or modified under the terms of the GNU General Public
++ * License.  See linux/COPYING for more information.
++ *
++ * Machine vector for the Renesas Technology sales HS7751RVoIP
++ */
++
++#include <linux/config.h>
++#include <linux/init.h>
++
++#include <asm/machvec.h>
++#include <asm/rtc.h>
++#include <asm/irq.h>
++#include <asm/hs7751rvoip/io.h>
++
++extern void init_hs7751rvoip_IRQ(void);
++extern void *hs7751rvoip_ioremap(unsigned long, unsigned long);
++
++/*
++ * The Machine Vector
++ */
++
++struct sh_machine_vector mv_hs7751rvoip __initmv = {
++	.mv_nr_irqs		= 72,
++
++	.mv_inb			= hs7751rvoip_inb,
++	.mv_inw			= hs7751rvoip_inw,
++	.mv_inl			= hs7751rvoip_inl,
++	.mv_outb		= hs7751rvoip_outb,
++	.mv_outw		= hs7751rvoip_outw,
++	.mv_outl		= hs7751rvoip_outl,
++
++	.mv_inb_p		= hs7751rvoip_inb_p,
++	.mv_inw_p		= hs7751rvoip_inw,
++	.mv_inl_p		= hs7751rvoip_inl,
++	.mv_outb_p		= hs7751rvoip_outb_p,
++	.mv_outw_p		= hs7751rvoip_outw,
++	.mv_outl_p		= hs7751rvoip_outl,
++
++	.mv_insb		= hs7751rvoip_insb,
++	.mv_insw		= hs7751rvoip_insw,
++	.mv_insl		= hs7751rvoip_insl,
++	.mv_outsb		= hs7751rvoip_outsb,
++	.mv_outsw		= hs7751rvoip_outsw,
++	.mv_outsl		= hs7751rvoip_outsl,
++
++	.mv_ioremap		= hs7751rvoip_ioremap,
++	.mv_isa_port2addr	= hs7751rvoip_isa_port2addr,
++	.mv_init_irq		= init_hs7751rvoip_IRQ,
++};
++ALIAS_MV(hs7751rvoip)
+diff -puN /dev/null arch/sh/boards/renesas/hs7751rvoip/Makefile
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/Makefile	2004-06-23 20:00:16.402196512 -0700
+@@ -0,0 +1,12 @@
++#
++# Makefile for the HS7751RVoIP specific parts of the kernel
++#
++# Note! Dependencies are done automagically by 'make dep', which also
++# removes any old dependencies. DON'T put your own dependencies here
++# unless it's something special (ie not a .c file).
++#
++
++obj-y	 := mach.o setup.o io.o irq.o led.o
++
++obj-$(CONFIG_PCI) += pci.o
++
+diff -puN /dev/null arch/sh/boards/renesas/hs7751rvoip/pci.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/pci.c	2004-06-23 20:00:16.403196360 -0700
+@@ -0,0 +1,150 @@
++/*
++ * linux/arch/sh/kernel/pci-hs7751rvoip.c
++ *
++ * Author:  Ian DaSilva (idasilva@mvista.com)
++ *
++ * Highly leveraged from pci-bigsur.c, written by Dustin McIntire.
++ *
++ * May be copied or modified under the terms of the GNU General Public
++ * License.  See linux/COPYING for more information.
++ *
++ * PCI initialization for the Renesas SH7751R HS7751RVoIP board
++ */
++
++#include <linux/config.h>
++#include <linux/kernel.h>
++#include <linux/types.h>
++#include <linux/init.h>
++#include <linux/delay.h>
++#include <linux/pci.h>
++#include <linux/module.h>
++
++#include <asm/io.h>
++#include "../../../drivers/pci/pci-sh7751.h"
++#include <asm/hs7751rvoip/hs7751rvoip.h>
++
++#define PCIMCR_MRSET_OFF	0xBFFFFFFF
++#define PCIMCR_RFSH_OFF		0xFFFFFFFB
++
++/*
++ * Only long word accesses of the PCIC's internal local registers and the
++ * configuration registers from the CPU is supported.
++ */
++#define PCIC_WRITE(x,v) writel((v), PCI_REG(x))
++#define PCIC_READ(x) readl(PCI_REG(x))
++
++/*
++ * Description:  This function sets up and initializes the pcic, sets
++ * up the BARS, maps the DRAM into the address space etc, etc.
++ */
++int __init pcibios_init_platform(void)
++{
++	unsigned long bcr1, wcr1, wcr2, wcr3, mcr;
++	unsigned short bcr2, bcr3;
++
++	/*
++	 * Initialize the slave bus controller on the pcic.  The values used
++	 * here should not be hardcoded, but they should be taken from the bsc
++	 * on the processor, to make this function as generic as possible.
++	 * (i.e. Another sbc may usr different SDRAM timing settings -- in order
++	 * for the pcic to work, its settings need to be exactly the same.)
++	 */
++	bcr1 = (*(volatile unsigned long *)(SH7751_BCR1));
++	bcr2 = (*(volatile unsigned short *)(SH7751_BCR2));
++	bcr3 = (*(volatile unsigned short *)(SH7751_BCR3));
++	wcr1 = (*(volatile unsigned long *)(SH7751_WCR1));
++	wcr2 = (*(volatile unsigned long *)(SH7751_WCR2));
++	wcr3 = (*(volatile unsigned long *)(SH7751_WCR3));
++	mcr = (*(volatile unsigned long *)(SH7751_MCR));
++
++	bcr1 = bcr1 | 0x00080000;  /* Enable Bit 19, BREQEN */
++	(*(volatile unsigned long *)(SH7751_BCR1)) = bcr1;
++
++	bcr1 = bcr1 | 0x40080000;  /* Enable Bit 19 BREQEN, set PCIC to slave */
++	PCIC_WRITE(SH7751_PCIBCR1, bcr1);	/* PCIC BCR1 */
++	PCIC_WRITE(SH7751_PCIBCR2, bcr2);	/* PCIC BCR2 */
++	PCIC_WRITE(SH7751_PCIBCR3, bcr3);	/* PCIC BCR3 */
++	PCIC_WRITE(SH7751_PCIWCR1, wcr1);	/* PCIC WCR1 */
++	PCIC_WRITE(SH7751_PCIWCR2, wcr2);	/* PCIC WCR2 */
++	PCIC_WRITE(SH7751_PCIWCR3, wcr3);	/* PCIC WCR3 */
++	mcr = (mcr & PCIMCR_MRSET_OFF) & PCIMCR_RFSH_OFF;
++	PCIC_WRITE(SH7751_PCIMCR, mcr);		/* PCIC MCR */
++
++	/* Enable all interrupts, so we know what to fix */
++	PCIC_WRITE(SH7751_PCIINTM, 0x0000c3ff);
++	PCIC_WRITE(SH7751_PCIAINTM, 0x0000380f);
++
++	/* Set up standard PCI config registers */
++	PCIC_WRITE(SH7751_PCICONF1, 0xFB900047); /* Bus Master, Mem & I/O access */
++	PCIC_WRITE(SH7751_PCICONF2, 0x00000000); /* PCI Class code & Revision ID */
++	PCIC_WRITE(SH7751_PCICONF4, 0xab000001); /* PCI I/O address (local regs) */
++	PCIC_WRITE(SH7751_PCICONF5, 0x0c000000); /* PCI MEM address (local RAM)  */
++	PCIC_WRITE(SH7751_PCICONF6, 0xd0000000); /* PCI MEM address (unused) */
++	PCIC_WRITE(SH7751_PCICONF11, 0x35051054); /* PCI Subsystem ID & Vendor ID */
++	PCIC_WRITE(SH7751_PCILSR0, 0x03f00000);	/* MEM (full 64M exposed) */
++	PCIC_WRITE(SH7751_PCILSR1, 0x00000000); /* MEM (unused) */
++	PCIC_WRITE(SH7751_PCILAR0, 0x0c000000); /* MEM (direct map from PCI) */
++	PCIC_WRITE(SH7751_PCILAR1, 0x00000000); /* MEM (unused) */
++
++	/* Now turn it on... */
++	PCIC_WRITE(SH7751_PCICR, 0xa5000001);
++
++	/*
++	 * Set PCIMBR and PCIIOBR here, assuming a single window
++	 * (16M MEM, 256K IO) is enough.  If a larger space is
++	 * needed, the readx/writex and inx/outx functions will
++	 * have to do more (e.g. setting registers for each call).
++	 */
++
++	/*
++	 * Set the MBR so PCI address is one-to-one with window,
++	 * meaning all calls go straight through... use ifdef to
++	 * catch erroneous assumption.
++	 */
++	BUG_ON(PCIBIOS_MIN_MEM != SH7751_PCI_MEMORY_BASE);
++
++	PCIC_WRITE(SH7751_PCIMBR, PCIBIOS_MIN_MEM);
++
++	/* Set IOBR for window containing area specified in pci.h */
++	PCIC_WRITE(SH7751_PCIIOBR, (PCIBIOS_MIN_IO & SH7751_PCIIOBR_MASK));
++
++	/* All done, may as well say so... */
++	printk("SH7751R PCI: Finished initialization of the PCI controller\n");
++
++	return 1;
++}
++
++int __init pcibios_map_platform_irq(u8 slot, u8 pin)
++{
++        switch (slot) {
++	case 0: return IRQ_PCISLOT;	/* PCI Extend slot */
++	case 1: return IRQ_PCMCIA;	/* PCI Cardbus Bridge */
++	case 2: return IRQ_PCIETH;	/* Realtek Ethernet controller */
++	case 3: return IRQ_PCIHUB;	/* Realtek Ethernet Hub controller */
++	default:
++		printk("PCI: Bad IRQ mapping request for slot %d\n", slot);
++		return -1;
++	}
++}
++
++static struct resource sh7751_io_resource = {
++	.name	= "SH7751_IO",
++	.start	= 0x4000,
++	.end	= 0x4000 + SH7751_PCI_IO_SIZE - 1,
++	.flags	= IORESOURCE_IO
++};
++
++static struct resource sh7751_mem_resource = {
++	.name	= "SH7751_mem",
++	.start	= SH7751_PCI_MEMORY_BASE,
++	.end	= SH7751_PCI_MEMORY_BASE + SH7751_PCI_MEM_SIZE - 1,
++	.flags	= IORESOURCE_MEM
++};
++
++extern struct pci_ops sh7751_pci_ops;
++
++struct pci_channel board_pci_channels[] = {
++	{ &sh7751_pci_ops, &sh7751_io_resource, &sh7751_mem_resource, 0, 0xff },
++	{ NULL, NULL, NULL, 0, 0 },
++};
++EXPORT_SYMBOL(board_pci_channels);
+diff -puN /dev/null arch/sh/boards/renesas/hs7751rvoip/setup.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/renesas/hs7751rvoip/setup.c	2004-06-23 20:00:16.404196208 -0700
+@@ -0,0 +1,89 @@
++/*
++ * linux/arch/sh/kernel/setup_hs7751rvoip.c
++ *
++ * Copyright (C) 2000  Kazumoto Kojima
++ *
++ * Renesas Technology Sales HS7751RVoIP Support.
++ *
++ * Modified for HS7751RVoIP by
++ * Atom Create Engineering Co., Ltd. 2002.
++ * Lineo uSolutions, Inc. 2003.
++ */
++
++#include <linux/config.h>
++#include <linux/init.h>
++#include <linux/irq.h>
++
++#include <linux/hdreg.h>
++#include <linux/ide.h>
++#include <asm/io.h>
++#include <asm/hs7751rvoip/hs7751rvoip.h>
++
++#include <linux/mm.h>
++#include <linux/vmalloc.h>
++
++/* defined in mm/ioremap.c */
++extern void * p3_ioremap(unsigned long phys_addr, unsigned long size, unsigned long flags);
++
++unsigned int debug_counter;
++
++const char *get_system_type(void)
++{
++	return "HS7751RVoIP";
++}
++
++/*
++ * Initialize the board
++ */
++void __init platform_setup(void)
++{
++	printk(KERN_INFO "Renesas Technology Sales HS7751RVoIP-2 support.\n");
++	ctrl_outb(0xf0, PA_OUTPORTR);
++	debug_counter = 0;
++}
++
++void *area5_io8_base;
++void *area6_io8_base;
++void *area5_io16_base;
++void *area6_io16_base;
++
++int __init cf_init(void)
++{
++	pgprot_t prot;
++	unsigned long paddrbase, psize;
++
++	/* open I/O area window */
++	paddrbase = virt_to_phys((void *)(PA_AREA5_IO+0x00000800));
++	psize = PAGE_SIZE;
++	prot = PAGE_KERNEL_PCC(1, _PAGE_PCC_COM16);
++	area5_io16_base = p3_ioremap(paddrbase, psize, prot.pgprot);
++	if (!area5_io16_base) {
++		printk("allocate_cf_area : can't open CF I/O window!\n");
++		return -ENOMEM;
++	}
++
++	/* XXX : do we need attribute and common-memory area also? */
++
++	paddrbase = virt_to_phys((void *)PA_AREA6_IO);
++	psize = PAGE_SIZE;
++#if defined(CONFIG_HS7751RVOIP_CODEC)
++	prot = PAGE_KERNEL_PCC(0, _PAGE_PCC_COM8);
++#else
++	prot = PAGE_KERNEL_PCC(0, _PAGE_PCC_IO8);
++#endif
++	area6_io8_base = p3_ioremap(paddrbase, psize, prot.pgprot);
++	if (!area6_io8_base) {
++		printk("allocate_cf_area : can't open CODEC I/O 8bit window!\n");
++		return -ENOMEM;
++	}
++	prot = PAGE_KERNEL_PCC(0, _PAGE_PCC_IO16);
++	area6_io16_base = p3_ioremap(paddrbase, psize, prot.pgprot);
++	if (!area6_io16_base) {
++		printk("allocate_cf_area : can't open CODEC I/O 16bit window!\n");
++		return -ENOMEM;
++	}
++
++	return 0;
++}
++
++__initcall (cf_init);
+diff -puN /dev/null include/asm-sh/hs7751rvoip/hs7751rvoip.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/hs7751rvoip/hs7751rvoip.h	2004-06-23 20:00:16.405196056 -0700
+@@ -0,0 +1,47 @@
++#ifndef __ASM_SH_RENESAS_HS7751RVOIP_H
++#define __ASM_SH_RENESAS_HS7751RVOIP_H
++
++/*
++ * linux/include/asm-sh/hs7751rvoip/hs7751rvoip.h
++ *
++ * Copyright (C) 2000  Atom Create Engineering Co., Ltd.
++ *
++ * Renesas Technology Sales HS7751RVoIP support
++ */
++
++/* Box specific addresses.  */
++
++#define PA_BCR		0xa4000000	/* FPGA */
++#define PA_SLICCNTR1	0xa4000006	/* SLIC PIO Control 1 */
++#define PA_SLICCNTR2	0xa4000008	/* SLIC PIO Control 2 */
++#define PA_DMACNTR	0xa400000a	/* USB DMA Control */
++#define PA_INPORTR	0xa400000c	/* Input Port Register */
++#define PA_OUTPORTR	0xa400000e	/* Output Port Reguster */
++#define PA_VERREG	0xa4000014	/* FPGA Version Register */
++
++#define PA_AREA5_IO	0xb4000000	/* Area 5 IO Memory */
++#define PA_AREA6_IO	0xb8000000	/* Area 6 IO Memory */
++#define PA_IDE_OFFSET	0x1f0		/* CF IDE Offset */
++
++#define IRLCNTR1	(PA_BCR + 0)	/* Interrupt Control Register1 */
++#define IRLCNTR2	(PA_BCR + 2)	/* Interrupt Control Register2 */
++#define IRLCNTR3	(PA_BCR + 4)	/* Interrupt Control Register3 */
++#define IRLCNTR4	(PA_BCR + 16)	/* Interrupt Control Register4 */
++#define IRLCNTR5	(PA_BCR + 18)	/* Interrupt Control Register5 */
++
++#define IRQ_PCIETH	6		/* PCI Ethernet IRQ */
++#define IRQ_PCIHUB	7		/* PCI Ethernet Hub IRQ */
++#define IRQ_USBCOM	8		/* USB Comunication IRQ */
++#define IRQ_USBCON	9		/* USB Connect IRQ */
++#define IRQ_USBDMA	10		/* USB DMA IRQ */
++#define IRQ_CFCARD	11		/* CF Card IRQ */
++#define IRQ_PCMCIA	12		/* PCMCIA IRQ */
++#define IRQ_PCISLOT	13		/* PCI Slot #1 IRQ */
++#define IRQ_ONHOOK1	0		/* ON HOOK1 IRQ */
++#define IRQ_OFFHOOK1	1		/* OFF HOOK1 IRQ */
++#define IRQ_ONHOOK2	2		/* ON HOOK2 IRQ */
++#define IRQ_OFFHOOK2	3		/* OFF HOOK2 IRQ */
++#define	IRQ_RINGING	4		/* Ringing IRQ */
++#define	IRQ_CODEC	5		/* CODEC IRQ */
++
++#endif  /* __ASM_SH_RENESAS_HS7751RVOIP */
+diff -puN /dev/null include/asm-sh/hs7751rvoip/ide.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/hs7751rvoip/ide.h	2004-06-23 20:00:16.405196056 -0700
+@@ -0,0 +1,8 @@
++#ifndef __ASM_SH_HS7751RVOIP_IDE_H
++#define __ASM_SH_HS7751RVOIP_IDE_H
++
++/* Nothing to see here.. */
++#include <asm/hs7751rvoip/hs7751rvoip.h>
++
++#endif /* __ASM_SH_HS7751RVOIP_IDE_H */
++
+diff -puN /dev/null include/asm-sh/hs7751rvoip/io.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/hs7751rvoip/io.h	2004-06-23 20:00:16.405196056 -0700
+@@ -0,0 +1,39 @@
++/*
++ * include/asm-sh/hs7751rvoip/hs7751rvoip.h
++ *
++ * Modified version of io_se.h for the hs7751rvoip-specific functions.
++ *
++ * May be copied or modified under the terms of the GNU General Public
++ * License.  See linux/COPYING for more information.
++ *
++ * IO functions for an Renesas Technology sales HS7751RVOIP
++ */
++
++#ifndef _ASM_SH_IO_HS7751RVOIP_H
++#define _ASM_SH_IO_HS7751RVOIP_H
++
++#include <asm/io_generic.h>
++
++extern unsigned char hs7751rvoip_inb(unsigned long port);
++extern unsigned short hs7751rvoip_inw(unsigned long port);
++extern unsigned int hs7751rvoip_inl(unsigned long port);
++
++extern void hs7751rvoip_outb(unsigned char value, unsigned long port);
++extern void hs7751rvoip_outw(unsigned short value, unsigned long port);
++extern void hs7751rvoip_outl(unsigned int value, unsigned long port);
++
++extern unsigned char hs7751rvoip_inb_p(unsigned long port);
++extern void hs7751rvoip_outb_p(unsigned char value, unsigned long port);
++
++extern void hs7751rvoip_insb(unsigned long port, void *addr, unsigned long count);
++extern void hs7751rvoip_insw(unsigned long port, void *addr, unsigned long count);
++extern void hs7751rvoip_insl(unsigned long port, void *addr, unsigned long count);
++extern void hs7751rvoip_outsb(unsigned long port, const void *addr, unsigned long count);
++extern void hs7751rvoip_outsw(unsigned long port, const void *addr, unsigned long count);
++extern void hs7751rvoip_outsl(unsigned long port, const void *addr, unsigned long count);
++
++extern void *hs7751rvoip_ioremap(unsigned long offset, unsigned long size);
++
++extern unsigned long hs7751rvoip_isa_port2addr(unsigned long offset);
++
++#endif /* _ASM_SH_IO_HS7751RVOIP_H */
+_

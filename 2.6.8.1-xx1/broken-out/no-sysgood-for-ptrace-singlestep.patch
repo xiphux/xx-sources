@@ -1,0 +1,29 @@
+
+From: Davide Libenzi <davidel@xmailserver.org>
+
+The ptrace single step mode should not use the SYSGOOD bit and should not
+report SIGTRAP|0x80 to the ptrace parent.  The following patch add an
+explicit check and to not add 0x80 in this is a singlestep trap.
+
+Signed-off-by: Davide Libenzi <davidel@xmailserver.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/ptrace.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN arch/i386/kernel/ptrace.c~no-sysgood-for-ptrace-singlestep arch/i386/kernel/ptrace.c
+--- 25/arch/i386/kernel/ptrace.c~no-sysgood-for-ptrace-singlestep	Thu Jul  1 16:04:29 2004
++++ 25-akpm/arch/i386/kernel/ptrace.c	Thu Jul  1 16:04:29 2004
+@@ -546,8 +546,8 @@ void do_syscall_trace(struct pt_regs *re
+ 		return;
+ 	/* the 0x80 provides a way for the tracing parent to distinguish
+ 	   between a syscall stop and SIGTRAP delivery */
+-	ptrace_notify(SIGTRAP | ((current->ptrace & PT_TRACESYSGOOD)
+-				 ? 0x80 : 0));
++	ptrace_notify(SIGTRAP | ((current->ptrace & PT_TRACESYSGOOD) &&
++				 !test_thread_flag(TIF_SINGLESTEP) ? 0x80 : 0));
+ 
+ 	/*
+ 	 * this isn't the same as continuing with a signal, but it will do
+_

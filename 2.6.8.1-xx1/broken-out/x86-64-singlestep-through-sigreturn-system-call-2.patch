@@ -1,0 +1,132 @@
+Return-Path: <roland@redhat.com>
+Received: from localhost (bix [127.0.0.1])
+	by localhost.localdomain (8.12.10/8.12.10) with ESMTP id i7A2n1VF016749
+	for <akpm@localhost>; Mon, 9 Aug 2004 19:49:01 -0700
+Received: from bix [127.0.0.1]
+	by localhost with POP3 (fetchmail-6.2.0)
+	for akpm@localhost (single-drop); Mon, 09 Aug 2004 19:49:01 -0700 (PDT)
+Received: from fire-1.osdl.org (fire.osdl.org [65.172.181.4])
+	by mail.osdl.org (8.11.6/8.11.6) with ESMTP id i7A2nK104620
+	for <akpm@mail.gateway.osdl.net>; Mon, 9 Aug 2004 19:49:20 -0700
+Received: from mail5.speakeasy.net (mail5.speakeasy.net [216.254.0.205])
+	by fire-1.osdl.org (8.12.8/8.12.8) with ESMTP id i7A2nJSf002554
+	(version=TLSv1/SSLv3 cipher=EDH-RSA-DES-CBC3-SHA bits=168 verify=FAIL)
+	for <akpm@osdl.org>; Mon, 9 Aug 2004 19:49:19 -0700
+Received: (qmail 10929 invoked from network); 10 Aug 2004 02:49:18 -0000
+Received: from gateway.sf.frob.com ([64.81.54.130])
+          (envelope-sender <roland@redhat.com>)
+          by mail5.speakeasy.net (qmail-ldap-1.03) with SMTP
+          for <akpm@osdl.org>; 10 Aug 2004 02:49:18 -0000
+Received: from magilla.sf.frob.com (magilla.sf.frob.com [198.49.250.228])
+	by gateway.sf.frob.com (Postfix) with ESMTP
+	id DF239357B; Mon,  9 Aug 2004 19:49:17 -0700 (PDT)
+Received: from magilla.sf.frob.com (localhost.localdomain [127.0.0.1])
+	by magilla.sf.frob.com (8.12.11/8.12.9) with ESMTP id i7A2nHEw020387;
+	Mon, 9 Aug 2004 19:49:17 -0700
+Received: (from roland@localhost)
+	by magilla.sf.frob.com (8.12.11/8.12.11/Submit) id i7A2nFjg020384;
+	Mon, 9 Aug 2004 19:49:15 -0700
+Date: Mon, 9 Aug 2004 19:49:15 -0700
+Message-Id: <200408100249.i7A2nFjg020384@magilla.sf.frob.com>
+From: Roland McGrath <roland@redhat.com>
+To: Andrew Morton <akpm@osdl.org>
+Cc: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+Subject: [PATCH] 
+X-Fcc: ~/Mail/linus
+X-Antipastobozoticataclysm: 
+   When George Bush projectile vomits antipasto on the Japanese.
+X-MIMEDefang-Filter: osdl$Revision: 1.1.1.1 $
+X-Scanned-By: MIMEDefang 2.36
+X-Spam-Status: No, hits=-4.9 required=1.0 tests=BAYES_00 autolearn=ham 
+	version=2.60
+X-Spam-Checker-Version: SpamAssassin 2.60 (1.212-2003-09-23-exp) on bix
+X-Spam-Level: 
+
+This replaces x86-64-singlestep-through-sigreturn-system-call-2.patch
+from 2.6.8-rc2-mm2.  The second addition in entry.S is the difference.
+This fixes a problem where additional singlesteps immediately after the
+singlestep stop after sigreturn would not work right.
+
+Note you might want to rename the patch, since this also has the effect of
+making single-stepping of IA32 syscalls work right.
+
+
+Thanks,
+Roland
+
+
+Signed-off-by: Roland McGrath <roland@redhat.com>
+
+Index: linux-2.6/arch/x86_64/kernel/entry.S
+===================================================================
+RCS file: /home/roland/redhat/bkcvs/linux-2.5/arch/x86_64/kernel/entry.S,v
+retrieving revision 1.22
+diff -b -p -u -r1.22 entry.S
+--- linux-2.6/arch/x86_64/kernel/entry.S 12 Apr 2004 20:29:12 -0000 1.22
++++ linux-2.6/arch/x86_64/kernel/entry.S 10 Aug 2004 02:34:01 -0000
+@@ -297,7 +297,7 @@ int_very_careful:
+ 	sti
+ 	SAVE_REST
+ 	/* Check for syscall exit trace */	
+-	testl $(_TIF_SYSCALL_TRACE|_TIF_SYSCALL_AUDIT),%edx
++	testl $(_TIF_SYSCALL_TRACE|_TIF_SYSCALL_AUDIT|_TIF_SINGLESTEP),%edx
+ 	jz int_signal
+ 	pushq %rdi
+ 	leaq 8(%rsp),%rdi	# &ptregs -> arg1	
+@@ -305,6 +305,7 @@ int_very_careful:
+ 	popq %rdi
+ 	btr  $TIF_SYSCALL_TRACE,%edi
+ 	btr  $TIF_SYSCALL_AUDIT,%edi
++	btr  $TIF_SINGLESTEP,%edi
+ 	jmp int_restore_rest
+ 	
+ int_signal:
+Index: linux-2.6/arch/x86_64/kernel/ptrace.c
+===================================================================
+RCS file: /home/roland/redhat/bkcvs/linux-2.5/arch/x86_64/kernel/ptrace.c,v
+retrieving revision 1.16
+diff -b -p -u -r1.16 ptrace.c
+--- linux-2.6/arch/x86_64/kernel/ptrace.c 31 May 2004 03:07:42 -0000 1.16
++++ linux-2.6/arch/x86_64/kernel/ptrace.c 15 Jul 2004 23:56:44 -0000
+@@ -88,6 +88,7 @@ void ptrace_disable(struct task_struct *
+ { 
+ 	long tmp;
+ 
++	clear_tsk_thread_flag(child, TIF_SINGLESTEP);
+ 	tmp = get_stack_long(child, EFL_OFFSET) & ~TRAP_FLAG;
+ 	put_stack_long(child, EFL_OFFSET, tmp);
+ }
+@@ -344,6 +345,7 @@ asmlinkage long sys_ptrace(long request,
+ 			set_tsk_thread_flag(child,TIF_SYSCALL_TRACE);
+ 		else
+ 			clear_tsk_thread_flag(child,TIF_SYSCALL_TRACE);
++		clear_tsk_thread_flag(child, TIF_SINGLESTEP);
+ 		child->exit_code = data;
+ 	/* make sure the single step bit is not set. */
+ 		tmp = get_stack_long(child, EFL_OFFSET);
+@@ -395,6 +397,7 @@ asmlinkage long sys_ptrace(long request,
+ 		ret = 0;
+ 		if (child->state == TASK_ZOMBIE)	/* already dead */
+ 			break;
++		clear_tsk_thread_flag(child, TIF_SINGLESTEP);
+ 		child->exit_code = SIGKILL;
+ 		/* make sure the single step bit is not set. */
+ 		tmp = get_stack_long(child, EFL_OFFSET) & ~TRAP_FLAG;
+@@ -416,6 +419,7 @@ asmlinkage long sys_ptrace(long request,
+ 		}
+ 		tmp = get_stack_long(child, EFL_OFFSET) | TRAP_FLAG;
+ 		put_stack_long(child, EFL_OFFSET, tmp);
++		set_tsk_thread_flag(child, TIF_SINGLESTEP);
+ 		child->exit_code = data;
+ 		/* give it a chance to run. */
+ 		wake_up_process(child);
+@@ -528,7 +532,8 @@ asmlinkage void syscall_trace_leave(stru
+ 	if (unlikely(current->audit_context))
+ 		audit_syscall_exit(current, regs->rax);
+ 
+-	if (test_thread_flag(TIF_SYSCALL_TRACE)
++	if ((test_thread_flag(TIF_SYSCALL_TRACE)
++	     || test_thread_flag(TIF_SINGLESTEP))
+ 	    && (current->ptrace & PT_PTRACED))
+ 		syscall_trace(regs);
+ }

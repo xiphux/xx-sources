@@ -1,0 +1,502 @@
+---
+
+ linux-2.6.6-xx2-xiphux/arch/i386/Kconfig                  |    3 
+ linux-2.6.6-xx2-xiphux/arch/i386/kernel/ldt.c             |   34 +++++----
+ linux-2.6.6-xx2-xiphux/arch/i386/kernel/ptrace.c          |   51 ++++++++++++++
+ linux-2.6.6-xx2-xiphux/arch/i386/kernel/sys_i386.c        |   12 +--
+ linux-2.6.6-xx2-xiphux/arch/um/include/skas_ptrace.h      |    6 +
+ linux-2.6.6-xx2-xiphux/arch/um/kernel/ptrace.c            |    5 -
+ linux-2.6.6-xx2-xiphux/arch/um/kernel/syscall_kern.c      |    2 
+ linux-2.6.6-xx2-xiphux/include/asm-i386/desc.h            |    3 
+ linux-2.6.6-xx2-xiphux/include/asm-i386/mmu_context.h     |    5 +
+ linux-2.6.6-xx2-xiphux/include/asm-i386/processor.h       |    2 
+ linux-2.6.6-xx2-xiphux/include/asm-i386/ptrace.h          |   22 ++++++
+ linux-2.6.6-xx2-xiphux/include/asm-um/processor-generic.h |    4 -
+ linux-2.6.6-xx2-xiphux/include/linux/mm.h                 |   16 ++--
+ linux-2.6.6-xx2-xiphux/mm/Makefile                        |    3 
+ linux-2.6.6-xx2-xiphux/mm/mmap.c                          |    4 -
+ linux-2.6.6-xx2-xiphux/mm/mprotect.c                      |    2 
+ linux-2.6.6-xx2-xiphux/mm/proc_mm.c                       |    2 
+ 17 files changed, 137 insertions(+), 39 deletions(-)
+
+diff -puN arch/i386/Kconfig~host-uml-skas3-2.6.6-v1 arch/i386/Kconfig
+--- linux-2.6.6-xx2/arch/i386/Kconfig~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.040826808 -0400
++++ linux-2.6.6-xx2-xiphux/arch/i386/Kconfig	2004-05-28 05:27:32.107816624 -0400
+@@ -735,6 +735,9 @@ config BADRAM
+ 	  It is safe to say 'Y' here, and it is advised because there is no
+ 	  performance impact.
+ 
++config PROC_MM
++	bool "/proc/mm support"
++
+ # Common NUMA Features
+ config NUMA
+ 	bool "Numa Memory Allocation and Scheduler Support"
+diff -puN arch/i386/kernel/ldt.c~host-uml-skas3-2.6.6-v1 arch/i386/kernel/ldt.c
+--- linux-2.6.6-xx2/arch/i386/kernel/ldt.c~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.043826352 -0400
++++ linux-2.6.6-xx2-xiphux/arch/i386/kernel/ldt.c	2004-05-28 05:27:32.103817232 -0400
+@@ -54,7 +54,7 @@ static int alloc_ldt(mm_context_t *pc, i
+ 	pc->size = mincount;
+ 	wmb();
+ 
+-	if (reload) {
++	if (reload && (&current->active_mm->context == pc)) {
+ #ifdef CONFIG_SMP
+ 		cpumask_t mask;
+ 		preempt_disable();
+@@ -89,14 +89,12 @@ static inline int copy_ldt(mm_context_t 
+  * we do not have to muck with descriptors here, that is
+  * done in switch_mm() as needed.
+  */
+-int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
++int __init_new_context(struct mm_struct *mm, struct mm_struct *old_mm)
+ {
+-	struct mm_struct * old_mm;
+ 	int retval = 0;
+ 
+ 	init_MUTEX(&mm->context.sem);
+ 	mm->context.size = 0;
+-	old_mm = current->mm;
+ 	if (old_mm && old_mm->context.size > 0) {
+ 		down(&old_mm->context.sem);
+ 		retval = copy_ldt(&mm->context, &old_mm->context);
+@@ -105,6 +103,11 @@ int init_new_context(struct task_struct 
+ 	return retval;
+ }
+ 
++int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
++{
++	return __init_new_context(mm, current->mm);
++}
++
+ /*
+  * No need to lock the MM as we are the last user
+  */
+@@ -121,11 +124,11 @@ void destroy_context(struct mm_struct *m
+ 	}
+ }
+ 
+-static int read_ldt(void __user * ptr, unsigned long bytecount)
++static int read_ldt(struct mm_struct * mm, void __user * ptr,
++		    unsigned long bytecount)
+ {
+ 	int err;
+ 	unsigned long size;
+-	struct mm_struct * mm = current->mm;
+ 
+ 	if (!mm->context.size)
+ 		return 0;
+@@ -169,9 +172,8 @@ static int read_default_ldt(void __user 
+ 	return err;
+ }
+ 
+-static int write_ldt(void __user * ptr, unsigned long bytecount, int oldmode)
++static int write_ldt(struct mm_struct * mm, void __user * ptr, unsigned long bytecount, int oldmode)
+ {
+-	struct mm_struct * mm = current->mm;
+ 	__u32 entry_1, entry_2, *lp;
+ 	int error;
+ 	struct user_desc ldt_info;
+@@ -195,7 +197,7 @@ static int write_ldt(void __user * ptr, 
+ 
+ 	down(&mm->context.sem);
+ 	if (ldt_info.entry_number >= mm->context.size) {
+-		error = alloc_ldt(&current->mm->context, ldt_info.entry_number+1, 1);
++		error = alloc_ldt(&mm->context, ldt_info.entry_number+1, 1);
+ 		if (error < 0)
+ 			goto out_unlock;
+ 	}
+@@ -228,23 +230,29 @@ out:
+ 	return error;
+ }
+ 
+-asmlinkage int sys_modify_ldt(int func, void __user *ptr, unsigned long bytecount)
++int modify_ldt(struct mm_struct * mm, int func, void __user *ptr,
++	       unsigned long bytecount)
+ {
+ 	int ret = -ENOSYS;
+ 
+ 	switch (func) {
+ 	case 0:
+-		ret = read_ldt(ptr, bytecount);
++		ret = read_ldt(mm, ptr, bytecount);
+ 		break;
+ 	case 1:
+-		ret = write_ldt(ptr, bytecount, 1);
++		ret = write_ldt(mm, ptr, bytecount, 1);
+ 		break;
+ 	case 2:
+ 		ret = read_default_ldt(ptr, bytecount);
+ 		break;
+ 	case 0x11:
+-		ret = write_ldt(ptr, bytecount, 0);
++		ret = write_ldt(mm, ptr, bytecount, 0);
+ 		break;
+ 	}
+ 	return ret;
+ }
++
++asmlinkage int sys_modify_ldt(int func, void __user *ptr, unsigned long bytecount)
++{
++	return modify_ldt(current->mm, func, ptr, bytecount);
++}
+diff -puN arch/i386/kernel/ptrace.c~host-uml-skas3-2.6.6-v1 arch/i386/kernel/ptrace.c
+--- linux-2.6.6-xx2/arch/i386/kernel/ptrace.c~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.045826048 -0400
++++ linux-2.6.6-xx2-xiphux/arch/i386/kernel/ptrace.c	2004-05-28 05:27:32.102817384 -0400
+@@ -15,6 +15,7 @@
+ #include <linux/user.h>
+ #include <linux/security.h>
+ #include <linux/audit.h>
++#include <linux/proc_mm.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
+@@ -562,6 +563,56 @@ asmlinkage int sys_ptrace(long request, 
+ 					     addr, (struct user_desc __user *) data);
+ 		break;
+ 
++#ifdef CONFIG_PROC_MM
++	case PTRACE_FAULTINFO: {
++		struct ptrace_faultinfo fault;
++
++		fault = ((struct ptrace_faultinfo)
++			{ .is_write	= child->thread.error_code,
++			  .addr		= child->thread.cr2 });
++		ret = copy_to_user((unsigned long *) data, &fault,
++				   sizeof(fault));
++		if(ret)
++			break;
++		break;
++	}
++
++	case PTRACE_SIGPENDING:
++		ret = copy_to_user((unsigned long *) data,
++				   &child->pending.signal,
++				   sizeof(child->pending.signal));
++		break;
++
++	case PTRACE_LDT: {
++		struct ptrace_ldt ldt;
++
++		if(copy_from_user(&ldt, (unsigned long *) data,
++				  sizeof(ldt))){
++			ret = -EIO;
++			break;
++		}
++		ret = modify_ldt(child->mm, ldt.func, ldt.ptr, ldt.bytecount);
++		break;
++	}
++
++	case PTRACE_SWITCH_MM: {
++		struct mm_struct *old = child->mm;
++		struct mm_struct *new = proc_mm_get_mm(data);
++
++		if(IS_ERR(new)){
++			ret = PTR_ERR(new);
++			break;
++		}
++
++		atomic_inc(&new->mm_users);
++		child->mm = new;
++		child->active_mm = new;
++		mmput(old);
++		ret = 0;
++		break;
++	}
++#endif
++
+ 	default:
+ 		ret = ptrace_request(child, request, addr, data);
+ 		break;
+diff -puN arch/i386/kernel/sys_i386.c~host-uml-skas3-2.6.6-v1 arch/i386/kernel/sys_i386.c
+--- linux-2.6.6-xx2/arch/i386/kernel/sys_i386.c~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.048825592 -0400
++++ linux-2.6.6-xx2-xiphux/arch/i386/kernel/sys_i386.c	2004-05-28 05:27:32.101817536 -0400
+@@ -41,7 +41,7 @@ asmlinkage int sys_pipe(unsigned long __
+ }
+ 
+ /* common code for old and new mmaps */
+-static inline long do_mmap2(
++long do_mmap2(struct mm_struct *mm,
+ 	unsigned long addr, unsigned long len,
+ 	unsigned long prot, unsigned long flags,
+ 	unsigned long fd, unsigned long pgoff)
+@@ -56,9 +56,9 @@ static inline long do_mmap2(
+ 			goto out;
+ 	}
+ 
+-	down_write(&current->mm->mmap_sem);
+-	error = do_mmap_pgoff(file, addr, len, prot, flags, pgoff);
+-	up_write(&current->mm->mmap_sem);
++	down_write(&mm->mmap_sem);
++	error = __do_mmap_pgoff(mm, file, addr, len, prot, flags, pgoff);
++	up_write(&mm->mmap_sem);
+ 
+ 	if (file)
+ 		fput(file);
+@@ -70,7 +70,7 @@ asmlinkage long sys_mmap2(unsigned long 
+ 	unsigned long prot, unsigned long flags,
+ 	unsigned long fd, unsigned long pgoff)
+ {
+-	return do_mmap2(addr, len, prot, flags, fd, pgoff);
++	return do_mmap2(current->mm, addr, len, prot, flags, fd, pgoff);
+ }
+ 
+ /*
+@@ -101,7 +101,7 @@ asmlinkage int old_mmap(struct mmap_arg_
+ 	if (a.offset & ~PAGE_MASK)
+ 		goto out;
+ 
+-	err = do_mmap2(a.addr, a.len, a.prot, a.flags, a.fd, a.offset >> PAGE_SHIFT);
++	err = do_mmap2(current->mm, a.addr, a.len, a.prot, a.flags, a.fd, a.offset >> PAGE_SHIFT);
+ out:
+ 	return err;
+ }
+diff -puN arch/um/include/skas_ptrace.h~host-uml-skas3-2.6.6-v1 arch/um/include/skas_ptrace.h
+--- linux-2.6.6-xx2/arch/um/include/skas_ptrace.h~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.050825288 -0400
++++ linux-2.6.6-xx2-xiphux/arch/um/include/skas_ptrace.h	2004-05-28 05:27:32.108816472 -0400
+@@ -6,6 +6,10 @@
+ #ifndef __SKAS_PTRACE_H
+ #define __SKAS_PTRACE_H
+ 
++
++#ifndef _LINUX_PTRACE_STRUCT_DEF
++#define _LINUX_PTRACE_STRUCT_DEF
++
+ struct ptrace_faultinfo {
+ 	int is_write;
+ 	unsigned long addr;
+@@ -17,6 +21,8 @@ struct ptrace_ldt {
+ 	unsigned long bytecount;
+ };
+ 
++#endif /*ifndef _LINUX_PTRACE_STRUCT_DEF*/
++
+ #define PTRACE_FAULTINFO 52
+ #define PTRACE_SIGPENDING 53
+ #define PTRACE_LDT 54
+diff -puN arch/um/kernel/ptrace.c~host-uml-skas3-2.6.6-v1 arch/um/kernel/ptrace.c
+--- linux-2.6.6-xx2/arch/um/kernel/ptrace.c~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.053824832 -0400
++++ linux-2.6.6-xx2-xiphux/arch/um/kernel/ptrace.c	2004-05-28 05:27:32.109816320 -0400
+@@ -24,11 +24,6 @@ void ptrace_disable(struct task_struct *
+ { 
+ }
+ 
+-extern long do_mmap2(struct task_struct *task, unsigned long addr, 
+-		     unsigned long len, unsigned long prot, 
+-		     unsigned long flags, unsigned long fd,
+-		     unsigned long pgoff);
+-
+ int sys_ptrace(long request, long pid, long addr, long data)
+ {
+ 	struct task_struct *child;
+diff -puN arch/um/kernel/syscall_kern.c~host-uml-skas3-2.6.6-v1 arch/um/kernel/syscall_kern.c
+--- linux-2.6.6-xx2/arch/um/kernel/syscall_kern.c~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.055824528 -0400
++++ linux-2.6.6-xx2-xiphux/arch/um/kernel/syscall_kern.c	2004-05-28 05:27:32.110816168 -0400
+@@ -82,7 +82,7 @@ long do_mmap2(struct mm_struct *mm, unsi
+ 	}
+ 
+ 	down_write(&mm->mmap_sem);
+-	error = do_mmap_pgoff(mm, file, addr, len, prot, flags, pgoff);
++	error = __do_mmap_pgoff(mm, file, addr, len, prot, flags, pgoff);
+ 	up_write(&mm->mmap_sem);
+ 
+ 	if (file)
+diff -puN include/asm-i386/desc.h~host-uml-skas3-2.6.6-v1 include/asm-i386/desc.h
+--- linux-2.6.6-xx2/include/asm-i386/desc.h~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.058824072 -0400
++++ linux-2.6.6-xx2-xiphux/include/asm-i386/desc.h	2004-05-28 05:27:32.113815712 -0400
+@@ -128,6 +128,9 @@ static inline void load_LDT(mm_context_t
+ 	put_cpu();
+ }
+ 
++extern int modify_ldt(struct mm_struct * mm, int func, void __user *ptr,
++		      unsigned long bytecount);
++
+ #endif /* !__ASSEMBLY__ */
+ 
+ #endif
+diff -puN include/asm-i386/mmu_context.h~host-uml-skas3-2.6.6-v1 include/asm-i386/mmu_context.h
+--- linux-2.6.6-xx2/include/asm-i386/mmu_context.h~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.060823768 -0400
++++ linux-2.6.6-xx2-xiphux/include/asm-i386/mmu_context.h	2004-05-28 05:27:32.116815256 -0400
+@@ -29,6 +29,10 @@ static inline void switch_mm(struct mm_s
+ {
+ 	int cpu = smp_processor_id();
+ 
++#ifdef CONFIG_SMP
++	prev = cpu_tlbstate[cpu].active_mm;
++#endif
++
+ 	if (likely(prev != next)) {
+ 		/* stop flush ipis for the previous mm */
+ 		cpu_clear(cpu, prev->cpu_vm_mask);
+@@ -50,7 +54,6 @@ static inline void switch_mm(struct mm_s
+ #ifdef CONFIG_SMP
+ 	else {
+ 		cpu_tlbstate[cpu].state = TLBSTATE_OK;
+-		BUG_ON(cpu_tlbstate[cpu].active_mm != next);
+ 
+ 		if (!cpu_test_and_set(cpu, next->cpu_vm_mask)) {
+ 			/* We were in lazy tlb mode and leave_mm disabled 
+diff -puN include/asm-i386/processor.h~host-uml-skas3-2.6.6-v1 include/asm-i386/processor.h
+--- linux-2.6.6-xx2/include/asm-i386/processor.h~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.062823464 -0400
++++ linux-2.6.6-xx2-xiphux/include/asm-i386/processor.h	2004-05-28 05:27:32.115815408 -0400
+@@ -650,4 +650,6 @@ extern void select_idle_routine(const st
+ #define ARCH_HAS_SCHED_WAKE_IDLE
+ #endif
+ 
++extern int __init_new_context(struct mm_struct *mm, struct mm_struct *old_mm);
++
+ #endif /* __ASM_I386_PROCESSOR_H */
+diff -puN include/asm-i386/ptrace.h~host-uml-skas3-2.6.6-v1 include/asm-i386/ptrace.h
+--- linux-2.6.6-xx2/include/asm-i386/ptrace.h~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.064823160 -0400
++++ linux-2.6.6-xx2-xiphux/include/asm-i386/ptrace.h	2004-05-28 05:27:32.116815256 -0400
+@@ -82,4 +82,26 @@ enum EFLAGS {
+ #define instruction_pointer(regs) ((regs)->eip)
+ #endif
+ 
++/*For SKAS3 support.*/
++#ifndef _LINUX_PTRACE_STRUCT_DEF
++#define _LINUX_PTRACE_STRUCT_DEF
++
++#define PTRACE_FAULTINFO	  52
++#define PTRACE_SIGPENDING	  53
++#define PTRACE_LDT		  54
++#define PTRACE_SWITCH_MM 	  55
++
++struct ptrace_faultinfo {
++	int is_write;
++	unsigned long addr;
++};
++
++struct ptrace_ldt {
++	int func;
++  	void *ptr;
++	unsigned long bytecount;
++};
++
++#endif /*ifndef _LINUX_PTRACE_STRUCT_DEF*/
++
+ #endif
+diff -puN include/asm-um/processor-generic.h~host-uml-skas3-2.6.6-v1 include/asm-um/processor-generic.h
+--- linux-2.6.6-xx2/include/asm-um/processor-generic.h~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.066822856 -0400
++++ linux-2.6.6-xx2-xiphux/include/asm-um/processor-generic.h	2004-05-28 05:27:32.117815104 -0400
+@@ -99,9 +99,9 @@ extern void prepare_to_copy(struct task_
+ 
+ extern unsigned long thread_saved_pc(struct task_struct *t);
+ 
+-static inline void mm_copy_segments(struct mm_struct *from_mm,
+-				    struct mm_struct *new_mm)
++static inline int __init_new_context(struct mm_struct *mm, struct mm_struct *old_mm)
+ {
++  return 0;
+ }
+ 
+ #define init_stack	(init_thread_union.stack)
+diff -puN include/linux/mm.h~host-uml-skas3-2.6.6-v1 include/linux/mm.h
+--- linux-2.6.6-xx2/include/linux/mm.h~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.069822400 -0400
++++ linux-2.6.6-xx2-xiphux/include/linux/mm.h	2004-05-28 05:27:32.112815864 -0400
+@@ -571,9 +571,6 @@ int clear_page_dirty_for_io(struct page 
+  */
+ typedef int (*shrinker_t)(int nr_to_scan, unsigned int gfp_mask);
+ 
+-extern long do_mprotect(struct mm_struct *mm, unsigned long start,
+-			size_t len, unsigned long prot);
+-
+ /*
+  * Add an aging callback.  The int is the number of 'seeks' it takes
+  * to recreate one of the objects that these functions age.
+@@ -584,6 +581,9 @@ struct shrinker;
+ extern struct shrinker *set_shrinker(int, shrinker_t);
+ extern void remove_shrinker(struct shrinker *shrinker);
+ 
++extern long do_mprotect(struct mm_struct *mm, unsigned long start,
++			size_t len, unsigned long prot);
++
+ /*
+  * On a two-level page table, this ends up being trivial. Thus the
+  * inlining and the symmetry break with pte_alloc_map() that does all
+@@ -642,10 +642,15 @@ extern void exit_mmap(struct mm_struct *
+ 
+ extern unsigned long get_unmapped_area(struct file *, unsigned long, unsigned long, unsigned long, unsigned long);
+ 
+-extern unsigned long do_mmap_pgoff(struct mm_struct *mm, struct file *file,
++extern unsigned long __do_mmap_pgoff(struct mm_struct *mm, struct file *file,
+ 				   unsigned long addr, unsigned long len,
+ 				   unsigned long prot, unsigned long flag,
+ 				   unsigned long pgoff);
++static inline unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
++	unsigned long len, unsigned long prot,
++	unsigned long flag, unsigned long pgoff) {
++	return __do_mmap_pgoff(current->mm, file, addr, len, prot, flag, pgoff);
++}
+ 
+ static inline unsigned long do_mmap(struct file *file, unsigned long addr,
+ 	unsigned long len, unsigned long prot,
+@@ -655,8 +660,7 @@ static inline unsigned long do_mmap(stru
+ 	if ((offset + PAGE_ALIGN(len)) < offset)
+ 		goto out;
+ 	if (!(offset & ~PAGE_MASK))
+-		ret = do_mmap_pgoff(current->mm, file, addr, len, prot, flag,
+-				    offset >> PAGE_SHIFT);
++		ret = do_mmap_pgoff(file, addr, len, prot, flag, offset >> PAGE_SHIFT);
+ out:
+ 	return ret;
+ }
+diff -puN mm/Makefile~host-uml-skas3-2.6.6-v1 mm/Makefile
+--- linux-2.6.6-xx2/mm/Makefile~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.073821792 -0400
++++ linux-2.6.6-xx2-xiphux/mm/Makefile	2004-05-28 05:27:57.248994584 -0400
+@@ -13,6 +13,7 @@ obj-y			:= bootmem.o filemap.o mempool.o
+ 			   $(mmu-y)
+ 
+ obj-$(CONFIG_SWAP)	+= page_io.o swap_state.o swapfile.o
+-obj-$(CONFIG_PROC_MM)	+= proc_mm.o
+ obj-$(CONFIG_HUGETLBFS)	+= hugetlb.o
+ obj-$(CONFIG_NUMA) 	+= mempolicy.o
++obj-$(CONFIG_PROC_MM)	+= proc_mm.o
++
+diff -puN mm/mmap.c~host-uml-skas3-2.6.6-v1 mm/mmap.c
+--- linux-2.6.6-xx2/mm/mmap.c~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.079820880 -0400
++++ linux-2.6.6-xx2-xiphux/mm/mmap.c	2004-05-28 05:27:32.128813432 -0400
+@@ -714,7 +714,7 @@ none:
+  * The caller must hold down_write(current->mm->mmap_sem).
+  */
+ 
+-unsigned long do_mmap_pgoff(struct mm_struct *mm, struct file * file,
++unsigned long __do_mmap_pgoff(struct mm_struct *mm, struct file * file,
+ 			    unsigned long addr, unsigned long len,
+ 			    unsigned long prot, unsigned long flags,
+ 			    unsigned long pgoff)
+@@ -1049,7 +1049,7 @@ unacct_error:
+ 	return error;
+ }
+ 
+-EXPORT_SYMBOL(do_mmap_pgoff);
++EXPORT_SYMBOL(__do_mmap_pgoff);
+ 
+ /* Get an address range which is currently unmapped.
+  * For shmat() with addr=0.
+diff -puN mm/mprotect.c~host-uml-skas3-2.6.6-v1 mm/mprotect.c
+--- linux-2.6.6-xx2/mm/mprotect.c~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.082820424 -0400
++++ linux-2.6.6-xx2-xiphux/mm/mprotect.c	2004-05-28 05:27:32.129813280 -0400
+@@ -189,7 +189,7 @@ fail:
+ 	return error;
+ }
+ 
+-asmlinkage long
++long
+ do_mprotect(struct mm_struct *mm, unsigned long start, size_t len,
+ 	     unsigned long prot)
+ {
+diff -puN mm/proc_mm.c~host-uml-skas3-2.6.6-v1 mm/proc_mm.c
+--- linux-2.6.6-xx2/mm/proc_mm.c~host-uml-skas3-2.6.6-v1	2004-05-28 05:27:32.085819968 -0400
++++ linux-2.6.6-xx2-xiphux/mm/proc_mm.c	2004-05-28 05:27:32.132812824 -0400
+@@ -93,7 +93,7 @@ static ssize_t write_proc_mm(struct file
+ 			break;
+ 		}
+ 
+-		mm_copy_segments(from, mm);
++		__init_new_context(mm, from);
+ 		break;
+ 	}
+ 	default:
+
+_

@@ -1,0 +1,31 @@
+
+From: Matt Porter <mporter@kernel.crashing.org>
+
+The following patch fixes the situation where the loop condition could
+generate a next_dec of zero while exiting the loop.  This is suboptimal on
+Classic PPC because it forces another interrupt to occur and reenter the
+handler.  It is fatal on Book E cores, because their decrementer is stopped
+when writing a zero (Classic interrupts on a 0->-1 transition, Book E
+interrupts on a 1->0 transition).  Instead, stay in the loop on a
+next_dec==0.
+
+Signed-off-by: Matt Porter <mporter@kernel.crashing.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc/kernel/time.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN arch/ppc/kernel/time.c~ppc32-optimize-fix-timer_interrupt-loop arch/ppc/kernel/time.c
+--- 25/arch/ppc/kernel/time.c~ppc32-optimize-fix-timer_interrupt-loop	Mon Aug  9 14:17:30 2004
++++ 25-akpm/arch/ppc/kernel/time.c	Mon Aug  9 14:17:30 2004
+@@ -161,7 +161,7 @@ void timer_interrupt(struct pt_regs * re
+ 
+ 	irq_enter();
+ 
+-	while ((next_dec = tb_ticks_per_jiffy - tb_delta(&jiffy_stamp)) < 0) {
++	while ((next_dec = tb_ticks_per_jiffy - tb_delta(&jiffy_stamp)) <= 0) {
+ 		jiffy_stamp += tb_ticks_per_jiffy;
+ 		
+ 		ppc_do_profile(regs);
+_

@@ -1,0 +1,189 @@
+---
+
+ linux-2.6.7-rc3-xx4-xiphux/arch/i386/kernel/cpu/Makefile |   16 +--
+ linux-2.6.7-rc3-xx4-xiphux/arch/i386/kernel/cpu/common.c |   18 ++++
+ linux-2.6.7-rc3-xx4-xiphux/arch/i386/mm/init.c           |   12 ++
+ linux-2.6.7-rc3-xx4-xiphux/kernel/Kconfig-extra.xx       |   62 +++++++++++++++
+ 4 files changed, 99 insertions(+), 9 deletions(-)
+
+diff -puN arch/i386/kernel/cpu/Makefile~cpu-support arch/i386/kernel/cpu/Makefile
+--- linux-2.6.7-rc3-xx4/arch/i386/kernel/cpu/Makefile~cpu-support	2004-06-14 09:07:51.052002432 -0400
++++ linux-2.6.7-rc3-xx4-xiphux/arch/i386/kernel/cpu/Makefile	2004-06-14 09:07:51.080998024 -0400
+@@ -4,14 +4,14 @@
+ 
+ obj-y	:=	common.o proc.o
+ 
+-obj-y	+=	amd.o
+-obj-y	+=	cyrix.o
+-obj-y	+=	centaur.o
+-obj-y	+=	transmeta.o
+-obj-y	+=	intel.o
+-obj-y	+=	rise.o
+-obj-y	+=	nexgen.o
+-obj-y	+=	umc.o
++obj-$(CONFIG_CPU_SUP_AMD)	+=	amd.o
++obj-$(CONFIG_CPU_SUP_CYRIX)	+=	cyrix.o
++obj-$(CONFIG_CPU_SUP_CENTAUR)	+=	centaur.o
++obj-$(CONFIG_CPU_SUP_TRANSMETA)	+=	transmeta.o
++obj-$(CONFIG_CPU_SUP_INTEL)	+=	intel.o
++obj-$(CONFIG_CPU_SUP_RISE)	+=	rise.o
++obj-$(CONFIG_CPU_SUP_NEXGEN)	+=	nexgen.o
++obj-$(CONFIG_CPU_SUP_UMC)	+=	umc.o
+ 
+ obj-$(CONFIG_X86_MCE)	+=	mcheck/
+ 
+diff -puN arch/i386/kernel/cpu/common.c~cpu-support arch/i386/kernel/cpu/common.c
+--- linux-2.6.7-rc3-xx4/arch/i386/kernel/cpu/common.c~cpu-support	2004-06-14 09:07:51.058001520 -0400
++++ linux-2.6.7-rc3-xx4-xiphux/arch/i386/kernel/cpu/common.c	2004-06-14 09:09:00.499444816 -0400
+@@ -481,15 +481,33 @@ void early_cpu_detect(void);
+ void __init early_cpu_init(void)
+ {
+ 	early_cpu_detect();
++#ifdef CONFIG_CPU_SUP_INTEL
+ 	intel_cpu_init();
++#endif
++#ifdef CONFIG_CPU_SUP_CYRIX
+ 	cyrix_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_NSC
+ 	nsc_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_AMD
+ 	amd_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_CENTAUR
+ 	centaur_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_TRANSMETA
+ 	transmeta_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_RISE
+ 	rise_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_NEXGEN
+ 	nexgen_init_cpu();
++#endif
++#ifdef CONFIG_CPU_SUP_UMC
+ 	umc_init_cpu();
++#endif
+ 
+ #ifdef CONFIG_DEBUG_PAGEALLOC
+ 	/* pse is not compatible with on-the-fly unmapping,
+diff -puN arch/i386/mm/init.c~cpu-support arch/i386/mm/init.c
+--- linux-2.6.7-rc3-xx4/arch/i386/mm/init.c~cpu-support	2004-06-14 09:07:51.069999696 -0400
++++ linux-2.6.7-rc3-xx4-xiphux/arch/i386/mm/init.c	2004-06-14 09:09:31.935665784 -0400
+@@ -179,12 +179,14 @@ static void __init kernel_physical_mappi
+ 	}
+ }
+ 
++#ifdef CONFIG_CPU_SUP_INTEL
+ static inline int page_kills_ppro(unsigned long pagenr)
+ {
+ 	if (pagenr >= 0x70000 && pagenr <= 0x7003F)
+ 		return 1;
+ 	return 0;
+ }
++#endif
+ 
+ extern int is_available_memory(efi_memory_desc_t *);
+ 
+@@ -270,7 +272,11 @@ void __init one_highpage_init(struct pag
+ 		int *bad)
+ {
+ 	*bad = 0;
+-	if (page_is_ram(pfn) && !(bad_ppro && page_kills_ppro(pfn))) {
++	if (page_is_ram(pfn)
++#ifdef CONFIG_CPU_SUP_INTEL
++	    && !(bad_ppro && page_kills_ppro(pfn))
++#endif
++		) {
+ 		ClearPageReserved(page);
+ #ifdef CONFIG_SOFTWARE_SUSPEND2
+ 		ClearPageNosave(page);
+@@ -584,7 +590,11 @@ void __init mem_init(void)
+ 		BUG();
+ #endif
+ 	
++#ifdef CONFIG_CPU_SUP_INTEL
+ 	bad_ppro = ppro_with_ram_bug();
++#else
++	bad_ppro = 0;
++#endif
+ 
+ #ifdef CONFIG_HIGHMEM
+ 	/* check that fixmap and pkmap do not overlap */
+diff -puN init/Kconfig~cpu-support init/Kconfig
+diff -puN kernel/Kconfig-extra.xx~cpu-support kernel/Kconfig-extra.xx
+--- linux-2.6.7-rc3-xx4/kernel/Kconfig-extra.xx~cpu-support	2004-06-14 09:09:38.735632032 -0400
++++ linux-2.6.7-rc3-xx4-xiphux/kernel/Kconfig-extra.xx	2004-06-14 09:11:10.014755496 -0400
+@@ -773,6 +773,68 @@ config PCI_QUIRKS
+ 	  Disable this only if you know your target machine is unaffected
+ 	  by PCI quirks.
+ 
++menuconfig PROCESSOR_SELECT
++	depends X86
++	default y
++	bool "Supported processor vendors" if EMBEDDED
++	help
++	  This lets you choose what x86 vendor support code your kernel
++	  will include.
++
++config CPU_SUP_INTEL
++       default y
++       bool "Support Intel processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for Intel processors
++
++config CPU_SUP_CYRIX
++       default y
++       bool "Support Cyrix processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for Cyrix processors
++
++config CPU_SUP_NSC
++       default y
++       bool "Support NSC processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for NSC processors
++
++config CPU_SUP_AMD
++       default y
++       bool "Support AMD processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for AMD processors
++
++config CPU_SUP_CENTAUR
++       default y
++       bool "Support Centaur processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for Centaur processors
++
++config CPU_SUP_TRANSMETA
++       default y
++       bool "Support Transmeta processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for Transmeta processors
++
++config CPU_SUP_RISE
++       default y
++       bool "Support Rise processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for Rise processors
++
++config CPU_SUP_NEXGEN
++       default y
++       bool "Support NexGen processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for NexGen processors
++
++config CPU_SUP_UMC
++       default y
++       bool "Support UMC processors" if PROCESSOR_SELECT
++       help
++         This enables extended support for UMC processors
++
+ endmenu
+ 
+ config TINY_SHMEM
+
+_

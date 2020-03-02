@@ -1,0 +1,30 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Small fix to sched-consolidate-domains.patch picked up by
+Suresh <suresh.b.siddha@intel.com>
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/sched.c |    7 +++++--
+ 1 files changed, 5 insertions(+), 2 deletions(-)
+
+diff -puN kernel/sched.c~sched-consolidate-domains-fix kernel/sched.c
+--- 25/kernel/sched.c~sched-consolidate-domains-fix	2004-07-26 18:18:36.670968016 -0700
++++ 25-akpm/kernel/sched.c	2004-07-26 18:18:36.676967104 -0700
+@@ -3822,8 +3822,11 @@ __init static void arch_init_sched_domai
+ 		sd->groups->cpu_power = power;
+ 
+ #ifdef CONFIG_NUMA
+-		sd = &per_cpu(node_domains, i);
+-		sd->groups->cpu_power += power;
++		if (i == first_cpu(sd->groups->cpumask)) {
++			/* Only add "power" once for each physical package. */
++			sd = &per_cpu(node_domains, i);
++			sd->groups->cpu_power += power;
++		}
+ #endif
+ 	}
+ 
+_

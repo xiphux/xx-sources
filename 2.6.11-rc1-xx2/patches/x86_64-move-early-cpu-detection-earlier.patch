@@ -1,0 +1,39 @@
+
+From: Andi Kleen <ak@suse.de>
+
+Move early CPU detection earlier.  Needed for some followup patches and
+makes sense in general.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/x86_64/kernel/setup.c   |    2 ++
+ 25-akpm/arch/x86_64/kernel/setup64.c |    3 ---
+ 2 files changed, 2 insertions(+), 3 deletions(-)
+
+diff -puN arch/x86_64/kernel/setup64.c~x86_64-move-early-cpu-detection-earlier arch/x86_64/kernel/setup64.c
+--- 25/arch/x86_64/kernel/setup64.c~x86_64-move-early-cpu-detection-earlier	Wed Jan 12 15:48:03 2005
++++ 25-akpm/arch/x86_64/kernel/setup64.c	Wed Jan 12 15:48:03 2005
+@@ -215,9 +215,6 @@ void __init cpu_init (void)
+ 
+ 	asm volatile("pushfq ; popq %%rax ; btr $14,%%rax ; pushq %%rax ; popfq" ::: "eax");
+ 
+-	if (cpu == 0) 
+-		early_identify_cpu(&boot_cpu_data);
+-
+ 	syscall_init();
+ 
+ 	wrmsrl(MSR_FS_BASE, 0);
+diff -puN arch/x86_64/kernel/setup.c~x86_64-move-early-cpu-detection-earlier arch/x86_64/kernel/setup.c
+--- 25/arch/x86_64/kernel/setup.c~x86_64-move-early-cpu-detection-earlier	Wed Jan 12 15:48:03 2005
++++ 25-akpm/arch/x86_64/kernel/setup.c	Wed Jan 12 15:48:03 2005
+@@ -485,6 +485,8 @@ void __init setup_arch(char **cmdline_p)
+ 
+ 	parse_cmdline_early(cmdline_p);
+ 
++	early_identify_cpu(&boot_cpu_data);
++
+ 	/*
+ 	 * partially used pages are not usable - thus
+ 	 * we are rounding upwards:
+_

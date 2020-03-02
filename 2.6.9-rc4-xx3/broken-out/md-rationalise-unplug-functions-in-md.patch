@@ -1,0 +1,93 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+There are currently subtle differences in the different personalities
+concerning when subdevices are unplugged (faulty?  nr_pending?).  This patch
+makes them sll uniform.
+
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/md/multipath.c |    2 +-
+ 25-akpm/drivers/md/raid1.c     |    2 +-
+ 25-akpm/drivers/md/raid10.c    |    2 +-
+ 25-akpm/drivers/md/raid5.c     |    4 ++--
+ 25-akpm/drivers/md/raid6main.c |    4 ++--
+ 5 files changed, 7 insertions(+), 7 deletions(-)
+
+diff -puN drivers/md/multipath.c~md-rationalise-unplug-functions-in-md drivers/md/multipath.c
+--- 25/drivers/md/multipath.c~md-rationalise-unplug-functions-in-md	2004-09-07 19:59:04.548557040 -0700
++++ 25-akpm/drivers/md/multipath.c	2004-09-07 19:59:04.559555368 -0700
+@@ -159,7 +159,7 @@ static void unplug_slaves(mddev_t *mddev
+ 	spin_lock_irqsave(&conf->device_lock, flags);
+ 	for (i=0; i<mddev->raid_disks; i++) {
+ 		mdk_rdev_t *rdev = conf->multipaths[i].rdev;
+-		if (rdev && !rdev->faulty) {
++		if (rdev && !rdev->faulty && atomic_read(&rdev->nr_pending)) {
+ 			request_queue_t *r_queue = bdev_get_queue(rdev->bdev);
+ 
+ 			atomic_inc(&rdev->nr_pending);
+diff -puN drivers/md/raid10.c~md-rationalise-unplug-functions-in-md drivers/md/raid10.c
+--- 25/drivers/md/raid10.c~md-rationalise-unplug-functions-in-md	2004-09-07 19:59:04.550556736 -0700
++++ 25-akpm/drivers/md/raid10.c	2004-09-07 19:59:04.561555064 -0700
+@@ -584,7 +584,7 @@ static void unplug_slaves(mddev_t *mddev
+ 	spin_lock_irqsave(&conf->device_lock, flags);
+ 	for (i=0; i<mddev->raid_disks; i++) {
+ 		mdk_rdev_t *rdev = conf->mirrors[i].rdev;
+-		if (rdev && atomic_read(&rdev->nr_pending)) {
++		if (rdev && !rdev->faulty && atomic_read(&rdev->nr_pending)) {
+ 			request_queue_t *r_queue = bdev_get_queue(rdev->bdev);
+ 
+ 			atomic_inc(&rdev->nr_pending);
+diff -puN drivers/md/raid1.c~md-rationalise-unplug-functions-in-md drivers/md/raid1.c
+--- 25/drivers/md/raid1.c~md-rationalise-unplug-functions-in-md	2004-09-07 19:59:04.552556432 -0700
++++ 25-akpm/drivers/md/raid1.c	2004-09-07 19:59:04.560555216 -0700
+@@ -430,7 +430,7 @@ static void unplug_slaves(mddev_t *mddev
+ 	spin_lock_irqsave(&conf->device_lock, flags);
+ 	for (i=0; i<mddev->raid_disks; i++) {
+ 		mdk_rdev_t *rdev = conf->mirrors[i].rdev;
+-		if (rdev && atomic_read(&rdev->nr_pending)) {
++		if (rdev && !rdev->faulty && atomic_read(&rdev->nr_pending)) {
+ 			request_queue_t *r_queue = bdev_get_queue(rdev->bdev);
+ 
+ 			atomic_inc(&rdev->nr_pending);
+diff -puN drivers/md/raid5.c~md-rationalise-unplug-functions-in-md drivers/md/raid5.c
+--- 25/drivers/md/raid5.c~md-rationalise-unplug-functions-in-md	2004-09-07 19:59:04.553556280 -0700
++++ 25-akpm/drivers/md/raid5.c	2004-09-07 19:59:04.562554912 -0700
+@@ -1307,13 +1307,13 @@ static void unplug_slaves(mddev_t *mddev
+ 	spin_lock_irqsave(&conf->device_lock, flags);
+ 	for (i=0; i<mddev->raid_disks; i++) {
+ 		mdk_rdev_t *rdev = conf->disks[i].rdev;
+-		if (rdev && atomic_read(&rdev->nr_pending)) {
++		if (rdev && !rdev->faulty && atomic_read(&rdev->nr_pending)) {
+ 			request_queue_t *r_queue = bdev_get_queue(rdev->bdev);
+ 
+ 			atomic_inc(&rdev->nr_pending);
+ 			spin_unlock_irqrestore(&conf->device_lock, flags);
+ 
+-			if (r_queue && r_queue->unplug_fn)
++			if (r_queue->unplug_fn)
+ 				r_queue->unplug_fn(r_queue);
+ 
+ 			spin_lock_irqsave(&conf->device_lock, flags);
+diff -puN drivers/md/raid6main.c~md-rationalise-unplug-functions-in-md drivers/md/raid6main.c
+--- 25/drivers/md/raid6main.c~md-rationalise-unplug-functions-in-md	2004-09-07 19:59:04.555555976 -0700
++++ 25-akpm/drivers/md/raid6main.c	2004-09-07 19:59:04.564554608 -0700
+@@ -1469,13 +1469,13 @@ static void unplug_slaves(mddev_t *mddev
+ 	spin_lock_irqsave(&conf->device_lock, flags);
+ 	for (i=0; i<mddev->raid_disks; i++) {
+ 		mdk_rdev_t *rdev = conf->disks[i].rdev;
+-		if (rdev && atomic_read(&rdev->nr_pending)) {
++		if (rdev && !rdev->faulty && atomic_read(&rdev->nr_pending)) {
+ 			request_queue_t *r_queue = bdev_get_queue(rdev->bdev);
+ 
+ 			atomic_inc(&rdev->nr_pending);
+ 			spin_unlock_irqrestore(&conf->device_lock, flags);
+ 
+-			if (r_queue && r_queue->unplug_fn)
++			if (r_queue->unplug_fn)
+ 				r_queue->unplug_fn(r_queue);
+ 
+ 			spin_lock_irqsave(&conf->device_lock, flags);
+_

@@ -1,0 +1,121 @@
+
+From: Christoph Hellwig <hch@lst.de>
+
+Currently it's up to the filesystem ->permission method to check whether
+the filesystem is readonly or the file marked immutable.  But this is
+really a VFS decision, and the distintion becomes more important when
+moving to per-mountpoint read only flags.
+
+For most filesystems that have been using generic_permission this is not
+change in behaviour.  For those that we're missing the check (cifs without
+CIFS_MOUNT_NO_PERM and coda [1]) this is a bugfix.
+
+Both reiserfs and xfs have this check still in their ->permission routine
+because they call it from other places aswell.  I'll try switching them
+over to generic_permission and will take care of this one.
+
+[1] coda_ioctl_permission always returns 0, aka always grants access,
+    which looks more than fishy to me.
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/namei.c   |   39 ++++++++++++++++++++-------------------
+ 25-akpm/fs/nfs/dir.c |   18 ------------------
+ 2 files changed, 20 insertions(+), 37 deletions(-)
+
+diff -puN fs/namei.c~move-read-only-and-immutable-checks-into-permission fs/namei.c
+--- 25/fs/namei.c~move-read-only-and-immutable-checks-into-permission	Thu Jan 13 15:53:59 2005
++++ 25-akpm/fs/namei.c	Thu Jan 13 15:53:59 2005
+@@ -169,21 +169,6 @@ int generic_permission(struct inode *ino
+ {
+ 	umode_t			mode = inode->i_mode;
+ 
+-	if (mask & MAY_WRITE) {
+-		/*
+-		 * Nobody gets write access to a read-only fs.
+-		 */
+-		if (IS_RDONLY(inode) &&
+-		    (S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode)))
+-			return -EROFS;
+-
+-		/*
+-		 * Nobody gets write access to an immutable file.
+-		 */
+-		if (IS_IMMUTABLE(inode))
+-			return -EACCES;
+-	}
+-
+ 	if (current->fsuid == inode->i_uid)
+ 		mode >>= 6;
+ 	else {
+@@ -225,14 +210,30 @@ int generic_permission(struct inode *ino
+ 	return -EACCES;
+ }
+ 
+-int permission(struct inode * inode,int mask, struct nameidata *nd)
++int permission(struct inode *inode, int mask, struct nameidata *nd)
+ {
+-	int retval;
+-	int submask;
++	int retval, submask;
++
++	if (mask & MAY_WRITE) {
++		umode_t mode = inode->i_mode;
++
++		/*
++		 * Nobody gets write access to a read-only fs.
++		 */
++		if (IS_RDONLY(inode) &&
++		    (S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode)))
++			return -EROFS;
++
++		/*
++		 * Nobody gets write access to an immutable file.
++		 */
++		if (IS_IMMUTABLE(inode))
++			return -EACCES;
++	}
++
+ 
+ 	/* Ordinary permission routines do not understand MAY_APPEND. */
+ 	submask = mask & ~MAY_APPEND;
+-
+ 	if (inode->i_op && inode->i_op->permission)
+ 		retval = inode->i_op->permission(inode, submask, nd);
+ 	else
+diff -puN fs/nfs/dir.c~move-read-only-and-immutable-checks-into-permission fs/nfs/dir.c
+--- 25/fs/nfs/dir.c~move-read-only-and-immutable-checks-into-permission	Thu Jan 13 15:53:59 2005
++++ 25-akpm/fs/nfs/dir.c	Thu Jan 13 15:53:59 2005
+@@ -1498,29 +1498,11 @@ out:
+ int nfs_permission(struct inode *inode, int mask, struct nameidata *nd)
+ {
+ 	struct rpc_cred *cred;
+-	int mode = inode->i_mode;
+ 	int res;
+ 
+ 	if (mask == 0)
+ 		return 0;
+-	if (mask & MAY_WRITE) {
+-		/*
+-		 *
+-		 * Nobody gets write access to a read-only fs.
+-		 *
+-		 */
+-		if (IS_RDONLY(inode) &&
+-		    (S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode)))
+-			return -EROFS;
+ 
+-		/*
+-		 *
+-		 * Nobody gets write access to an immutable file.
+-		 *
+-		 */
+-		if (IS_IMMUTABLE(inode))
+-			return -EACCES;
+-	}
+ 	/* Are we checking permissions on anything other than lookup/execute? */
+ 	if ((mask & MAY_EXEC) == 0) {
+ 		/* We only need to check permissions on file open() and access() */
+_

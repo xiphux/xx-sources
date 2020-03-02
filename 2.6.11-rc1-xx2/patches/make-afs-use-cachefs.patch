@@ -1,0 +1,807 @@
+
+From: David Howells <dhowells@redhat.com>
+
+The attached patch makes it possible for the Linux kernel AFS client to use
+CacheFS.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ /dev/null                  |   27 ------------------
+ 25-akpm/fs/afs/cell.c      |   23 ++++++++-------
+ 25-akpm/fs/afs/cell.h      |    4 +-
+ 25-akpm/fs/afs/dir.c       |    5 ---
+ 25-akpm/fs/afs/file.c      |   67 +++++++++++++++++++++++++++++----------------
+ 25-akpm/fs/afs/inode.c     |   11 +++----
+ 25-akpm/fs/afs/internal.h  |   10 +++---
+ 25-akpm/fs/afs/main.c      |   10 +++---
+ 25-akpm/fs/afs/mntpt.c     |    4 +-
+ 25-akpm/fs/afs/proc.c      |    1 
+ 25-akpm/fs/afs/vlocation.c |   27 +++++++++---------
+ 25-akpm/fs/afs/vnode.c     |   10 ++++--
+ 25-akpm/fs/afs/vnode.h     |    6 ++--
+ 25-akpm/fs/afs/volume.c    |   25 ++++++++--------
+ 25-akpm/fs/afs/volume.h    |   10 +++---
+ 15 files changed, 118 insertions(+), 122 deletions(-)
+
+diff -L fs/afs/cache.h -puN fs/afs/cache.h~make-afs-use-cachefs /dev/null
+--- 25/fs/afs/cache.h
++++ /dev/null	2003-09-15 06:40:47.000000000 -0700
+@@ -1,27 +0,0 @@
+-/* cache.h: AFS local cache management interface
+- *
+- * Copyright (C) 2002 Red Hat, Inc. All Rights Reserved.
+- * Written by David Howells (dhowells@redhat.com)
+- *
+- * This program is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU General Public License
+- * as published by the Free Software Foundation; either version
+- * 2 of the License, or (at your option) any later version.
+- */
+-
+-#ifndef _LINUX_AFS_CACHE_H
+-#define _LINUX_AFS_CACHE_H
+-
+-#undef AFS_CACHING_SUPPORT
+-
+-#include <linux/mm.h>
+-#ifdef AFS_CACHING_SUPPORT
+-#include <linux/cachefs.h>
+-#endif
+-#include "types.h"
+-
+-#ifdef __KERNEL__
+-
+-#endif /* __KERNEL__ */
+-
+-#endif /* _LINUX_AFS_CACHE_H */
+diff -puN fs/afs/cell.c~make-afs-use-cachefs fs/afs/cell.c
+--- 25/fs/afs/cell.c~make-afs-use-cachefs	2005-01-10 21:15:06.148518864 -0800
++++ 25-akpm/fs/afs/cell.c	2005-01-10 21:15:06.183513544 -0800
+@@ -31,7 +31,7 @@ static rwlock_t afs_cells_lock = RW_LOCK
+ static DECLARE_RWSEM(afs_cells_sem); /* add/remove serialisation */
+ static struct afs_cell *afs_cell_root;
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static cachefs_match_val_t afs_cell_cache_match(void *target,
+ 						const void *entry);
+ static void afs_cell_cache_update(void *source, void *entry);
+@@ -39,7 +39,9 @@ static void afs_cell_cache_update(void *
+ struct cachefs_index_def afs_cache_cell_index_def = {
+ 	.name			= "cell_ix",
+ 	.data_size		= sizeof(struct afs_cache_cell),
+-	.keys[0]		= { CACHEFS_INDEX_KEYS_ASCIIZ, 64 },
++	.keys			= {
++		{ .type = CACHEFS_INDEX_KEYS_ASCIIZ, .len = 64 },
++	},
+ 	.match			= afs_cell_cache_match,
+ 	.update			= afs_cell_cache_update,
+ };
+@@ -115,12 +117,11 @@ int afs_cell_create(const char *name, ch
+ 	if (ret < 0)
+ 		goto error;
+ 
+-#ifdef AFS_CACHING_SUPPORT
+-	/* put it up for caching */
+-	cachefs_acquire_cookie(afs_cache_netfs.primary_index,
+-			       &afs_vlocation_cache_index_def,
+-			       cell,
+-			       &cell->cache);
++#ifdef CONFIG_AFS_CACHEFS
++	/* put it up for caching (this never returns an error) */
++	cell->cache = cachefs_acquire_cookie(afs_cache_netfs.primary_index,
++					     &afs_vlocation_cache_index_def,
++					     cell);
+ #endif
+ 
+ 	/* add to the cell lists */
+@@ -345,7 +346,7 @@ static void afs_cell_destroy(struct afs_
+ 	list_del_init(&cell->proc_link);
+ 	up_write(&afs_proc_cells_sem);
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	cachefs_relinquish_cookie(cell->cache, 0);
+ #endif
+ 
+@@ -528,7 +529,7 @@ void afs_cell_purge(void)
+ /*
+  * match a cell record obtained from the cache
+  */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static cachefs_match_val_t afs_cell_cache_match(void *target,
+ 						const void *entry)
+ {
+@@ -551,7 +552,7 @@ static cachefs_match_val_t afs_cell_cach
+ /*
+  * update a cell record in the cache
+  */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static void afs_cell_cache_update(void *source, void *entry)
+ {
+ 	struct afs_cache_cell *ccell = entry;
+diff -puN fs/afs/cell.h~make-afs-use-cachefs fs/afs/cell.h
+--- 25/fs/afs/cell.h~make-afs-use-cachefs	2005-01-10 21:15:06.149518712 -0800
++++ 25-akpm/fs/afs/cell.h	2005-01-10 21:15:06.183513544 -0800
+@@ -13,7 +13,7 @@
+ #define _LINUX_AFS_CELL_H
+ 
+ #include "types.h"
+-#include "cache.h"
++#include <linux/cachefs.h>
+ 
+ #define AFS_CELL_MAX_ADDRS 15
+ 
+@@ -39,7 +39,7 @@ struct afs_cell
+ 	struct list_head	link;		/* main cell list link */
+ 	struct list_head	proc_link;	/* /proc cell list link */
+ 	struct proc_dir_entry	*proc_dir;	/* /proc dir for this cell */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	struct cachefs_cookie	*cache;		/* caching cookie */
+ #endif
+ 
+diff -puN fs/afs/dir.c~make-afs-use-cachefs fs/afs/dir.c
+--- 25/fs/afs/dir.c~make-afs-use-cachefs	2005-01-10 21:15:06.150518560 -0800
++++ 25-akpm/fs/afs/dir.c	2005-01-10 21:15:06.184513392 -0800
+@@ -155,11 +155,9 @@ static inline void afs_dir_check_page(st
+ 		}
+ 	}
+ 
+-	SetPageChecked(page);
+ 	return;
+ 
+  error:
+-	SetPageChecked(page);
+ 	SetPageError(page);
+ 
+ } /* end afs_dir_check_page() */
+@@ -193,8 +191,7 @@ static struct page *afs_dir_get_page(str
+ 		kmap(page);
+ 		if (!PageUptodate(page))
+ 			goto fail;
+-		if (!PageChecked(page))
+-			afs_dir_check_page(dir, page);
++		afs_dir_check_page(dir, page);
+ 		if (PageError(page))
+ 			goto fail;
+ 	}
+diff -puN fs/afs/file.c~make-afs-use-cachefs fs/afs/file.c
+--- 25/fs/afs/file.c~make-afs-use-cachefs	2005-01-10 21:15:06.152518256 -0800
++++ 25-akpm/fs/afs/file.c	2005-01-10 21:15:06.185513240 -0800
+@@ -33,6 +33,7 @@ static int afs_file_releasepage(struct p
+ 
+ static ssize_t afs_file_write(struct file *file, const char __user *buf,
+ 			      size_t size, loff_t *off);
++static int afs_file_page_mkwrite(struct page *page);
+ 
+ struct inode_operations afs_file_inode_operations = {
+ 	.getattr	= afs_inode_getattr,
+@@ -55,6 +56,7 @@ struct address_space_operations afs_fs_a
+ 	.set_page_dirty	= __set_page_dirty_nobuffers,
+ 	.releasepage	= afs_file_releasepage,
+ 	.invalidatepage	= afs_file_invalidatepage,
++	.page_mkwrite	= afs_file_page_mkwrite,
+ };
+ 
+ /*****************************************************************************/
+@@ -77,7 +79,7 @@ static ssize_t afs_file_write(struct fil
+ /*
+  * deal with notification that a page was read from the cache
+  */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static void afs_file_readpage_read_complete(void *cookie_data,
+ 					    struct page *page,
+ 					    void *data,
+@@ -98,7 +100,7 @@ static void afs_file_readpage_read_compl
+ /*
+  * deal with notification that a page was written to the cache
+  */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static void afs_file_readpage_write_complete(void *cookie_data,
+ 					     struct page *page,
+ 					     void *data,
+@@ -106,7 +108,9 @@ static void afs_file_readpage_write_comp
+ {
+ 	_enter("%p,%p,%p,%d", cookie_data, page, data, error);
+ 
+-	unlock_page(page);
++	/* note that the page has been written to the cache and can now be
++	 * modified */
++	end_page_fs_misc(page);
+ 
+ } /* end afs_file_readpage_write_complete() */
+ #endif
+@@ -118,7 +122,7 @@ static void afs_file_readpage_write_comp
+ static int afs_file_readpage(struct file *file, struct page *page)
+ {
+ 	struct afs_rxfs_fetch_descriptor desc;
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	struct cachefs_page *pageio;
+ #endif
+ 	struct afs_vnode *vnode;
+@@ -138,10 +142,10 @@ static int afs_file_readpage(struct file
+ 	if (vnode->flags & AFS_VNODE_DELETED)
+ 		goto error;
+ 
+-#ifdef AFS_CACHING_SUPPORT
+-	ret = cachefs_page_get_private(page, &pageio, GFP_NOIO);
+-	if (ret < 0)
+-		goto error;
++#ifdef CONFIG_AFS_CACHEFS
++	pageio = cachefs_page_get_private(page, GFP_NOIO);
++	if (IS_ERR(pageio))
++		goto error2;
+ 
+ 	/* is it cached? */
+ 	ret = cachefs_read_or_alloc_page(vnode->cache,
+@@ -179,14 +183,14 @@ static int afs_file_readpage(struct file
+ 		ret = afs_vnode_fetch_data(vnode, &desc);
+ 		kunmap(page);
+ 		if (ret < 0) {
+-			if (ret==-ENOENT) {
++			if (ret == -ENOENT) {
+ 				_debug("got NOENT from server"
+ 				       " - marking file deleted and stale");
+ 				vnode->flags |= AFS_VNODE_DELETED;
+ 				ret = -ESTALE;
+ 			}
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 			cachefs_uncache_page(vnode->cache, page);
+ #endif
+ 			goto error;
+@@ -194,7 +198,9 @@ static int afs_file_readpage(struct file
+ 
+ 		SetPageUptodate(page);
+ 
+-#ifdef AFS_CACHING_SUPPORT
++		/* send the page to the cache */
++#ifdef CONFIG_AFS_CACHEFS
++		SetPageFsMisc(page);
+ 		if (cachefs_write_page(vnode->cache,
+ 				       page,
+ 				       afs_file_readpage_write_complete,
+@@ -202,16 +208,19 @@ static int afs_file_readpage(struct file
+ 				       GFP_KERNEL) != 0
+ 		    ) {
+ 			cachefs_uncache_page(vnode->cache, page);
+-			unlock_page(page);
++			ClearPageFsMisc(page);
+ 		}
+-#else
+-		unlock_page(page);
+ #endif
++		unlock_page(page);
+ 	}
+ 
+ 	_leave(" = 0");
+ 	return 0;
+ 
++#ifdef CONFIG_AFS_CACHEFS
++ error2:
++	ret = PTR_ERR(pageio);
++#endif
+  error:
+ 	SetPageError(page);
+ 	unlock_page(page);
+@@ -225,17 +234,16 @@ static int afs_file_readpage(struct file
+ /*
+  * get a page cookie for the specified page
+  */
+-#ifdef AFS_CACHING_SUPPORT
+-int afs_cache_get_page_cookie(struct page *page,
+-			      struct cachefs_page **_page_cookie)
++#ifdef CONFIG_AFS_CACHEFS
++struct cachefs_page *afs_cache_get_page_cookie(struct page *page)
+ {
+-	int ret;
++	struct cachefs_page *page_cookie;
+ 
+ 	_enter("");
+-	ret = cachefs_page_get_private(page,_page_cookie, GFP_NOIO);
++	page_cookie = cachefs_page_get_private(page, GFP_NOIO);
+ 
+-	_leave(" = %d", ret);
+-	return ret;
++	_leave(" = %p", page_cookie);
++	return page_cookie;
+ } /* end afs_cache_get_page_cookie() */
+ #endif
+ 
+@@ -252,7 +260,7 @@ static int afs_file_invalidatepage(struc
+ 	BUG_ON(!PageLocked(page));
+ 
+ 	if (PagePrivate(page)) {
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 		struct afs_vnode *vnode = AFS_FS_I(page->mapping->host);
+ 		cachefs_uncache_page(vnode->cache,page);
+ #endif
+@@ -287,7 +295,7 @@ static int afs_file_releasepage(struct p
+ 	_enter("{%lu},%x", page->index, gfp_flags);
+ 
+ 	if (PagePrivate(page)) {
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 		struct afs_vnode *vnode = AFS_FS_I(page->mapping->host);
+ 		cachefs_uncache_page(vnode->cache, page);
+ #endif
+@@ -303,3 +311,16 @@ static int afs_file_releasepage(struct p
+ 	_leave(" = 0");
+ 	return 0;
+ } /* end afs_file_releasepage() */
++
++/*****************************************************************************/
++/*
++ * wait for the disc cache to finish writing before permitting
++ */
++#ifdef CONFIG_AFS_CACHEFS
++static int afs_file_page_mkwrite(struct page *page)
++{
++	wait_on_page_fs_misc(page);
++	return 0;
++
++} /* end afs_file_page_mkwrite() */
++#endif
+diff -puN fs/afs/inode.c~make-afs-use-cachefs fs/afs/inode.c
+--- 25/fs/afs/inode.c~make-afs-use-cachefs	2005-01-10 21:15:06.153518104 -0800
++++ 25-akpm/fs/afs/inode.c	2005-01-10 21:15:06.186513088 -0800
+@@ -179,13 +179,12 @@ inline int afs_iget(struct super_block *
+ 		return ret;
+ 	}
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	/* set up caching before reading the status, as fetch-status reads the
+ 	 * first page of symlinks to see if they're really mntpts */
+-	cachefs_acquire_cookie(vnode->volume->cache,
+-			       NULL,
+-			       vnode,
+-			       &vnode->cache);
++	vnode->cache = cachefs_acquire_cookie(vnode->volume->cache,
++					      NULL,
++					      vnode);
+ #endif
+ 
+ 	/* okay... it's a new inode */
+@@ -278,7 +277,7 @@ void afs_clear_inode(struct inode *inode
+ 
+ 	afs_vnode_give_up_callback(vnode);
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	cachefs_relinquish_cookie(vnode->cache, 0);
+ 	vnode->cache = NULL;
+ #endif
+diff -puN fs/afs/internal.h~make-afs-use-cachefs fs/afs/internal.h
+--- 25/fs/afs/internal.h~make-afs-use-cachefs	2005-01-10 21:15:06.154517952 -0800
++++ 25-akpm/fs/afs/internal.h	2005-01-10 21:15:06.186513088 -0800
+@@ -16,6 +16,7 @@
+ #include <linux/kernel.h>
+ #include <linux/fs.h>
+ #include <linux/pagemap.h>
++#include <linux/cachefs.h>
+ 
+ /*
+  * debug tracing
+@@ -56,7 +57,7 @@ static inline void afs_discard_my_signal
+  */
+ extern struct rw_semaphore afs_proc_cells_sem;
+ extern struct list_head afs_proc_cells;
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ extern struct cachefs_index_def afs_cache_cell_index_def;
+ #endif
+ 
+@@ -73,9 +74,8 @@ extern struct address_space_operations a
+ extern struct inode_operations afs_file_inode_operations;
+ extern struct file_operations afs_file_file_operations;
+ 
+-#ifdef AFS_CACHING_SUPPORT
+-extern int afs_cache_get_page_cookie(struct page *page,
+-				     struct cachefs_page **_page_cookie);
++#ifdef CONFIG_AFS_CACHEFS
++extern struct cachefs_page *afs_cache_get_page_cookie(struct page *page);
+ #endif
+ 
+ /*
+@@ -98,7 +98,7 @@ extern void afs_key_unregister(void);
+ /*
+  * main.c
+  */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ extern struct cachefs_netfs afs_cache_netfs;
+ #endif
+ 
+diff -puN fs/afs/main.c~make-afs-use-cachefs fs/afs/main.c
+--- 25/fs/afs/main.c~make-afs-use-cachefs	2005-01-10 21:15:06.156517648 -0800
++++ 25-akpm/fs/afs/main.c	2005-01-10 21:15:06.187512936 -0800
+@@ -14,11 +14,11 @@
+ #include <linux/init.h>
+ #include <linux/sched.h>
+ #include <linux/completion.h>
++#include <linux/cachefs.h>
+ #include <rxrpc/rxrpc.h>
+ #include <rxrpc/transport.h>
+ #include <rxrpc/call.h>
+ #include <rxrpc/peer.h>
+-#include "cache.h"
+ #include "cell.h"
+ #include "server.h"
+ #include "fsclient.h"
+@@ -60,7 +60,7 @@ static struct rxrpc_peer_ops afs_peer_op
+ struct list_head afs_cb_hash_tbl[AFS_CB_HASH_COUNT];
+ spinlock_t afs_cb_hash_lock = SPIN_LOCK_UNLOCKED;
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static struct cachefs_netfs_operations afs_cache_ops = {
+ 	.get_page_cookie	= afs_cache_get_page_cookie,
+ };
+@@ -92,7 +92,7 @@ static int afs_init(void)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	/* we want to be able to cache */
+ 	ret = cachefs_register_netfs(&afs_cache_netfs,
+ 				     &afs_cache_cell_index_def);
+@@ -146,7 +146,7 @@ static int afs_init(void)
+ 	afs_key_unregister();
+  error_cache:
+ #endif
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	cachefs_unregister_netfs(&afs_cache_netfs);
+  error:
+ #endif
+@@ -172,7 +172,7 @@ static void __exit afs_exit(void)
+ #ifdef CONFIG_KEYS_TURNED_OFF
+ 	afs_key_unregister();
+ #endif
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	cachefs_unregister_netfs(&afs_cache_netfs);
+ #endif
+ 	afs_proc_cleanup();
+diff -puN fs/afs/mntpt.c~make-afs-use-cachefs fs/afs/mntpt.c
+--- 25/fs/afs/mntpt.c~make-afs-use-cachefs	2005-01-10 21:15:06.170515520 -0800
++++ 25-akpm/fs/afs/mntpt.c	2005-01-10 21:15:06.187512936 -0800
+@@ -276,12 +276,12 @@ static int afs_mntpt_follow_link(struct 
+  */
+ static void afs_mntpt_expiry_timed_out(struct afs_timer *timer)
+ {
+-	kenter("");
++//	kenter("");
+ 
+ 	mark_mounts_for_expiry(&afs_vfsmounts);
+ 
+ 	afs_kafstimod_add_timer(&afs_mntpt_expiry_timer,
+ 				afs_mntpt_expiry_timeout * HZ);
+ 
+-	kleave("");
++//	kleave("");
+ } /* end afs_mntpt_expiry_timed_out() */
+diff -puN fs/afs/proc.c~make-afs-use-cachefs fs/afs/proc.c
+--- 25/fs/afs/proc.c~make-afs-use-cachefs	2005-01-10 21:15:06.172515216 -0800
++++ 25-akpm/fs/afs/proc.c	2005-01-10 21:15:06.188512784 -0800
+@@ -177,6 +177,7 @@ int afs_proc_init(void)
+  */
+ void afs_proc_cleanup(void)
+ {
++	remove_proc_entry("rootcell", proc_afs);
+ 	remove_proc_entry("cells", proc_afs);
+ 
+ 	remove_proc_entry("fs/afs", NULL);
+diff -puN fs/afs/vlocation.c~make-afs-use-cachefs fs/afs/vlocation.c
+--- 25/fs/afs/vlocation.c~make-afs-use-cachefs	2005-01-10 21:15:06.173515064 -0800
++++ 25-akpm/fs/afs/vlocation.c	2005-01-10 21:15:06.189512632 -0800
+@@ -59,7 +59,7 @@ static LIST_HEAD(afs_vlocation_update_pe
+ static struct afs_vlocation *afs_vlocation_update;	/* VL currently being updated */
+ static spinlock_t afs_vlocation_update_lock = SPIN_LOCK_UNLOCKED; /* lock guarding update queue */
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static cachefs_match_val_t afs_vlocation_cache_match(void *target,
+ 						     const void *entry);
+ static void afs_vlocation_cache_update(void *source, void *entry);
+@@ -67,7 +67,9 @@ static void afs_vlocation_cache_update(v
+ struct cachefs_index_def afs_vlocation_cache_index_def = {
+ 	.name		= "vldb",
+ 	.data_size	= sizeof(struct afs_cache_vlocation),
+-	.keys[0]	= { CACHEFS_INDEX_KEYS_ASCIIZ, 64 },
++	.keys		= {
++		{ .type = CACHEFS_INDEX_KEYS_ASCIIZ, .len = 64, },
++	},
+ 	.match		= afs_vlocation_cache_match,
+ 	.update		= afs_vlocation_cache_update,
+ };
+@@ -300,13 +302,12 @@ int afs_vlocation_lookup(struct afs_cell
+ 
+ 	list_add_tail(&vlocation->link, &cell->vl_list);
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	/* we want to store it in the cache, plus it might already be
+ 	 * encached */
+-	cachefs_acquire_cookie(cell->cache,
+-			       &afs_volume_cache_index_def,
+-			       vlocation,
+-			       &vlocation->cache);
++	vlocation->cache = cachefs_acquire_cookie(cell->cache,
++						  &afs_volume_cache_index_def,
++						  vlocation);
+ 
+ 	if (vlocation->valid)
+ 		goto found_in_cache;
+@@ -341,7 +342,7 @@ int afs_vlocation_lookup(struct afs_cell
+  active:
+ 	active = 1;
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+  found_in_cache:
+ #endif
+ 	/* try to look up a cached volume in the cell VL databases by ID */
+@@ -423,7 +424,7 @@ int afs_vlocation_lookup(struct afs_cell
+ 
+ 	afs_kafstimod_add_timer(&vlocation->upd_timer, 10 * HZ);
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	/* update volume entry in local cache */
+ 	cachefs_update_cookie(vlocation->cache);
+ #endif
+@@ -439,7 +440,7 @@ int afs_vlocation_lookup(struct afs_cell
+ 		}
+ 		else {
+ 			list_del(&vlocation->link);
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 			cachefs_relinquish_cookie(vlocation->cache, 0);
+ #endif
+ 			afs_put_cell(vlocation->cell);
+@@ -538,7 +539,7 @@ void afs_vlocation_do_timeout(struct afs
+ 	}
+ 
+ 	/* we can now destroy it properly */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	cachefs_relinquish_cookie(vlocation->cache, 0);
+ #endif
+ 	afs_put_cell(cell);
+@@ -893,7 +894,7 @@ static void afs_vlocation_update_discard
+  * match a VLDB record stored in the cache
+  * - may also load target from entry
+  */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static cachefs_match_val_t afs_vlocation_cache_match(void *target,
+ 						     const void *entry)
+ {
+@@ -940,7 +941,7 @@ static cachefs_match_val_t afs_vlocation
+ /*
+  * update a VLDB record stored in the cache
+  */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static void afs_vlocation_cache_update(void *source, void *entry)
+ {
+ 	struct afs_cache_vlocation *vldb = entry;
+diff -puN fs/afs/vnode.c~make-afs-use-cachefs fs/afs/vnode.c
+--- 25/fs/afs/vnode.c~make-afs-use-cachefs	2005-01-10 21:15:06.175514760 -0800
++++ 25-akpm/fs/afs/vnode.c	2005-01-10 21:15:06.190512480 -0800
+@@ -29,7 +29,7 @@ struct afs_timer_ops afs_vnode_cb_timed_
+ 	.timed_out	= afs_vnode_cb_timed_out,
+ };
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static cachefs_match_val_t afs_vnode_cache_match(void *target,
+ 						 const void *entry);
+ static void afs_vnode_cache_update(void *source, void *entry);
+@@ -37,7 +37,9 @@ static void afs_vnode_cache_update(void 
+ struct cachefs_index_def afs_vnode_cache_index_def = {
+ 	.name		= "vnode",
+ 	.data_size	= sizeof(struct afs_cache_vnode),
+-	.keys[0]	= { CACHEFS_INDEX_KEYS_BIN, 4 },
++	.keys		= {
++		{ .type = CACHEFS_INDEX_KEYS_BIN, .len = 4 },
++	},
+ 	.match		= afs_vnode_cache_match,
+ 	.update		= afs_vnode_cache_update,
+ };
+@@ -344,7 +346,7 @@ int afs_vnode_give_up_callback(struct af
+ /*
+  * match a vnode record stored in the cache
+  */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static cachefs_match_val_t afs_vnode_cache_match(void *target,
+ 						 const void *entry)
+ {
+@@ -379,7 +381,7 @@ static cachefs_match_val_t afs_vnode_cac
+ /*
+  * update a vnode record stored in the cache
+  */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static void afs_vnode_cache_update(void *source, void *entry)
+ {
+ 	struct afs_cache_vnode *cvnode = entry;
+diff -puN fs/afs/vnode.h~make-afs-use-cachefs fs/afs/vnode.h
+--- 25/fs/afs/vnode.h~make-afs-use-cachefs	2005-01-10 21:15:06.176514608 -0800
++++ 25-akpm/fs/afs/vnode.h	2005-01-10 21:15:06.190512480 -0800
+@@ -13,9 +13,9 @@
+ #define _LINUX_AFS_VNODE_H
+ 
+ #include <linux/fs.h>
++#include <linux/cachefs.h>
+ #include "server.h"
+ #include "kafstimod.h"
+-#include "cache.h"
+ 
+ #ifdef __KERNEL__
+ 
+@@ -32,7 +32,7 @@ struct afs_cache_vnode
+ 	afs_dataversion_t	data_version;	/* data version */
+ };
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ extern struct cachefs_index_def afs_vnode_cache_index_def;
+ #endif
+ 
+@@ -47,7 +47,7 @@ struct afs_vnode
+ 	struct afs_volume	*volume;	/* volume on which vnode resides */
+ 	struct afs_fid		fid;		/* the file identifier for this inode */
+ 	struct afs_file_status	status;		/* AFS status info for this file */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	struct cachefs_cookie	*cache;		/* caching cookie */
+ #endif
+ 
+diff -puN fs/afs/volume.c~make-afs-use-cachefs fs/afs/volume.c
+--- 25/fs/afs/volume.c~make-afs-use-cachefs	2005-01-10 21:15:06.177514456 -0800
++++ 25-akpm/fs/afs/volume.c	2005-01-10 21:15:06.191512328 -0800
+@@ -15,10 +15,10 @@
+ #include <linux/slab.h>
+ #include <linux/fs.h>
+ #include <linux/pagemap.h>
++#include <linux/cachefs.h>
+ #include "volume.h"
+ #include "vnode.h"
+ #include "cell.h"
+-#include "cache.h"
+ #include "cmservice.h"
+ #include "fsclient.h"
+ #include "vlclient.h"
+@@ -28,7 +28,7 @@
+ static const char *afs_voltypes[] = { "R/W", "R/O", "BAK" };
+ #endif
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static cachefs_match_val_t afs_volume_cache_match(void *target,
+ 						  const void *entry);
+ static void afs_volume_cache_update(void *source, void *entry);
+@@ -36,8 +36,10 @@ static void afs_volume_cache_update(void
+ struct cachefs_index_def afs_volume_cache_index_def = {
+ 	.name		= "volume",
+ 	.data_size	= sizeof(struct afs_cache_vhash),
+-	.keys[0]	= { CACHEFS_INDEX_KEYS_BIN, 1 },
+-	.keys[1]	= { CACHEFS_INDEX_KEYS_BIN, 1 },
++	.keys	= {
++		{ .type = CACHEFS_INDEX_KEYS_BIN, .len = 1, },
++		{ .type = CACHEFS_INDEX_KEYS_BIN, .len = 1, },
++	},
+ 	.match		= afs_volume_cache_match,
+ 	.update		= afs_volume_cache_update,
+ };
+@@ -214,11 +216,10 @@ int afs_volume_lookup(const char *name, 
+ 	}
+ 
+ 	/* attach the cache and volume location */
+-#ifdef AFS_CACHING_SUPPORT
+-	cachefs_acquire_cookie(vlocation->cache,
+-			       &afs_vnode_cache_index_def,
+-			       volume,
+-			       &volume->cache);
++#ifdef CONFIG_AFS_CACHEFS
++	volume->cache = cachefs_acquire_cookie(vlocation->cache,
++					       &afs_vnode_cache_index_def,
++					       volume);
+ #endif
+ 
+ 	afs_get_vlocation(vlocation);
+@@ -286,7 +287,7 @@ void afs_put_volume(struct afs_volume *v
+ 	up_write(&vlocation->cell->vl_sem);
+ 
+ 	/* finish cleaning up the volume */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	cachefs_relinquish_cookie(volume->cache, 0);
+ #endif
+ 	afs_put_vlocation(vlocation);
+@@ -483,7 +484,7 @@ int afs_volume_release_fileserver(struct
+ /*
+  * match a volume hash record stored in the cache
+  */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static cachefs_match_val_t afs_volume_cache_match(void *target,
+ 						  const void *entry)
+ {
+@@ -506,7 +507,7 @@ static cachefs_match_val_t afs_volume_ca
+ /*
+  * update a volume hash record stored in the cache
+  */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ static void afs_volume_cache_update(void *source, void *entry)
+ {
+ 	struct afs_cache_vhash *vhash = entry;
+diff -puN fs/afs/volume.h~make-afs-use-cachefs fs/afs/volume.h
+--- 25/fs/afs/volume.h~make-afs-use-cachefs	2005-01-10 21:15:06.179514152 -0800
++++ 25-akpm/fs/afs/volume.h	2005-01-10 21:15:06.192512176 -0800
+@@ -12,11 +12,11 @@
+ #ifndef _LINUX_AFS_VOLUME_H
+ #define _LINUX_AFS_VOLUME_H
+ 
++#include <linux/cachefs.h>
+ #include "types.h"
+ #include "fsclient.h"
+ #include "kafstimod.h"
+ #include "kafsasyncd.h"
+-#include "cache.h"
+ 
+ #define __packed __attribute__((packed))
+ 
+@@ -47,7 +47,7 @@ struct afs_cache_vlocation
+ 	time_t			rtime;		/* last retrieval time */
+ };
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ extern struct cachefs_index_def afs_vlocation_cache_index_def;
+ #endif
+ 
+@@ -61,7 +61,7 @@ struct afs_cache_vhash
+ 	uint8_t			hash_bucket;	/* which hash bucket this represents */
+ } __attribute__((packed));
+ 
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ extern struct cachefs_index_def afs_volume_cache_index_def;
+ #endif
+ 
+@@ -75,7 +75,7 @@ struct afs_vlocation
+ 	struct list_head	link;		/* link in cell volume location list */
+ 	struct afs_timer	timeout;	/* decaching timer */
+ 	struct afs_cell		*cell;		/* cell to which volume belongs */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	struct cachefs_cookie	*cache;		/* caching cookie */
+ #endif
+ 	struct afs_cache_vlocation vldb;	/* volume information DB record */
+@@ -111,7 +111,7 @@ struct afs_volume
+ 	atomic_t		usage;
+ 	struct afs_cell		*cell;		/* cell to which belongs (unrefd ptr) */
+ 	struct afs_vlocation	*vlocation;	/* volume location */
+-#ifdef AFS_CACHING_SUPPORT
++#ifdef CONFIG_AFS_CACHEFS
+ 	struct cachefs_cookie	*cache;		/* caching cookie */
+ #endif
+ 	afs_volid_t		vid;		/* volume ID */
+_

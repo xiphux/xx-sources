@@ -1,0 +1,50 @@
+
+From: Stephen Hemminger <shemminger@osdl.org>
+
+A couple chrdev routines take a constant string and should be declared with
+const char *.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/char_dev.c      |    5 +++--
+ 25-akpm/include/linux/fs.h |    4 ++--
+ 2 files changed, 5 insertions(+), 4 deletions(-)
+
+diff -puN fs/char_dev.c~register_chrdev_region-alloc_chrdev_region-const fs/char_dev.c
+--- 25/fs/char_dev.c~register_chrdev_region-alloc_chrdev_region-const	Fri Oct  8 15:11:16 2004
++++ 25-akpm/fs/char_dev.c	Fri Oct  8 15:11:16 2004
+@@ -153,7 +153,7 @@ __unregister_chrdev_region(unsigned majo
+ 	return cd;
+ }
+ 
+-int register_chrdev_region(dev_t from, unsigned count, char *name)
++int register_chrdev_region(dev_t from, unsigned count, const char *name)
+ {
+ 	struct char_device_struct *cd;
+ 	dev_t to = from + count;
+@@ -178,7 +178,8 @@ fail:
+ 	return PTR_ERR(cd);
+ }
+ 
+-int alloc_chrdev_region(dev_t *dev, unsigned baseminor, unsigned count, char *name)
++int alloc_chrdev_region(dev_t *dev, unsigned baseminor, unsigned count,
++			const char *name)
+ {
+ 	struct char_device_struct *cd;
+ 	cd = __register_chrdev_region(0, baseminor, count, name);
+diff -puN include/linux/fs.h~register_chrdev_region-alloc_chrdev_region-const include/linux/fs.h
+--- 25/include/linux/fs.h~register_chrdev_region-alloc_chrdev_region-const	Fri Oct  8 15:11:16 2004
++++ 25-akpm/include/linux/fs.h	Fri Oct  8 15:11:16 2004
+@@ -1345,8 +1345,8 @@ extern int bd_claim(struct block_device 
+ extern void bd_release(struct block_device *);
+ 
+ /* fs/char_dev.c */
+-extern int alloc_chrdev_region(dev_t *, unsigned, unsigned, char *);
+-extern int register_chrdev_region(dev_t, unsigned, char *);
++extern int alloc_chrdev_region(dev_t *, unsigned, unsigned, const char *);
++extern int register_chrdev_region(dev_t, unsigned, const char *);
+ extern int register_chrdev(unsigned int, const char *,
+ 			   struct file_operations *);
+ extern int unregister_chrdev(unsigned int, const char *);
+_

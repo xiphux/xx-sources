@@ -1,0 +1,99 @@
+Index: xx-sources/fs/proc/proc_misc.c
+===================================================================
+--- xx-sources.orig/fs/proc/proc_misc.c	2004-09-07 15:57:06.000000000 -0400
++++ xx-sources/fs/proc/proc_misc.c	2004-09-09 15:51:34.364279744 -0400
+@@ -149,6 +149,61 @@
+ 	return proc_calc_metrics(page, start, off, count, eof, len);
+ }
+ 
++static int xx_read_proc(char *page, char **start, off_t off,
++				int count, int *eof, void *data)
++{
++	const char *elv =
++#if defined(CONFIG_ELV_SELECT)
++		"Yes"
++#else
++		"No"
++#endif
++	;
++	const int jiffies = CONFIG_HERTZ;
++	const int idedelay = CONFIG_IDE_DELAY;
++	extern char *scheduler_name;
++	extern char *scheduler_version;
++#if defined(CONFIG_CFLAGS_EDIT)
++	const char *cflags = CONFIG_CFLAGS_STRING;
++#endif
++	int len;
++
++	len = sprintf(page,
++		"Process scheduler:			%s\n"
++		"Version:				%s\n"
++		"Supported I/O schedulers:\n"
++#if defined(CONFIG_IOSCHED_CFQ)
++		"					CFQ\n"
++#endif
++#if defined(CONFIG_IOSCHED_AS)
++		"					Anticipatory\n"
++#endif
++#if defined(CONFIG_IOSCHED_DEADLINE)
++		"					Deadline\n"
++#endif
++#if defined(CONFIG_IOSCHED_NOOP)
++		"					Noop\n"
++#endif
++		"Runtime selectable I/O schedulers:	%s\n"
++		"Jiffies:				%d\n"
++		"IDE Delay:				%d\n"
++#if defined(CONFIG_CFLAGS_EDIT)
++		"CFLAGS:				%s\n"
++#endif
++		,
++		scheduler_name,
++		scheduler_version,
++		elv,
++		jiffies,
++		idedelay
++#if defined(CONFIG_CFLAGS_EDIT)
++			, cflags
++#endif
++		);
++
++	return proc_calc_metrics(page, start, off, count, eof, len);
++}
++
+ static int meminfo_read_proc(char *page, char **start, off_t off,
+ 				 int count, int *eof, void *data)
+ {
+@@ -583,6 +638,7 @@
+ 		{"loadavg",     loadavg_read_proc},
+ 		{"uptime",	uptime_read_proc},
+ 		{"meminfo",	meminfo_read_proc},
++		{"xx",		xx_read_proc},
+ 		{"version",	version_read_proc},
+ #ifdef CONFIG_PROC_HARDWARE
+ 		{"hardware",	hardware_read_proc},
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-09-07 15:58:40.000000000 -0400
++++ xx-sources/kernel/sched.c	2004-09-09 15:39:07.527816144 -0400
+@@ -49,6 +49,20 @@
+ 
+ #include <asm/unistd.h>
+ 
++/* Stuff for scheduler proc entry */
++const char *scheduler_name =
++#if 1
++	"Default scheduler"
++#endif
++;
++
++const char *scheduler_version =
++#if 1
++	"NA"
++#endif
++;
++
++
+ #ifdef CONFIG_NUMA
+ #define cpu_to_node_mask(cpu) node_to_cpumask(cpu_to_node(cpu))
+ #else

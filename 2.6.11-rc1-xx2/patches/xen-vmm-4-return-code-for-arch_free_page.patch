@@ -1,0 +1,86 @@
+
+From: Ian Pratt <Ian.Pratt@cl.cam.ac.uk>
+
+This patch adds a return value to the existing arch_free_page function that
+indicates whether the normal free routine still has work to do.  The only
+architecture that currently uses arch_free_page is arch 'um'.  arch xen needs
+this for 'foreign pages' - pages that don't belong to the page allocator but
+are instead managed by custom allocators.  Such pages are marked using
+PG_arch_1.
+
+Signed-off-by: Ian Pratt <Ian.Pratt@cl.cam.ac.uk>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/um/kernel/physmem.c |    2 +-
+ 25-akpm/include/asm-um/page.h    |    3 ++-
+ 25-akpm/include/linux/gfp.h      |    6 +++++-
+ 25-akpm/mm/page_alloc.c          |    6 ++++--
+ 4 files changed, 12 insertions(+), 5 deletions(-)
+
+diff -puN arch/um/kernel/physmem.c~xen-vmm-4-return-code-for-arch_free_page arch/um/kernel/physmem.c
+--- 25/arch/um/kernel/physmem.c~xen-vmm-4-return-code-for-arch_free_page	2005-01-10 21:14:26.506545360 -0800
++++ 25-akpm/arch/um/kernel/physmem.c	2005-01-10 21:14:26.516543840 -0800
+@@ -225,7 +225,7 @@ EXPORT_SYMBOL(physmem_forget_descriptor)
+ EXPORT_SYMBOL(physmem_remove_mapping);
+ EXPORT_SYMBOL(physmem_subst_mapping);
+ 
+-void arch_free_page(struct page *page, int order)
++void __arch_free_page(struct page *page, int order)
+ {
+ 	void *virt;
+ 	int i;
+diff -puN include/asm-um/page.h~xen-vmm-4-return-code-for-arch_free_page include/asm-um/page.h
+--- 25/include/asm-um/page.h~xen-vmm-4-return-code-for-arch_free_page	2005-01-10 21:14:26.508545056 -0800
++++ 25-akpm/include/asm-um/page.h	2005-01-10 21:14:26.516543840 -0800
+@@ -46,7 +46,8 @@ extern void *to_virt(unsigned long phys)
+ extern struct page *arch_validate(struct page *page, int mask, int order);
+ #define HAVE_ARCH_VALIDATE
+ 
+-extern void arch_free_page(struct page *page, int order);
++extern void __arch_free_page(struct page *page, int order);
++#define arch_free_page(page, order) (__arch_free_page((page), (order)), 0)
+ #define HAVE_ARCH_FREE_PAGE
+ 
+ #endif
+diff -puN include/linux/gfp.h~xen-vmm-4-return-code-for-arch_free_page include/linux/gfp.h
+--- 25/include/linux/gfp.h~xen-vmm-4-return-code-for-arch_free_page	2005-01-10 21:14:26.510544752 -0800
++++ 25-akpm/include/linux/gfp.h	2005-01-10 21:14:26.517543688 -0800
+@@ -75,8 +75,12 @@ struct vm_area_struct;
+  * optimized to &contig_page_data at compile-time.
+  */
+ 
++/*
++ * If arch_free_page returns non-zero then the generic free_page code can
++ * immediately bail: the arch-specific function has done all the work.
++ */
+ #ifndef HAVE_ARCH_FREE_PAGE
+-static inline void arch_free_page(struct page *page, int order) { }
++#define arch_free_page(page, order) 0
+ #endif
+ 
+ extern struct page *
+diff -puN mm/page_alloc.c~xen-vmm-4-return-code-for-arch_free_page mm/page_alloc.c
+--- 25/mm/page_alloc.c~xen-vmm-4-return-code-for-arch_free_page	2005-01-10 21:14:26.512544448 -0800
++++ 25-akpm/mm/page_alloc.c	2005-01-10 21:14:26.520543232 -0800
+@@ -324,7 +324,8 @@ void __free_pages_ok(struct page *page, 
+ 	LIST_HEAD(list);
+ 	int i;
+ 
+-	arch_free_page(page, order);
++	if (arch_free_page(page, order))
++		return;
+ 
+ 	mod_page_state(pgfree, 1 << order);
+ 
+@@ -564,7 +565,8 @@ static void fastcall free_hot_cold_page(
+ 	struct per_cpu_pages *pcp;
+ 	unsigned long flags;
+ 
+-	arch_free_page(page, 0);
++	if (arch_free_page(page, 0))
++		return;
+ 
+ 	kernel_map_pages(page, 1, 0);
+ 	inc_page_state(pgfree);
+_

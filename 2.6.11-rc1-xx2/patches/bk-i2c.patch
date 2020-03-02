@@ -1,0 +1,1337 @@
+bk://kernel.bkbits.net/gregkh/linux/i2c-2.6
+galak@somerset.sps.mot.com|ChangeSet|20050114003306|37043 galak
+
+# This is a BitKeeper generated diff -Nru style patch.
+#
+# ChangeSet
+#   2005/01/13 16:33:06-08:00 galak@somerset.sps.mot.com 
+#   [PATCH] I2C-MPC: use wait_event_interruptible_timeout between transactions
+#   
+#   Use wait_event_interruptible_timeout so we dont waste time waiting between
+#   transactions like we use to.  Also, we use the adapters timeout so the
+#   ioctl cmd I2C_TIMEOUT will now work.
+#   
+#   Signed-off-by: Kumar Gala <kumar.gala@freescale.com>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/i2c/busses/i2c-mpc.c
+#   2005/01/13 16:15:58-08:00 galak@somerset.sps.mot.com +15 -21
+#   I2C-MPC: use wait_event_interruptible_timeout between transactions
+# 
+# ChangeSet
+#   2005/01/13 14:02:05-08:00 khali@linux-fr.org 
+#   [PATCH] I2C: Improve it87 super-i/o detection
+#   
+#   This patch improves the detection of Super-I/O it87 chips (IT8712F,
+#   IT8705F).
+#   
+#   * Find the IT8712F and IT8705F address through Super-I/O (as opposed to
+#     IT8712F only so far).
+#   
+#   * Verify that the device is activated. Print info lines if a
+#     disactivated or unconfigured chip is found.
+#   
+#   * Print an info line when finding either chip, with device name,
+#     address and revision.
+#   
+#   * Rearrange code in it87_find() (error path).
+#   
+#   * (bonus) Get rid of the useless i2c_client id.
+#   
+#   Successfully tested on two IT8712F and one IT8705F, thanks to Jonas
+#   Munsin, Rudolf Marek and Karine Proot.
+#   
+#   Signed-off-by: Jean Delvare <khali@linux-fr.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/i2c/chips/it87.c
+#   2005/01/13 11:12:50-08:00 khali@linux-fr.org +33 -20
+#   I2C: Improve it87 super-i/o detection
+# 
+# ChangeSet
+#   2005/01/13 14:01:35-08:00 rafael.espindola@gmail.com 
+#   [PATCH] I2C: add EMC6D100 support in lm85 driver
+#   
+#   I have ported the support for the EMC6D100 sensor from kernel 2.4 to kernel
+#   2.6. In the process I received some comments from Jean Delvare.
+#   
+#   Signed-off-by: Rafael Ávila de Espíndola <rafael.espindola@gmail.com>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/i2c/chips/lm85.c
+#   2005/01/13 14:01:08-08:00 rafael.espindola@gmail.com +62 -14
+#   I2C: add EMC6D100 support in lm85 driver
+# 
+# ChangeSet
+#   2005/01/13 14:01:02-08:00 jmunsin@iki.fi 
+#   [PATCH] I2C: fix it87 sensor driver stops CPU fan
+#   
+#   > 2* I would then add a check to the it87 driver, which completely disables
+#   > the fan speed control interface if the initial configuration looks weird
+#   > (all fans supposedly stopped and polarity set to "active low"). This
+#   > should protect users of the driver who have a faulty BIOS.
+#   >
+#   > When a bogus configuration is detected, we would of course complain in
+#   > the logs and invite the user to complain to his/her motherboard maker
+#   > too.
+#   
+#   Here is it87.c_2.6.10-jm4-detect_broken_bios_20050112.diff implementing
+#   this. It goes on top of the previous patch.
+#   
+#   - detects broken bioses, disables the pwm for them and prints a message
+#   - fixes an unrelated minor bug in set_fan_div()
+#   
+#   Signed-off-by: Jean Delvare <khali@linux-fr.org>
+#   Signed-off-by: Jonas Munsin <jmunsin@iki.fi>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/i2c/chips/it87.c
+#   2005/01/12 13:58:34-08:00 jmunsin@iki.fi +22 -7
+#   I2C: fix it87 sensor driver stops CPU fan
+# 
+# ChangeSet
+#   2005/01/13 14:00:26-08:00 khali@linux-fr.org 
+#   [PATCH] I2C: Cleanups to the eeprom driver
+#   
+#   Here comes a cleanup patch to the i2c eeprom client driver:
+#   
+#   * Get rid of the unused i2c_client client_id.
+#   * Get rid of the redundant non-ISA bus check.
+#   * Fix the adapter capability check. We were previously using
+#     capabilities without checking if they were supported. Document
+#     which capabilities are required and which are optional.
+#   * Reorder things a bit. In particular, wait to have a valid client
+#     before we bother checking if this is a Vaio EEPROM.
+#   * Use strlcpy instead of strncpy, because I Heard It Was Better (TM) and
+#     all other chip drivers use it.
+#   * Take benefit of the auto-increment feature of EEPROMs to speed up the
+#     Vaio check.
+#   * Display an information message when a Vaio EEPROM is detected.
+#   
+#   Tested successfully on my laptop, which happens to be a Vaio.
+#   
+#   Signed-off-by: Jean Delvare <khali@linux-fr.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/i2c/chips/eeprom.c
+#   2005/01/12 12:33:21-08:00 khali@linux-fr.org +22 -25
+#   I2C: Cleanups to the eeprom driver
+# 
+# ChangeSet
+#   2005/01/13 13:59:49-08:00 khali@linux-fr.org 
+#   [PATCH] I2C: Fix bogus bitmask in lm63 debug message
+#   
+#   There is a bitmask error in one debug message of my lm63 chip driver.
+#   Nothing critical but still worth fixing, hence comes a patch.
+#   
+#   Credits go to Mohan Mistry for finding the error.
+#   
+#   Signed-off-by: Jean Delvare <khali@linux-fr.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/i2c/chips/lm63.c
+#   2005/01/12 11:23:54-08:00 khali@linux-fr.org +2 -2
+#   I2C: Fix bogus bitmask in lm63 debug message
+# 
+# ChangeSet
+#   2005/01/13 13:58:50-08:00 johnpol@2ka.mipt.ru 
+#   [PATCH] w1: add ->search() method.
+#   
+#   Patch allows w1_search() to be overwritten by bus_master drivers.
+#   It is very usefull for several devices, like found in iPaq w1 bus master,
+#   which does not support bit operations but has hardware implemented
+#   search algorithm.
+#   
+#   Signed-off-by: Evgeniy Polyakov <johnpol@2ka.mipt.ru>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/w1/w1_io.h
+#   2005/01/12 16:00:00-08:00 johnpol@2ka.mipt.ru +1 -0
+#   w1: add ->search() method.
+# 
+# drivers/w1/w1_io.c
+#   2005/01/12 16:00:00-08:00 johnpol@2ka.mipt.ru +10 -0
+#   w1: add ->search() method.
+# 
+# drivers/w1/w1.h
+#   2005/01/12 16:00:00-08:00 johnpol@2ka.mipt.ru +5 -0
+#   w1: add ->search() method.
+# 
+# drivers/w1/w1.c
+#   2005/01/12 16:00:00-08:00 johnpol@2ka.mipt.ru +69 -36
+#   w1: add ->search() method.
+# 
+# ChangeSet
+#   2005/01/12 12:24:12-08:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-i2c
+# 
+# include/linux/pci_ids.h
+#   2005/01/12 12:24:09-08:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2005/01/12 10:56:05-08:00 jthiessen@penguincomputing.com 
+#   [PATCH] I2C: adm1026.c fixes
+#   
+#   Ok, take 3 on the adm1026 patch.
+#   
+#   In this patch:
+#   
+#   (1) Code has been added which ensures that the fan divisor registers are
+#       properly read into the data structure before fan minimum speeds are
+#       determined.  This prevents a possible divide by zero error.  The line
+#       which reads the hardware default fan divisor values has been reformatted
+#       as suggested by Andreas Dilger to make the intent of the statement clearer.
+#   
+#   (2) In a similar spirit, an unecessary carriage return from a "dev_dbg"
+#       statement in the adm1026_print_gpio() function has been elminated,
+#       shortening the statement to a single line and making the code easier
+#       to read.
+#   
+#   Signed-off-by: Justin Thiessen <jthiessen@penguincomputing.com
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/i2c/chips/adm1026.c
+#   2005/01/12 10:30:02-08:00 jthiessen@penguincomputing.com +9 -2
+#   I2C: adm1026.c fixes
+# 
+# ChangeSet
+#   2005/01/11 14:43:18-08:00 jmunsin@iki.fi 
+#   [PATCH] I2C: it87 fan update
+#   
+#   On Tue, Jan 11, 2005 at 10:26:22AM +0100, Jean Delvare wrote:
+#   > 1* Jonas, please send a modified version of your original patch to Greg.
+#   > The only difference would be that you wouldn't force on/off mode to be
+#   > on at driver load time. Instead, disabling PWM for one fan control
+#   > output (echo 0 > pwmN_enable) would both set on/off mode to on for that
+#   > output (new) and turn that output to on/off mode (same as before).
+#   
+#   Ok, thanks for doing the thinking ;), here is the modified patch
+#   (it87.c_2.6.10-jm3-corrected_manual_pwm_20050111.diff). In addition to
+#   the above change, it also refreshes fan_main_ctrl in the update routine,
+#   as suggested by Jean on IRC.
+#   
+#    - adds manual PWM
+#    - removes buggy "reset" module parameter
+#    - fixes some whitespaces
+#   
+#   Signed-off-by: Jonas Munsin <jmunsin@iki.fi>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/i2c/chips/it87.c
+#   2005/01/11 11:24:55-08:00 jmunsin@iki.fi +131 -17
+#   I2C: it87 fan update
+# 
+# ChangeSet
+#   2005/01/11 14:42:52-08:00 jason.d.gaston@intel.com 
+#   [PATCH] I2C support for Intel ICH7 - 2.6.10 - resubmit
+#   
+#   This patch adds the Intel ICH7 DID to the i2c-i801.c driver and adds an
+#   entry to Kconfig for I2C(SMBus) support.  Note: This patch relies on the
+#   already submitted and accepted PATA patch to pci_ids.h containing all
+#   ICH7 DID's.
+#   
+#   
+#   Signed-off-by: Jason Gaston <Jason.d.gaston@intel.com>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/i2c/busses/i2c-i801.c
+#   2005/01/11 14:30:42-08:00 jason.d.gaston@intel.com +2 -0
+#   I2C support for Intel ICH7 - 2.6.10 - resubmit
+# 
+# drivers/i2c/busses/Kconfig
+#   2005/01/11 14:29:59-08:00 jason.d.gaston@intel.com +1 -0
+#   I2C support for Intel ICH7 - 2.6.10 - resubmit
+# 
+# ChangeSet
+#   2005/01/11 12:46:30-08:00 greg@kroah.com 
+#   I2C: add MODULE_DEVICE_TABLE to via686a.c driver
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/i2c/chips/via686a.c
+#   2005/01/11 12:45:54-08:00 greg@kroah.com +3 -6
+#   I2C: add MODULE_DEVICE_TABLE to via686a.c driver
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# ChangeSet
+#   2005/01/11 12:06:41-08:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-i2c
+# 
+# include/linux/pci_ids.h
+#   2005/01/11 12:06:36-08:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2005/01/10 14:59:37-08:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-i2c
+# 
+# include/linux/pci_ids.h
+#   2005/01/10 14:59:33-08:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2005/01/08 21:18:35-08:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-i2c
+# 
+# include/linux/pci_ids.h
+#   2005/01/08 21:18:30-08:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2005/01/08 18:52:33-08:00 akpm@bix.(none) 
+#   Merge bk://kernel.bkbits.net/gregkh/linux/i2c-2.6
+#   into bix.(none):/usr/src/bk-i2c
+# 
+# include/linux/pci_ids.h
+#   2005/01/08 18:52:30-08:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/12/30 23:18:09-08:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-i2c
+# 
+# include/linux/pci_ids.h
+#   2004/12/30 23:18:03-08:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/12/29 18:13:10-08:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-i2c
+# 
+# include/linux/pci_ids.h
+#   2004/12/29 18:13:04-08:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/12/27 00:42:57-08:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-i2c
+# 
+# include/linux/pci_ids.h
+#   2004/12/27 00:42:49-08:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/12/25 08:51:17-08:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-i2c
+# 
+# include/linux/pci_ids.h
+#   2004/12/25 08:51:13-08:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+diff -Nru a/drivers/i2c/busses/Kconfig b/drivers/i2c/busses/Kconfig
+--- a/drivers/i2c/busses/Kconfig	2005-01-13 16:50:53 -08:00
++++ b/drivers/i2c/busses/Kconfig	2005-01-13 16:50:53 -08:00
+@@ -112,6 +112,7 @@
+ 	    82801EB
+ 	    6300ESB
+ 	    ICH6
++	    ICH7
+ 
+ 	  This driver can also be built as a module.  If so, the module
+ 	  will be called i2c-i801.
+diff -Nru a/drivers/i2c/busses/i2c-i801.c b/drivers/i2c/busses/i2c-i801.c
+--- a/drivers/i2c/busses/i2c-i801.c	2005-01-13 16:50:53 -08:00
++++ b/drivers/i2c/busses/i2c-i801.c	2005-01-13 16:50:53 -08:00
+@@ -30,6 +30,7 @@
+     82801EB		24D3   (HW PEC supported, 32 byte buffer not supported)
+     6300ESB		25A4
+     ICH6		266A
++    ICH7		27DA
+     This driver supports several versions of Intel's I/O Controller Hubs (ICH).
+     For SMBus support, they are similar to the PIIX4 and are part
+     of Intel's '810' and other chipsets.
+@@ -556,6 +557,7 @@
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82801EB_3) },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ESB_4) },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH6_16) },
++	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH7_17) },
+ 	{ 0, }
+ };
+ 
+diff -Nru a/drivers/i2c/busses/i2c-mpc.c b/drivers/i2c/busses/i2c-mpc.c
+--- a/drivers/i2c/busses/i2c-mpc.c	2005-01-13 16:50:53 -08:00
++++ b/drivers/i2c/busses/i2c-mpc.c	2005-01-13 16:50:53 -08:00
+@@ -6,7 +6,7 @@
+  * MPC107/Tsi107 PowerPC northbridge and processors that include
+  * the same I2C unit (8240, 8245, 85xx). 
+  *
+- * Release 0.6
++ * Release 0.7
+  *
+  * This file is licensed under the terms of the GNU General Public
+  * License version 2. This program is licensed "as is" without any
+@@ -75,7 +75,6 @@
+ 
+ static int i2c_wait(struct mpc_i2c *i2c, unsigned timeout, int writing)
+ {
+-	DECLARE_WAITQUEUE(wait, current);
+ 	unsigned long orig_jiffies = jiffies;
+ 	u32 x;
+ 	int result = 0;
+@@ -92,28 +91,22 @@
+ 		x = readb(i2c->base + MPC_I2C_SR);
+ 		writeb(0, i2c->base + MPC_I2C_SR);
+ 	} else {
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		add_wait_queue(&i2c->queue, &wait);
+-		while (!(i2c->interrupt & CSR_MIF)) {
+-			if (signal_pending(current)) {
+-				pr_debug("I2C: Interrupted\n");
+-				result = -EINTR;
+-				break;
+-			}
+-			if (time_after(jiffies, orig_jiffies + timeout)) {
+-				pr_debug("I2C: timeout\n");
+-				result = -EIO;
+-				break;
+-			}
+-			msleep_interruptible(jiffies_to_msecs(timeout));
++		/* Interrupt mode */
++		result = wait_event_interruptible_timeout(i2c->queue, 
++			(i2c->interrupt & CSR_MIF), timeout * HZ);
++
++		if (unlikely(result < 0))
++			pr_debug("I2C: wait interrupted\n");
++		else if (unlikely(!(i2c->interrupt & CSR_MIF))) {
++			pr_debug("I2C: wait timeout\n");
++			result = -ETIMEDOUT;
+ 		}
+-		set_current_state(TASK_RUNNING);
+-		remove_wait_queue(&i2c->queue, &wait);
++
+ 		x = i2c->interrupt;
+ 		i2c->interrupt = 0;
+ 	}
+ 
+-	if (result < -0)
++	if (result < 0)
+ 		return result;
+ 
+ 	if (!(x & CSR_MCF)) {
+@@ -165,7 +158,7 @@
+ 		     const u8 * data, int length, int restart)
+ {
+ 	int i;
+-	unsigned timeout = HZ;
++	unsigned timeout = i2c->adap.timeout;
+ 	u32 flags = restart ? CCR_RSTA : 0;
+ 
+ 	/* Start with MEN */
+@@ -193,7 +186,7 @@
+ static int mpc_read(struct mpc_i2c *i2c, int target,
+ 		    u8 * data, int length, int restart)
+ {
+-	unsigned timeout = HZ;
++	unsigned timeout = i2c->adap.timeout;
+ 	int i;
+ 	u32 flags = restart ? CCR_RSTA : 0;
+ 
+@@ -302,6 +295,7 @@
+ 	if (!(i2c = kmalloc(sizeof(*i2c), GFP_KERNEL))) {
+ 		return -ENOMEM;
+ 	}
++	memset(i2c, 0, sizeof(*i2c));
+ 	i2c->ocpdef = ocp->def;
+ 	init_waitqueue_head(&i2c->queue);
+ 
+diff -Nru a/drivers/i2c/chips/adm1026.c b/drivers/i2c/chips/adm1026.c
+--- a/drivers/i2c/chips/adm1026.c	2005-01-13 16:50:53 -08:00
++++ b/drivers/i2c/chips/adm1026.c	2005-01-13 16:50:53 -08:00
+@@ -452,6 +452,14 @@
+ 		client->id, value);
+ 	data->config1 = value;
+ 	adm1026_write_value(client, ADM1026_REG_CONFIG1, value);
++
++	/* initialize fan_div[] to hardware defaults */
++	value = adm1026_read_value(client, ADM1026_REG_FAN_DIV_0_3) |
++		(adm1026_read_value(client, ADM1026_REG_FAN_DIV_4_7) << 8);
++	for (i = 0;i <= 7;++i) {
++		data->fan_div[i] = DIV_FROM_REG(value & 0x03);
++		value >>= 2;
++	}
+ }
+ 
+ void adm1026_print_gpio(struct i2c_client *client)
+@@ -459,8 +467,7 @@
+ 	struct adm1026_data *data = i2c_get_clientdata(client);
+ 	int  i;
+ 
+-	dev_dbg(&client->dev, "(%d): GPIO config is:",
+-			    client->id);
++	dev_dbg(&client->dev, "(%d): GPIO config is:", client->id);
+ 	for (i = 0;i <= 7;++i) {
+ 		if (data->config2 & (1 << i)) {
+ 			dev_dbg(&client->dev, "\t(%d): %sGP%s%d\n", client->id,
+diff -Nru a/drivers/i2c/chips/eeprom.c b/drivers/i2c/chips/eeprom.c
+--- a/drivers/i2c/chips/eeprom.c	2005-01-13 16:50:53 -08:00
++++ b/drivers/i2c/chips/eeprom.c	2005-01-13 16:50:53 -08:00
+@@ -78,8 +78,6 @@
+ 	.detach_client	= eeprom_detach_client,
+ };
+ 
+-static int eeprom_id;
+-
+ static void eeprom_update_client(struct i2c_client *client, u8 slice)
+ {
+ 	struct eeprom_data *data = i2c_get_clientdata(client);
+@@ -165,16 +163,14 @@
+ 	struct eeprom_data *data;
+ 	int err = 0;
+ 
+-	/* Make sure we aren't probing the ISA bus!! This is just a safety check
+-	   at this moment; i2c_detect really won't call us. */
+-#ifdef DEBUG
+-	if (i2c_is_isa_adapter(adapter)) {
+-		dev_dbg(&adapter->dev, " eeprom_detect called for an ISA bus adapter?!?\n");
+-		return 0;
+-	}
+-#endif
+-
+-	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA))
++	/* There are three ways we can read the EEPROM data:
++	   (1) I2C block reads (faster, but unsupported by most adapters)
++	   (2) Consecutive byte reads (100% overhead)
++	   (3) Regular byte data reads (200% overhead)
++	   The third method is not implemented by this driver because all
++	   known adapters support at least the second. */
++	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_READ_BYTE_DATA
++					    | I2C_FUNC_SMBUS_BYTE))
+ 		goto exit;
+ 
+ 	/* OK. For now, we presume we have a valid client. We now create the
+@@ -197,26 +193,27 @@
+ 	/* prevent 24RF08 corruption */
+ 	i2c_smbus_write_quick(new_client, 0);
+ 
+-	data->nature = UNKNOWN;
+-	/* Detect the Vaio nature of EEPROMs.
+-	   We use the "PCG-" prefix as the signature. */
+-	if (address == 0x57) {
+-		if (i2c_smbus_read_byte_data(new_client, 0x80) == 'P' && 
+-		    i2c_smbus_read_byte_data(new_client, 0x81) == 'C' && 
+-		    i2c_smbus_read_byte_data(new_client, 0x82) == 'G' &&
+-		    i2c_smbus_read_byte_data(new_client, 0x83) == '-')
+-			data->nature = VAIO;
+-	}
+-
+ 	/* Fill in the remaining client fields */
+-	strncpy(new_client->name, "eeprom", I2C_NAME_SIZE);
+-	new_client->id = eeprom_id++;
++	strlcpy(new_client->name, "eeprom", I2C_NAME_SIZE);
+ 	data->valid = 0;
+ 	init_MUTEX(&data->update_lock);
++	data->nature = UNKNOWN;
+ 
+ 	/* Tell the I2C layer a new client has arrived */
+ 	if ((err = i2c_attach_client(new_client)))
+ 		goto exit_kfree;
++
++	/* Detect the Vaio nature of EEPROMs.
++	   We use the "PCG-" prefix as the signature. */
++	if (address == 0x57) {
++		if (i2c_smbus_read_byte_data(new_client, 0x80) == 'P'
++		 && i2c_smbus_read_byte(new_client) == 'C'
++		 && i2c_smbus_read_byte(new_client) == 'G'
++		 && i2c_smbus_read_byte(new_client) == '-')
++			dev_info(&new_client->dev, "Vaio EEPROM detected, "
++				"enabling password protection\n");
++			data->nature = VAIO;
++	}
+ 
+ 	/* create the sysfs eeprom file */
+ 	sysfs_create_bin_file(&new_client->dev.kobj, &eeprom_attr);
+diff -Nru a/drivers/i2c/chips/it87.c b/drivers/i2c/chips/it87.c
+--- a/drivers/i2c/chips/it87.c	2005-01-13 16:50:53 -08:00
++++ b/drivers/i2c/chips/it87.c	2005-01-13 16:50:53 -08:00
+@@ -56,6 +56,7 @@
+ #define	VAL	0x2f	/* The value to read/write */
+ #define PME	0x04	/* The device with the fan registers in it */
+ #define	DEVID	0x20	/* Register: Device ID */
++#define	DEVREV	0x22	/* Register: Device Revision */
+ 
+ static inline int
+ superio_inb(int reg)
+@@ -64,6 +65,16 @@
+ 	return inb(VAL);
+ }
+ 
++static int superio_inw(int reg)
++{
++	int val;
++	outb(reg++, REG);
++	val = inb(VAL) << 8;
++	outb(reg, REG);
++	val |= inb(VAL);
++	return val;
++}
++
+ static inline void
+ superio_select(void)
+ {
+@@ -87,18 +98,14 @@
+ 	outb(0x02, VAL);
+ }
+ 
+-/* just IT8712F for now - this should be extended to support the other
+-   chips as well */
+ #define IT8712F_DEVID 0x8712
++#define IT8705F_DEVID 0x8705
+ #define IT87_ACT_REG  0x30
+ #define IT87_BASE_REG 0x60
+ 
+ /* Update battery voltage after every reading if true */
+ static int update_vbat;
+ 
+-/* Reset the registers on init if true */
+-static int reset;
+-
+ /* Chip Type */
+ 
+ static u16 chip_type;
+@@ -128,6 +135,8 @@
+ #define IT87_REG_FAN(nr)       (0x0d + (nr))
+ #define IT87_REG_FAN_MIN(nr)   (0x10 + (nr))
+ #define IT87_REG_FAN_MAIN_CTRL 0x13
++#define IT87_REG_FAN_CTL       0x14
++#define IT87_REG_PWM(nr)       (0x15 + (nr))
+ 
+ #define IT87_REG_VIN(nr)       (0x20 + (nr))
+ #define IT87_REG_TEMP(nr)      (0x29 + (nr))
+@@ -164,6 +173,9 @@
+ 
+ #define ALARMS_FROM_REG(val) (val)
+ 
++#define PWM_TO_REG(val)   ((val) >> 1)
++#define PWM_FROM_REG(val) (((val)&0x7f) << 1)
++
+ static int DIV_TO_REG(int val)
+ {
+ 	int answer = 0;
+@@ -200,6 +212,8 @@
+ 	u8 vid;			/* Register encoding, combined */
+ 	int vrm;
+ 	u32 alarms;		/* Register encoding, combined */
++	u8 fan_main_ctrl;	/* Register value */
++	u8 manual_pwm_ctl[3];   /* manual PWM value set by user */
+ };
+ 
+ 
+@@ -224,8 +238,6 @@
+ 	.detach_client	= it87_detach_client,
+ };
+ 
+-static int it87_id;
+-
+ static ssize_t show_in(struct device *dev, char *buf, int nr)
+ {
+ 	struct it87_data *data = it87_update_device(dev);
+@@ -440,18 +452,28 @@
+ {
+ 	struct it87_data *data = it87_update_device(dev);
+ 	return sprintf(buf,"%d\n", FAN_FROM_REG(data->fan[nr], 
+-				DIV_FROM_REG(data->fan_div[nr])) );
++				DIV_FROM_REG(data->fan_div[nr])));
+ }
+ static ssize_t show_fan_min(struct device *dev, char *buf, int nr)
+ {
+ 	struct it87_data *data = it87_update_device(dev);
+ 	return sprintf(buf,"%d\n",
+-		FAN_FROM_REG(data->fan_min[nr], DIV_FROM_REG(data->fan_div[nr])) );
++		FAN_FROM_REG(data->fan_min[nr], DIV_FROM_REG(data->fan_div[nr])));
+ }
+ static ssize_t show_fan_div(struct device *dev, char *buf, int nr)
+ {
+ 	struct it87_data *data = it87_update_device(dev);
+-	return sprintf(buf,"%d\n", DIV_FROM_REG(data->fan_div[nr]) );
++	return sprintf(buf, "%d\n", DIV_FROM_REG(data->fan_div[nr]));
++}
++static ssize_t show_pwm_enable(struct device *dev, char *buf, int nr)
++{
++	struct it87_data *data = it87_update_device(dev);
++	return sprintf(buf,"%d\n", (data->fan_main_ctrl & (1 << nr)) ? 1 : 0);
++}
++static ssize_t show_pwm(struct device *dev, char *buf, int nr)
++{
++	struct it87_data *data = it87_update_device(dev);
++	return sprintf(buf,"%d\n", data->manual_pwm_ctl[nr]);
+ }
+ static ssize_t set_fan_min(struct device *dev, const char *buf, 
+ 		size_t count, int nr)
+@@ -486,7 +508,7 @@
+ 		else
+ 			data->fan_div[nr] = 3;
+ 	}
+-	val = old & 0x100;
++	val = old & 0x80;
+ 	val |= (data->fan_div[0] & 0x07);
+ 	val |= (data->fan_div[1] & 0x07) << 3;
+ 	if (data->fan_div[2] == 3)
+@@ -499,6 +521,48 @@
+ 	}
+ 	return count;
+ }
++static ssize_t set_pwm_enable(struct device *dev, const char *buf,
++		size_t count, int nr)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct it87_data *data = i2c_get_clientdata(client);
++	int val = simple_strtol(buf, NULL, 10);
++
++	if (val == 0) {
++		int tmp;
++		/* make sure the fan is on when in on/off mode */
++		tmp = it87_read_value(client, IT87_REG_FAN_CTL);
++		it87_write_value(client, IT87_REG_FAN_CTL, tmp | (1 << nr));
++		/* set on/off mode */
++		data->fan_main_ctrl &= ~(1 << nr);
++		it87_write_value(client, IT87_REG_FAN_MAIN_CTRL, data->fan_main_ctrl);
++	} else if (val == 1) {
++		/* set SmartGuardian mode */
++		data->fan_main_ctrl |= (1 << nr);
++		it87_write_value(client, IT87_REG_FAN_MAIN_CTRL, data->fan_main_ctrl);
++		/* set saved pwm value, clear FAN_CTLX PWM mode bit */
++		it87_write_value(client, IT87_REG_PWM(nr), PWM_TO_REG(data->manual_pwm_ctl[nr]));
++	} else
++		return -EINVAL;
++
++	return count;
++}
++static ssize_t set_pwm(struct device *dev, const char *buf,
++		size_t count, int nr)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct it87_data *data = i2c_get_clientdata(client);
++	int val = simple_strtol(buf, NULL, 10);
++
++	if (val < 0 || val > 255)
++		return -EINVAL;
++
++	data->manual_pwm_ctl[nr] = val;
++	if (data->fan_main_ctrl & (1 << nr))
++		it87_write_value(client, IT87_REG_PWM(nr), PWM_TO_REG(data->manual_pwm_ctl[nr]));
++
++	return count;
++}
+ 
+ #define show_fan_offset(offset)						\
+ static ssize_t show_fan_##offset (struct device *dev, char *buf)	\
+@@ -533,6 +597,36 @@
+ show_fan_offset(2);
+ show_fan_offset(3);
+ 
++#define show_pwm_offset(offset)						\
++static ssize_t show_pwm##offset##_enable (struct device *dev,		\
++	char *buf)							\
++{									\
++	return show_pwm_enable(dev, buf, offset - 1);			\
++}									\
++static ssize_t show_pwm##offset (struct device *dev, char *buf)		\
++{									\
++	return show_pwm(dev, buf, offset - 1);				\
++}									\
++static ssize_t set_pwm##offset##_enable (struct device *dev,		\
++		const char *buf, size_t count)				\
++{									\
++	return set_pwm_enable(dev, buf, count, offset - 1);		\
++}									\
++static ssize_t set_pwm##offset (struct device *dev,			\
++		const char *buf, size_t count)				\
++{									\
++	return set_pwm(dev, buf, count, offset - 1);			\
++}									\
++static DEVICE_ATTR(pwm##offset##_enable, S_IRUGO | S_IWUSR,		\
++		show_pwm##offset##_enable,				\
++		set_pwm##offset##_enable);				\
++static DEVICE_ATTR(pwm##offset, S_IRUGO | S_IWUSR,			\
++		show_pwm##offset , set_pwm##offset );
++
++show_pwm_offset(1);
++show_pwm_offset(2);
++show_pwm_offset(3);
++
+ /* Alarms */
+ static ssize_t show_alarms(struct device *dev, char *buf)
+ {
+@@ -587,25 +681,33 @@
+ /* SuperIO detection - will change normal_isa[0] if a chip is found */
+ static int it87_find(int *address)
+ {
+-	u16 val;
++	int err = -ENODEV;
+ 
+ 	superio_enter();
+-	chip_type = (superio_inb(DEVID) << 8) |
+-	       superio_inb(DEVID + 1);
+-	if (chip_type != IT8712F_DEVID) {
+-		superio_exit();
+-		return -ENODEV;
+-	}
++	chip_type = superio_inw(DEVID);
++	if (chip_type != IT8712F_DEVID
++	 && chip_type != IT8705F_DEVID)
++	 	goto exit;
+ 
+ 	superio_select();
+-	val = (superio_inb(IT87_BASE_REG) << 8) |
+-	       superio_inb(IT87_BASE_REG + 1);
+-	superio_exit();
+-	*address = val & ~(IT87_EXTENT - 1);
++	if (!(superio_inb(IT87_ACT_REG) & 0x01)) {
++		pr_info("it87: Device not activated, skipping\n");
++		goto exit;
++	}
++
++	*address = superio_inw(IT87_BASE_REG) & ~(IT87_EXTENT - 1);
+ 	if (*address == 0) {
+-		return -ENODEV;
++		pr_info("it87: Base address not set, skipping\n");
++		goto exit;
+ 	}
+-	return 0;
++
++	err = 0;
++	pr_info("it87: Found IT%04xF chip at 0x%x, revision %d\n",
++		chip_type, *address, superio_inb(DEVREV) & 0x0f);
++
++exit:
++	superio_exit();
++	return err;
+ }
+ 
+ /* This function is called by i2c_detect */
+@@ -617,6 +719,8 @@
+ 	int err = 0;
+ 	const char *name = "";
+ 	int is_isa = i2c_is_isa_adapter(adapter);
++	int enable_pwm_interface;
++	int tmp;
+ 
+ 	if (!is_isa && 
+ 	    !i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA))
+@@ -712,10 +816,7 @@
+ 
+ 	/* Fill in the remaining client fields and put it into the global list */
+ 	strlcpy(new_client->name, name, I2C_NAME_SIZE);
+-
+ 	data->type = kind;
+-
+-	new_client->id = it87_id++;
+ 	data->valid = 0;
+ 	init_MUTEX(&data->update_lock);
+ 
+@@ -726,6 +827,17 @@
+ 	/* Initialize the IT87 chip */
+ 	it87_init_client(new_client, data);
+ 
++	/* Some BIOSes fail to correctly configure the IT87 fans. All fans off
++	 * and polarity set to active low is sign that this is the case so we
++	 * disable pwm control to protect the user. */
++	enable_pwm_interface = 1;
++	tmp = it87_read_value(new_client, IT87_REG_FAN_CTL);
++	if ((tmp & 0x87) == 0) {
++		enable_pwm_interface = 0;
++		dev_info(&new_client->dev,
++			"detected broken BIOS defaults, disabling pwm interface");
++	}
++
+ 	/* Register sysfs hooks */
+ 	device_create_file(&new_client->dev, &dev_attr_in0_input);
+ 	device_create_file(&new_client->dev, &dev_attr_in1_input);
+@@ -774,6 +886,14 @@
+ 	device_create_file(&new_client->dev, &dev_attr_fan2_div);
+ 	device_create_file(&new_client->dev, &dev_attr_fan3_div);
+ 	device_create_file(&new_client->dev, &dev_attr_alarms);
++	if (enable_pwm_interface) {
++		device_create_file(&new_client->dev, &dev_attr_pwm1_enable);
++		device_create_file(&new_client->dev, &dev_attr_pwm2_enable);
++		device_create_file(&new_client->dev, &dev_attr_pwm3_enable);
++		device_create_file(&new_client->dev, &dev_attr_pwm1);
++		device_create_file(&new_client->dev, &dev_attr_pwm2);
++		device_create_file(&new_client->dev, &dev_attr_pwm3);
++	}
+ 
+ 	if (data->type == it8712) {
+ 		device_create_file_vrm(new_client);
+@@ -851,12 +971,17 @@
+ /* Called when we have found a new IT87. */
+ static void it87_init_client(struct i2c_client *client, struct it87_data *data)
+ {
+-	int tmp;
++	int tmp, i;
+ 
+-	if (reset) {
+-		/* Reset all except Watchdog values and last conversion values
+-		   This sets fan-divs to 2, among others */
+-		it87_write_value(client, IT87_REG_CONFIG, 0x80);
++	/* initialize to sane defaults:
++	 * - if the chip is in manual pwm mode, this will be overwritten with
++	 *   the actual settings on the chip (so in this case, initialization
++	 *   is not needed)
++	 * - if in automatic or on/off mode, we could switch to manual mode,
++	 *   read the registers and set manual_pwm_ctl accordingly, but currently
++	 *   this is not implemented, so we initialize to something sane */
++	for (i = 0; i < 3; i++) {
++		data->manual_pwm_ctl[i] = 0xff;
+ 	}
+ 
+ 	/* Check if temperature channnels are reset manually or by some reason */
+@@ -876,13 +1001,31 @@
+ 	}
+ 
+ 	/* Check if tachometers are reset manually or by some reason */
+-	tmp = it87_read_value(client, IT87_REG_FAN_MAIN_CTRL);
+-	if ((tmp & 0x70) == 0) {
++	data->fan_main_ctrl = it87_read_value(client, IT87_REG_FAN_MAIN_CTRL);
++	if ((data->fan_main_ctrl & 0x70) == 0) {
+ 		/* Enable all fan tachometers */
+-		tmp = (tmp & 0x8f) | 0x70;
+-		it87_write_value(client, IT87_REG_FAN_MAIN_CTRL, tmp);
++		data->fan_main_ctrl |= 0x70;
++		it87_write_value(client, IT87_REG_FAN_MAIN_CTRL, data->fan_main_ctrl);
+ 	}
+ 
++	/* Set current fan mode registers and the default settings for the
++	 * other mode registers */
++	for (i = 0; i < 3; i++) {
++		if (data->fan_main_ctrl & (1 << i)) {
++			/* pwm mode */
++			tmp = it87_read_value(client, IT87_REG_PWM(i));
++			if (tmp & 0x80) {
++				/* automatic pwm - not yet implemented, but
++				 * leave the settings made by the BIOS alone
++				 * until a change is requested via the sysfs
++				 * interface */
++			} else {
++				/* manual pwm */
++				data->manual_pwm_ctl[i] = PWM_FROM_REG(tmp);
++			}
++		}
++ 	}
++
+ 	/* Start monitoring */
+ 	it87_write_value(client, IT87_REG_CONFIG,
+ 			 (it87_read_value(client, IT87_REG_CONFIG) & 0x36)
+@@ -948,6 +1091,7 @@
+ 			it87_read_value(client, IT87_REG_ALARM1) |
+ 			(it87_read_value(client, IT87_REG_ALARM2) << 8) |
+ 			(it87_read_value(client, IT87_REG_ALARM3) << 16);
++		data->fan_main_ctrl = it87_read_value(client, IT87_REG_FAN_MAIN_CTRL);
+ 
+ 		data->sensor = it87_read_value(client, IT87_REG_TEMP_ENABLE);
+ 		/* The 8705 does not have VID capability */
+@@ -984,8 +1128,6 @@
+ MODULE_DESCRIPTION("IT8705F, IT8712F, Sis950 driver");
+ module_param(update_vbat, bool, 0);
+ MODULE_PARM_DESC(update_vbat, "Update vbat if set else return powerup value");
+-module_param(reset, bool, 0);
+-MODULE_PARM_DESC(reset, "Reset the chip's registers, default no");
+ MODULE_LICENSE("GPL");
+ 
+ module_init(sm_it87_init);
+diff -Nru a/drivers/i2c/chips/lm63.c b/drivers/i2c/chips/lm63.c
+--- a/drivers/i2c/chips/lm63.c	2005-01-13 16:50:53 -08:00
++++ b/drivers/i2c/chips/lm63.c	2005-01-13 16:50:53 -08:00
+@@ -464,8 +464,8 @@
+ 		(data->config & 0x04) ? "tachometer input" :
+ 		"alert output");
+ 	dev_dbg(&client->dev, "PWM clock %s kHz, output frequency %u Hz\n",
+-		(data->config_fan & 0x04) ? "1.4" : "360",
+-		((data->config_fan & 0x04) ? 700 : 180000) / data->pwm1_freq);
++		(data->config_fan & 0x08) ? "1.4" : "360",
++		((data->config_fan & 0x08) ? 700 : 180000) / data->pwm1_freq);
+ 	dev_dbg(&client->dev, "PWM output active %s, %s mode\n",
+ 		(data->config_fan & 0x10) ? "low" : "high",
+ 		(data->config_fan & 0x20) ? "manual" : "auto");
+diff -Nru a/drivers/i2c/chips/lm85.c b/drivers/i2c/chips/lm85.c
+--- a/drivers/i2c/chips/lm85.c	2005-01-13 16:50:53 -08:00
++++ b/drivers/i2c/chips/lm85.c	2005-01-13 16:50:53 -08:00
+@@ -36,7 +36,7 @@
+ static unsigned int normal_isa[] = { I2C_CLIENT_ISA_END };
+ 
+ /* Insmod parameters */
+-SENSORS_INSMOD_4(lm85b, lm85c, adm1027, adt7463);
++SENSORS_INSMOD_5(lm85b, lm85c, adm1027, adt7463, emc6d100);
+ 
+ /* The LM85 registers */
+ 
+@@ -66,11 +66,15 @@
+ #define	LM85_DEVICE_ADX			0x27
+ #define	LM85_COMPANY_NATIONAL		0x01
+ #define	LM85_COMPANY_ANALOG_DEV		0x41
++#define	LM85_COMPANY_SMSC      		0x5c
++#define	LM85_VERSTEP_VMASK              0xf0
+ #define	LM85_VERSTEP_GENERIC		0x60
+ #define	LM85_VERSTEP_LM85C		0x60
+ #define	LM85_VERSTEP_LM85B		0x62
+ #define	LM85_VERSTEP_ADM1027		0x60
+ #define	LM85_VERSTEP_ADT7463		0x62
++#define	LM85_VERSTEP_EMC6D100_A0        0x60
++#define	LM85_VERSTEP_EMC6D100_A1        0x61
+ 
+ #define	LM85_REG_CONFIG			0x40
+ 
+@@ -105,6 +109,12 @@
+ #define	ADT7463_REG_THERM		0x79
+ #define	ADT7463_REG_THERM_LIMIT		0x7A
+ 
++#define EMC6D100_REG_ALARM3             0x7d
++/* IN5, IN6 and IN7 */
++#define EMC6D100_REG_IN(nr)             (0x70 + ((nr)-5))
++#define EMC6D100_REG_IN_MIN(nr)         (0x73 + ((nr)-5) * 2)
++#define EMC6D100_REG_IN_MAX(nr)         (0x74 + ((nr)-5) * 2)
++
+ #define	LM85_ALARM_IN0			0x0001
+ #define	LM85_ALARM_IN1			0x0002
+ #define	LM85_ALARM_IN2			0x0004
+@@ -135,7 +145,8 @@
+ 
+ /* IN are scaled acording to built-in resistors */
+ static int lm85_scaling[] = {  /* .001 Volts */
+-		2500, 2250, 3300, 5000, 12000
++		2500, 2250, 3300, 5000, 12000,
++		3300, 1500, 1800 /*EMC6D100*/
+ 	};
+ #define SCALE(val,from,to)		(((val)*(to) + ((from)/2))/(from))
+ #define INS_TO_REG(n,val)		(SENSORS_LIMIT(SCALE(val,lm85_scaling[n],192),0,255))
+@@ -331,9 +342,9 @@
+ 	unsigned long last_reading;	/* In jiffies */
+ 	unsigned long last_config;	/* In jiffies */
+ 
+-	u8 in[5];		/* Register value */
+-	u8 in_max[5];		/* Register value */
+-	u8 in_min[5];		/* Register value */
++	u8 in[8];		/* Register value */
++	u8 in_max[8];		/* Register value */
++	u8 in_min[8];		/* Register value */
+ 	s8 temp[3];		/* Register value */
+ 	s8 temp_min[3];		/* Register value */
+ 	s8 temp_max[3];		/* Register value */
+@@ -353,7 +364,7 @@
+ 	u16 tmin_ctl;		/* Register value */
+ 	unsigned long therm_total; /* Cummulative therm count */
+ 	u8 therm_limit;		/* Register value */
+-	u16 alarms;		/* Register encoding, combined */
++	u32 alarms;		/* Register encoding, combined */
+ 	struct lm85_autofan autofan[3];
+ 	struct lm85_zone zone[3];
+ };
+@@ -1072,7 +1083,7 @@
+ 		    && verstep == LM85_VERSTEP_LM85B ) {
+ 			kind = lm85b ;
+ 		} else if( company == LM85_COMPANY_NATIONAL
+-		    && (verstep & 0xf0) == LM85_VERSTEP_GENERIC ) {
++		    && (verstep & LM85_VERSTEP_VMASK) == LM85_VERSTEP_GENERIC ) {
+ 			dev_err(&adapter->dev, "Unrecognized version/stepping 0x%02x"
+ 				" Defaulting to LM85.\n", verstep);
+ 			kind = any_chip ;
+@@ -1083,17 +1094,34 @@
+ 		    && verstep == LM85_VERSTEP_ADT7463 ) {
+ 			kind = adt7463 ;
+ 		} else if( company == LM85_COMPANY_ANALOG_DEV
+-		    && (verstep & 0xf0) == LM85_VERSTEP_GENERIC ) {
++		    && (verstep & LM85_VERSTEP_VMASK) == LM85_VERSTEP_GENERIC ) {
+ 			dev_err(&adapter->dev, "Unrecognized version/stepping 0x%02x"
+-				" Defaulting to ADM1027.\n", verstep);
+-			kind = adm1027 ;
+-		} else if( kind == 0 && (verstep & 0xf0) == 0x60) {
++				" Defaulting to Generic LM85.\n", verstep );
++			kind = any_chip ;
++		} else if( company == LM85_COMPANY_SMSC
++		    && (verstep == LM85_VERSTEP_EMC6D100_A0
++			 || verstep == LM85_VERSTEP_EMC6D100_A1) ) {
++			/* Unfortunately, we can't tell a '100 from a '101
++			 * from the registers.  Since a '101 is a '100
++			 * in a package with fewer pins and therefore no
++			 * 3.3V, 1.5V or 1.8V inputs, perhaps if those
++			 * inputs read 0, then it's a '101.
++			 */
++			kind = emc6d100 ;
++		} else if( company == LM85_COMPANY_SMSC
++		    && (verstep & LM85_VERSTEP_VMASK) == LM85_VERSTEP_GENERIC) {
++			dev_err(&adapter->dev, "lm85: Detected SMSC chip\n");
++			dev_err(&adapter->dev, "lm85: Unrecognized version/stepping 0x%02x"
++			    " Defaulting to Generic LM85.\n", verstep );
++			kind = any_chip ;
++		} else if( kind == any_chip
++		    && (verstep & LM85_VERSTEP_VMASK) == LM85_VERSTEP_GENERIC) {
+ 			dev_err(&adapter->dev, "Generic LM85 Version 6 detected\n");
+ 			/* Leave kind as "any_chip" */
+ 		} else {
+ 			dev_dbg(&adapter->dev, "Autodetection failed\n");
+ 			/* Not an LM85 ... */
+-			if( kind == 0 ) {  /* User used force=x,y */
++			if( kind == any_chip ) {  /* User used force=x,y */
+ 				dev_err(&adapter->dev, "Generic LM85 Version 6 not"
+ 					" found at %d,0x%02x. Try force_lm85c.\n",
+ 					i2c_adapter_id(adapter), address );
+@@ -1114,6 +1142,8 @@
+ 		type_name = "adm1027";
+ 	} else if ( kind == adt7463 ) {
+ 		type_name = "adt7463";
++	} else if ( kind == emc6d100){
++		type_name = "emc6d100";
+ 	}
+ 	strlcpy(new_client->name, type_name, I2C_NAME_SIZE);
+ 
+@@ -1365,15 +1395,24 @@
+ 			    lm85_read_value(client, LM85_REG_PWM(i));
+ 		}
+ 
++		data->alarms = lm85_read_value(client, LM85_REG_ALARM1);
++
+ 		if ( data->type == adt7463 ) {
+ 			if( data->therm_total < ULONG_MAX - 256 ) {
+ 			    data->therm_total +=
+ 				lm85_read_value(client, ADT7463_REG_THERM );
+ 			}
++		} else if ( data->type == emc6d100 ) {
++			/* Three more voltage sensors */
++			for (i = 5; i <= 7; ++i) {
++				data->in[i] =
++					lm85_read_value(client, EMC6D100_REG_IN(i));
++			}
++			/* More alarm bits */
++			data->alarms |=
++				lm85_read_value(client, EMC6D100_REG_ALARM3) << 16;
+ 		}
+ 
+-		data->alarms = lm85_read_value(client, LM85_REG_ALARM1);
+-
+ 		data->last_reading = jiffies ;
+ 	};  /* last_reading */
+ 
+@@ -1387,6 +1426,15 @@
+ 			    lm85_read_value(client, LM85_REG_IN_MIN(i));
+ 			data->in_max[i] =
+ 			    lm85_read_value(client, LM85_REG_IN_MAX(i));
++		}
++
++		if ( data->type == emc6d100 ) {
++			for (i = 5; i <= 7; ++i) {
++				data->in_min[i] =
++					lm85_read_value(client, EMC6D100_REG_IN_MIN(i));
++				data->in_max[i] =
++					lm85_read_value(client, EMC6D100_REG_IN_MAX(i));
++			}
+ 		}
+ 
+ 		for (i = 0; i <= 3; ++i) {
+diff -Nru a/drivers/i2c/chips/via686a.c b/drivers/i2c/chips/via686a.c
+--- a/drivers/i2c/chips/via686a.c	2005-01-13 16:50:53 -08:00
++++ b/drivers/i2c/chips/via686a.c	2005-01-13 16:50:53 -08:00
+@@ -786,14 +786,11 @@
+ }
+ 
+ static struct pci_device_id via686a_pci_ids[] = {
+-       {
+-	       .vendor 		= PCI_VENDOR_ID_VIA, 
+-	       .device 		= PCI_DEVICE_ID_VIA_82C686_4, 
+-	       .subvendor	= PCI_ANY_ID, 
+-	       .subdevice	= PCI_ANY_ID, 
+-       },
++       { PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C686_4) },
+        { 0, }
+ };
++
++MODULE_DEVICE_TABLE(pci, via686a_pci_ids);
+ 
+ static int __devinit via686a_pci_probe(struct pci_dev *dev,
+                                       const struct pci_device_id *id)
+diff -Nru a/drivers/w1/w1.c b/drivers/w1/w1.c
+--- a/drivers/w1/w1.c	2005-01-13 16:50:53 -08:00
++++ b/drivers/w1/w1.c	2005-01-13 16:50:53 -08:00
+@@ -468,17 +468,75 @@
+ 	w1_netlink_send(sl->master, &msg);
+ }
+ 
+-static void w1_search(struct w1_master *dev)
++static struct w1_master *w1_search_master(unsigned long data)
+ {
+-	u64 last, rn, tmp;
+-	int i, count = 0, slave_count;
+-	int last_family_desc, last_zero, last_device;
+-	int search_bit, id_bit, comp_bit, desc_bit;
+-	struct list_head *ent;
++	struct w1_master *dev;
++	int found = 0;
++	
++	spin_lock_irq(&w1_mlock);
++	list_for_each_entry(dev, &w1_masters, w1_master_entry) {
++		if (dev->bus_master->data == data) {
++			found = 1;
++			atomic_inc(&dev->refcnt);
++			break;
++		}
++	}
++	spin_unlock_irq(&w1_mlock);
++
++	return (found)?dev:NULL;
++}
++
++void w1_slave_found(unsigned long data, u64 rn)
++{
++	int slave_count;
+ 	struct w1_slave *sl;
++	struct list_head *ent;
++	struct w1_reg_num *tmp;
+ 	int family_found = 0;
++	struct w1_master *dev;
++
++	dev = w1_search_master(data);
++	if (!dev) {
++		printk(KERN_ERR "Failed to find w1 master device for data %08lx, it is impossible.\n",
++				data);
++		return;
++	}
++	
++	tmp = (struct w1_reg_num *) &rn;
++
++	slave_count = 0;
++	list_for_each(ent, &dev->slist) {
++
++		sl = list_entry(ent, struct w1_slave, w1_slave_entry);
+ 
+-	dev->attempts++;
++		if (sl->reg_num.family == tmp->family &&
++		    sl->reg_num.id == tmp->id &&
++		    sl->reg_num.crc == tmp->crc) {
++			set_bit(W1_SLAVE_ACTIVE, (long *)&sl->flags);
++			break;
++		}
++		else if (sl->reg_num.family == tmp->family) {
++			family_found = 1;
++			break;
++		}
++
++		slave_count++;
++	}
++
++	if (slave_count == dev->slave_count &&
++		rn && ((rn >> 56) & 0xff) == w1_calc_crc8((u8 *)&rn, 7)) {
++		w1_attach_slave_device(dev, (struct w1_reg_num *) &rn);
++	}
++			
++	atomic_dec(&dev->refcnt);
++}
++
++void w1_search(struct w1_master *dev)
++{
++	u64 last, rn, tmp;
++	int i, count = 0;
++	int last_family_desc, last_zero, last_device;
++	int search_bit, id_bit, comp_bit, desc_bit;
+ 
+ 	search_bit = id_bit = comp_bit = 0;
+ 	rn = tmp = last = 0;
+@@ -556,33 +614,8 @@
+ 			last_device = 1;
+ 
+ 		desc_bit = last_zero;
+-
+-		slave_count = 0;
+-		list_for_each(ent, &dev->slist) {
+-			struct w1_reg_num *tmp;
+-
+-			tmp = (struct w1_reg_num *) &rn;
+-
+-			sl = list_entry(ent, struct w1_slave, w1_slave_entry);
+-
+-			if (sl->reg_num.family == tmp->family &&
+-			    sl->reg_num.id == tmp->id &&
+-			    sl->reg_num.crc == tmp->crc) {
+-				set_bit(W1_SLAVE_ACTIVE, (long *)&sl->flags);
+-				break;
+-			}
+-			else if (sl->reg_num.family == tmp->family) {
+-				family_found = 1;
+-				break;
+-			}
+-
+-			slave_count++;
+-		}
+-
+-		if (slave_count == dev->slave_count &&
+-			rn && ((rn >> 56) & 0xff) == w1_calc_crc8((u8 *)&rn, 7)) {
+-			w1_attach_slave_device(dev, (struct w1_reg_num *) &rn);
+-		}
++	
++		w1_slave_found(dev->bus_master->data, rn);
+ 	}
+ }
+ 
+@@ -724,8 +757,8 @@
+ 				clear_bit(W1_SLAVE_ACTIVE, (long *)&sl->flags);
+ 		}
+ 		
+-      		w1_search(dev);
+-		
++		w1_search_devices(dev, w1_slave_found);
++
+ 		list_for_each_safe(ent, n, &dev->slist) {
+ 			sl = list_entry(ent, struct w1_slave, w1_slave_entry);
+ 
+diff -Nru a/drivers/w1/w1.h b/drivers/w1/w1.h
+--- a/drivers/w1/w1.h	2005-01-13 16:50:53 -08:00
++++ b/drivers/w1/w1.h	2005-01-13 16:50:53 -08:00
+@@ -74,6 +74,8 @@
+ 	struct device_attribute	attr_name, attr_val;
+ };
+ 
++typedef void (* w1_slave_found_callback)(unsigned long, u64);
++
+ struct w1_bus_master
+ {
+ 	unsigned long		data;
+@@ -90,6 +92,8 @@
+   	u8			(*touch_bit)(unsigned long, u8);
+   
+   	u8			(*reset_bus)(unsigned long);
++
++	void			(*search)(unsigned long, w1_slave_found_callback);
+ };
+ 
+ struct w1_master
+@@ -127,6 +131,7 @@
+ 
+ int w1_create_master_attributes(struct w1_master *);
+ void w1_destroy_master_attributes(struct w1_master *);
++void w1_search(struct w1_master *dev);
+ 
+ #endif /* __KERNEL__ */
+ 
+diff -Nru a/drivers/w1/w1_io.c b/drivers/w1/w1_io.c
+--- a/drivers/w1/w1_io.c	2005-01-13 16:50:53 -08:00
++++ b/drivers/w1/w1_io.c	2005-01-13 16:50:53 -08:00
+@@ -174,6 +174,15 @@
+ 	return crc;
+ }
+ 
++void w1_search_devices(struct w1_master *dev, w1_slave_found_callback cb)
++{
++	dev->attempts++;
++	if (dev->bus_master->search)
++		dev->bus_master->search(dev->bus_master->data, cb);
++	else
++		w1_search(dev);
++}
++
+ EXPORT_SYMBOL(w1_write_bit);
+ EXPORT_SYMBOL(w1_write_8);
+ EXPORT_SYMBOL(w1_read_bit);
+@@ -183,3 +192,4 @@
+ EXPORT_SYMBOL(w1_delay);
+ EXPORT_SYMBOL(w1_read_block);
+ EXPORT_SYMBOL(w1_write_block);
++EXPORT_SYMBOL(w1_search_devices);
+diff -Nru a/drivers/w1/w1_io.h b/drivers/w1/w1_io.h
+--- a/drivers/w1/w1_io.h	2005-01-13 16:50:53 -08:00
++++ b/drivers/w1/w1_io.h	2005-01-13 16:50:53 -08:00
+@@ -34,5 +34,6 @@
+ u8 w1_calc_crc8(u8 *, int);
+ void w1_write_block(struct w1_master *, u8 *, int);
+ u8 w1_read_block(struct w1_master *, u8 *, int);
++void w1_search_devices(struct w1_master *dev, w1_slave_found_callback cb);
+ 
+ #endif /* __W1_IO_H */

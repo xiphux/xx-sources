@@ -1,0 +1,115 @@
+
+From: Paul Jackson <pj@sgi.com>
+
+Should have done this earlier - the cpus_allowed and mems_allowed values
+for each task are not always obvious from the tasks cpuset settings, for
+various reasons, including:
+
+  1) a task might use sched_setaffinity, mbind or set_mempolicy
+     to restrain its placement to less than its cpuset, or
+  2) various temporary changes to cpus_allowed are done by
+     kernel internal code, or
+  3) attaching a task to a cpuset doesn't change its mems_allowed
+     until the next time that task needs kernel memory, or
+  4) changing a cpusets 'cpus' doesn't change the cpus_allowed of
+     the tasks attached to it until those tasks are reattached
+     to that cpuset (to avoid a hook in the hotpath scheduler
+     code in the kernel).
+
+So it is useful, when learning and making new uses of cpusets and placement
+to be able to see what are the current value of a tasks cpus_allowed and
+mems_allowed, which are the actual placement used by the kernel scheduler
+and memory allocator.
+
+The cpus_allowed and mems_allowed values are needed by user space apps that
+are micromanaging placement, such as when moving an app to a obtained by
+that app within its cpuset using sched_setaffinity, mbind and
+set_mempolicy.
+
+The cpus_allowed value is also available via the sched_getaffinity system
+call.  But since the entire rest of the cpuset API, including the display
+of mems_allowed added here, is via an ascii style presentation in /proc and
+/dev/cpuset, it is worth the extra couple lines of code to display
+cpus_allowed in the same way.
+
+This patch adds the display of these two fields to the 'status' file in the
+/proc/<pid> directory of each task.  The fields are only added if
+CONFIG_CPUSETS is enabled (which is also needed to define the mems_allowed
+field of each task).  The new output lines look like:
+
+  $ tail -2 /proc/1/status
+  Cpus_allowed:   ffffffff,ffffffff,ffffffff,ffffffff
+  Mems_allowed:   ffffffff,ffffffff
+
+Signed-off-by: Paul Jackson <pj@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/proc/array.c        |    2 ++
+ 25-akpm/include/linux/cpuset.h |    7 +++++++
+ 25-akpm/kernel/cpuset.c        |   12 ++++++++++++
+ 3 files changed, 21 insertions(+)
+
+diff -puN fs/proc/array.c~cpusets-display-allowed-masks-in-proc-status fs/proc/array.c
+--- 25/fs/proc/array.c~cpusets-display-allowed-masks-in-proc-status	2004-11-10 20:43:57.052309000 -0800
++++ 25-akpm/fs/proc/array.c	2004-11-10 20:43:57.058308088 -0800
+@@ -73,6 +73,7 @@
+ #include <linux/highmem.h>
+ #include <linux/file.h>
+ #include <linux/times.h>
++#include <linux/cpuset.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
+@@ -295,6 +296,7 @@ int proc_pid_status(struct task_struct *
+ 	}
+ 	buffer = task_sig(task, buffer);
+ 	buffer = task_cap(task, buffer);
++	buffer = cpuset_task_status_allowed(task, buffer);
+ #if defined(CONFIG_ARCH_S390)
+ 	buffer = task_show_regs(task, buffer);
+ #endif
+diff -puN include/linux/cpuset.h~cpusets-display-allowed-masks-in-proc-status include/linux/cpuset.h
+--- 25/include/linux/cpuset.h~cpusets-display-allowed-masks-in-proc-status	2004-11-10 20:43:57.053308848 -0800
++++ 25-akpm/include/linux/cpuset.h	2004-11-10 20:43:57.059307936 -0800
+@@ -26,6 +26,7 @@ void cpuset_restrict_to_mems_allowed(uns
+ int cpuset_zonelist_valid_mems_allowed(struct zonelist *zl);
+ int cpuset_zone_allowed(struct zone *z);
+ extern struct file_operations proc_cpuset_operations;
++extern char *cpuset_task_status_allowed(struct task_struct *task, char *buffer);
+ 
+ #else /* !CONFIG_CPUSETS */
+ 
+@@ -58,6 +59,12 @@ static inline int cpuset_zone_allowed(st
+ 	return 1;
+ }
+ 
++static inline char *cpuset_task_status_allowed(struct task_struct *task,
++							char *buffer)
++{
++	return buffer;
++}
++
+ #endif /* !CONFIG_CPUSETS */
+ 
+ #endif /* _LINUX_CPUSET_H */
+diff -puN kernel/cpuset.c~cpusets-display-allowed-masks-in-proc-status kernel/cpuset.c
+--- 25/kernel/cpuset.c~cpusets-display-allowed-masks-in-proc-status	2004-11-10 20:43:57.055308544 -0800
++++ 25-akpm/kernel/cpuset.c	2004-11-10 20:43:57.060307784 -0800
+@@ -1552,3 +1552,15 @@ struct file_operations proc_cpuset_opera
+ 	.llseek		= seq_lseek,
+ 	.release	= single_release,
+ };
++
++/* Display task cpus_allowed, mems_allowed in /proc/<pid>/status file. */
++char *cpuset_task_status_allowed(struct task_struct *task, char *buffer)
++{
++	buffer += sprintf(buffer, "Cpus_allowed:\t");
++	buffer += cpumask_scnprintf(buffer, PAGE_SIZE, task->cpus_allowed);
++	buffer += sprintf(buffer, "\n");
++	buffer += sprintf(buffer, "Mems_allowed:\t");
++	buffer += nodemask_scnprintf(buffer, PAGE_SIZE, task->mems_allowed);
++	buffer += sprintf(buffer, "\n");
++	return buffer;
++}
+_

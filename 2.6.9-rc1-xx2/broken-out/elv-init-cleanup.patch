@@ -1,0 +1,366 @@
+ linux-2.6-npiggin/drivers/block/elevator.c  |   90 +++++++++++++++++++++++-----
+ linux-2.6-npiggin/drivers/block/ll_rw_blk.c |   88 ++++++---------------------
+ linux-2.6-npiggin/include/linux/elevator.h  |   27 --------
+ 3 files changed, 100 insertions(+), 105 deletions(-)
+
+Index: xx-elv-select-cfqionice/drivers/block/elevator.c
+===================================================================
+--- xx-elv-select-cfqionice.orig/drivers/block/elevator.c	2004-08-19 02:16:09.000000000 -0400
++++ xx-elv-select-cfqionice/drivers/block/elevator.c	2004-08-19 02:55:40.196921864 -0400
+@@ -37,6 +37,14 @@
+ 
+ #include <asm/uaccess.h>
+ 
++#if defined(CONFIG_ELV_SELECT)
++/* These may not exist - must check CONFIG_IOSCHED_* */
++extern elevator_t elevator_noop;
++extern elevator_t iosched_deadline;
++extern elevator_t iosched_as;
++extern elevator_t iosched_cfq;
++#endif
++
+ /*
+  * can we safely merge with this request?
+  */
+@@ -86,6 +94,51 @@
+ 	return ELEVATOR_NO_MERGE;
+ }
+ 
++#if defined(CONFIG_ELV_SELECT)
++static elevator_t *default_elevator =
++#if defined(CONFIG_IOSCHED_AS)
++	&iosched_as;
++#elif defined(CONFIG_IOSCHED_DEADLINE)
++	&iosched_deadline;
++#elif defined(CONFIG_IOSCHED_CFQ)
++	&iosched_cfq;
++#elif defined(CONFIG_IOSCHED_NOOP)
++	&elevator_noop;
++#else
++	NULL;
++#error "You must have at least 1 I/O scheduler selected"
++#endif
++
++static elevator_t *str_to_elv(const char *str)
++{
++	if (!strncmp(str, "default", strlen("default")))
++		return default_elevator;
++
++#ifdef CONFIG_IOSCHED_DEADLINE
++	if (!strncmp(str, iosched_deadline.elevator_name,
++				strlen(iosched_deadline.elevator_name)))
++		return &iosched_deadline;
++#endif
++#ifdef CONFIG_IOSCHED_AS
++	if (!strncmp(str, iosched_as.elevator_name,
++				strlen(iosched_as.elevator_name)))
++		return &iosched_as;
++#endif
++#ifdef CONFIG_IOSCHED_CFQ
++	if (!strncmp(str, iosched_cfq.elevator_name,
++				strlen(iosched_cfq.elevator_name)))
++		return &iosched_cfq;
++#endif
++#ifdef CONFIG_IOSCHED_NOOP
++	if (!strncmp(str, elevator_noop.elevator_name,
++				strlen(elevator_noop.elevator_name)))
++		return &elevator_noop;
++#endif
++
++	return NULL;
++}
++#endif
++
+ /*
+  * general block -> elevator interface starts here
+  */
+@@ -129,14 +182,22 @@
+ }
+ 
+ #if defined(CONFIG_ELV_SELECT)
+-elevator_t *elevator_alloc(elevator_t *type)
++elevator_t *elevator_alloc(const char *type)
+ {
+-	elevator_t *e = kmalloc(sizeof(*type), GFP_KERNEL);
++	elevator_t *e, *elv_type;
++
++	elv_type = str_to_elv(type);
++	if (elv_type == NULL) {
++		printk(KERN_INFO "Unknown elevator %s. Using default\n", type);
++		elv_type = default_elevator;
++	}
++
++	e = kmalloc(sizeof(*elv_type), GFP_KERNEL);
+ 
+ 	if (e == NULL)
+ 		goto out_err;
+ 
+-	memcpy(e, type, sizeof(*e));
++	memcpy(e, elv_type, sizeof(*e));
+ 
+ 	if (e->elevator_alloc_fn)
+ 		if (e->elevator_alloc_fn(e))
+@@ -441,11 +502,17 @@
+ };
+ #endif
+ 
++#if defined(CONFIG_ELV_SELECT)
++int elv_register_queue(struct request_queue *q, elevator_t *e)
++#else
+ int elv_register_queue(struct request_queue *q)
++#endif
+ {
++#if !defined(CONFIG_ELV_SELECT)
+ 	elevator_t *e;
+ 
+ 	e = ELEVATOR(q);
++#endif
+ 
+ 	e->kobj.parent = kobject_get(&q->kobj);
+ 	if (!e->kobj.parent)
+@@ -465,6 +532,26 @@
+ 	return kobject_register(&e->kobj);
+ }
+ 
++#if defined(CONFIG_ELV_SELECT)
++void elv_unregister_queue(struct request_queue *q, elevator_t *e)
++{
++	kobject_unregister(&e->kobj);
++	kobject_put(&q->kobj);
++}
++
++/* boot-time set default */
++static int __init elevator_setup(char *str)
++{
++	elevator_t *e = str_to_elv(str);
++	if (e != NULL)
++		default_elevator = e;
++
++	return 1;
++}
++
++__setup("elevator=", elevator_setup);
++
++#else
+ void elv_unregister_queue(struct request_queue *q)
+ {
+ 	if (q) {
+@@ -473,6 +560,7 @@
+ 		kobject_put(&q->kobj);
+ 	}
+ }
++#endif
+ 
+ module_init(elevator_global_init);
+ 
+Index: xx-elv-select-cfqionice/drivers/block/ll_rw_blk.c
+===================================================================
+--- xx-elv-select-cfqionice.orig/drivers/block/ll_rw_blk.c	2004-08-19 02:16:09.000000000 -0400
++++ xx-elv-select-cfqionice/drivers/block/ll_rw_blk.c	2004-08-19 02:53:34.200076296 -0400
+@@ -1475,6 +1475,7 @@
+ 
+ static int __make_request(request_queue_t *, struct bio *);
+ 
++#if !defined(CONFIG_ELV_SELECT)
+ static elevator_t *chosen_elevator =
+ #if defined(CONFIG_IOSCHED_CFQ)
+ 	&iosched_cfq;
+@@ -1489,33 +1490,9 @@
+ #error "You must have at least 1 I/O scheduler selected"
+ #endif
+ 
+-#if defined(CONFIG_ELV_SELECT) || ( defined(CONFIG_IOSCHED_AS) || defined(CONFIG_IOSCHED_DEADLINE) || defined(CONFIG_IOSCHED_NOOP) || defined(CONFIG_IOSCHED_CFQ) )
+-#if defined(CONFIG_ELV_SELECT)
+-elevator_t *str_to_elv(const char *str)
+-#else
++#if defined(CONFIG_IOSCHED_AS) || defined(CONFIG_IOSCHED_DEADLINE) || defined(CONFIG_IOSCHED_NOOP) || defined(CONFIG_IOSCHED_CFQ)
+ static int __init elevator_setup(char *str)
+-#endif
+ {
+-#if defined(CONFIG_ELV_SELECT)
+-#ifdef CONFIG_IOSCHED_DEADLINE
+-	if (!strncmp(str, "deadline", strlen("deadline")))
+-		return &iosched_deadline;
+-#endif
+-#ifdef CONFIG_IOSCHED_AS
+-	if (!strncmp(str, "as", strlen("as")))
+-		return &iosched_as;
+-#endif
+-#ifdef CONFIG_IOSCHED_CFQ
+-	if (!strncmp(str, "cfq", strlen("cfq")))
+-		return &iosched_cfq;
+-#endif
+-#ifdef CONFIG_IOSCHED_NOOP
+-	if (!strncmp(str, "noop", strlen("noop")))
+-		return &elevator_noop;
+-#endif
+-
+-	return NULL;
+-#else
+ #ifdef CONFIG_IOSCHED_DEADLINE
+ 	if (!strcmp(str, "deadline"))
+ 		chosen_elevator = &iosched_deadline;
+@@ -1534,22 +1511,11 @@
+ #endif
+ 
+  	return 1;
+-#endif
+-}
+-
+-#if defined(CONFIG_ELV_SELECT)
+-static int __init elevator_setup(char *str)
+-{
+-	elevator_t *e = str_to_elv(str);
+-	if (e != NULL)
+-		chosen_elevator = e;
+-
+-	return 1;
+ }
+-#endif
+ 
+ __setup("elevator=", elevator_setup);
+ #endif
++#endif
+ 
+ request_queue_t *blk_alloc_queue(int gfp_mask)
+ {
+@@ -1618,7 +1584,7 @@
+ 		goto out_init;
+ 
+ #if defined(CONFIG_ELV_SELECT)
+-	e = elevator_alloc(chosen_elevator);
++	e = elevator_alloc("default");
+ 	if (!e)
+ 		goto out_elv;
+ 
+@@ -3265,27 +3231,27 @@
+ #if defined(CONFIG_ELV_SELECT)
+ static ssize_t queue_elevator_show(struct request_queue *q, char *page)
+ {
+-	return sprintf(page, "%s\n", q->elevator->elevator_name);
++	int ret;
++	unsigned long flags;
++	spin_lock_irqsave(q->queue_lock, flags);
++	ret = sprintf(page, "%s\n", q->elevator->elevator_name);
++	spin_unlock_irqrestore(q->queue_lock, flags);
++
++	return ret;
+ }
+ 
+ static ssize_t
+ queue_elevator_store(struct request_queue *q, const char *page, size_t count)
+ {
+-	elevator_t *type, *elv;
++	elevator_t *e, *old_elv;
+ 	unsigned long flags;
+ 	static DECLARE_MUTEX(switch_mutex);
+ 
+ 	down(&switch_mutex);
+ 
+-	type = str_to_elv(page);
+-	if (type == NULL) {
+-		goto out;
+-	}
+-
+-	elv = elevator_alloc(type);
+-	if (!elv) {
++	e = elevator_alloc(page);
++	if (!e)
+ 		goto out;
+-	}
+ 
+ 	spin_lock_irqsave(q->queue_lock, flags);
+ 
+@@ -3293,21 +3259,21 @@
+ 	blk_set_queue_drain(q);
+ 	blk_wait_free_list(q);
+ 
++	WARN_ON(!elv_queue_empty(q));
++
+ 	/* Stop old elevator */
++	old_elv = q->elevator;
+ 	elevator_exit(q);
+ 
+-	/* Unlock here should be OK. The elevator should not be entered because
+-	 * the queue is drained, and blocked... */
+-	spin_unlock_irqrestore(q->queue_lock, flags);
+-	elv_unregister_queue(q);
+-	spin_lock_irqsave(q->queue_lock, flags);
+-
+ 	/* Start new one */
+-	elevator_init(q, elv);
++	elevator_init(q, e);
+ 	printk(KERN_INFO "elevator_init %s\n", q->elevator->elevator_name);
+ 
++	/* Unlock here should be OK. The elevator should not be entered because
++	 * the queue is drained, and blocked... */
+ 	spin_unlock_irqrestore(q->queue_lock, flags);
+-	if (elv_register_queue(q)) {
++	elv_unregister_queue(q, old_elv);
++	if (elv_register_queue(q, e)) {
+ 		/*
+ 		 * Can't do much about it now... failure should not cause the
+ 		 * device to stop working or future elevator selection to stop
+@@ -3485,7 +3451,11 @@
+ 	if (q->elevator)
+ #endif
+ 	{
++#if defined(CONFIG_ELV_SELECT)
++		ret = elv_register_queue(q, q->elevator);
++#else
+ 		ret = elv_register_queue(q);
++#endif
+ 		if (ret) {
+ 			kobject_unregister(&q->kobj);
+ 			return ret;
+@@ -3502,8 +3472,10 @@
+ 	if (q && q->request_fn) {
+ #if defined(CONFIG_ELV_SELECT)
+ 		if (q->elevator)
++			elv_unregister_queue(q, q->elevator);
++#else
++		elv_unregister_queue(q);
+ #endif
+-			elv_unregister_queue(q);
+ 
+ 		kobject_unregister(&q->kobj);
+ 		kobject_put(&disk->kobj);
+Index: xx-elv-select-cfqionice/include/linux/elevator.h
+===================================================================
+--- xx-elv-select-cfqionice.orig/include/linux/elevator.h	2004-08-19 02:16:09.000000000 -0400
++++ xx-elv-select-cfqionice/include/linux/elevator.h	2004-08-19 02:19:36.935787544 -0400
+@@ -92,14 +92,20 @@
+ extern struct request *elv_next_request(struct request_queue *q);
+ extern struct request *elv_former_request(request_queue_t *, struct request *);
+ extern struct request *elv_latter_request(request_queue_t *, struct request *);
++#if defined(CONFIG_ELV_SELECT)
++extern int elv_register_queue(request_queue_t *q, elevator_t *e);
++extern void elv_unregister_queue(request_queue_t *q, elevator_t *e);
++#else
+ extern int elv_register_queue(request_queue_t *q);
+ extern void elv_unregister_queue(request_queue_t *q);
++#endif
+ extern int elv_may_queue(request_queue_t *, int);
+ extern void elv_completed_request(request_queue_t *, struct request *);
+ extern void elv_set_congested(request_queue_t *);
+ extern int elv_set_request(request_queue_t *, struct request *, int);
+ extern void elv_put_request(request_queue_t *, struct request *);
+ 
++#if !defined(CONFIG_ELV_SELECT)
+ /*
+  * noop I/O scheduler. always merges, always inserts new request at tail
+  */
+@@ -120,11 +126,12 @@
+  * completely fair queueing I/O scheduler
+  */
+ extern elevator_t iosched_cfq;
++#endif
+ 
+ #if defined(CONFIG_ELV_SELECT)
+ extern void elevator_init(request_queue_t *, elevator_t *);
+ extern void elevator_exit(request_queue_t *);
+-extern elevator_t *elevator_alloc(elevator_t *);
++extern elevator_t *elevator_alloc(const char *);
+ extern void elevator_release(struct kobject *);
+ #else
+ extern int elevator_init(request_queue_t *, elevator_t *);

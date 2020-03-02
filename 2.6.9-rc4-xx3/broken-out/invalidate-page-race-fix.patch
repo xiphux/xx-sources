@@ -1,0 +1,47 @@
+
+From: Jens Axboe <axboe@suse.de>
+
+invalidate_inode_pages() and invalidate_inode_pages2() can mark pages not
+uptodate while read() is trying to read from them.  This is interpreted as
+an I/O error.
+
+Fix that by teaching the invalidate code to leave the page alone if someone
+else has a ref on it.
+
+Signed-off-by: Jens Axboe <axboe@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/truncate.c |   12 +++++++++++-
+ 1 files changed, 11 insertions(+), 1 deletion(-)
+
+diff -puN mm/truncate.c~invalidate-page-race-fix mm/truncate.c
+--- 25/mm/truncate.c~invalidate-page-race-fix	Wed Sep 22 17:05:16 2004
++++ 25-akpm/mm/truncate.c	Wed Sep 22 17:05:16 2004
+@@ -79,6 +79,12 @@ invalidate_complete_page(struct address_
+ 		spin_unlock_irq(&mapping->tree_lock);
+ 		return 0;
+ 	}
++
++	BUG_ON(PagePrivate(page));
++	if (page_count(page) != 2) {
++		spin_unlock_irq(&mapping->tree_lock);
++		return 0;
++	}
+ 	__remove_from_page_cache(page);
+ 	spin_unlock_irq(&mapping->tree_lock);
+ 	ClearPageUptodate(page);
+@@ -269,7 +275,11 @@ void invalidate_inode_pages2(struct addr
+ 					clear_page_dirty(page);
+ 					ClearPageUptodate(page);
+ 				} else {
+-					invalidate_complete_page(mapping, page);
++					if (!invalidate_complete_page(mapping,
++								      page)) {
++						clear_page_dirty(page);
++						ClearPageUptodate(page);
++					}
+ 				}
+ 			}
+ 			unlock_page(page);
+_

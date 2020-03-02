@@ -1,0 +1,60 @@
+Index: xx-sources/kernel/xsched.c
+===================================================================
+--- xx-sources.orig/kernel/xsched.c	2004-11-18 02:12:16.575124864 -0500
++++ xx-sources/kernel/xsched.c	2004-11-18 02:13:26.489496264 -0500
+@@ -3721,6 +3721,47 @@
+ }
+ #endif /* CONFIG_MAGIC_SYSRQ */
+  
++/*
++ * sysfs stuff
++ */
++#ifdef CONFIG_SYSFS
++
++SCHED_SHOW_FUNCTION(x_base_timeslice_show, x_sched_base_timeslice);
++SCHED_SHOW_FUNCTION(x_punishment_show, x_punishment);
++SCHED_SHOW_FUNCTION(x_uisleep_factor_show, x_uisleep_factor);
++SCHED_SHOW_FUNCTION(x_scaled_rt_timeslice_show, x_scaled_rt_timeslice);
++SCHED_SHOW_FUNCTION(x_interactive_show, x_sched_interactive);
++SCHED_SHOW_FUNCTION(x_compute_show, x_sched_compute);
++
++SCHED_STORE_FUNCTION(x_base_timeslice_store, &x_sched_base_timeslice, 1, UINT_MAX);
++SCHED_STORE_FUNCTION(x_punishment_store, &x_punishment, 1, UINT_MAX);
++SCHED_STORE_FUNCTION(x_uisleep_factor_store, &x_uisleep_factor, 1, UINT_MAX);
++SCHED_STORE_FUNCTION(x_interactive_store, &x_sched_interactive, 0, 1);
++SCHED_STORE_FUNCTION(x_compute_store, &x_sched_compute, 0, 1);
++
++SCHED_SYSFS_ENTRY(x_base_timeslice_entry, "base_timeslice", x_base_timeslice_show, x_base_timeslice_store);
++SCHED_SYSFS_ENTRY(x_punishment_entry, "punishment", x_punishment_show, x_punishment_store);
++SCHED_SYSFS_ENTRY(x_uisleep_factor_entry, "uisleep_factor", x_uisleep_factor_show, x_uisleep_factor_store);
++SCHED_SYSFS_ENTRY(x_interactive_entry, "interactive", x_interactive_show, x_interactive_store);
++SCHED_SYSFS_ENTRY(x_compute_entry, "compute", x_compute_show, x_compute_store);
++SCHED_SYSFS_ENTRY_RO(x_scaled_rt_timeslice_entry, "scaled_rt_timeslice", x_scaled_rt_timeslice_show);
++
++static struct attribute *default_attrs[] = {
++	&x_base_timeslice_entry.attr,
++	&x_punishment_entry.attr,
++	&x_uisleep_factor_entry.attr,
++	&x_scaled_rt_timeslice_entry.attr,
++	&x_interactive_entry.attr,
++	&x_compute_entry.attr,
++	NULL,
++};
++
++static struct kobj_type x_ktype = {
++	.sysfs_ops = &sched_sysfs_ops,
++	.default_attrs = default_attrs,
++};
++#endif
++
+ struct sched_drv x_sched_drv = {
+ 	.task_cpu		= common_task_cpu,
+ 	.set_task_cpu		= common_set_task_cpu,
+@@ -3774,4 +3815,7 @@
+ #ifdef CONFIG_MAGIC_SYSRQ
+ 	.normalize_rt_tasks 	= x_normalize_rt_tasks,
+ #endif
++#ifdef CONFIG_SYSFS
++	.kobj.ktype		= &x_ktype,
++#endif
+ };

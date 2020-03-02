@@ -1,0 +1,124 @@
+
+From: Peter Osterlund <petero2@telia.com>
+
+That shouldn't cause any real problems, but since it's quite confusing,
+here is a patch to fix it.  With this change, both DVD+RW and DVD-RW media
+is correctly identified in the kernel log, and DVD speeds are printed in
+kB/s.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/pktcdvd.c |   34 ++++++++++++++++++++--------------
+ 25-akpm/include/linux/pktcdvd.h |    4 ++--
+ 2 files changed, 22 insertions(+), 16 deletions(-)
+
+diff -puN drivers/block/pktcdvd.c~packet-writing-reporting-fix drivers/block/pktcdvd.c
+--- 25/drivers/block/pktcdvd.c~packet-writing-reporting-fix	2004-09-26 17:06:22.970623024 -0700
++++ 25-akpm/drivers/block/pktcdvd.c	2004-09-26 17:06:22.977621960 -0700
+@@ -384,11 +384,6 @@ static int pkt_set_speed(struct pktcdvd_
+ 	struct request_sense sense;
+ 	int ret;
+ 
+-	write_speed = write_speed * 177; /* should be 176.4, but CD-RWs rounds down */
+-	write_speed = min_t(unsigned, write_speed, MAX_SPEED);
+-	read_speed = read_speed * 177;
+-	read_speed = min_t(unsigned, read_speed, MAX_SPEED);
+-
+ 	init_cdrom_command(&cgc, NULL, 0, CGC_DATA_NONE);
+ 	cgc.sense = &sense;
+ 	cgc.cmd[0] = GPCMD_SET_SPEED;
+@@ -503,8 +498,8 @@ static void pkt_iosched_process_queue(st
+ 			pd->iosched.successive_reads = 0;
+ 		if (pd->iosched.successive_reads >= HI_SPEED_SWITCH) {
+ 			if (pd->read_speed == pd->write_speed) {
+-				pd->read_speed = 0xff;
+-				pkt_set_speed(pd, pd->write_speed, MAX_SPEED);
++				pd->read_speed = MAX_SPEED;
++				pkt_set_speed(pd, pd->write_speed, pd->read_speed);
+ 			}
+ 		} else {
+ 			if (pd->read_speed != pd->write_speed) {
+@@ -1531,7 +1526,17 @@ static int pkt_probe_settings(struct pkt
+ 	if (pkt_good_disc(pd, &di))
+ 		return -ENXIO;
+ 
+-	printk("pktcdvd: inserted media is CD-R%s\n", di.erasable ? "W" : "");
++	switch (pd->mmc3_profile) {
++		case 0x1a: /* DVD+RW */
++			printk("pktcdvd: inserted media is DVD+RW\n");
++			break;
++		case 0x13: /* DVD-RW */
++			printk("pktcdvd: inserted media is DVD-RW\n");
++			break;
++		default:
++			printk("pktcdvd: inserted media is CD-R%s\n", di.erasable ? "W" : "");
++			break;
++	}
+ 	pd->type = di.erasable ? PACKET_CDRW : PACKET_CDR;
+ 
+ 	track = 1; /* (di.last_track_msb << 8) | di.last_track_lsb; */
+@@ -1684,7 +1689,7 @@ static int pkt_get_max_speed(struct pktc
+ 			offset = 34;
+ 	}
+ 
+-	*write_speed = ((cap_buf[offset] << 8) | cap_buf[offset + 1]) / 0xb0;
++	*write_speed = (cap_buf[offset] << 8) | cap_buf[offset + 1];
+ 	return 0;
+ }
+ 
+@@ -1816,15 +1821,17 @@ static int pkt_open_write(struct pktcdvd
+ 	pkt_write_caching(pd, USE_WCACHING);
+ 
+ 	if ((ret = pkt_get_max_speed(pd, &write_speed)))
+-		write_speed = 16;
++		write_speed = 16 * 177;
+ 	switch (pd->mmc3_profile) {
+ 		case 0x13: /* DVD-RW */
+ 		case 0x1a: /* DVD+RW */
++			DPRINTK("pktcdvd: write speed %ukB/s\n", write_speed);
+ 			break;
+ 		default:
+ 			if ((ret = pkt_media_speed(pd, &media_write_speed)))
+ 				media_write_speed = 16;
+-			write_speed = min(write_speed, media_write_speed);
++			write_speed = min(write_speed, media_write_speed * 177);
++			DPRINTK("pktcdvd: write speed %ux\n", write_speed / 176);
+ 			break;
+ 	}
+ 	read_speed = write_speed;
+@@ -1833,7 +1840,6 @@ static int pkt_open_write(struct pktcdvd
+ 		DPRINTK("pktcdvd: %s couldn't set write speed\n", pd->name);
+ 		return -EIO;
+ 	}
+-	DPRINTK("pktcdvd: write speed %u\n", write_speed);
+ 	pd->write_speed = write_speed;
+ 	pd->read_speed = read_speed;
+ 
+@@ -2234,8 +2240,8 @@ static int pkt_seq_show(struct seq_file 
+ 	seq_printf(m, "\nMisc:\n");
+ 	seq_printf(m, "\treference count:\t%d\n", pd->refcnt);
+ 	seq_printf(m, "\tflags:\t\t\t0x%lx\n", pd->flags);
+-	seq_printf(m, "\tread speed:\t\t%ukB/s\n", pd->read_speed * 150);
+-	seq_printf(m, "\twrite speed:\t\t%ukB/s\n", pd->write_speed * 150);
++	seq_printf(m, "\tread speed:\t\t%ukB/s\n", pd->read_speed);
++	seq_printf(m, "\twrite speed:\t\t%ukB/s\n", pd->write_speed);
+ 	seq_printf(m, "\tstart offset:\t\t%lu\n", pd->offset);
+ 	seq_printf(m, "\tmode page offset:\t%u\n", pd->mode_offset);
+ 
+diff -puN include/linux/pktcdvd.h~packet-writing-reporting-fix include/linux/pktcdvd.h
+--- 25/include/linux/pktcdvd.h~packet-writing-reporting-fix	2004-09-26 17:06:22.971622872 -0700
++++ 25-akpm/include/linux/pktcdvd.h	2004-09-26 17:06:22.978621808 -0700
+@@ -232,8 +232,8 @@ struct pktcdvd_device
+ 	struct packet_settings	settings;
+ 	struct packet_stats	stats;
+ 	int			refcnt;		/* Open count */
+-	__u8			write_speed;	/* current write speed */
+-	__u8			read_speed;	/* current read speed */
++	int			write_speed;	/* current write speed, kB/s */
++	int			read_speed;	/* current read speed, kB/s */
+ 	unsigned long		offset;		/* start offset */
+ 	__u8			mode_offset;	/* 0 / 8 */
+ 	__u8			type;
+_

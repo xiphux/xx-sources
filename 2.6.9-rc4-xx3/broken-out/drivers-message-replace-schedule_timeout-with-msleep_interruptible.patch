@@ -1,0 +1,190 @@
+
+From: <janitor@sternwelten.at>
+
+Use msleep_interruptible() instead of schedule_timeout() under drivers/message.
+
+Signed-off-by: Nishanth Aravamudan <nacc@us.ibm.com>
+Signed-off-by: Maximilian Attems <janitor@sternwelten.at>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/message/fusion/mptbase.c |   39 ++++++++++---------------------
+ 25-akpm/drivers/message/i2o/device.c     |    4 +--
+ 25-akpm/drivers/message/i2o/exec-osm.c   |    3 +-
+ 3 files changed, 17 insertions(+), 29 deletions(-)
+
+diff -puN drivers/message/fusion/mptbase.c~drivers-message-replace-schedule_timeout-with-msleep_interruptible drivers/message/fusion/mptbase.c
+--- 25/drivers/message/fusion/mptbase.c~drivers-message-replace-schedule_timeout-with-msleep_interruptible	Tue Oct  5 14:26:22 2004
++++ 25-akpm/drivers/message/fusion/mptbase.c	Tue Oct  5 14:26:22 2004
+@@ -2195,8 +2195,7 @@ MakeIocReady(MPT_ADAPTER *ioc, int force
+ 		}
+ 
+ 		if (sleepFlag == CAN_SLEEP) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(1 * HZ / 1000);
++			msleep_interruptible(1);
+ 		} else {
+ 			mdelay (1);	/* 1 msec delay */
+ 		}
+@@ -2565,8 +2564,7 @@ SendIocInit(MPT_ADAPTER *ioc, int sleepF
+ 	state = mpt_GetIocState(ioc, 1);
+ 	while (state != MPI_IOC_STATE_OPERATIONAL && --cntdn) {
+ 		if (sleepFlag == CAN_SLEEP) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(1 * HZ / 1000);
++			msleep_interruptible(1);
+ 		} else {
+ 			mdelay(1);
+ 		}
+@@ -2833,8 +2831,7 @@ mpt_downloadboot(MPT_ADAPTER *ioc, int s
+ 
+ 	/* wait 1 msec */
+ 	if (sleepFlag == CAN_SLEEP) {
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout(1 * HZ / 1000);
++		msleep_interruptible(1);
+ 	} else {
+ 		mdelay (1);
+ 	}
+@@ -2851,8 +2848,7 @@ mpt_downloadboot(MPT_ADAPTER *ioc, int s
+ 		}
+ 		/* wait 1 sec */
+ 		if (sleepFlag == CAN_SLEEP) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(1000 * HZ / 1000);
++			msleep_interruptible (1000);
+ 		} else {
+ 			mdelay (1000);
+ 		}
+@@ -2952,8 +2948,7 @@ mpt_downloadboot(MPT_ADAPTER *ioc, int s
+ 			return 0;
+ 		}
+ 		if (sleepFlag == CAN_SLEEP) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(10 * HZ / 1000);
++			msleep_interruptible (10);
+ 		} else {
+ 			mdelay (10);
+ 		}
+@@ -3004,8 +2999,7 @@ KickStart(MPT_ADAPTER *ioc, int force, i
+ 		SendIocReset(ioc, MPI_FUNCTION_IOC_MESSAGE_UNIT_RESET, sleepFlag);
+ 
+ 		if (sleepFlag == CAN_SLEEP) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(1000 * HZ / 1000);
++			msleep_interruptible (1000);
+ 		} else {
+ 			mdelay (1000);
+ 		}
+@@ -3027,8 +3021,7 @@ KickStart(MPT_ADAPTER *ioc, int force, i
+ 			return hard_reset_done;
+ 		}
+ 		if (sleepFlag == CAN_SLEEP) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(10 * HZ / 1000);
++			msleep_interruptible (10);
+ 		} else {
+ 			mdelay (10);
+ 		}
+@@ -3099,8 +3092,7 @@ mpt_diag_reset(MPT_ADAPTER *ioc, int ign
+ 
+ 			/* wait 100 msec */
+ 			if (sleepFlag == CAN_SLEEP) {
+-				set_current_state(TASK_INTERRUPTIBLE);
+-				schedule_timeout(100 * HZ / 1000);
++				msleep_interruptible (100);
+ 			} else {
+ 				mdelay (100);
+ 			}
+@@ -3207,8 +3199,7 @@ mpt_diag_reset(MPT_ADAPTER *ioc, int ign
+ 
+ 				/* wait 1 sec */
+ 				if (sleepFlag == CAN_SLEEP) {
+-					set_current_state(TASK_INTERRUPTIBLE);
+-					schedule_timeout(1000 * HZ / 1000);
++					msleep_interruptible (1000);
+ 				} else {
+ 					mdelay (1000);
+ 				}
+@@ -3242,8 +3233,7 @@ mpt_diag_reset(MPT_ADAPTER *ioc, int ign
+ 
+ 		/* wait 100 msec */
+ 		if (sleepFlag == CAN_SLEEP) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(100 * HZ / 1000);
++			msleep_interruptible (100);
+ 		} else {
+ 			mdelay (100);
+ 		}
+@@ -3337,8 +3327,7 @@ SendIocReset(MPT_ADAPTER *ioc, u8 reset_
+ 		}
+ 
+ 		if (sleepFlag == CAN_SLEEP) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(1 * HZ / 1000);
++			msleep_interruptible(1);
+ 		} else {
+ 			mdelay (1);	/* 1 msec delay */
+ 		}
+@@ -3775,8 +3764,7 @@ WaitForDoorbellAck(MPT_ADAPTER *ioc, int
+ 			intstat = CHIPREG_READ32(&ioc->chip->IntStatus);
+ 			if (! (intstat & MPI_HIS_IOP_DOORBELL_STATUS))
+ 				break;
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(1 * HZ / 1000);
++			msleep_interruptible (1);
+ 			count++;
+ 		}
+ 	} else {
+@@ -3825,8 +3813,7 @@ WaitForDoorbellInt(MPT_ADAPTER *ioc, int
+ 			intstat = CHIPREG_READ32(&ioc->chip->IntStatus);
+ 			if (intstat & MPI_HIS_DOORBELL_INTERRUPT)
+ 				break;
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(1 * HZ / 1000);
++			msleep_interruptible(1);
+ 			count++;
+ 		}
+ 	} else {
+diff -puN drivers/message/i2o/exec-osm.c~drivers-message-replace-schedule_timeout-with-msleep_interruptible drivers/message/i2o/exec-osm.c
+--- 25/drivers/message/i2o/exec-osm.c~drivers-message-replace-schedule_timeout-with-msleep_interruptible	Tue Oct  5 14:26:22 2004
++++ 25-akpm/drivers/message/i2o/exec-osm.c	Tue Oct  5 14:26:22 2004
+@@ -29,6 +29,7 @@
+ 
+ #include <linux/module.h>
+ #include <linux/i2o.h>
++#include <linux/delay.h>
+ 
+ struct i2o_driver i2o_exec_driver;
+ 
+@@ -151,7 +152,7 @@ int i2o_msg_post_wait_mem(struct i2o_con
+ 		prepare_to_wait(&wq, &wait, TASK_INTERRUPTIBLE);
+ 
+ 		if (!iwait->complete)
+-			schedule_timeout(timeout * HZ);
++			msleep_interruptible(timeout * 1000);
+ 
+ 		finish_wait(&wq, &wait);
+ 
+diff -puN drivers/message/i2o/device.c~drivers-message-replace-schedule_timeout-with-msleep_interruptible drivers/message/i2o/device.c
+--- 25/drivers/message/i2o/device.c~drivers-message-replace-schedule_timeout-with-msleep_interruptible	Tue Oct  5 14:26:22 2004
++++ 25-akpm/drivers/message/i2o/device.c	Tue Oct  5 14:26:22 2004
+@@ -15,6 +15,7 @@
+ 
+ #include <linux/module.h>
+ #include <linux/i2o.h>
++#include <linux/delay.h>
+ 
+ /* Exec OSM functions */
+ extern struct bus_type i2o_bus_type;
+@@ -106,8 +107,7 @@ int i2o_device_claim_release(struct i2o_
+ 		if (!rc)
+ 			break;
+ 
+-		set_current_state(TASK_UNINTERRUPTIBLE);
+-		schedule_timeout(HZ);
++		ssleep(1);
+ 	}
+ 
+ 	if (!rc)
+_

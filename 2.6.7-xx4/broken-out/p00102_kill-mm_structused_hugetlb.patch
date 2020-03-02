@@ -1,0 +1,97 @@
+
+From: Oleg Nesterov <oleg@tv-sign.ru>
+
+mm_struct.used_hugetlb used to eliminate costly find_vma() from
+follow_page().  Now it is used only in ia64 version of follow_huge_addr(). 
+I know nothing about ia64, but this REGION_NUMBER() looks simple enough to
+kill used_hugetlb.
+
+There is debug version (commented out) of follow_huge_addr() in i386 which
+looks at used_hugetlb, but it can work without this check.
+
+Signed-off-by: Oleg Nesterov
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/mm/hugetlbpage.c |    3 ---
+ 25-akpm/arch/ia64/mm/hugetlbpage.c |    2 --
+ 25-akpm/include/linux/hugetlb.h    |    8 --------
+ 25-akpm/include/linux/sched.h      |    3 ---
+ 25-akpm/mm/mmap.c                  |    1 -
+ 5 files changed, 17 deletions(-)
+
+diff -puN arch/i386/mm/hugetlbpage.c~kill-mm_structused_hugetlb arch/i386/mm/hugetlbpage.c
+--- 25/arch/i386/mm/hugetlbpage.c~kill-mm_structused_hugetlb	2004-06-27 22:12:22.918445000 -0700
++++ 25-akpm/arch/i386/mm/hugetlbpage.c	2004-06-27 22:12:22.938441960 -0700
+@@ -146,9 +146,6 @@ follow_huge_addr(struct mm_struct *mm, u
+ 	struct page *page;
+ 	struct vm_area_struct *vma;
+ 
+-	if (! mm->used_hugetlb)
+-		return ERR_PTR(-EINVAL);
+-
+ 	vma = find_vma(mm, addr);
+ 	if (!vma || !is_vm_hugetlb_page(vma))
+ 		return ERR_PTR(-EINVAL);
+diff -puN arch/ia64/mm/hugetlbpage.c~kill-mm_structused_hugetlb arch/ia64/mm/hugetlbpage.c
+--- 25/arch/ia64/mm/hugetlbpage.c~kill-mm_structused_hugetlb	2004-06-27 22:12:22.920444696 -0700
++++ 25-akpm/arch/ia64/mm/hugetlbpage.c	2004-06-27 22:12:22.940441656 -0700
+@@ -158,8 +158,6 @@ struct page *follow_huge_addr(struct mm_
+ 	struct page *page;
+ 	pte_t *ptep;
+ 
+-	if (! mm->used_hugetlb)
+-		return ERR_PTR(-EINVAL);
+ 	if (REGION_NUMBER(addr) != REGION_HPAGE)
+ 		return ERR_PTR(-EINVAL);
+ 
+diff -puN include/linux/hugetlb.h~kill-mm_structused_hugetlb include/linux/hugetlb.h
+--- 25/include/linux/hugetlb.h~kill-mm_structused_hugetlb	2004-06-27 22:12:22.922444392 -0700
++++ 25-akpm/include/linux/hugetlb.h	2004-06-27 22:12:42.011542408 -0700
+@@ -35,13 +35,6 @@ extern unsigned long max_huge_pages;
+ extern const unsigned long hugetlb_zero, hugetlb_infinity;
+ extern int sysctl_hugetlb_shm_group;
+ 
+-static inline void
+-mark_mm_hugetlb(struct mm_struct *mm, struct vm_area_struct *vma)
+-{
+-	if (is_vm_hugetlb_page(vma))
+-		mm->used_hugetlb = 1;
+-}
+-
+ #ifndef ARCH_HAS_HUGEPAGE_ONLY_RANGE
+ #define is_hugepage_only_range(addr, len)	0
+ #define hugetlb_free_pgtables(tlb, prev, start, end) do { } while (0)
+@@ -74,7 +67,6 @@ static inline unsigned long hugetlb_tota
+ #define is_hugepage_mem_enough(size)		0
+ #define hugetlb_report_meminfo(buf)		0
+ #define hugetlb_report_node_meminfo(n, buf)	0
+-#define mark_mm_hugetlb(mm, vma)		do { } while (0)
+ #define follow_huge_pmd(mm, addr, pmd, write)	0
+ #define is_aligned_hugepage_range(addr, len)	0
+ #define prepare_hugepage_range(addr, len)	(-EINVAL)
+diff -puN include/linux/sched.h~kill-mm_structused_hugetlb include/linux/sched.h
+--- 25/include/linux/sched.h~kill-mm_structused_hugetlb	2004-06-27 22:12:22.924444088 -0700
++++ 25-akpm/include/linux/sched.h	2004-06-27 22:12:22.943441200 -0700
+@@ -215,9 +215,6 @@ struct mm_struct {
+ 	unsigned long saved_auxv[40]; /* for /proc/PID/auxv */
+ 
+ 	unsigned dumpable:1;
+-#ifdef CONFIG_HUGETLB_PAGE
+-	int used_hugetlb;
+-#endif
+ 	cpumask_t cpu_vm_mask;
+ 
+ 	/* Architecture-specific MM context */
+diff -puN mm/mmap.c~kill-mm_structused_hugetlb mm/mmap.c
+--- 25/mm/mmap.c~kill-mm_structused_hugetlb	2004-06-27 22:12:22.935442416 -0700
++++ 25-akpm/mm/mmap.c	2004-06-27 22:12:22.945440896 -0700
+@@ -317,7 +317,6 @@ static void vma_link(struct mm_struct *m
+ 	if (mapping)
+ 		spin_unlock(&mapping->i_mmap_lock);
+ 
+-	mark_mm_hugetlb(mm, vma);
+ 	mm->map_count++;
+ 	validate_mm(mm);
+ }
+_

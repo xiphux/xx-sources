@@ -1,0 +1,467 @@
+
+From: Arjan van de Ven <arjanv@redhat.com>
+
+This patch provides an architecture hook to /dev/mem where the architecture
+can cause impossible (due to cacheing rules) or undesireable ranges of
+physical ram to be unavailable via /dev/mem.  
+
+For i386 and x86-64, the architecture hook will prevent accesses to kernel
+memory while allowing accesses to PCI config space and bios regions.  This is
+in order to prevent accidental (X bugs) or deliberate (rootkits) overwriting
+of kernel memory from userspace without breaking legit applications.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/mm/init.c          |   19 ++++++++
+ 25-akpm/arch/x86_64/mm/init.c        |   20 +++++++++
+ 25-akpm/drivers/char/mem.c           |   76 +++++++----------------------------
+ 25-akpm/include/asm-alpha/page.h     |    1 
+ 25-akpm/include/asm-arm/page.h       |    2 
+ 25-akpm/include/asm-arm26/page.h     |    2 
+ 25-akpm/include/asm-cris/page.h      |    2 
+ 25-akpm/include/asm-h8300/page.h     |    2 
+ 25-akpm/include/asm-i386/page.h      |    4 +
+ 25-akpm/include/asm-ia64/page.h      |    2 
+ 25-akpm/include/asm-m68k/page.h      |    2 
+ 25-akpm/include/asm-m68knommu/page.h |    2 
+ 25-akpm/include/asm-mips/page.h      |    2 
+ 25-akpm/include/asm-parisc/page.h    |    2 
+ 25-akpm/include/asm-ppc/page.h       |    2 
+ 25-akpm/include/asm-ppc64/page.h     |    2 
+ 25-akpm/include/asm-s390/page.h      |    2 
+ 25-akpm/include/asm-sh/page.h        |    2 
+ 25-akpm/include/asm-sh64/page.h      |    2 
+ 25-akpm/include/asm-sparc/page.h     |    2 
+ 25-akpm/include/asm-sparc64/page.h   |    2 
+ 25-akpm/include/asm-um/page.h        |    1 
+ 25-akpm/include/asm-v850/page.h      |    2 
+ 25-akpm/include/asm-x86_64/page.h    |    1 
+ 24 files changed, 96 insertions(+), 60 deletions(-)
+
+diff -puN arch/i386/mm/init.c~dev-mem-restriction-patch arch/i386/mm/init.c
+--- 25/arch/i386/mm/init.c~dev-mem-restriction-patch	2004-09-30 22:35:51.431174264 -0700
++++ 25-akpm/arch/i386/mm/init.c	2004-09-30 22:35:51.470168336 -0700
+@@ -225,6 +225,25 @@ static inline int page_is_ram(unsigned l
+ 	return 0;
+ }
+ 
++/*
++ * devmem_is_allowed() checks to see if /dev/mem access to a certain address is
++ * valid. The argument is a physical page number.
++ *
++ *
++ * On x86, access has to be given to the first megabyte of ram because that area
++ * contains bios code and data regions used by X and dosemu and similar apps.
++ * Access has to be given to non-kernel-ram areas as well, these contain the PCI
++ * mmio resources as well as potential bios/acpi data regions.
++ */
++int devmem_is_allowed(unsigned long pagenr)
++{
++	if (pagenr <= 256)
++		return 1;
++	if (!page_is_ram(pagenr))
++		return 1;
++	return 0;
++}
++
+ #ifdef CONFIG_HIGHMEM
+ pte_t *kmap_pte;
+ pgprot_t kmap_prot;
+diff -puN arch/x86_64/mm/init.c~dev-mem-restriction-patch arch/x86_64/mm/init.c
+--- 25/arch/x86_64/mm/init.c~dev-mem-restriction-patch	2004-09-30 22:35:51.432174112 -0700
++++ 25-akpm/arch/x86_64/mm/init.c	2004-09-30 22:35:51.471168184 -0700
+@@ -402,6 +402,26 @@ static inline int page_is_ram (unsigned 
+ 
+ extern int swiotlb_force;
+ 
++/*
++ * devmem_is_allowed() checks to see if /dev/mem access to a certain address is
++ * valid. The argument is a physical page number.
++ *
++ *
++ * On x86-64, access has to be given to the first megabyte of ram because that area
++ * contains bios code and data regions used by X and dosemu and similar apps.
++ * Access has to be given to non-kernel-ram areas as well, these contain the PCI
++ * mmio resources as well as potential bios/acpi data regions.
++ */
++int devmem_is_allowed(unsigned long pagenr)
++{
++	if (pagenr <= 256)
++		return 1;
++	if (!page_is_ram(pagenr))
++		return 1;
++	return 0;
++}
++
++
+ static struct kcore_list kcore_mem, kcore_vmalloc, kcore_kernel, kcore_modules,
+ 			 kcore_vsyscall;
+ 
+diff -puN drivers/char/mem.c~dev-mem-restriction-patch drivers/char/mem.c
+--- 25/drivers/char/mem.c~dev-mem-restriction-patch	2004-09-30 22:35:51.434173808 -0700
++++ 25-akpm/drivers/char/mem.c	2004-09-30 22:35:51.472168032 -0700
+@@ -111,6 +111,18 @@ static inline int valid_phys_addr_range(
+ }
+ #endif
+ 
++static inline int range_is_allowed(unsigned long from, unsigned long to)
++{
++	unsigned long cursor;
++
++	cursor = from >> PAGE_SHIFT;
++	while ((cursor << PAGE_SHIFT) < to) {
++		if (!devmem_is_allowed(cursor))
++			return 0;
++		cursor++;
++	}
++	return 1;
++}
+ static ssize_t do_write_mem(void *p, unsigned long realp,
+ 			    const char __user * buf, size_t count, loff_t *ppos)
+ {
+@@ -130,6 +142,8 @@ static ssize_t do_write_mem(void *p, uns
+ 		written+=sz;
+ 	}
+ #endif
++	if (!range_is_allowed(realp, realp+count))
++		return -EPERM;
+ 	copied = copy_from_user(p, buf, count);
+ 	if (copied) {
+ 		ssize_t ret = written + (count - copied);
+@@ -173,6 +187,8 @@ static ssize_t read_mem(struct file * fi
+ 		}
+ 	}
+ #endif
++	if (!range_is_allowed(p, p+count))
++		return -EPERM;
+ 	if (copy_to_user(buf, __va(p), count))
+ 		return -EFAULT;
+ 	read += count;
+@@ -282,65 +298,6 @@ static ssize_t read_kmem(struct file *fi
+  	return virtr + read;
+ }
+ 
+-/*
+- * This function writes to the *virtual* memory as seen by the kernel.
+- */
+-static ssize_t write_kmem(struct file * file, const char __user * buf, 
+-			  size_t count, loff_t *ppos)
+-{
+-	unsigned long p = *ppos;
+-	ssize_t wrote = 0;
+-	ssize_t virtr = 0;
+-	ssize_t written;
+-	char * kbuf; /* k-addr because vwrite() takes vmlist_lock rwlock */
+-
+-	if (p < (unsigned long) high_memory) {
+-
+-		wrote = count;
+-		if (count > (unsigned long) high_memory - p)
+-			wrote = (unsigned long) high_memory - p;
+-
+-		written = do_write_mem((void*)p, p, buf, wrote, ppos);
+-		if (written != wrote)
+-			return written;
+-		wrote = written;
+-		p += wrote;
+-		buf += wrote;
+-		count -= wrote;
+-	}
+-
+-	if (count > 0) {
+-		kbuf = (char *)__get_free_page(GFP_KERNEL);
+-		if (!kbuf)
+-			return wrote ? wrote : -ENOMEM;
+-		while (count > 0) {
+-			int len = count;
+-
+-			if (len > PAGE_SIZE)
+-				len = PAGE_SIZE;
+-			if (len) {
+-				written = copy_from_user(kbuf, buf, len);
+-				if (written) {
+-					ssize_t ret;
+-
+-					free_page((unsigned long)kbuf);
+-					ret = wrote + virtr + (len - written);
+-					return ret ? ret : -EFAULT;
+-				}
+-			}
+-			len = vwrite(kbuf, (char *)p, len);
+-			count -= len;
+-			buf += len;
+-			virtr += len;
+-			p += len;
+-		}
+-		free_page((unsigned long)kbuf);
+-	}
+-
+- 	*ppos = p;
+- 	return virtr + wrote;
+-}
+-
+ #if defined(CONFIG_ISA) || !defined(__mc68000__)
+ static ssize_t read_port(struct file * file, char __user * buf,
+ 			 size_t count, loff_t *ppos)
+@@ -591,7 +548,6 @@ static struct file_operations mem_fops =
+ static struct file_operations kmem_fops = {
+ 	.llseek		= memory_lseek,
+ 	.read		= read_kmem,
+-	.write		= write_kmem,
+ 	.mmap		= mmap_kmem,
+ 	.open		= open_kmem,
+ };
+diff -puN include/asm-alpha/page.h~dev-mem-restriction-patch include/asm-alpha/page.h
+--- 25/include/asm-alpha/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.437173352 -0700
++++ 25-akpm/include/asm-alpha/page.h	2004-09-30 22:35:51.473167880 -0700
+@@ -107,6 +107,7 @@ extern __inline__ int get_order(unsigned
+ #define VM_DATA_DEFAULT_FLAGS		(VM_READ | VM_WRITE | VM_EXEC | \
+ 					 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
++#define devmem_is_allowed(x) 1
+ #endif /* __KERNEL__ */
+ 
+ #endif /* _ALPHA_PAGE_H */
+diff -puN include/asm-arm26/page.h~dev-mem-restriction-patch include/asm-arm26/page.h
+--- 25/include/asm-arm26/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.438173200 -0700
++++ 25-akpm/include/asm-arm26/page.h	2004-09-30 22:35:51.473167880 -0700
+@@ -110,6 +110,8 @@ static inline int get_order(unsigned lon
+ #define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | VM_EXEC | \
+ 				 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* __KERNEL__ */
+ 
+ #endif
+diff -puN include/asm-arm/page.h~dev-mem-restriction-patch include/asm-arm/page.h
+--- 25/include/asm-arm/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.440172896 -0700
++++ 25-akpm/include/asm-arm/page.h	2004-09-30 22:35:51.474167728 -0700
+@@ -196,6 +196,8 @@ static inline int get_order(unsigned lon
+ #define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | VM_EXEC | \
+ 				 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* __KERNEL__ */
+ 
+ #endif
+diff -puN include/asm-cris/page.h~dev-mem-restriction-patch include/asm-cris/page.h
+--- 25/include/asm-cris/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.441172744 -0700
++++ 25-akpm/include/asm-cris/page.h	2004-09-30 22:35:51.474167728 -0700
+@@ -96,6 +96,8 @@ static inline int get_order(unsigned lon
+ #define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | VM_EXEC | \
+ 				 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* __KERNEL__ */
+ 
+ #endif /* _CRIS_PAGE_H */
+diff -puN include/asm-h8300/page.h~dev-mem-restriction-patch include/asm-h8300/page.h
+--- 25/include/asm-h8300/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.442172592 -0700
++++ 25-akpm/include/asm-h8300/page.h	2004-09-30 22:35:51.475167576 -0700
+@@ -96,6 +96,8 @@ extern unsigned long memory_end;
+ 
+ #endif /* __ASSEMBLY__ */
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* __KERNEL__ */
+ 
+ #endif /* _H8300_PAGE_H */
+diff -puN include/asm-i386/page.h~dev-mem-restriction-patch include/asm-i386/page.h
+--- 25/include/asm-i386/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.444172288 -0700
++++ 25-akpm/include/asm-i386/page.h	2004-09-30 22:35:51.475167576 -0700
+@@ -118,6 +118,8 @@ static __inline__ int get_order(unsigned
+ 
+ extern int sysctl_legacy_va_layout;
+ 
++extern int devmem_is_allowed(unsigned long pagenr);
++
+ #endif /* __ASSEMBLY__ */
+ 
+ #ifdef __ASSEMBLY__
+@@ -147,6 +149,8 @@ extern int sysctl_legacy_va_layout;
+ 	((current->personality & READ_IMPLIES_EXEC) ? VM_EXEC : 0 ) | \
+ 		 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
++
++
+ #endif /* __KERNEL__ */
+ 
+ #endif /* _I386_PAGE_H */
+diff -puN include/asm-ia64/page.h~dev-mem-restriction-patch include/asm-ia64/page.h
+--- 25/include/asm-ia64/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.445172136 -0700
++++ 25-akpm/include/asm-ia64/page.h	2004-09-30 22:35:51.475167576 -0700
+@@ -193,4 +193,6 @@ get_order (unsigned long size)
+ 					 (((current->personality & READ_IMPLIES_EXEC) != 0)	\
+ 					  ? VM_EXEC : 0))
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* _ASM_IA64_PAGE_H */
+diff -puN include/asm-m68knommu/page.h~dev-mem-restriction-patch include/asm-m68knommu/page.h
+--- 25/include/asm-m68knommu/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.447171832 -0700
++++ 25-akpm/include/asm-m68knommu/page.h	2004-09-30 22:35:51.476167424 -0700
+@@ -96,6 +96,8 @@ extern unsigned long memory_end;
+ 
+ #endif /* __ASSEMBLY__ */
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* __KERNEL__ */
+ 
+ #endif /* _M68KNOMMU_PAGE_H */
+diff -puN include/asm-m68k/page.h~dev-mem-restriction-patch include/asm-m68k/page.h
+--- 25/include/asm-m68k/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.448171680 -0700
++++ 25-akpm/include/asm-m68k/page.h	2004-09-30 22:35:51.476167424 -0700
+@@ -190,6 +190,8 @@ static inline void *__va(unsigned long x
+ #define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | VM_EXEC | \
+ 				 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* __KERNEL__ */
+ 
+ #endif /* _M68K_PAGE_H */
+diff -puN include/asm-mips/page.h~dev-mem-restriction-patch include/asm-mips/page.h
+--- 25/include/asm-mips/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.449171528 -0700
++++ 25-akpm/include/asm-mips/page.h	2004-09-30 22:35:51.477167272 -0700
+@@ -137,4 +137,6 @@ static __inline__ int get_order(unsigned
+ #define WANT_PAGE_VIRTUAL
+ #endif
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* _ASM_PAGE_H */
+diff -puN include/asm-parisc/page.h~dev-mem-restriction-patch include/asm-parisc/page.h
+--- 25/include/asm-parisc/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.451171224 -0700
++++ 25-akpm/include/asm-parisc/page.h	2004-09-30 22:35:51.477167272 -0700
+@@ -157,6 +157,8 @@ extern int npmem_ranges;
+ #define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | VM_EXEC | \
+ 				 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* __KERNEL__ */
+ 
+ #endif /* _PARISC_PAGE_H */
+diff -puN include/asm-ppc64/page.h~dev-mem-restriction-patch include/asm-ppc64/page.h
+--- 25/include/asm-ppc64/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.452171072 -0700
++++ 25-akpm/include/asm-ppc64/page.h	2004-09-30 22:35:51.477167272 -0700
+@@ -236,5 +236,7 @@ extern int page_is_ram(unsigned long pfn
+ #define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | VM_EXEC | \
+ 				 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* __KERNEL__ */
+ #endif /* _PPC64_PAGE_H */
+diff -puN include/asm-ppc/page.h~dev-mem-restriction-patch include/asm-ppc/page.h
+--- 25/include/asm-ppc/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.453170920 -0700
++++ 25-akpm/include/asm-ppc/page.h	2004-09-30 22:35:51.478167120 -0700
+@@ -163,5 +163,7 @@ extern __inline__ int get_order(unsigned
+ #define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | VM_EXEC | \
+ 				 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* __KERNEL__ */
+ #endif /* _PPC_PAGE_H */
+diff -puN include/asm-s390/page.h~dev-mem-restriction-patch include/asm-s390/page.h
+--- 25/include/asm-s390/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.455170616 -0700
++++ 25-akpm/include/asm-s390/page.h	2004-09-30 22:35:51.478167120 -0700
+@@ -181,6 +181,8 @@ typedef struct { unsigned long pgd; } pg
+ #define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | VM_EXEC | \
+ 				 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* __KERNEL__ */
+ 
+ #endif /* _S390_PAGE_H */
+diff -puN include/asm-sh64/page.h~dev-mem-restriction-patch include/asm-sh64/page.h
+--- 25/include/asm-sh64/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.456170464 -0700
++++ 25-akpm/include/asm-sh64/page.h	2004-09-30 22:35:51.478167120 -0700
+@@ -132,6 +132,8 @@ extern __inline__ int get_order(unsigned
+ 
+ #endif
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* __KERNEL__ */
+ 
+ #endif /* __ASM_SH64_PAGE_H */
+diff -puN include/asm-sh/page.h~dev-mem-restriction-patch include/asm-sh/page.h
+--- 25/include/asm-sh/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.458170160 -0700
++++ 25-akpm/include/asm-sh/page.h	2004-09-30 22:35:51.479166968 -0700
+@@ -133,6 +133,8 @@ static __inline__ int get_order(unsigned
+ 
+ #endif
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* __KERNEL__ */
+ 
+ #endif /* __ASM_SH_PAGE_H */
+diff -puN include/asm-sparc64/page.h~dev-mem-restriction-patch include/asm-sparc64/page.h
+--- 25/include/asm-sparc64/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.459170008 -0700
++++ 25-akpm/include/asm-sparc64/page.h	2004-09-30 22:35:51.479166968 -0700
+@@ -165,6 +165,8 @@ static __inline__ int get_order(unsigned
+ #define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | VM_EXEC | \
+ 				 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* !(__KERNEL__) */
+ 
+ #endif /* !(_SPARC64_PAGE_H) */
+diff -puN include/asm-sparc/page.h~dev-mem-restriction-patch include/asm-sparc/page.h
+--- 25/include/asm-sparc/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.461169704 -0700
++++ 25-akpm/include/asm-sparc/page.h	2004-09-30 22:35:51.479166968 -0700
+@@ -176,6 +176,8 @@ extern unsigned long pfn_base;
+ #define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | VM_EXEC | \
+ 				 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* __KERNEL__ */
+ 
+ #endif /* _SPARC_PAGE_H */
+diff -puN include/asm-um/page.h~dev-mem-restriction-patch include/asm-um/page.h
+--- 25/include/asm-um/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.462169552 -0700
++++ 25-akpm/include/asm-um/page.h	2004-09-30 22:35:51.480166816 -0700
+@@ -45,6 +45,7 @@ extern void *to_virt(unsigned long phys)
+   
+ extern struct page *arch_validate(struct page *page, int mask, int order);
+ #define HAVE_ARCH_VALIDATE
++#define devmem_is_allowed(x) 1
+ 
+ extern void arch_free_page(struct page *page, int order);
+ #define HAVE_ARCH_FREE_PAGE
+diff -puN include/asm-v850/page.h~dev-mem-restriction-patch include/asm-v850/page.h
+--- 25/include/asm-v850/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.464169248 -0700
++++ 25-akpm/include/asm-v850/page.h	2004-09-30 22:35:51.480166816 -0700
+@@ -141,6 +141,8 @@ extern __inline__ int get_order (unsigne
+ #define __va(x)		     ((void *)__phys_to_virt ((unsigned long)(x)))
+ 
+ 
++#define devmem_is_allowed(x) 1
++
+ #endif /* KERNEL */
+ 
+ #endif /* __V850_PAGE_H__ */
+diff -puN include/asm-x86_64/page.h~dev-mem-restriction-patch include/asm-x86_64/page.h
+--- 25/include/asm-x86_64/page.h~dev-mem-restriction-patch	2004-09-30 22:35:51.465169096 -0700
++++ 25-akpm/include/asm-x86_64/page.h	2004-09-30 22:35:51.480166816 -0700
+@@ -148,6 +148,7 @@ extern __inline__ int get_order(unsigned
+ struct task_struct;
+ struct vm_area_struct *get_gate_vma(struct task_struct *tsk);
+ int in_gate_area(struct task_struct *task, unsigned long addr);
++extern int devmem_is_allowed(unsigned long pagenr);
+ #endif
+ 
+ #endif /* __KERNEL__ */
+_

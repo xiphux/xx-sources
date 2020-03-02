@@ -1,0 +1,67 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+The attached patch fixes long latencies in unmap_vmas().  We had lockbreak
+code in that function already but it did not take delayed effects of
+TLB-gather into account.
+
+Has been tested as part of the -VP patchset.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/memory.c |   26 +++++++++++---------------
+ 1 files changed, 11 insertions(+), 15 deletions(-)
+
+diff -puN mm/memory.c~sched-mm-fix-scheduling-latencies-in-unmap_vmas mm/memory.c
+--- 25/mm/memory.c~sched-mm-fix-scheduling-latencies-in-unmap_vmas	Tue Sep 14 17:40:01 2004
++++ 25-akpm/mm/memory.c	Tue Sep 14 17:40:01 2004
+@@ -497,19 +497,15 @@ static void unmap_page_range(struct mmu_
+ 	tlb_end_vma(tlb, vma);
+ }
+ 
+-/* Dispose of an entire struct mmu_gather per rescheduling point */
+-#if defined(CONFIG_SMP) && defined(CONFIG_PREEMPT)
+-#define ZAP_BLOCK_SIZE	(FREE_PTE_NR * PAGE_SIZE)
+-#endif
+-
+-/* For UP, 256 pages at a time gives nice low latency */
+-#if !defined(CONFIG_SMP) && defined(CONFIG_PREEMPT)
+-#define ZAP_BLOCK_SIZE	(256 * PAGE_SIZE)
+-#endif
+-
++#ifdef CONFIG_PREEMPT
++/*
++ * It's not an issue to have a small zap block size - TLB flushes
++ * only happen once normally, due to the tlb->need_flush optimization.
++ */
++# define ZAP_BLOCK_SIZE	(8 * PAGE_SIZE)
++#else
+ /* No preempt: go for improved straight-line efficiency */
+-#if !defined(CONFIG_PREEMPT)
+-#define ZAP_BLOCK_SIZE	(1024 * PAGE_SIZE)
++# define ZAP_BLOCK_SIZE	(1024 * PAGE_SIZE)
+ #endif
+ 
+ /**
+@@ -584,15 +580,15 @@ int unmap_vmas(struct mmu_gather **tlbp,
+ 
+ 			start += block;
+ 			zap_bytes -= block;
+-			if ((long)zap_bytes > 0)
+-				continue;
+-			if (!atomic && need_resched()) {
++			if (!atomic) {
+ 				int fullmm = tlb_is_full_mm(*tlbp);
+ 				tlb_finish_mmu(*tlbp, tlb_start, start);
+ 				cond_resched_lock(&mm->page_table_lock);
+ 				*tlbp = tlb_gather_mmu(mm, fullmm);
+ 				tlb_start_valid = 0;
+ 			}
++			if ((long)zap_bytes > 0)
++				continue;
+ 			zap_bytes = ZAP_BLOCK_SIZE;
+ 		}
+ 	}
+_

@@ -1,0 +1,53 @@
+Documentation for the linear target.  The last 2 scripts still need
+testing.
+--- diff/Documentation/device-mapper/linear.txt	1970-01-01 01:00:00.000000000 +0100
++++ source/Documentation/device-mapper/linear.txt	2004-04-21 10:55:50.297843200 +0100
+@@ -0,0 +1,48 @@
++The linear target maps a linear range of the device mapper device on
++to a linear range of another device.  This is the basic building block
++of logical volume managers.
++
++Parameters: <devpath> <offset>
++
++[[
++#!/bin/sh
++# Create an identity mapping for a device
++dmsetup create identity <<EOF
++0 `blockdev --getsize $1` linear $1 0
++EOF
++]]
++
++[[
++#!/bin/sh
++# Join 2 devices together
++size1=`blockdev --getsize $1`
++size2=`blockdev --getsize $2`
++dmsetup create joined <<EOF
++0 $size1 linear $1 0
++$size1 `expr $size1 + $size2` linear $2 0
++EOF
++]]
++
++[[
++#!/bin/sh
++# Split a device into 4M chunks, and then join them together in
++# reverse order
++size=`blockdev --getsize $1`
++table=""
++extent=8196
++count=`expr $size / $extent`
++lcount=0
++while [ $count -g 0 ]
++do
++	lstart=`expr $lcount * $extent`
++	lcount=`expr $lcount + 1`
++
++	end=`expr $count * $extent`
++	count=`expr $count - 1`
++	start=`expr $count * $extent`
++
++	foo="$foo\n$lstart $end linear $1 $start"
++done
++
++echo $table | dmsetup create reversed
++]]

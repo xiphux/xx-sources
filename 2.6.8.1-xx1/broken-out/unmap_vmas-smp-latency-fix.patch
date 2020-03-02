@@ -1,0 +1,31 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/memory.c |    9 ++++++---
+ 1 files changed, 6 insertions(+), 3 deletions(-)
+
+diff -puN mm/memory.c~unmap_vmas-smp-latency-fix mm/memory.c
+--- 25/mm/memory.c~unmap_vmas-smp-latency-fix	2004-07-12 23:54:50.766190216 -0700
++++ 25-akpm/mm/memory.c	2004-07-12 23:56:09.875163824 -0700
+@@ -567,12 +567,15 @@ int unmap_vmas(struct mmu_gather **tlbp,
+ 			zap_bytes -= block;
+ 			if ((long)zap_bytes > 0)
+ 				continue;
+-			if (!atomic && need_resched()) {
++			if (!atomic) {
+ 				int fullmm = tlb_is_full_mm(*tlbp);
++
+ 				tlb_finish_mmu(*tlbp, tlb_start, start);
+-				cond_resched_lock(&mm->page_table_lock);
+-				*tlbp = tlb_gather_mmu(mm, fullmm);
++				spin_unlock(&mm->page_table_lock);
++				cond_resched();
+ 				tlb_start_valid = 0;
++				spin_lock(&mm->page_table_lock);
++				*tlbp = tlb_gather_mmu(mm, fullmm);
+ 			}
+ 			zap_bytes = ZAP_BLOCK_SIZE;
+ 		}
+_

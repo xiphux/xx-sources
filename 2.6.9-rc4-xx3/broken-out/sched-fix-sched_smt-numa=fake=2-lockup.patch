@@ -1,0 +1,78 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+This patch fixes an interaction between the numa=fake=<domains> feature,
+the domain setup code and cpu_siblings_map[].  The bug leads to a bootup
+crash when using numa=fake=2 on a 2-way/4-way SMP+HT box.
+
+When SCHED_SMT is turned on the domains-setup code relies on siblings not
+spanning multiple domains (which makes perfect sense).  But numa=fake=2
+creates an assymetric 1101/0010 splitup between CPUs, which results in two
+siblings being on different nodes.
+
+The patch adds a check_siblings_map() function that checks the sibling maps
+and fixes them up if they violate this rule.  (it also prints a warning in
+that case.)
+
+The patch also turns SCHED_DOMAIN_DEBUG back on - had this been enabled
+we'd have noticed this bug much earlier.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/sched.c |   27 ++++++++++++++++++++++++++-
+ 1 files changed, 26 insertions(+), 1 deletion(-)
+
+diff -puN kernel/sched.c~sched-fix-sched_smt-numa=fake=2-lockup kernel/sched.c
+--- 25/kernel/sched.c~sched-fix-sched_smt-numa=fake=2-lockup	Fri Oct  8 14:05:32 2004
++++ 25-akpm/kernel/sched.c	Fri Oct  8 14:05:32 2004
+@@ -4199,6 +4199,28 @@ static int __devinit cpu_to_node_group(i
+ }
+ #endif
+ 
++#if defined(CONFIG_SCHED_SMT) && defined(CONFIG_NUMA)
++/*
++ * The domains setup code relies on siblings not spanning
++ * multiple nodes. Make sure the architecture has a proper
++ * siblings map:
++ */
++static void check_sibling_maps(void)
++{
++	int i, j;
++
++	for_each_online_cpu(i) {
++		for_each_cpu_mask(j, cpu_sibling_map[i]) {
++			if (cpu_to_node[i] != cpu_to_node[j]) {
++				printk(KERN_INFO "warning: CPU %d siblings map to different node - isolating them.\n", i);
++				cpu_sibling_map[i] = cpumask_of_cpu(i);
++				break;
++			}
++		}
++	}
++}
++#endif
++
+ /*
+  * Set up scheduler domains and groups.  Callers must hold the hotplug lock.
+  */
+@@ -4207,6 +4229,9 @@ static void __devinit arch_init_sched_do
+ 	int i;
+ 	cpumask_t cpu_default_map;
+ 
++#if defined(CONFIG_SCHED_SMT) && defined(CONFIG_NUMA)
++	check_sibling_maps();
++#endif
+ 	/*
+ 	 * Setup mask for cpus without special case scheduling requirements.
+ 	 * For now this just excludes isolated cpus, but could be used to
+@@ -4329,7 +4354,7 @@ static void __devinit arch_destroy_sched
+ 
+ #endif /* ARCH_HAS_SCHED_DOMAIN */
+ 
+-#undef SCHED_DOMAIN_DEBUG
++#define SCHED_DOMAIN_DEBUG
+ #ifdef SCHED_DOMAIN_DEBUG
+ static void sched_domain_debug(void)
+ {
+_

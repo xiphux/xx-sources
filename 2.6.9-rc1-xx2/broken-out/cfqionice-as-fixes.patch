@@ -1,0 +1,68 @@
+# 2.6.3-WOLK1.1
+#
+# Comment:
+# --------
+# w/o this fix, elevator=as (the default) is dead due to cfq ionice elevator
+# Con: *hint hint* - Merge this in your -ck tree too because it's broken too :p
+#
+# Patch from: Jens Axboe
+
+Index: xx-elv-select-cfqionice/drivers/block/ll_rw_blk.c
+===================================================================
+--- xx-elv-select-cfqionice.orig/drivers/block/ll_rw_blk.c	2004-08-17 06:32:13.413311520 -0400
++++ xx-elv-select-cfqionice/drivers/block/ll_rw_blk.c	2004-08-17 06:32:53.620199144 -0400
+@@ -1661,9 +1661,6 @@
+ 
+ 	spin_lock_irq(q->queue_lock);
+ 
+-	if (!elv_may_queue(q, rw))
+-		goto out_lock;
+-
+ 	if (rl->count[rw]+1 >= q->nr_requests) {
+ 		/*
+ 		 * The queue will fill after this allocation, so set it as
+@@ -1677,12 +1674,15 @@
+ 		}
+ 	}
+ 
+-	/*
+-	 * The queue is full and the allocating process is not a
+-	 * "batcher", and not exempted by the IO scheduler
+-	 */
+-	if (blk_queue_full(q, rw) && !ioc_batching(ioc))
+-		goto out_lock;
++	if (blk_queue_full(q, rw)
++			&& !ioc_batching(ioc) && !elv_may_queue(q, rw)) {
++		/*
++		 * The queue is full and the allocating process is not a
++		 * "batcher", and not exempted by the IO scheduler
++		 */
++		spin_unlock_irq(q->queue_lock);
++		goto out;
++	}
+ 
+ 	rl->count[rw]++;
+ 	if (rl->count[rw] >= queue_congestion_on_threshold(q))
+@@ -1700,7 +1700,8 @@
+ 		 */
+ 		spin_lock_irq(q->queue_lock);
+ 		freed_request(q, rw);
+-		goto out_lock;
++		spin_unlock_irq(q->queue_lock);
++		goto out;
+ 	}
+ 
+ 	if (ioc_batching(ioc))
+@@ -1729,12 +1730,7 @@
+ 
+ out:
+ 	put_io_context(ioc);
+-	if (!rq)
+-		elv_set_congested(q);
+ 	return rq;
+-out_lock:
+-	spin_unlock_irq(q->queue_lock);
+-	goto out;
+ }
+ 
+ /*

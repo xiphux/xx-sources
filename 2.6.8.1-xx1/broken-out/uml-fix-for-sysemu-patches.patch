@@ -1,0 +1,199 @@
+
+From: <blaisorblade_spam@yahoo.it>
+
+- Correct some silly errors (dereferencing a pointer before checking if it's
+  != NULL when creating /proc/sysemu, some error messages)
+
+- separate using_sysemu from sysemu_supported (so to refuse to activate
+  sysemu if it is not supported, avoiding panics)
+
+- not probe sysemu if in tt mode.
+
+Signed-off-by: <blaisorblade_spam@yahoo.it>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/um/kernel/process.c                  |   80 ++++++++++++----------
+ 25-akpm/arch/um/kernel/skas/include/ptrace-skas.h |    1 
+ 25-akpm/arch/um/kernel/skas/process.c             |    9 +-
+ 25-akpm/arch/um/kernel/skas/process_kern.c        |   14 ++-
+ 4 files changed, 58 insertions(+), 46 deletions(-)
+
+diff -puN arch/um/kernel/process.c~uml-fix-for-sysemu-patches arch/um/kernel/process.c
+--- 25/arch/um/kernel/process.c~uml-fix-for-sysemu-patches	2004-07-05 16:00:46.556942720 -0700
++++ 25-akpm/arch/um/kernel/process.c	2004-07-05 16:00:46.565941352 -0700
+@@ -212,6 +212,49 @@ __uml_setup("nosysemu", nosysemu_cmd_par
+ 		"    To make it working, you need a kernel patch for your host, too.\n"
+ 		"    See http://perso.wanadoo.fr/laurent.vivier/UML/ for further information.\n");
+ 
++static void __init check_sysemu(void)
++{
++	void *stack;
++	int pid, n, status;
++
++	if (mode_tt)
++		return;
++
++	printk("Checking syscall emulation patch for ptrace...");
++	sysemu_supported = 0;
++	pid = start_ptraced_child(&stack);
++	if(ptrace(PTRACE_SYSEMU, pid, 0, 0) >= 0) {
++		struct user_regs_struct regs;
++
++		if (waitpid(pid, &status, WUNTRACED) < 0)
++			panic("check_ptrace : wait failed, errno = %d", errno);
++		if(!WIFSTOPPED(status) || (WSTOPSIG(status) != SIGTRAP))
++			panic("check_ptrace : expected SIGTRAP, "
++			      "got status = %d", status);
++
++		if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0)
++			panic("check_ptrace : failed to read child "
++			      "registers, errno = %d", errno);
++		regs.orig_eax = pid;
++		if (ptrace(PTRACE_SETREGS, pid, 0, &regs) < 0)
++			panic("check_ptrace : failed to modify child "
++			      "registers, errno = %d", errno);
++
++		stop_ptraced_child(pid, stack, 0);
++
++		sysemu_supported = 1;
++		printk("found\n");
++	}
++	else
++	{
++		stop_ptraced_child(pid, stack, 1);
++		sysemu_supported = 0;
++		printk("missing\n");
++	}
++
++	set_using_sysemu(!force_sysemu_disabled);
++}
++
+ void __init check_ptrace(void)
+ {
+ 	void *stack;
+@@ -244,42 +287,7 @@ void __init check_ptrace(void)
+ 	}
+ 	stop_ptraced_child(pid, stack, 0);
+ 	printk("OK\n");
+-
+-	printk("Checking syscall emulation patch for ptrace...");
+-	set_using_sysemu(0);
+-	pid = start_ptraced_child(&stack);
+-	if(ptrace(PTRACE_SYSEMU, pid, 0, 0) >= 0) {
+-		struct user_regs_struct regs;
+-
+-		if (waitpid(pid, &status, WUNTRACED) < 0)
+-			panic("check_ptrace : wait failed, errno = %d", errno);
+-		if(!WIFSTOPPED(status) || (WSTOPSIG(status) != SIGTRAP))
+-			panic("check_ptrace : expected SIGTRAP, "
+-			      "got status = %d", status);
+-
+-		if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0)
+-			panic("check_ptrace : failed to read child "
+-			      "registers, errno = %d", errno);
+-		regs.orig_eax = pid;
+-		if (ptrace(PTRACE_SETREGS, pid, 0, &regs) < 0)
+-			panic("check_ptrace : failed to modify child "
+-			      "registers, errno = %d", errno);
+-
+-		stop_ptraced_child(pid, stack, 0);
+-
+-		if (!force_sysemu_disabled) {
+-			printk("found\n");
+-			set_using_sysemu(1);
+-		} else {
+-			printk("found but disabled\n");
+-		}
+-	}
+-	else
+-	{
+-		printk("missing\n");
+-		stop_ptraced_child(pid, stack, 1);
+-	}
+-
++	check_sysemu();
+ }
+ 
+ int run_kernel_thread(int (*fn)(void *), void *arg, void **jmp_ptr)
+diff -puN arch/um/kernel/skas/include/ptrace-skas.h~uml-fix-for-sysemu-patches arch/um/kernel/skas/include/ptrace-skas.h
+--- 25/arch/um/kernel/skas/include/ptrace-skas.h~uml-fix-for-sysemu-patches	2004-07-05 16:00:46.558942416 -0700
++++ 25-akpm/arch/um/kernel/skas/include/ptrace-skas.h	2004-07-05 16:00:46.566941200 -0700
+@@ -18,6 +18,7 @@
+ 
+ void set_using_sysemu(int value);
+ int get_using_sysemu(void);
++extern int sysemu_supported;
+ 
+ #include "skas_ptregs.h"
+ 
+diff -puN arch/um/kernel/skas/process.c~uml-fix-for-sysemu-patches arch/um/kernel/skas/process.c
+--- 25/arch/um/kernel/skas/process.c~uml-fix-for-sysemu-patches	2004-07-05 16:00:46.559942264 -0700
++++ 25-akpm/arch/um/kernel/skas/process.c	2004-07-05 16:00:46.566941200 -0700
+@@ -151,8 +151,8 @@ void userspace(union uml_pt_regs *regs)
+ 	else
+ 		err = ptrace(PTRACE_SYSCALL, pid, 0, 0);
+ 	if(err)
+-		panic("userspace - PTRACE_SYSCALL failed, errno = %d\n", 
+-		       errno);
++		panic("userspace - PTRACE_%s failed, errno = %d\n",
++		       local_using_sysemu ? "SYSEMU" : "SYSCALL", errno);
+ 	while(1){
+ 		err = waitpid(pid, &status, WUNTRACED);
+ 		if(err < 0)
+@@ -199,8 +199,9 @@ void userspace(union uml_pt_regs *regs)
+ 
+ 		err = ptrace(op, pid, 0, 0);
+ 		if(err)
+-			panic("userspace - PTRACE_SYSCALL failed, "
+-			      "errno = %d\n", errno);
++			panic("userspace - PTRACE_%s failed, "
++			      "errno = %d\n",
++			      local_using_sysemu ? "SYSEMU" : "SYSCALL", errno);
+ 	}
+ }
+ 
+diff -puN arch/um/kernel/skas/process_kern.c~uml-fix-for-sysemu-patches arch/um/kernel/skas/process_kern.c
+--- 25/arch/um/kernel/skas/process_kern.c~uml-fix-for-sysemu-patches	2004-07-05 16:00:46.560942112 -0700
++++ 25-akpm/arch/um/kernel/skas/process_kern.c	2004-07-05 16:00:46.567941048 -0700
+@@ -23,13 +23,12 @@
+ #include "kern.h"
+ #include "mode.h"
+ 
+-#ifdef PTRACE_SYSEMU
+ static atomic_t using_sysemu;
+-#endif
++int sysemu_supported;
+ 
+ void set_using_sysemu(int value)
+ {
+-	atomic_set(&using_sysemu, value);
++	atomic_set(&using_sysemu, sysemu_supported && value);
+ }
+ 
+ int get_using_sysemu(void)
+@@ -60,10 +59,10 @@ int proc_write_sysemu(struct file *file,
+ int __init make_proc_sysemu(void)
+ {
+ 	struct proc_dir_entry *ent;
++	if (mode_tt || !sysemu_supported)
++		return 0;
+ 
+-	ent = create_proc_entry("sysemu", 00600, &proc_root);
+-	ent->read_proc  = proc_read_sysemu;
+-	ent->write_proc = proc_write_sysemu;
++	ent = create_proc_entry("sysemu", 0600, &proc_root);
+ 
+ 	if (ent == NULL)
+ 	{
+@@ -71,6 +70,9 @@ int __init make_proc_sysemu(void)
+ 		return(0);
+ 	}
+ 
++	ent->read_proc  = proc_read_sysemu;
++	ent->write_proc = proc_write_sysemu;
++
+ 	return 0;
+ }
+ 
+_

@@ -1,0 +1,99 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+__builtin_return_address() with non-constant arguments is unsupported on
+various architectures.
+fs/reiser4/context.c: In function `get_context_ok':
+fs/reiser4/context.c:88: warning: unsupported arg to `__builtin_return_address'
+fs/reiser4/context.c:89: warning: unsupported arg to `__builtin_return_address'
+
+s/non-constant/nonzero/
+
+Anyway, get_context_ok() appears to be nowhere used in the reiser4 bits in
+-mm.  Hans, any chance you could filter out some of the non-portable debug
+code in the -mm snapshots?  Especially the bits not called in -mm.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/reiser4/context.c |   52 -------------------------------------------
+ 25-akpm/fs/reiser4/context.h |    4 ---
+ 2 files changed, 56 deletions(-)
+
+diff -puN fs/reiser4/context.c~reiser4-get_context_ok-warning-fixes fs/reiser4/context.c
+--- 25/fs/reiser4/context.c~reiser4-get_context_ok-warning-fixes	2004-09-08 13:11:14.033844240 -0700
++++ 25-akpm/fs/reiser4/context.c	2004-09-08 13:11:14.038843480 -0700
+@@ -60,58 +60,6 @@ check_contexts(void)
+ /* REISER4_DEBUG_CONTEXTS */
+ #endif
+ 
+-struct {
+-	void *task;
+-	void *context;
+-	void *path[16];
+-} context_ok;
+-
+-
+-
+-reiser4_internal void get_context_ok(reiser4_context *ctx)
+-{
+-	int i;
+-	void *addr = NULL, *frame = NULL;
+-
+-#define CTX_FRAME(nr)						\
+-	case (nr):						\
+-		addr  = __builtin_return_address((nr));	 	\
+-                frame = __builtin_frame_address(nr);		\
+-		break
+-
+-	memset(&context_ok, 0, sizeof(context_ok));
+-
+-	context_ok.task = current;
+-	context_ok.context = ctx;
+-	for (i = 0; i < 16; i ++) {
+-		switch(i) {
+-			CTX_FRAME(0);
+-			CTX_FRAME(1);
+-			CTX_FRAME(2);
+-			CTX_FRAME(3);
+-			CTX_FRAME(4);
+-			CTX_FRAME(5);
+-			CTX_FRAME(6);
+-			CTX_FRAME(7);
+-			CTX_FRAME(8);
+-			CTX_FRAME(9);
+-			CTX_FRAME(10);
+-			CTX_FRAME(11);
+-			CTX_FRAME(12);
+-			CTX_FRAME(13);
+-			CTX_FRAME(14);
+-			CTX_FRAME(15);
+-		default:
+-			impossible("", "");
+-		}
+-		if (frame > (void *)ctx)
+-			break;
+-		context_ok.path[i] = addr;
+-	}
+-#undef CTX_FRAME
+-}
+-
+-
+ /* initialise context and bind it to the current thread
+ 
+    This function should be called at the beginning of reiser4 part of
+diff -puN fs/reiser4/context.h~reiser4-get_context_ok-warning-fixes fs/reiser4/context.h
+--- 25/fs/reiser4/context.h~reiser4-get_context_ok-warning-fixes	2004-09-08 13:11:14.035843936 -0700
++++ 25-akpm/fs/reiser4/context.h	2004-09-08 13:11:14.038843480 -0700
+@@ -205,10 +205,6 @@ extern void done_context(reiser4_context
+ 
+ extern int is_in_reiser4_context(void);
+ 
+-/* return context associated with given thread */
+-
+-void get_context_ok(reiser4_context *);
+-
+ /*
+  * return reiser4_context for the thread @tsk
+  */
+_

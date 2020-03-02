@@ -1,0 +1,268 @@
+On Tue, 2004-08-31 at 15:06 -0700, Andrew Morton wrote:
+
+> Robert Love <rml@ximian.com> wrote:
+> >
+> > 	- 	len = strlen(object) + 1 + strlen(signal);
+> > 	+ 	len = strlen(object) + 1 + strlen(signal) + 1;
+> > 
+> > should fix it, right?
+
+
+Attached.
+
+	Robert Love
+
+
+Kernel Events Layer.  A simple sysfs change notifier over netlink.
+Signed-Off-By: Robert Love <rml@novell.com>
+
+ fs/super.c              |   11 ++++-
+ include/linux/kevent.h  |   42 +++++++++++++++++++
+ include/linux/netlink.h |    1 
+ init/Kconfig            |   14 ++++++
+ kernel/Makefile         |    1 
+ kernel/kevent.c         |  105 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 6 files changed, 173 insertions(+), 1 deletion(-)
+Index: xx-sources/fs/super.c
+===================================================================
+--- xx-sources.orig/fs/super.c	2004-09-02 20:23:56.048993008 -0400
++++ xx-sources/fs/super.c	2004-09-02 20:26:11.977328760 -0400
+@@ -35,6 +35,7 @@
+ #include <linux/vfs.h>
+ #include <linux/writeback.h>		/* for the emergency remount stuff */
+ #include <linux/idr.h>
++#include <linux/kevent.h>
+ #include <asm/uaccess.h>
+ 
+ 
+@@ -890,8 +891,12 @@
+ 			up_write(&s->s_umount);
+ 			deactivate_super(s);
+ 			s = ERR_PTR(error);
+-		} else
++		} else {
+ 			s->s_flags |= MS_ACTIVE;
++			if (bdev->bd_disk)
++				send_kevent(KEVENT_FS, NULL,
++					    &bdev->bd_disk->kobj, "mount");
++		}
+ 	}
+ 
+ 	return s;
+@@ -906,6 +911,10 @@
+ void kill_block_super(struct super_block *sb)
+ {
+ 	struct block_device *bdev = sb->s_bdev;
++
++	if (bdev->bd_disk)
++		send_kevent(KEVENT_FS, NULL, &bdev->bd_disk->kobj, "umount");
++
+ 	generic_shutdown_super(sb);
+ 	set_blocksize(bdev, sb->s_old_blocksize);
+ 	close_bdev_excl(bdev);
+Index: xx-sources/include/linux/kevent.h
+===================================================================
+--- xx-sources.orig/include/linux/kevent.h	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/include/linux/kevent.h	2004-09-02 20:26:11.978328608 -0400
+@@ -0,0 +1,42 @@
++#ifndef _LINUX_KEVENT_H
++#define _LINUX_KEVENT_H
++
++#include <linux/config.h>
++#include <linux/kobject.h>
++
++/* kevent types - these are used as the multicast group */
++enum kevent {
++	KEVENT_GENERAL	=	0,
++	KEVENT_STORAGE	=	1,
++	KEVENT_POWER	=	2,
++	KEVENT_FS	= 	3,
++	KEVENT_HOTPLUG	=	4,
++};
++
++#ifdef __KERNEL__
++#ifdef CONFIG_KERNEL_EVENTS
++
++int send_kevent(enum kevent type, struct kset *kset,
++		struct kobject *kobj, const char *signal);
++
++int send_kevent_atomic(enum kevent type, struct kset *kset,
++		       struct kobject *kobj, const char *signal);
++
++#else
++
++static inline int send_kevent(enum kevent type, struct kset *kset,
++			      struct kobject *kobj, const char *signal)
++{
++	return 0;
++}
++
++static inline int send_kevent_atomic(enum kevent type, struct kset *kset,
++				     struct kobject *kobj, const char *signal)
++{
++	return 0;
++}
++
++#endif /* CONFIG_KERNEL_EVENTS */
++#endif /* __KERNEL__ */
++
++#endif	/* _LINUX_KEVENT_H */
+Index: xx-sources/include/linux/netlink.h
+===================================================================
+--- xx-sources.orig/include/linux/netlink.h	2004-09-01 13:39:07.000000000 -0400
++++ xx-sources/include/linux/netlink.h	2004-09-02 20:26:11.980328304 -0400
+@@ -17,6 +17,7 @@
+ #define NETLINK_ROUTE6		11	/* af_inet6 route comm channel */
+ #define NETLINK_IP6_FW		13
+ #define NETLINK_DNRTMSG		14	/* DECnet routing messages */
++#define NETLINK_KEVENT		15	/* Kernel messages to userspace */
+ #define NETLINK_TAPBASE		16	/* 16 to 31 are ethertap */
+ 
+ #define MAX_LINKS 32		
+Index: xx-sources/init/Kconfig
+===================================================================
+--- xx-sources.orig/init/Kconfig	2004-09-02 20:23:44.273783112 -0400
++++ xx-sources/init/Kconfig	2004-09-02 20:26:11.982328000 -0400
+@@ -164,6 +164,20 @@
+ 	  logging of avc messages output).  Does not do system-call
+ 	  auditing without CONFIG_AUDITSYSCALL.
+ 
++config KERNEL_EVENTS
++	bool "Kernel Events Layer"
++	depends on NET
++	default y
++	help
++	  This option enables the kernel events layer, which is a simple
++	  mechanism for kernel-to-user communication over a netlink socket.
++	  The goal of the kernel events layer is to provide a simple and
++	  efficient logging, error, and events system.  Specifically, code
++	  is available to link the events into D-BUS.  Say Y, unless you
++	  are building a system requiring minimal memory consumption.
++
++	  D-BUS is available at http://dbus.freedesktop.org/
++
+ config AUDITSYSCALL
+ 	bool "Enable system-call auditing support"
+ 	depends on AUDIT && (X86 || PPC64 || ARCH_S390 || IA64)
+Index: xx-sources/kernel/Makefile
+===================================================================
+--- xx-sources.orig/kernel/Makefile	2004-09-02 19:38:22.996480144 -0400
++++ xx-sources/kernel/Makefile	2004-09-02 20:26:24.751386808 -0400
+@@ -28,6 +28,7 @@
+ obj-$(CONFIG_AUDITSYSCALL) += auditsc.o
+ obj-$(CONFIG_KPROBES) += kprobes.o
+ obj-$(CONFIG_MORSE_PANICS) += morse.o
++obj-$(CONFIG_KERNEL_EVENTS) += kevent.o
+ 
+ ifneq ($(CONFIG_IA64),y)
+ # According to Alan Modra <alan@linuxcare.com.au>, the -fno-omit-frame-pointer is
+Index: xx-sources/kernel/kevent.c
+===================================================================
+--- xx-sources.orig/kernel/kevent.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/kernel/kevent.c	2004-09-02 20:26:11.983327848 -0400
+@@ -0,0 +1,105 @@
++/*
++ * kernel/kevent.c - sysfs event delivery via netlink socket
++ * 
++ * Copyright (C) 2004 Red Hat, Inc.  All rights reserved.
++ * Copyright (C) 2004 Novell, Inc.  All rights reserved.
++ *
++ * Licensed under the GNU GPL v2.
++ *
++ * Authors:
++ *	Robert Love		<rml@novell.com>
++ *	Kay Sievers		<kay.sievers@vrfy.org>
++ *	Arjan van de Ven	<arjanv@redhat.com>
++ */
++
++#include <linux/module.h>
++#include <linux/spinlock.h>
++#include <linux/socket.h>
++#include <linux/skbuff.h>
++#include <linux/netlink.h>
++#include <linux/string.h>
++#include <linux/kobject.h>
++#include <linux/kevent.h>
++#include <net/sock.h>
++
++static struct sock *kevent_sock = NULL;	/* kevent's global netlink socket */
++
++/**
++ * send_kevent - send a message to user-space via the kernel events layer
++ */
++static int do_send_kevent(enum kevent type, int gfp_mask,
++			  const char *object, const char *signal)
++{
++	struct sk_buff *skb;
++	char *buffer;
++	int len;
++
++	if (!kevent_sock)
++		return -EIO;
++
++	if (!object || !signal)
++		return -EINVAL;
++
++	len = strlen(object) + 1 + strlen(signal) + 1;
++
++	skb = alloc_skb(len, gfp_mask);
++	if (!skb)
++		return -ENOMEM;
++
++	buffer = skb_put(skb, len);
++
++	sprintf(buffer, "%s\n%s", object, signal);
++
++	return netlink_broadcast(kevent_sock, skb, 0, (1 << type), gfp_mask);
++}
++
++int send_kevent(enum kevent type, struct kset *kset,
++		struct kobject *kobj, const char *signal)
++{
++	const char *path;
++	int ret;
++
++	path = kobject_get_path(kset, kobj, GFP_KERNEL);
++	if (!path)
++		return -ENOMEM;
++
++	ret =  do_send_kevent(type, GFP_KERNEL, path, signal);
++	kfree(path);
++
++	return ret;
++}
++
++EXPORT_SYMBOL_GPL(send_kevent);
++
++int send_kevent_atomic(enum kevent type, struct kset *kset,
++		       struct kobject *kobj, const char *signal)
++{
++	const char *path;
++	int ret;
++
++	path = kobject_get_path(kset, kobj, GFP_ATOMIC);
++	if (!path)
++		return -ENOMEM;
++
++	ret =  do_send_kevent(type, GFP_ATOMIC, path, signal);
++	kfree(path);
++
++	return ret;
++}
++
++EXPORT_SYMBOL_GPL(send_kevent_atomic);
++
++static int kevent_init(void)
++{
++	kevent_sock = netlink_kernel_create(NETLINK_KEVENT, NULL);
++
++	if (!kevent_sock) {
++		printk(KERN_ERR
++		       "kevent: unable to create netlink socket!\n");
++		return -ENODEV;
++	}
++
++	return 0;
++}
++
++module_init(kevent_init);

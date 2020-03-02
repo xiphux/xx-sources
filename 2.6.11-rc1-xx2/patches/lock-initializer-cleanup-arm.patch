@@ -1,0 +1,303 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/arm/common/rtctime.c                 |    2 +-
+ 25-akpm/arch/arm/common/scoop.c                   |    2 +-
+ 25-akpm/arch/arm/kernel/apm.c                     |    2 +-
+ 25-akpm/arch/arm/kernel/dma.c                     |    2 +-
+ 25-akpm/arch/arm/kernel/irq.c                     |    2 +-
+ 25-akpm/arch/arm/kernel/semaphore.c               |    2 +-
+ 25-akpm/arch/arm/kernel/smp.c                     |    4 ++--
+ 25-akpm/arch/arm/kernel/time.c                    |    2 +-
+ 25-akpm/arch/arm/kernel/traps.c                   |    4 ++--
+ 25-akpm/arch/arm/mach-footbridge/ebsa285-leds.c   |    2 +-
+ 25-akpm/arch/arm/mach-footbridge/netwinder-hw.c   |    2 +-
+ 25-akpm/arch/arm/mach-footbridge/netwinder-leds.c |    2 +-
+ 25-akpm/arch/arm/mach-integrator/core.c           |    2 +-
+ 25-akpm/arch/arm/mach-integrator/pci_v3.c         |    2 +-
+ 25-akpm/arch/arm/mach-ixp2000/core.c              |    2 +-
+ 25-akpm/arch/arm/mach-ixp4xx/common-pci.c         |    2 +-
+ 25-akpm/arch/arm/mach-omap/clock.c                |    2 +-
+ 25-akpm/arch/arm/mach-omap/mux.c                  |    2 +-
+ 25-akpm/arch/arm/mach-shark/leds.c                |    2 +-
+ 25-akpm/arch/arm/mm/consistent.c                  |    2 +-
+ 25-akpm/arch/arm/mm/copypage-v6.c                 |    2 +-
+ 21 files changed, 23 insertions(+), 23 deletions(-)
+
+diff -puN arch/arm/common/rtctime.c~lock-initializer-cleanup-arm arch/arm/common/rtctime.c
+--- 25/arch/arm/common/rtctime.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/common/rtctime.c	Wed Jan 12 16:55:03 2005
+@@ -28,7 +28,7 @@ static struct fasync_struct *rtc_async_q
+ /*
+  * rtc_lock protects rtc_irq_data
+  */
+-static spinlock_t rtc_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(rtc_lock);
+ static unsigned long rtc_irq_data;
+ 
+ /*
+diff -puN arch/arm/common/scoop.c~lock-initializer-cleanup-arm arch/arm/common/scoop.c
+--- 25/arch/arm/common/scoop.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/common/scoop.c	Wed Jan 12 16:55:03 2005
+@@ -31,7 +31,7 @@ void reset_scoop(void)
+ 	SCOOP_REG(SCOOP_IRM) = 0x0000;
+ }
+ 
+-static spinlock_t scoop_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(scoop_lock);
+ static u32 scoop_gpwr;
+ 
+ unsigned short set_scoop_gpio(unsigned short bit)
+diff -puN arch/arm/kernel/apm.c~lock-initializer-cleanup-arm arch/arm/kernel/apm.c
+--- 25/arch/arm/kernel/apm.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/kernel/apm.c	Wed Jan 12 16:55:03 2005
+@@ -97,7 +97,7 @@ static LIST_HEAD(apm_user_list);
+  */
+ static DECLARE_WAIT_QUEUE_HEAD(kapmd_wait);
+ static DECLARE_COMPLETION(kapmd_exit);
+-static spinlock_t kapmd_queue_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(kapmd_queue_lock);
+ static struct apm_queue kapmd_queue;
+ 
+ 
+diff -puN arch/arm/kernel/dma.c~lock-initializer-cleanup-arm arch/arm/kernel/dma.c
+--- 25/arch/arm/kernel/dma.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/kernel/dma.c	Wed Jan 12 16:55:03 2005
+@@ -22,7 +22,7 @@
+ 
+ #include <asm/mach/dma.h>
+ 
+-spinlock_t dma_spin_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(dma_spin_lock);
+ 
+ #if MAX_DMA_CHANNELS > 0
+ 
+diff -puN arch/arm/kernel/irq.c~lock-initializer-cleanup-arm arch/arm/kernel/irq.c
+--- 25/arch/arm/kernel/irq.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/kernel/irq.c	Wed Jan 12 16:55:03 2005
+@@ -49,7 +49,7 @@
+ 
+ static int noirqdebug;
+ static volatile unsigned long irq_err_count;
+-static spinlock_t irq_controller_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(irq_controller_lock);
+ static LIST_HEAD(irq_pending);
+ 
+ struct irqdesc irq_desc[NR_IRQS];
+diff -puN arch/arm/kernel/semaphore.c~lock-initializer-cleanup-arm arch/arm/kernel/semaphore.c
+--- 25/arch/arm/kernel/semaphore.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/kernel/semaphore.c	Wed Jan 12 16:55:03 2005
+@@ -54,7 +54,7 @@ void __up(struct semaphore *sem)
+ 	wake_up(&sem->wait);
+ }
+ 
+-static spinlock_t semaphore_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(semaphore_lock);
+ 
+ void __sched __down(struct semaphore * sem)
+ {
+diff -puN arch/arm/kernel/smp.c~lock-initializer-cleanup-arm arch/arm/kernel/smp.c
+--- 25/arch/arm/kernel/smp.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/kernel/smp.c	Wed Jan 12 16:55:03 2005
+@@ -66,7 +66,7 @@ struct smp_call_struct {
+ };
+ 
+ static struct smp_call_struct * volatile smp_call_function_data;
+-static spinlock_t smp_call_function_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(smp_call_function_lock);
+ 
+ int __init __cpu_up(unsigned int cpu)
+ {
+@@ -284,7 +284,7 @@ static void ipi_call_function(unsigned i
+ 		cpu_clear(cpu, data->unfinished);
+ }
+ 
+-static spinlock_t stop_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(stop_lock);
+ 
+ /*
+  * ipi_cpu_stop - handle IPI from smp_send_stop()
+diff -puN arch/arm/kernel/time.c~lock-initializer-cleanup-arm arch/arm/kernel/time.c
+--- 25/arch/arm/kernel/time.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/kernel/time.c	Wed Jan 12 16:55:03 2005
+@@ -48,7 +48,7 @@ struct sys_timer *system_timer;
+ extern unsigned long wall_jiffies;
+ 
+ /* this needs a better home */
+-spinlock_t rtc_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(rtc_lock);
+ 
+ #ifdef CONFIG_SA1100_RTC_MODULE
+ EXPORT_SYMBOL(rtc_lock);
+diff -puN arch/arm/kernel/traps.c~lock-initializer-cleanup-arm arch/arm/kernel/traps.c
+--- 25/arch/arm/kernel/traps.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/kernel/traps.c	Wed Jan 12 16:55:03 2005
+@@ -200,7 +200,7 @@ void show_stack(struct task_struct *tsk,
+ 	barrier();
+ }
+ 
+-spinlock_t die_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(die_lock);
+ 
+ /*
+  * This function is protected against re-entrancy.
+@@ -241,7 +241,7 @@ void die_if_kernel(const char *str, stru
+ }
+ 
+ static LIST_HEAD(undef_hook);
+-static spinlock_t undef_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(undef_lock);
+ 
+ void register_undef_hook(struct undef_hook *hook)
+ {
+diff -puN arch/arm/mach-footbridge/ebsa285-leds.c~lock-initializer-cleanup-arm arch/arm/mach-footbridge/ebsa285-leds.c
+--- 25/arch/arm/mach-footbridge/ebsa285-leds.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/mach-footbridge/ebsa285-leds.c	Wed Jan 12 16:55:03 2005
+@@ -32,7 +32,7 @@
+ static char led_state;
+ static char hw_led_state;
+ 
+-static spinlock_t leds_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(leds_lock);
+ 
+ static void ebsa285_leds_event(led_event_t evt)
+ {
+diff -puN arch/arm/mach-footbridge/netwinder-hw.c~lock-initializer-cleanup-arm arch/arm/mach-footbridge/netwinder-hw.c
+--- 25/arch/arm/mach-footbridge/netwinder-hw.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/mach-footbridge/netwinder-hw.c	Wed Jan 12 16:55:03 2005
+@@ -68,7 +68,7 @@ static inline void wb977_ww(int reg, int
+ /*
+  * This is a lock for accessing ports GP1_IO_BASE and GP2_IO_BASE
+  */
+-spinlock_t gpio_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(gpio_lock);
+ 
+ static unsigned int current_gpio_op;
+ static unsigned int current_gpio_io;
+diff -puN arch/arm/mach-footbridge/netwinder-leds.c~lock-initializer-cleanup-arm arch/arm/mach-footbridge/netwinder-leds.c
+--- 25/arch/arm/mach-footbridge/netwinder-leds.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/mach-footbridge/netwinder-leds.c	Wed Jan 12 16:55:03 2005
+@@ -32,7 +32,7 @@
+ static char led_state;
+ static char hw_led_state;
+ 
+-static spinlock_t leds_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(leds_lock);
+ extern spinlock_t gpio_lock;
+ 
+ static void netwinder_leds_event(led_event_t evt)
+diff -puN arch/arm/mach-integrator/core.c~lock-initializer-cleanup-arm arch/arm/mach-integrator/core.c
+--- 25/arch/arm/mach-integrator/core.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/mach-integrator/core.c	Wed Jan 12 16:55:03 2005
+@@ -115,7 +115,7 @@ arch_initcall(integrator_init);
+ 
+ #define CM_CTRL	IO_ADDRESS(INTEGRATOR_HDR_BASE) + INTEGRATOR_HDR_CTRL_OFFSET
+ 
+-static spinlock_t cm_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(cm_lock);
+ 
+ /**
+  * cm_control - update the CM_CTRL register.
+diff -puN arch/arm/mach-integrator/pci_v3.c~lock-initializer-cleanup-arm arch/arm/mach-integrator/pci_v3.c
+--- 25/arch/arm/mach-integrator/pci_v3.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/mach-integrator/pci_v3.c	Wed Jan 12 16:55:03 2005
+@@ -163,7 +163,7 @@
+  *	 7:2	register number
+  *  
+  */
+-static spinlock_t v3_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(v3_lock);
+ 
+ #define PCI_BUS_NONMEM_START	0x00000000
+ #define PCI_BUS_NONMEM_SIZE	SZ_256M
+diff -puN arch/arm/mach-ixp2000/core.c~lock-initializer-cleanup-arm arch/arm/mach-ixp2000/core.c
+--- 25/arch/arm/mach-ixp2000/core.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/mach-ixp2000/core.c	Wed Jan 12 16:55:03 2005
+@@ -40,7 +40,7 @@
+ #include <asm/mach/time.h>
+ #include <asm/mach/irq.h>
+ 
+-static spinlock_t ixp2000_slowport_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(ixp2000_slowport_lock);
+ static unsigned long ixp2000_slowport_irq_flags;
+ 
+ /*************************************************************************
+diff -puN arch/arm/mach-ixp4xx/common-pci.c~lock-initializer-cleanup-arm arch/arm/mach-ixp4xx/common-pci.c
+--- 25/arch/arm/mach-ixp4xx/common-pci.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/mach-ixp4xx/common-pci.c	Wed Jan 12 16:55:03 2005
+@@ -53,7 +53,7 @@ unsigned long ixp4xx_pci_reg_base = 0;
+  * these transactions are atomic or we will end up
+  * with corrupt data on the bus or in a driver.
+  */
+-static spinlock_t ixp4xx_pci_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(ixp4xx_pci_lock);
+ 
+ /*
+  * Read from PCI config space
+diff -puN arch/arm/mach-omap/clock.c~lock-initializer-cleanup-arm arch/arm/mach-omap/clock.c
+--- 25/arch/arm/mach-omap/clock.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/mach-omap/clock.c	Wed Jan 12 16:55:03 2005
+@@ -22,7 +22,7 @@
+ 
+ static LIST_HEAD(clocks);
+ static DECLARE_MUTEX(clocks_sem);
+-static spinlock_t clockfw_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(clockfw_lock);
+ static void propagate_rate(struct clk *  clk);
+ /* MPU virtual clock functions */
+ static int select_table_rate(unsigned long rate);
+diff -puN arch/arm/mach-omap/mux.c~lock-initializer-cleanup-arm arch/arm/mach-omap/mux.c
+--- 25/arch/arm/mach-omap/mux.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/mach-omap/mux.c	Wed Jan 12 16:55:03 2005
+@@ -40,7 +40,7 @@
+ int __init_or_module
+ omap_cfg_reg(const reg_cfg_t reg_cfg)
+ {
+-	static spinlock_t mux_spin_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(mux_spin_lock);
+ 
+ 	unsigned long flags;
+ 	reg_cfg_set *cfg;
+diff -puN arch/arm/mach-shark/leds.c~lock-initializer-cleanup-arm arch/arm/mach-shark/leds.c
+--- 25/arch/arm/mach-shark/leds.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/mach-shark/leds.c	Wed Jan 12 16:55:03 2005
+@@ -33,7 +33,7 @@ static char led_state;
+ static short hw_led_state;
+ static short saved_state;
+ 
+-static spinlock_t leds_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(leds_lock);
+ 
+ short sequoia_read(int addr) {
+   outw(addr,0x24);
+diff -puN arch/arm/mm/consistent.c~lock-initializer-cleanup-arm arch/arm/mm/consistent.c
+--- 25/arch/arm/mm/consistent.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/mm/consistent.c	Wed Jan 12 16:55:03 2005
+@@ -30,7 +30,7 @@
+  * This is the page table (2MB) covering uncached, DMA consistent allocations
+  */
+ static pte_t *consistent_pte;
+-static spinlock_t consistent_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(consistent_lock);
+ 
+ /*
+  * VM region handling support.
+diff -puN arch/arm/mm/copypage-v6.c~lock-initializer-cleanup-arm arch/arm/mm/copypage-v6.c
+--- 25/arch/arm/mm/copypage-v6.c~lock-initializer-cleanup-arm	Wed Jan 12 16:55:03 2005
++++ 25-akpm/arch/arm/mm/copypage-v6.c	Wed Jan 12 16:55:03 2005
+@@ -28,7 +28,7 @@
+ 
+ static pte_t *from_pte;
+ static pte_t *to_pte;
+-static spinlock_t v6_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(v6_lock);
+ 
+ #define DCACHE_COLOUR(vaddr) ((vaddr & (SHMLBA - 1)) >> PAGE_SHIFT)
+ 
+_

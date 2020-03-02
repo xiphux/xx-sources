@@ -1,0 +1,146 @@
+
+From: David Howells <dhowells@redhat.com>
+
+The attached patch adds some bits to make the key management API more
+usable.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/keys.txt      |   24 ++++++++++++++++++++++--
+ 25-akpm/include/linux/key.h         |   15 ++++++++++++++-
+ 25-akpm/security/keys/request_key.c |   24 +++++++++++++-----------
+ 3 files changed, 49 insertions(+), 14 deletions(-)
+
+diff -puN Documentation/keys.txt~bits-to-make-the-key-management-api-more-usable Documentation/keys.txt
+--- 25/Documentation/keys.txt~bits-to-make-the-key-management-api-more-usable	Fri Sep 24 17:17:43 2004
++++ 25-akpm/Documentation/keys.txt	Fri Sep 24 17:17:43 2004
+@@ -630,7 +630,26 @@ locked, or else the data may be changed 
+ 
+ 	void key_put(struct key *key);
+ 
+-    This can be called from interrupt context.
++    This can be called from interrupt context. If CONFIG_KEYS is not set then
++    the argument will not be parsed.
++
++
++(*) Extra references can be made to a key by calling the following function:
++
++	struct key *key_get(struct key *key);
++
++    These need to be disposed of by calling key_put() when they've been
++    finished with. The key pointer passed in will be returned. If the pointer
++    is NULL or CONFIG_KEYS is not set then the key will not be dereferenced and
++    no increment will take place.
++
++
++(*) A key's serial number can be obtained by calling:
++
++	key_serial_t key_serial(struct key *key);
++
++    If key is NULL or if CONFIG_KEYS is not set then 0 will be returned (in the
++    latter case without parsing the argument).
+ 
+ 
+ (*) If a keyring was found in the search, this can be further searched by:
+@@ -650,7 +669,8 @@ locked, or else the data may be changed 
+ 
+     This checks that the key in question hasn't expired or and hasn't been
+     revoked. Should the key be invalid, error EKEYEXPIRED or EKEYREVOKED will
+-    be returned.
++    be returned. If the key is NULL or if CONFIG_KEYS is not set then 0 will be
++    returned (in the latter case without parsing the argument).
+ 
+ 
+ (*) To register a key type, the following function should be called:
+diff -puN include/linux/key.h~bits-to-make-the-key-management-api-more-usable include/linux/key.h
+--- 25/include/linux/key.h~bits-to-make-the-key-management-api-more-usable	Fri Sep 24 17:17:43 2004
++++ 25-akpm/include/linux/key.h	Fri Sep 24 17:17:43 2004
+@@ -29,6 +29,8 @@ typedef int32_t key_serial_t;
+ /* key handle permissions mask */
+ typedef uint32_t key_perm_t;
+ 
++struct key;
++
+ #ifdef CONFIG_KEYS
+ 
+ #undef KEY_DEBUGGING
+@@ -57,7 +59,6 @@ typedef uint32_t key_perm_t;
+ struct seq_file;
+ struct user_struct;
+ 
+-struct key;
+ struct key_type;
+ struct key_owner;
+ struct keyring_list;
+@@ -201,6 +202,13 @@ extern int key_negate_and_link(struct ke
+ extern void key_revoke(struct key *key);
+ extern void key_put(struct key *key);
+ 
++static inline struct key *key_get(struct key *key)
++{
++	if (key)
++		atomic_inc(&key->usage);
++	return key;
++}
++
+ extern struct key *request_key(struct key_type *type,
+ 			       const char *description,
+ 			       const char *callout_info);
+@@ -241,6 +249,8 @@ extern int keyring_add_key(struct key *k
+ 
+ extern struct key *key_lookup(key_serial_t id);
+ 
++#define key_serial(key) ((key) ? (key)->serial : 0)
++
+ /*
+  * the userspace interface
+  */
+@@ -256,6 +266,9 @@ extern void key_fsgid_changed(struct tas
+ 
+ #else /* CONFIG_KEYS */
+ 
++#define key_validate(k)			0
++#define key_serial(k)			0
++#define key_get(k) 			NULL
+ #define key_put(k)			do { } while(0)
+ #define alloc_uid_keyring(u)		0
+ #define switch_uid_keyring(u)		do { } while(0)
+diff -puN security/keys/request_key.c~bits-to-make-the-key-management-api-more-usable security/keys/request_key.c
+--- 25/security/keys/request_key.c~bits-to-make-the-key-management-api-more-usable	Fri Sep 24 17:17:43 2004
++++ 25-akpm/security/keys/request_key.c	Fri Sep 24 17:17:43 2004
+@@ -312,19 +312,21 @@ EXPORT_SYMBOL(request_key);
+ int key_validate(struct key *key)
+ {
+ 	struct timespec now;
+-	int ret;
++	int ret = 0;
+ 
+-	/* check it's still accessible */
+-	ret = -EKEYREVOKED;
+-	if (key->flags & (KEY_FLAG_REVOKED | KEY_FLAG_DEAD))
+-		goto error;
++	if (key) {
++		/* check it's still accessible */
++		ret = -EKEYREVOKED;
++		if (key->flags & (KEY_FLAG_REVOKED | KEY_FLAG_DEAD))
++			goto error;
+ 
+-	/* check it hasn't expired */
+-	ret = 0;
+-	if (key->expiry) {
+-		now = current_kernel_time();
+-		if (now.tv_sec >= key->expiry)
+-			ret = -EKEYEXPIRED;
++		/* check it hasn't expired */
++		ret = 0;
++		if (key->expiry) {
++			now = current_kernel_time();
++			if (now.tv_sec >= key->expiry)
++				ret = -EKEYEXPIRED;
++		}
+ 	}
+ 
+  error:
+_

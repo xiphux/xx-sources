@@ -1,0 +1,78 @@
+Index: xx-sources/fs/proc/proc_misc.c
+===================================================================
+--- xx-sources.orig/fs/proc/proc_misc.c	2004-08-12 23:29:34.857871968 -0400
++++ xx-sources/fs/proc/proc_misc.c	2004-08-12 23:37:37.260535616 -0400
+@@ -149,6 +149,40 @@
+ 	return proc_calc_metrics(page, start, off, count, eof, len);
+ }
+ 
++static int xx_read_proc(char *page, char **start, off_t off,
++				int count, int *eof, void *data)
++{
++	const char *elv = 
++#if defined(CONFIG_CFQIONICE)
++		"CFQ with IOnice support"
++#elif defined(CONFIG_ELV_SELECT)
++		"Runtime selectable I/O schedulers"
++#else
++		"None (default)"
++#endif
++	;
++	const int jiffies = CONFIG_HERTZ;
++	const int idedelay = CONFIG_IDE_DELAY;
++	extern char *scheduler_name;
++	extern char *scheduler_version;
++	int len;
++
++	len = sprintf(page,
++		"Scheduler:	%s\n"
++		"Version:	%s\n"
++		"I/O Elevators:	%s\n"
++		"Jiffies:	%d\n"
++		"IDE Delay:	%d\n",
++		scheduler_name,
++		scheduler_version,
++		elv,
++		jiffies,
++		idedelay
++		);
++
++	return proc_calc_metrics(page, start, off, count, eof, len);
++}
++
+ static int meminfo_read_proc(char *page, char **start, off_t off,
+ 				 int count, int *eof, void *data)
+ {
+@@ -613,6 +647,7 @@
+ 		{"loadavg",     loadavg_read_proc},
+ 		{"uptime",	uptime_read_proc},
+ 		{"meminfo",	meminfo_read_proc},
++		{"xx",		xx_read_proc},
+ 		{"version",	version_read_proc},
+ #ifdef CONFIG_PROC_HARDWARE
+ 		{"hardware",	hardware_read_proc},
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-08-12 23:29:34.861871360 -0400
++++ xx-sources/kernel/sched.c	2004-08-12 23:29:48.859743360 -0400
+@@ -49,6 +49,20 @@
+ 
+ #include <asm/unistd.h>
+ 
++/* Stuff for scheduler proc entry */
++const char *scheduler_name =
++#if 1
++	"Default scheduler"
++#endif
++;
++
++const char *scheduler_version =
++#if 1
++	"NA"
++#endif
++;
++
++
+ #ifdef CONFIG_NUMA
+ #define cpu_to_node_mask(cpu) node_to_cpumask(cpu_to_node(cpu))
+ #else

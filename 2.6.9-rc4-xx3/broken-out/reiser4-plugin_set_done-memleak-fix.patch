@@ -1,0 +1,29 @@
+
+From: Hans Reiser <reiser@namesys.com>
+
+This is memory leak fix.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/reiser4/plugin/plugin_set.c |    7 ++++++-
+ 1 files changed, 6 insertions(+), 1 deletion(-)
+
+diff -puN fs/reiser4/plugin/plugin_set.c~reiser4-plugin_set_done-memleak-fix fs/reiser4/plugin/plugin_set.c
+--- 25/fs/reiser4/plugin/plugin_set.c~reiser4-plugin_set_done-memleak-fix	2004-09-20 11:05:33.155674104 -0700
++++ 25-akpm/fs/reiser4/plugin/plugin_set.c	2004-09-20 11:05:33.158673648 -0700
+@@ -328,7 +328,12 @@ reiser4_internal int plugin_set_init(voi
+ 
+ reiser4_internal void plugin_set_done(void)
+ {
+-	/* NOTE: scan hash table and recycle all objects. */
++	plugin_set * cur, * next;
++
++	for_all_in_htable(&ps_table, ps, cur, next) {
++		ps_hash_remove(&ps_table, cur);
++		kmem_cache_free(plugin_set_slab, cur);
++	}
+ 	kmem_cache_destroy(plugin_set_slab);
+ 	ps_hash_done(&ps_table);
+ }
+_

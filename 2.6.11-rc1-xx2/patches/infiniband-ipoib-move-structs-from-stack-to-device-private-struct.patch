@@ -1,0 +1,147 @@
+
+From: Roland Dreier <roland@topspin.com>
+
+Move the gather list and work request used for posting sends from the stack in
+ipoib_send() to the private structure.  This reduces the stack usage for the
+data path function ipoib_send() and may speed things up slightly because we
+don't need to initialize constant members of the structures.
+
+Signed-off-by: Roland Dreier <roland@topspin.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/infiniband/ulp/ipoib/ipoib.h           |   10 +++--
+ 25-akpm/drivers/infiniband/ulp/ipoib/ipoib_ib.c        |   30 +++++------------
+ 25-akpm/drivers/infiniband/ulp/ipoib/ipoib_multicast.c |    6 ++-
+ 25-akpm/drivers/infiniband/ulp/ipoib/ipoib_verbs.c     |   11 +++++-
+ 4 files changed, 28 insertions(+), 29 deletions(-)
+
+diff -puN drivers/infiniband/ulp/ipoib/ipoib.h~infiniband-ipoib-move-structs-from-stack-to-device-private-struct drivers/infiniband/ulp/ipoib/ipoib.h
+--- 25/drivers/infiniband/ulp/ipoib/ipoib.h~infiniband-ipoib-move-structs-from-stack-to-device-private-struct	Wed Jan 12 16:32:03 2005
++++ 25-akpm/drivers/infiniband/ulp/ipoib/ipoib.h	Wed Jan 12 16:32:03 2005
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2004 Topspin Communications.  All rights reserved.
++ * Copyright (c) 2004, 2005 Topspin Communications.  All rights reserved.
+  *
+  * This software is available to you under a choice of one of two
+  * licenses.  You may choose to be licensed under the terms of the GNU
+@@ -150,10 +150,12 @@ struct ipoib_dev_priv {
+ 
+ 	struct ipoib_buf *rx_ring;
+ 
+-	spinlock_t tx_lock;
++	spinlock_t        tx_lock;
+ 	struct ipoib_buf *tx_ring;
+-	unsigned tx_head;
+-	unsigned tx_tail;
++	unsigned          tx_head;
++	unsigned          tx_tail;
++	struct ib_sge     tx_sge;
++	struct ib_send_wr tx_wr;
+ 
+ 	struct ib_wc ibwc[IPOIB_NUM_WC];
+ 
+diff -puN drivers/infiniband/ulp/ipoib/ipoib_ib.c~infiniband-ipoib-move-structs-from-stack-to-device-private-struct drivers/infiniband/ulp/ipoib/ipoib_ib.c
+--- 25/drivers/infiniband/ulp/ipoib/ipoib_ib.c~infiniband-ipoib-move-structs-from-stack-to-device-private-struct	Wed Jan 12 16:32:03 2005
++++ 25-akpm/drivers/infiniband/ulp/ipoib/ipoib_ib.c	Wed Jan 12 16:32:03 2005
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2004 Topspin Communications.  All rights reserved.
++ * Copyright (c) 2004, 2005 Topspin Communications.  All rights reserved.
+  *
+  * This software is available to you under a choice of one of two
+  * licenses.  You may choose to be licensed under the terms of the GNU
+@@ -281,28 +281,16 @@ static inline int post_send(struct ipoib
+ 			    struct ib_ah *address, u32 qpn,
+ 			    dma_addr_t addr, int len)
+ {
+-	struct ib_sge list = {
+-		.addr    = addr,
+-		.length  = len,
+-		.lkey    = priv->mr->lkey,
+-	};
+-	struct ib_send_wr param = {
+-		.wr_id = wr_id,
+-		.opcode = IB_WR_SEND,
+-		.sg_list = &list,
+-		.num_sge = 1,
+-		.wr = {
+-			.ud = {
+-				 .remote_qpn = qpn,
+-				 .remote_qkey = priv->qkey,
+-				 .ah = address
+-			 },
+-		},
+-		.send_flags = IB_SEND_SIGNALED,
+-	};
+ 	struct ib_send_wr *bad_wr;
+ 
+-	return ib_post_send(priv->qp, &param, &bad_wr);
++	priv->tx_sge.addr             = addr;
++	priv->tx_sge.length           = len;
++
++	priv->tx_wr.wr_id 	      = wr_id;
++	priv->tx_wr.wr.ud.remote_qpn  = qpn;
++	priv->tx_wr.wr.ud.ah 	      = address;
++
++	return ib_post_send(priv->qp, &priv->tx_wr, &bad_wr);
+ }
+ 
+ void ipoib_send(struct net_device *dev, struct sk_buff *skb,
+diff -puN drivers/infiniband/ulp/ipoib/ipoib_multicast.c~infiniband-ipoib-move-structs-from-stack-to-device-private-struct drivers/infiniband/ulp/ipoib/ipoib_multicast.c
+--- 25/drivers/infiniband/ulp/ipoib/ipoib_multicast.c~infiniband-ipoib-move-structs-from-stack-to-device-private-struct	Wed Jan 12 16:32:03 2005
++++ 25-akpm/drivers/infiniband/ulp/ipoib/ipoib_multicast.c	Wed Jan 12 16:32:03 2005
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2004 Topspin Communications.  All rights reserved.
++ * Copyright (c) 2004, 2005 Topspin Communications.  All rights reserved.
+  *
+  * This software is available to you under a choice of one of two
+  * licenses.  You may choose to be licensed under the terms of the GNU
+@@ -213,8 +213,10 @@ static int ipoib_mcast_join_finish(struc
+ 
+ 	/* Set the cached Q_Key before we attach if it's the broadcast group */
+ 	if (!memcmp(mcast->mcmember.mgid.raw, priv->dev->broadcast + 4,
+-		    sizeof (union ib_gid)))
++		    sizeof (union ib_gid))) {
+ 		priv->qkey = be32_to_cpu(priv->broadcast->mcmember.qkey);
++		priv->tx_wr.wr.ud.remote_qkey = priv->qkey;
++	}
+ 
+ 	if (!test_bit(IPOIB_MCAST_FLAG_SENDONLY, &mcast->flags)) {
+ 		if (test_and_set_bit(IPOIB_MCAST_FLAG_ATTACHED, &mcast->flags)) {
+diff -puN drivers/infiniband/ulp/ipoib/ipoib_verbs.c~infiniband-ipoib-move-structs-from-stack-to-device-private-struct drivers/infiniband/ulp/ipoib/ipoib_verbs.c
+--- 25/drivers/infiniband/ulp/ipoib/ipoib_verbs.c~infiniband-ipoib-move-structs-from-stack-to-device-private-struct	Wed Jan 12 16:32:03 2005
++++ 25-akpm/drivers/infiniband/ulp/ipoib/ipoib_verbs.c	Wed Jan 12 16:32:03 2005
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2004 Topspin Communications.  All rights reserved.
++ * Copyright (c) 2004, 2005 Topspin Communications.  All rights reserved.
+  *
+  * This software is available to you under a choice of one of two
+  * licenses.  You may choose to be licensed under the terms of the GNU
+@@ -187,7 +187,7 @@ int ipoib_transport_dev_init(struct net_
+ 
+ 	priv->mr = ib_get_dma_mr(priv->pd, IB_ACCESS_LOCAL_WRITE);
+ 	if (IS_ERR(priv->mr)) {
+-		printk(KERN_WARNING "%s: ib_reg_phys_mr failed\n", ca->name);
++		printk(KERN_WARNING "%s: ib_get_dma_mr failed\n", ca->name);
+ 		goto out_free_cq;
+ 	}
+ 
+@@ -204,6 +204,13 @@ int ipoib_transport_dev_init(struct net_
+ 	priv->dev->dev_addr[2] = (priv->qp->qp_num >>  8) & 0xff;
+ 	priv->dev->dev_addr[3] = (priv->qp->qp_num      ) & 0xff;
+ 
++	priv->tx_sge.lkey 	= priv->mr->lkey;
++
++	priv->tx_wr.opcode 	= IB_WR_SEND;
++	priv->tx_wr.sg_list 	= &priv->tx_sge;
++	priv->tx_wr.num_sge 	= 1;
++	priv->tx_wr.send_flags 	= IB_SEND_SIGNALED;
++
+ 	return 0;
+ 
+ out_free_mr:
+_

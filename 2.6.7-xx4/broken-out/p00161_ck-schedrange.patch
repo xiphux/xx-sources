@@ -1,0 +1,77 @@
+---
+
+ linux-2.6.7-xx4-xiphux/include/linux/sched.h |   10 ++++++++++
+ linux-2.6.7-xx4-xiphux/kernel/sched.c        |   16 ++++++++++++++++
+ 2 files changed, 26 insertions(+)
+
+diff -puN include/linux/sched.h~ck-schedrange include/linux/sched.h
+--- linux-2.6.7-xx4/include/linux/sched.h~ck-schedrange	2004-06-28 12:04:55.847139744 -0400
++++ linux-2.6.7-xx4-xiphux/include/linux/sched.h	2004-06-28 12:06:33.832243744 -0400
+@@ -127,6 +127,16 @@ extern unsigned long nr_iowait(void);
+ #define SCHED_FIFO		1
+ #define SCHED_RR		2
+ 
++#ifdef CONFIG_STAIRCASE
++#define SCHED_MIN		0
++#define SCHED_MAX		2
++
++#define SCHED_RANGE(policy)	((policy) >= SCHED_MIN && \
++					(policy) <= SCHED_MAX)
++#define SCHED_RT(policy)	((policy) == SCHED_FIFO || \
++					(policy) == SCHED_RR)
++#endif
++
+ struct sched_param {
+ 	int sched_priority;
+ };
+diff -puN kernel/sched.c~ck-schedrange kernel/sched.c
+--- linux-2.6.7-xx4/kernel/sched.c~ck-schedrange	2004-06-28 12:04:58.315764456 -0400
++++ linux-2.6.7-xx4-xiphux/kernel/sched.c	2004-06-28 12:08:22.607707360 -0400
+@@ -3773,7 +3773,11 @@ static void __setscheduler(struct task_s
+ 	p->policy = policy;
+ 	p->rt_priority = prio;
+ #ifndef CONFIG_SPA
++#ifdef CONFIG_STAIRCASE
++	if (SCHED_RT(policy))
++#else
+ 	if (policy != SCHED_NORMAL)
++#endif
+ 		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
+ 	else
+ 		p->prio = p->static_prio;
+@@ -3828,8 +3832,12 @@ static int setscheduler(pid_t pid, int p
+ 		policy = p->policy;
+ 	else {
+ 		retval = -EINVAL;
++#ifdef CONFIG_STAIRCASE
++		if (!SCHED_RANGE(policy))
++#else
+ 		if (policy != SCHED_FIFO && policy != SCHED_RR &&
+ 				policy != SCHED_NORMAL)
++#endif
+ 			goto out_unlock;
+ 	}
+ 
+@@ -3840,12 +3848,20 @@ static int setscheduler(pid_t pid, int p
+ 	retval = -EINVAL;
+ 	if (lp.sched_priority < 0 || lp.sched_priority > MAX_USER_RT_PRIO-1)
+ 		goto out_unlock;
++#ifdef CONFIG_STAIRCASE
++	if (!SCHED_RT(policy) != (lp.sched_priority == 0))
++#else
+ 	if ((policy == SCHED_NORMAL) != (lp.sched_priority == 0))
++#endif
+ 		goto out_unlock;
+ 
+ 	retval = -EPERM;
++#ifdef CONFIG_STAIRCASE
++	if (SCHED_RT(policy) && !capable(CAP_SYS_NICE))
++#else
+ 	if ((policy == SCHED_FIFO || policy == SCHED_RR) &&
+ 	    !capable(CAP_SYS_NICE))
++#endif
+ 		goto out_unlock;
+ 	if ((current->euid != p->euid) && (current->euid != p->uid) &&
+ 	    !capable(CAP_SYS_NICE))
+
+_

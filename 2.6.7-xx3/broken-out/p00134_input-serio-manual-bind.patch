@@ -1,0 +1,68 @@
+
+From: Dmitry Torokhov <dtor_core@ameritech.net>
+
+===================================================================
+
+ChangeSet@1.1799, 2004-06-18 02:59:36-05:00, dtor_core@ameritech.net
+  Input: allow marking some drivers (that don't do HW autodetection)
+         as manual bind only. Such drivers will only be bound to a
+         serio port if user requests it by echoing driver name into
+         port's sysfs driver attribute.
+  
+  Signed-off-by: Dmitry Torokhov <dtor@mail.ru>
+
+===================================================================
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/input/serio/serio.c |    9 +++++++--
+ 25-akpm/include/linux/serio.h       |    2 ++
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+diff -puN drivers/input/serio/serio.c~input-serio-manual-bind drivers/input/serio/serio.c
+--- 25/drivers/input/serio/serio.c~input-serio-manual-bind	2004-06-19 13:52:29.975989152 -0700
++++ 25-akpm/drivers/input/serio/serio.c	2004-06-19 13:52:29.980988392 -0700
+@@ -92,8 +92,9 @@ static void serio_find_driver(struct ser
+ 	struct serio_driver *drv;
+ 
+ 	list_for_each_entry(drv, &serio_driver_list, node)
+-		if (serio_bind_driver(serio, drv))
+-			break;
++		if (!drv->manual_bind)
++			if (serio_bind_driver(serio, drv))
++				break;
+ }
+ 
+ /*
+@@ -498,6 +499,9 @@ void serio_register_driver(struct serio_
+ 	driver_register(&drv->driver);
+ 	driver_create_file(&drv->driver, &driver_attr_description);
+ 
++	if (drv->manual_bind)
++		goto out;
++
+ start_over:
+ 	list_for_each_entry(serio, &serio_list, node) {
+ 		if (!serio->drv) {
+@@ -511,6 +515,7 @@ start_over:
+ 		}
+ 	}
+ 
++out:
+ 	up(&serio_sem);
+ }
+ 
+diff -puN include/linux/serio.h~input-serio-manual-bind include/linux/serio.h
+--- 25/include/linux/serio.h~input-serio-manual-bind	2004-06-19 13:52:29.976989000 -0700
++++ 25-akpm/include/linux/serio.h	2004-06-19 13:52:29.980988392 -0700
+@@ -55,6 +55,8 @@ struct serio_driver {
+ 	void *private;
+ 	char *description;
+ 
++	int manual_bind;
++
+ 	void (*write_wakeup)(struct serio *);
+ 	irqreturn_t (*interrupt)(struct serio *, unsigned char,
+ 			unsigned int, struct pt_regs *);
+_

@@ -1,0 +1,82 @@
+
+From: Arjan van de Ven <arjanv@redhat.com>
+
+Create /proc/sys/vm/legacy_va_layout.  If this is non-zero, the kernel will
+use the old mmap layout for all tasks.  it presently defaults to zero (the new
+layout).
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/mm/mmap.c    |    2 +-
+ 25-akpm/include/linux/mm.h     |    2 ++
+ 25-akpm/include/linux/sysctl.h |    1 +
+ 25-akpm/kernel/sysctl.c        |   12 ++++++++++++
+ 4 files changed, 16 insertions(+), 1 deletion(-)
+
+diff -puN arch/i386/mm/mmap.c~sysctl-tunable-for-flexmmap arch/i386/mm/mmap.c
+--- 25/arch/i386/mm/mmap.c~sysctl-tunable-for-flexmmap	2004-08-01 17:33:34.674954912 -0700
++++ 25-akpm/arch/i386/mm/mmap.c	2004-08-01 17:42:34.929823688 -0700
+@@ -57,7 +57,7 @@ void arch_pick_mmap_layout(struct mm_str
+ 	 * Fall back to the standard layout if the personality
+ 	 * bit is set, or if the expected stack growth is unlimited:
+ 	 */
+-	if ((current->personality & ADDR_COMPAT_LAYOUT) ||
++	if (sysctl_legacy_va_layout || (current->personality & ADDR_COMPAT_LAYOUT) ||
+ 			current->rlim[RLIMIT_STACK].rlim_cur == RLIM_INFINITY) {
+ 		mm->mmap_base = TASK_UNMAPPED_BASE;
+ 		mm->get_unmapped_area = arch_get_unmapped_area;
+diff -puN include/linux/mm.h~sysctl-tunable-for-flexmmap include/linux/mm.h
+--- 25/include/linux/mm.h~sysctl-tunable-for-flexmmap	2004-08-01 17:33:34.676954608 -0700
++++ 25-akpm/include/linux/mm.h	2004-08-01 17:33:34.683953544 -0700
+@@ -26,6 +26,8 @@ extern void * high_memory;
+ extern unsigned long vmalloc_earlyreserve;
+ extern int page_cluster;
+ 
++extern int sysctl_legacy_va_layout;
++
+ #include <asm/page.h>
+ #include <asm/pgtable.h>
+ #include <asm/processor.h>
+diff -puN include/linux/sysctl.h~sysctl-tunable-for-flexmmap include/linux/sysctl.h
+--- 25/include/linux/sysctl.h~sysctl-tunable-for-flexmmap	2004-08-01 17:33:34.677954456 -0700
++++ 25-akpm/include/linux/sysctl.h	2004-08-01 17:33:34.684953392 -0700
+@@ -166,6 +166,7 @@ enum
+ 	VM_BLOCK_DUMP=24,	/* block dump mode */
+ 	VM_HUGETLB_GROUP=25,	/* permitted hugetlb group */
+ 	VM_VFS_CACHE_PRESSURE=26, /* dcache/icache reclaim pressure */
++	VM_LEGACY_VA_LAYOUT=27, /* legacy/compatibility virtual address space layout */
+ };
+ 
+ 
+diff -puN kernel/sysctl.c~sysctl-tunable-for-flexmmap kernel/sysctl.c
+--- 25/kernel/sysctl.c~sysctl-tunable-for-flexmmap	2004-08-01 17:33:34.679954152 -0700
++++ 25-akpm/kernel/sysctl.c	2004-08-01 17:42:34.928823840 -0700
+@@ -149,6 +149,8 @@ extern ctl_table random_table[];
+ extern ctl_table pty_table[];
+ #endif
+ 
++int sysctl_legacy_va_layout;
++
+ /* /proc declarations: */
+ 
+ #ifdef CONFIG_PROC_FS
+@@ -805,6 +807,16 @@ static ctl_table vm_table[] = {
+ 		.strategy	= &sysctl_intvec,
+ 		.extra1		= &zero,
+ 	},
++	{
++		.ctl_name	= VM_LEGACY_VA_LAYOUT,
++		.procname	= "legacy_va_layout",
++		.data		= &sysctl_legacy_va_layout,
++		.maxlen		= sizeof(sysctl_legacy_va_layout),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++		.strategy	= &sysctl_intvec,
++		.extra1		= &zero,
++	},
+ 	{ .ctl_name = 0 }
+ };
+ 
+_

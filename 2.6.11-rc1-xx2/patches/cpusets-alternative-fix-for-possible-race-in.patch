@@ -1,0 +1,108 @@
+
+From: Paul Jackson <pj@sgi.com>
+
+Move the code that sets up the character buffer of text to read out when
+reading a "tasks" file from the read routine to the open routine.
+
+Multiple cloned threads could be doing the first read on a shared file
+descriptor open on a "tasks" file, resulting in confused or leaked kernel
+memory as multiple threads initialized the same file private_data at the
+same time.  Rather than add locks to the initialization code, move it into
+the open(), where it belongs anyway.
+
+Only do buffer allocation in open() when the file is opened for reading.
+
+Signed-off-by: Paul Jackson <pj@sgi.com>
+Signed-off-by: Simon Derr <simon.derr@bull.net>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/cpuset.c |   27 ++++++++++-----------------
+ 1 files changed, 10 insertions(+), 17 deletions(-)
+
+diff -puN kernel/cpuset.c~cpusets-alternative-fix-for-possible-race-in kernel/cpuset.c
+--- 25/kernel/cpuset.c~cpusets-alternative-fix-for-possible-race-in	2004-09-16 00:46:19.986325232 -0700
++++ 25-akpm/kernel/cpuset.c	2004-09-16 00:46:37.698632552 -0700
+@@ -1017,7 +1017,7 @@ static int cpuset_add_file(struct dentry
+  * but we cannot guarantee that the information we produce is correct
+  * unless we produce it entirely atomically.
+  *
+- * Upon first file read(), a struct ctr_struct is allocated, that
++ * Upon tasks file open(), a struct ctr_struct is allocated, that
+  * will have a pointer to an array (also allocated here).  The struct
+  * ctr_struct * is stored in file->private_data.  Its resources will
+  * be freed by release() when the file is closed.  The array is used
+@@ -1087,7 +1087,7 @@ static int pid_array_to_buf(char *buf, i
+ 	return cnt;
+ }
+ 
+-static inline struct ctr_struct *cpuset_tasks_mkctr(struct file *file)
++static int cpuset_tasks_open(struct inode *unused, struct file *file)
+ {
+ 	struct cpuset *cs = __d_cs(file->f_dentry->d_parent);
+ 	struct ctr_struct *ctr;
+@@ -1095,6 +1095,9 @@ static inline struct ctr_struct *cpuset_
+ 	int npids;
+ 	char c;
+ 
++	if (!(file->f_mode & FMODE_READ))
++		return 0;
++
+ 	ctr = kmalloc(sizeof(*ctr), GFP_KERNEL);
+ 	if (!ctr)
+ 		goto err0;
+@@ -1122,14 +1125,14 @@ static inline struct ctr_struct *cpuset_
+ 
+ 	kfree(pidarray);
+ 	file->private_data = (void *)ctr;
+-	return ctr;
++	return 0;
+ 
+ err2:
+ 	kfree(pidarray);
+ err1:
+ 	kfree(ctr);
+ err0:
+-	return NULL;
++	return -ENOMEM;
+ }
+ 
+ static ssize_t cpuset_tasks_read(struct file *file, char __user *buf,
+@@ -1137,13 +1140,6 @@ static ssize_t cpuset_tasks_read(struct 
+ {
+ 	struct ctr_struct *ctr = (struct ctr_struct *)file->private_data;
+ 
+-	/* allocate buffer and fill it on first call to read() */
+-	if (!ctr) {
+-		ctr = cpuset_tasks_mkctr(file);
+-		if (!ctr)
+-			return -ENOMEM;
+-	}
+-
+ 	if (*ppos + nbytes > ctr->bufsz)
+ 		nbytes = ctr->bufsz - *ppos;
+ 	if (copy_to_user(buf, ctr->buf + *ppos, nbytes))
+@@ -1156,12 +1152,8 @@ static int cpuset_tasks_release(struct i
+ {
+ 	struct ctr_struct *ctr;
+ 
+-	/* we have nothing to do if no read-access is needed */
+-	if (!(file->f_mode & FMODE_READ))
+-		return 0;
+-
+-	ctr = (struct ctr_struct *)file->private_data;
+-	if (ctr) {
++	if (file->f_mode & FMODE_READ) {
++		ctr = (struct ctr_struct *)file->private_data;
+ 		kfree(ctr->buf);
+ 		kfree(ctr);
+ 	}
+@@ -1174,6 +1166,7 @@ static int cpuset_tasks_release(struct i
+ 
+ static struct cftype cft_tasks = {
+ 	.name = "tasks",
++	.open = cpuset_tasks_open,
+ 	.read = cpuset_tasks_read,
+ 	.release = cpuset_tasks_release,
+ 	.private = FILE_TASKLIST,
+_

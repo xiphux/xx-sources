@@ -1,0 +1,1937 @@
+
+From: Paul Mundt <lethal@Linux-SH.ORG>
+
+This adds support for the Renesas Technology Sales RTS7751R2D board.
+
+Signed-off-by: Paul Mundt <lethal@linux-sh.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/sh/boards/renesas/rts7751r2d/Makefile |   10 
+ 25-akpm/arch/sh/boards/renesas/rts7751r2d/io.c     |  319 ++++++++
+ 25-akpm/arch/sh/boards/renesas/rts7751r2d/irq.c    |  135 +++
+ 25-akpm/arch/sh/boards/renesas/rts7751r2d/led.c    |   67 +
+ 25-akpm/arch/sh/boards/renesas/rts7751r2d/mach.c   |   68 +
+ 25-akpm/arch/sh/boards/renesas/rts7751r2d/setup.c  |   31 
+ 25-akpm/arch/sh/configs/rts7751r2d_defconfig       |  809 +++++++++++++++++++++
+ 25-akpm/include/asm-sh/rts7751r2d/ide.h            |    8 
+ 25-akpm/include/asm-sh/rts7751r2d/io.h             |   37 
+ 25-akpm/include/asm-sh/rts7751r2d/rts7751r2d.h     |   73 +
+ 25-akpm/include/asm-sh/rts7751r2d/voyagergx_reg.h  |  313 ++++++++
+ 11 files changed, 1870 insertions(+)
+
+diff -puN /dev/null arch/sh/boards/renesas/rts7751r2d/io.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/renesas/rts7751r2d/io.c	2004-06-23 20:00:18.981804352 -0700
+@@ -0,0 +1,319 @@
++/*
++ * linux/arch/sh/kernel/io_rts7751r2d.c
++ *
++ * Copyright (C) 2001  Ian da Silva, Jeremy Siegel
++ * Based largely on io_se.c.
++ *
++ * I/O routine for Renesas Technology sales RTS7751R2D.
++ *
++ * Initial version only to support LAN access; some
++ * placeholder code from io_rts7751r2d.c left in with the
++ * expectation of later SuperIO and PCMCIA access.
++ */
++
++#include <linux/kernel.h>
++#include <linux/types.h>
++#include <asm/io.h>
++#include <asm/rts7751r2d/rts7751r2d.h>
++#include <asm/addrspace.h>
++
++#include <linux/module.h>
++#include <linux/pci.h>
++#include "../../../drivers/pci/pci-sh7751.h"
++
++/*
++ * The 7751R RTS7751R2D uses the built-in PCI controller (PCIC)
++ * of the 7751R processor, and has a SuperIO accessible via the PCI.
++ * The board also includes a PCMCIA controller on its memory bus,
++ * like the other Solution Engine boards.
++ */
++
++#define PCIIOBR		(volatile long *)PCI_REG(SH7751_PCIIOBR)
++#define PCIMBR          (volatile long *)PCI_REG(SH7751_PCIMBR)
++#define PCI_IO_AREA	SH7751_PCI_IO_BASE
++#define PCI_MEM_AREA	SH7751_PCI_CONFIG_BASE
++
++#define PCI_IOMAP(adr)	(PCI_IO_AREA + (adr & ~SH7751_PCIIOBR_MASK))
++
++#define maybebadio(name,port) \
++  printk("bad PC-like io %s for port 0x%lx at 0x%08x\n", \
++	 #name, (port), (__u32) __builtin_return_address(0))
++
++static inline void delay(void)
++{
++	ctrl_inw(0xa0000000);
++}
++
++static inline unsigned long port2adr(unsigned int port)
++{
++	if ((0x1f0 <= port && port < 0x1f8) || port == 0x3f6)
++		if (port == 0x3f6)
++			return (PA_AREA5_IO + 0x80c);
++		else
++			return (PA_AREA5_IO + 0x1000 + ((port-0x1f0) << 1));
++	else
++		maybebadio(port2adr, (unsigned long)port);
++
++	return port;
++}
++
++static inline unsigned long port88796l(unsigned int port, int flag)
++{
++	unsigned long addr;
++
++	if (flag)
++		addr = PA_AX88796L + ((port - AX88796L_IO_BASE) << 1);
++	else
++		addr = PA_AX88796L + ((port - AX88796L_IO_BASE) << 1) + 0x1000;
++
++	return addr;
++}
++
++/* The 7751R RTS7751R2D seems to have everything hooked */
++/* up pretty normally (nothing on high-bytes only...) so this */
++/* shouldn't be needed */
++static inline int shifted_port(unsigned long port)
++{
++	/* For IDE registers, value is not shifted */
++	if ((0x1f0 <= port && port < 0x1f8) || port == 0x3f6)
++		return 0;
++	else
++		return 1;
++}
++
++/* In case someone configures the kernel w/o PCI support: in that */
++/* scenario, don't ever bother to check for PCI-window addresses */
++
++/* NOTE: WINDOW CHECK MAY BE A BIT OFF, HIGH PCIBIOS_MIN_IO WRAPS? */
++#if defined(CONFIG_PCI)
++#define CHECK_SH7751_PCIIO(port) \
++  ((port >= PCIBIOS_MIN_IO) && (port < (PCIBIOS_MIN_IO + SH7751_PCI_IO_SIZE)))
++#else
++#define CHECK_SH7751_PCIIO(port) (0)
++#endif
++
++#if defined(CONFIG_NE2000) || defined(CONFIG_NE2000_MODULE)
++#define CHECK_AX88796L_PORT(port) \
++  ((port >= AX88796L_IO_BASE) && (port < (AX88796L_IO_BASE+0x20)))
++#else
++#define CHECK_AX88796L_PORT(port) (0)
++#endif
++
++/*
++ * General outline: remap really low stuff [eventually] to SuperIO,
++ * stuff in PCI IO space (at or above window at pci.h:PCIBIOS_MIN_IO)
++ * is mapped through the PCI IO window.  Stuff with high bits (PXSEG)
++ * should be way beyond the window, and is used  w/o translation for
++ * compatibility.
++ */
++unsigned char rts7751r2d_inb(unsigned long port)
++{
++	if (CHECK_AX88796L_PORT(port))
++		return (*(volatile unsigned short *)port88796l(port, 0)) & 0xff;
++	else if (PXSEG(port))
++		return *(volatile unsigned char *)port;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++		return *(volatile unsigned char *)PCI_IOMAP(port);
++	else
++		return (*(volatile unsigned short *)port2adr(port) & 0xff);
++}
++
++unsigned char rts7751r2d_inb_p(unsigned long port)
++{
++	unsigned char v;
++
++	if (CHECK_AX88796L_PORT(port))
++		v = (*(volatile unsigned short *)port88796l(port, 0)) & 0xff;
++        else if (PXSEG(port))
++		v = *(volatile unsigned char *)port;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++		v = *(volatile unsigned char *)PCI_IOMAP(port);
++	else
++		v = (*(volatile unsigned short *)port2adr(port) & 0xff);
++	delay();
++
++	return v;
++}
++
++unsigned short rts7751r2d_inw(unsigned long port)
++{
++	if (CHECK_AX88796L_PORT(port))
++		maybebadio(inw, port);
++        else if (PXSEG(port))
++		return *(volatile unsigned short *)port;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++		return *(volatile unsigned short *)PCI_IOMAP(port);
++	else
++		maybebadio(inw, port);
++
++	return 0;
++}
++
++unsigned int rts7751r2d_inl(unsigned long port)
++{
++	if (CHECK_AX88796L_PORT(port))
++		maybebadio(inl, port);
++        else if (PXSEG(port))
++		return *(volatile unsigned long *)port;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++		return *(volatile unsigned long *)PCI_IOMAP(port);
++	else
++		maybebadio(inl, port);
++
++	return 0;
++}
++
++void rts7751r2d_outb(unsigned char value, unsigned long port)
++{
++	if (CHECK_AX88796L_PORT(port))
++		*((volatile unsigned short *)port88796l(port, 0)) = value;
++        else if (PXSEG(port))
++		*(volatile unsigned char *)port = value;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++		*(volatile unsigned char *)PCI_IOMAP(port) = value;
++	else
++		*(volatile unsigned short *)port2adr(port) = value;
++}
++
++void rts7751r2d_outb_p(unsigned char value, unsigned long port)
++{
++	if (CHECK_AX88796L_PORT(port))
++		*((volatile unsigned short *)port88796l(port, 0)) = value;
++        else if (PXSEG(port))
++		*(volatile unsigned char *)port = value;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++		*(volatile unsigned char *)PCI_IOMAP(port) = value;
++	else
++		*(volatile unsigned short *)port2adr(port) = value;
++	delay();
++}
++
++void rts7751r2d_outw(unsigned short value, unsigned long port)
++{
++	if (CHECK_AX88796L_PORT(port))
++		maybebadio(outw, port);
++        else if (PXSEG(port))
++		*(volatile unsigned short *)port = value;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++		*(volatile unsigned short *)PCI_IOMAP(port) = value;
++	else
++		maybebadio(outw, port);
++}
++
++void rts7751r2d_outl(unsigned int value, unsigned long port)
++{
++	if (CHECK_AX88796L_PORT(port))
++		maybebadio(outl, port);
++        else if (PXSEG(port))
++		*(volatile unsigned long *)port = value;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++		*(volatile unsigned long *)PCI_IOMAP(port) = value;
++	else
++		maybebadio(outl, port);
++}
++
++void rts7751r2d_insb(unsigned long port, void *addr, unsigned long count)
++{
++	volatile __u8 *bp;
++	volatile __u16 *p;
++
++	if (CHECK_AX88796L_PORT(port)) {
++		p = (volatile unsigned short *)port88796l(port, 0);
++		while (count--) *((unsigned char *) addr)++ = *p & 0xff;
++	} else if (PXSEG(port))
++		while (count--) *((unsigned char *) addr)++ = *(volatile unsigned char *)port;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port)) {
++		bp = (__u8 *)PCI_IOMAP(port);
++		while (count--) *((volatile unsigned char *) addr)++ = *bp;
++	} else {
++		p = (volatile unsigned short *)port2adr(port);
++		while (count--) *((unsigned char *) addr)++ = *p & 0xff;
++	}
++}
++
++void rts7751r2d_insw(unsigned long port, void *addr, unsigned long count)
++{
++	volatile __u16 *p;
++
++	if (CHECK_AX88796L_PORT(port))
++		p = (volatile unsigned short *)port88796l(port, 1);
++	else if (PXSEG(port))
++		p = (volatile unsigned short *)port;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++		p = (volatile unsigned short *)PCI_IOMAP(port);
++	else
++		p = (volatile unsigned short *)port2adr(port);
++	while (count--) *((__u16 *) addr)++ = *p;
++}
++
++void rts7751r2d_insl(unsigned long port, void *addr, unsigned long count)
++{
++	if (CHECK_AX88796L_PORT(port))
++		maybebadio(insl, port);
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port)) {
++		volatile __u32 *p = (__u32 *)PCI_IOMAP(port);
++
++		while (count--) *((__u32 *) addr)++ = *p;
++	} else
++		maybebadio(insl, port);
++}
++
++void rts7751r2d_outsb(unsigned long port, const void *addr, unsigned long count)
++{
++	volatile __u8 *bp;
++	volatile __u16 *p;
++
++	if (CHECK_AX88796L_PORT(port)) {
++		p = (volatile unsigned short *)port88796l(port, 0);
++		while (count--) *p = *((unsigned char *) addr)++;
++	} else if (PXSEG(port))
++		while (count--) *(volatile unsigned char *)port = *((unsigned char *) addr)++;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port)) {
++		bp = (__u8 *)PCI_IOMAP(port);
++		while (count--) *bp = *((volatile unsigned char *) addr)++;
++	} else {
++		p = (volatile unsigned short *)port2adr(port);
++		while (count--) *p = *((unsigned char *) addr)++;
++	}
++}
++
++void rts7751r2d_outsw(unsigned long port, const void *addr, unsigned long count)
++{
++	volatile __u16 *p;
++
++	if (CHECK_AX88796L_PORT(port))
++		p = (volatile unsigned short *)port88796l(port, 1);
++	else if (PXSEG(port))
++		p = (volatile unsigned short *)port;
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port))
++		p = (volatile unsigned short *)PCI_IOMAP(port);
++	else
++		p = (volatile unsigned short *)port2adr(port);
++	while (count--) *p = *((__u16 *) addr)++;
++}
++
++void rts7751r2d_outsl(unsigned long port, const void *addr, unsigned long count)
++{
++	if (CHECK_AX88796L_PORT(port))
++		maybebadio(outsl, port);
++	else if (CHECK_SH7751_PCIIO(port) || shifted_port(port)) {
++		volatile __u32 *p = (__u32 *)PCI_IOMAP(port);
++
++		while (count--) *p = *((__u32 *) addr)++;
++	} else
++		maybebadio(outsl, port);
++}
++
++void *rts7751r2d_ioremap(unsigned long offset, unsigned long size)
++{
++	if (offset >= 0xfd000000)
++		return (void *)offset;
++	else
++		return (void *)P2SEGADDR(offset);
++}
++EXPORT_SYMBOL(rts7751r2d_ioremap);
++
++unsigned long rts7751r2d_isa_port2addr(unsigned long offset)
++{
++	return port2adr(offset);
++}
+diff -puN /dev/null arch/sh/boards/renesas/rts7751r2d/irq.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/renesas/rts7751r2d/irq.c	2004-06-23 20:00:18.982804200 -0700
+@@ -0,0 +1,135 @@
++/*
++ * linux/arch/sh/boards/renesas/rts7751r2d/irq.c
++ *
++ * Copyright (C) 2000  Kazumoto Kojima
++ *
++ * Renesas Technology Sales RTS7751R2D Support.
++ *
++ * Modified for RTS7751R2D by
++ * Atom Create Engineering Co., Ltd. 2002.
++ */
++
++#include <linux/config.h>
++#include <linux/init.h>
++#include <linux/irq.h>
++#include <asm/io.h>
++#include <asm/irq.h>
++#include <asm/rts7751r2d/rts7751r2d.h>
++
++#if defined(CONFIG_RTS7751R2D_REV11)
++static int mask_pos[] = {11, 9, 8, 12, 10, 6, 5, 4, 7, 14, 13, 0, 0, 0, 0};
++#else
++static int mask_pos[] = {6, 11, 9, 8, 12, 10, 5, 4, 7, 14, 13, 0, 0, 0, 0};
++#endif
++
++extern int voyagergx_irq_demux(int irq);
++extern void setup_voyagergx_irq(void);
++
++static void enable_rts7751r2d_irq(unsigned int irq);
++static void disable_rts7751r2d_irq(unsigned int irq);
++
++/* shutdown is same as "disable" */
++#define shutdown_rts7751r2d_irq disable_rts7751r2d_irq
++
++static void ack_rts7751r2d_irq(unsigned int irq);
++static void end_rts7751r2d_irq(unsigned int irq);
++
++static unsigned int startup_rts7751r2d_irq(unsigned int irq)
++{
++	enable_rts7751r2d_irq(irq);
++	return 0; /* never anything pending */
++}
++
++static void disable_rts7751r2d_irq(unsigned int irq)
++{
++	unsigned long flags;
++	unsigned short val;
++	unsigned short mask = 0xffff ^ (0x0001 << mask_pos[irq]);
++
++	/* Set the priority in IPR to 0 */
++	local_irq_save(flags);
++	val = ctrl_inw(IRLCNTR1);
++	val &= mask;
++	ctrl_outw(val, IRLCNTR1);
++	local_irq_restore(flags);
++}
++
++static void enable_rts7751r2d_irq(unsigned int irq)
++{
++	unsigned long flags;
++	unsigned short val;
++	unsigned short value = (0x0001 << mask_pos[irq]);
++
++	/* Set priority in IPR back to original value */
++	local_irq_save(flags);
++	val = ctrl_inw(IRLCNTR1);
++	val |= value;
++	ctrl_outw(val, IRLCNTR1);
++	local_irq_restore(flags);
++}
++
++int rts7751r2d_irq_demux(int irq)
++{
++	int demux_irq;
++
++	demux_irq = voyagergx_irq_demux(irq);
++	return demux_irq;
++}
++
++static void ack_rts7751r2d_irq(unsigned int irq)
++{
++	disable_rts7751r2d_irq(irq);
++}
++
++static void end_rts7751r2d_irq(unsigned int irq)
++{
++	if (!(irq_desc[irq].status & (IRQ_DISABLED|IRQ_INPROGRESS)))
++		enable_rts7751r2d_irq(irq);
++}
++
++static struct hw_interrupt_type rts7751r2d_irq_type = {
++	"RTS7751R2D IRQ",
++	startup_rts7751r2d_irq,
++	shutdown_rts7751r2d_irq,
++	enable_rts7751r2d_irq,
++	disable_rts7751r2d_irq,
++	ack_rts7751r2d_irq,
++	end_rts7751r2d_irq,
++};
++
++static void make_rts7751r2d_irq(unsigned int irq)
++{
++	disable_irq_nosync(irq);
++	irq_desc[irq].handler = &rts7751r2d_irq_type;
++	disable_rts7751r2d_irq(irq);
++}
++
++/*
++ * Initialize IRQ setting
++ */
++void __init init_rts7751r2d_IRQ(void)
++{
++	int i;
++
++	/* IRL0=KEY Input
++	 * IRL1=Ethernet
++	 * IRL2=CF Card
++	 * IRL3=CF Card Insert
++	 * IRL4=PCMCIA
++	 * IRL5=VOYAGER
++	 * IRL6=RTC Alarm
++	 * IRL7=RTC Timer
++	 * IRL8=SD Card
++	 * IRL9=PCI Slot #1
++	 * IRL10=PCI Slot #2
++	 * IRL11=Extention #0
++	 * IRL12=Extention #1
++	 * IRL13=Extention #2
++	 * IRL14=Extention #3
++	 */
++
++	for (i=0; i<15; i++)
++		make_rts7751r2d_irq(i);
++
++	setup_voyagergx_irq();
++}
+diff -puN /dev/null arch/sh/boards/renesas/rts7751r2d/led.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/renesas/rts7751r2d/led.c	2004-06-23 20:00:18.983804048 -0700
+@@ -0,0 +1,67 @@
++/*
++ * linux/arch/sh/kernel/led_rts7751r2d.c
++ *
++ * Copyright (C) Atom Create Engineering Co., Ltd.
++ *
++ * May be copied or modified under the terms of GNU General Public
++ * License.  See linux/COPYING for more information.
++ *
++ * This file contains Renesas Technology Sales RTS7751R2D specific LED code.
++ */
++
++#include <linux/config.h>
++#include <asm/io.h>
++#include <asm/rts7751r2d/rts7751r2d.h>
++
++extern unsigned int debug_counter;
++
++#ifdef CONFIG_HEARTBEAT
++
++#include <linux/sched.h>
++
++/* Cycle the LED's in the clasic Knightriger/Sun pattern */
++void heartbeat_rts7751r2d(void)
++{
++	static unsigned int cnt = 0, period = 0;
++	volatile unsigned short *p = (volatile unsigned short *)PA_OUTPORT;
++	static unsigned bit = 0, up = 1;
++
++	cnt += 1;
++	if (cnt < period)
++		return;
++
++	cnt = 0;
++
++	/* Go through the points (roughly!):
++	 * f(0)=10, f(1)=16, f(2)=20, f(5)=35, f(int)->110
++	 */
++	period = 110 - ((300 << FSHIFT)/((avenrun[0]/5) + (3<<FSHIFT)));
++
++	*p = 1 << bit;
++	if (up)
++		if (bit == 7) {
++			bit--;
++			up = 0;
++		} else
++			bit++;
++	else if (bit == 0)
++		up = 1;
++	else
++		bit--;
++}
++#endif /* CONFIG_HEARTBEAT */
++
++void rts7751r2d_led(unsigned short value)
++{
++	ctrl_outw(value, PA_OUTPORT);
++}
++
++void debug_led_disp(void)
++{
++	unsigned short value;
++
++	value = (unsigned short)debug_counter++;
++	rts7751r2d_led(value);
++	if (value == 0xff)
++		debug_counter = 0;
++}
+diff -puN /dev/null arch/sh/boards/renesas/rts7751r2d/mach.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/renesas/rts7751r2d/mach.c	2004-06-23 20:00:18.984803896 -0700
+@@ -0,0 +1,68 @@
++/*
++ * linux/arch/sh/kernel/mach_rts7751r2d.c
++ *
++ * Minor tweak of mach_se.c file to reference rts7751r2d-specific items.
++ *
++ * May be copied or modified under the terms of the GNU General Public
++ * License.  See linux/COPYING for more information.
++ *
++ * Machine vector for the Renesas Technology sales RTS7751R2D
++ */
++
++#include <linux/config.h>
++#include <linux/init.h>
++#include <linux/types.h>
++
++#include <asm/machvec.h>
++#include <asm/rtc.h>
++#include <asm/irq.h>
++#include <asm/rts7751r2d/io.h>
++
++extern void heartbeat_rts7751r2d(void);
++extern void init_rts7751r2d_IRQ(void);
++extern void *rts7751r2d_ioremap(unsigned long, unsigned long);
++extern int rts7751r2d_irq_demux(int irq);
++
++extern void *voyagergx_consistent_alloc(struct device *, size_t, dma_addr_t *, int);
++extern void voyagergx_consistent_free(struct device *, size_t, void *, dma_addr_t);
++
++/*
++ * The Machine Vector
++ */
++
++struct sh_machine_vector mv_rts7751r2d __initmv = {
++	.mv_nr_irqs		= 72,
++
++	.mv_inb			= rts7751r2d_inb,
++	.mv_inw			= rts7751r2d_inw,
++	.mv_inl			= rts7751r2d_inl,
++	.mv_outb		= rts7751r2d_outb,
++	.mv_outw		= rts7751r2d_outw,
++	.mv_outl		= rts7751r2d_outl,
++
++	.mv_inb_p		= rts7751r2d_inb_p,
++	.mv_inw_p		= rts7751r2d_inw,
++	.mv_inl_p		= rts7751r2d_inl,
++	.mv_outb_p		= rts7751r2d_outb_p,
++	.mv_outw_p		= rts7751r2d_outw,
++	.mv_outl_p		= rts7751r2d_outl,
++
++	.mv_insb		= rts7751r2d_insb,
++	.mv_insw		= rts7751r2d_insw,
++	.mv_insl		= rts7751r2d_insl,
++	.mv_outsb		= rts7751r2d_outsb,
++	.mv_outsw		= rts7751r2d_outsw,
++	.mv_outsl		= rts7751r2d_outsl,
++
++	.mv_ioremap		= rts7751r2d_ioremap,
++	.mv_isa_port2addr	= rts7751r2d_isa_port2addr,
++	.mv_init_irq		= init_rts7751r2d_IRQ,
++#ifdef CONFIG_HEARTBEAT
++	.mv_heartbeat		= heartbeat_rts7751r2d,
++#endif
++	.mv_irq_demux		= rts7751r2d_irq_demux,
++
++	.mv_consistent_alloc	= voyagergx_consistent_alloc,
++	.mv_consistent_free	= voyagergx_consistent_free,
++};
++ALIAS_MV(rts7751r2d)
+diff -puN /dev/null arch/sh/boards/renesas/rts7751r2d/Makefile
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/renesas/rts7751r2d/Makefile	2004-06-23 20:00:18.984803896 -0700
+@@ -0,0 +1,10 @@
++#
++# Makefile for the RTS7751R2D specific parts of the kernel
++#
++# Note! Dependencies are done automagically by 'make dep', which also
++# removes any old dependencies. DON'T put your own dependencies here
++# unless it's something special (ie not a .c file).
++#
++
++obj-y	 := mach.o setup.o io.o irq.o led.o
++
+diff -puN /dev/null arch/sh/boards/renesas/rts7751r2d/setup.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/boards/renesas/rts7751r2d/setup.c	2004-06-23 20:00:18.985803744 -0700
+@@ -0,0 +1,31 @@
++/*
++ * linux/arch/sh/kernel/setup_rts7751r2d.c
++ *
++ * Copyright (C) 2000  Kazumoto Kojima
++ *
++ * Renesas Technology Sales RTS7751R2D Support.
++ *
++ * Modified for RTS7751R2D by
++ * Atom Create Engineering Co., Ltd. 2002.
++ */
++
++#include <linux/init.h>
++#include <asm/io.h>
++#include <asm/rts7751r2d/rts7751r2d.h>
++
++unsigned int debug_counter;
++
++const char *get_system_type(void)
++{
++	return "RTS7751R2D";
++}
++
++/*
++ * Initialize the board
++ */
++void __init platform_setup(void)
++{
++	printk(KERN_INFO "Renesas Technology Sales RTS7751R2D support.\n");
++	ctrl_outw(0x0000, PA_OUTPORT);
++	debug_counter = 0;
++}
+diff -puN /dev/null arch/sh/configs/rts7751r2d_defconfig
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/configs/rts7751r2d_defconfig	2004-06-23 20:00:18.989803136 -0700
+@@ -0,0 +1,809 @@
++#
++# Automatically generated make config: don't edit
++#
++CONFIG_SUPERH=y
++CONFIG_UID16=y
++CONFIG_RWSEM_GENERIC_SPINLOCK=y
++
++#
++# Code maturity level options
++#
++CONFIG_EXPERIMENTAL=y
++CONFIG_CLEAN_COMPILE=y
++CONFIG_STANDALONE=y
++CONFIG_BROKEN_ON_SMP=y
++
++#
++# General setup
++#
++CONFIG_SWAP=y
++CONFIG_SYSVIPC=y
++# CONFIG_BSD_PROCESS_ACCT is not set
++CONFIG_SYSCTL=y
++CONFIG_LOG_BUF_SHIFT=14
++# CONFIG_IKCONFIG is not set
++CONFIG_EMBEDDED=y
++CONFIG_KALLSYMS=y
++CONFIG_FUTEX=y
++CONFIG_EPOLL=y
++CONFIG_IOSCHED_NOOP=y
++CONFIG_IOSCHED_AS=y
++CONFIG_IOSCHED_DEADLINE=y
++
++#
++# Loadable module support
++#
++CONFIG_MODULES=y
++# CONFIG_MODULE_UNLOAD is not set
++CONFIG_OBSOLETE_MODPARM=y
++# CONFIG_MODVERSIONS is not set
++# CONFIG_KMOD is not set
++
++#
++# System type
++#
++# CONFIG_SH_SOLUTION_ENGINE is not set
++# CONFIG_SH_7751_SOLUTION_ENGINE is not set
++# CONFIG_SH_7751_SYSTEMH is not set
++# CONFIG_SH_STB1_HARP is not set
++# CONFIG_SH_STB1_OVERDRIVE is not set
++# CONFIG_SH_HP620 is not set
++# CONFIG_SH_HP680 is not set
++# CONFIG_SH_HP690 is not set
++# CONFIG_SH_CQREEK is not set
++# CONFIG_SH_DMIDA is not set
++# CONFIG_SH_EC3104 is not set
++# CONFIG_SH_SATURN is not set
++# CONFIG_SH_DREAMCAST is not set
++# CONFIG_SH_CAT68701 is not set
++# CONFIG_SH_BIGSUR is not set
++# CONFIG_SH_SH2000 is not set
++# CONFIG_SH_ADX is not set
++# CONFIG_SH_MPC1211 is not set
++# CONFIG_SH_SECUREEDGE5410 is not set
++CONFIG_SH_RTS7751R2D=y
++# CONFIG_SH_UNKNOWN is not set
++# CONFIG_CPU_SH2 is not set
++# CONFIG_CPU_SH3 is not set
++CONFIG_CPU_SH4=y
++# CONFIG_CPU_SUBTYPE_SH7604 is not set
++# CONFIG_CPU_SUBTYPE_SH7300 is not set
++# CONFIG_CPU_SUBTYPE_SH7707 is not set
++# CONFIG_CPU_SUBTYPE_SH7708 is not set
++# CONFIG_CPU_SUBTYPE_SH7709 is not set
++# CONFIG_CPU_SUBTYPE_SH7750 is not set
++CONFIG_CPU_SUBTYPE_SH7751=y
++# CONFIG_CPU_SUBTYPE_SH7760 is not set
++# CONFIG_CPU_SUBTYPE_ST40STB1 is not set
++CONFIG_MMU=y
++CONFIG_CMDLINE_BOOL=y
++CONFIG_CMDLINE="mem=64M console=ttySC0,115200 root=/dev/hda1"
++CONFIG_MEMORY_START=0x0c000000
++CONFIG_MEMORY_SIZE=0x04000000
++CONFIG_MEMORY_SET=y
++# CONFIG_MEMORY_OVERRIDE is not set
++CONFIG_SH_RTC=y
++CONFIG_ZERO_PAGE_OFFSET=0x00010000
++CONFIG_BOOT_LINK_OFFSET=0x00800000
++CONFIG_CPU_LITTLE_ENDIAN=y
++# CONFIG_PREEMPT is not set
++# CONFIG_UBC_WAKEUP is not set
++# CONFIG_SH_WRITETHROUGH is not set
++# CONFIG_SH_OCRAM is not set
++# CONFIG_SH_STORE_QUEUES is not set
++# CONFIG_SMP is not set
++CONFIG_VOYAGERGX=y
++CONFIG_RTS7751R2D_REV11=y
++CONFIG_SH_PCLK_FREQ=60000000
++# CONFIG_CPU_FREQ is not set
++CONFIG_SH_DMA=y
++CONFIG_NR_ONCHIP_DMA_CHANNELS=8
++# CONFIG_NR_DMA_CHANNELS_BOOL is not set
++# CONFIG_DMA_PAGE_OPS is not set
++
++#
++# Bus options (PCI, PCMCIA, EISA, MCA, ISA)
++#
++CONFIG_ISA=y
++CONFIG_PCI=y
++CONFIG_SH_PCIDMA_NONCOHERENT=y
++CONFIG_PCI_AUTO=y
++CONFIG_PCI_AUTO_UPDATE_RESOURCES=y
++CONFIG_PCI_DMA=y
++# CONFIG_PCI_LEGACY_PROC is not set
++CONFIG_PCI_NAMES=y
++CONFIG_HOTPLUG=y
++
++#
++# PCMCIA/CardBus support
++#
++CONFIG_PCMCIA=m
++CONFIG_YENTA=m
++CONFIG_CARDBUS=y
++# CONFIG_I82092 is not set
++# CONFIG_I82365 is not set
++# CONFIG_TCIC is not set
++CONFIG_PCMCIA_PROBE=y
++
++#
++# PCI Hotplug Support
++#
++CONFIG_HOTPLUG_PCI=y
++# CONFIG_HOTPLUG_PCI_FAKE is not set
++# CONFIG_HOTPLUG_PCI_CPCI is not set
++
++#
++# Executable file formats
++#
++CONFIG_BINFMT_ELF=y
++# CONFIG_BINFMT_FLAT is not set
++# CONFIG_BINFMT_MISC is not set
++
++#
++# Generic Driver Options
++#
++# CONFIG_FW_LOADER is not set
++
++#
++# Memory Technology Devices (MTD)
++#
++# CONFIG_MTD is not set
++
++#
++# Parallel port support
++#
++# CONFIG_PARPORT is not set
++
++#
++# Block devices
++#
++# CONFIG_BLK_DEV_FD is not set
++# CONFIG_BLK_DEV_XD is not set
++# CONFIG_BLK_CPQ_DA is not set
++# CONFIG_BLK_CPQ_CISS_DA is not set
++# CONFIG_BLK_DEV_DAC960 is not set
++# CONFIG_BLK_DEV_UMEM is not set
++# CONFIG_BLK_DEV_LOOP is not set
++# CONFIG_BLK_DEV_NBD is not set
++CONFIG_BLK_DEV_RAM=y
++CONFIG_BLK_DEV_RAM_SIZE=4096
++# CONFIG_BLK_DEV_INITRD is not set
++# CONFIG_LBD is not set
++
++#
++# ATA/ATAPI/MFM/RLL support
++#
++CONFIG_IDE=y
++CONFIG_BLK_DEV_IDE=y
++
++#
++# Please see Documentation/ide.txt for help/info on IDE drives
++#
++CONFIG_BLK_DEV_IDEDISK=y
++# CONFIG_IDEDISK_MULTI_MODE is not set
++# CONFIG_IDEDISK_STROKE is not set
++CONFIG_BLK_DEV_IDECS=m
++# CONFIG_BLK_DEV_IDECD is not set
++# CONFIG_BLK_DEV_IDETAPE is not set
++# CONFIG_BLK_DEV_IDEFLOPPY is not set
++# CONFIG_IDE_TASK_IOCTL is not set
++# CONFIG_IDE_TASKFILE_IO is not set
++
++#
++# IDE chipset support/bugfixes
++#
++# CONFIG_BLK_DEV_IDEPCI is not set
++# CONFIG_IDE_CHIPSETS is not set
++# CONFIG_BLK_DEV_IDEDMA is not set
++# CONFIG_IDEDMA_AUTO is not set
++# CONFIG_DMA_NONPCI is not set
++# CONFIG_BLK_DEV_HD is not set
++
++#
++# SCSI device support
++#
++# CONFIG_SCSI is not set
++
++#
++# Old CD-ROM drivers (not SCSI, not IDE)
++#
++# CONFIG_CD_NO_IDESCSI is not set
++
++#
++# Multi-device support (RAID and LVM)
++#
++# CONFIG_MD is not set
++
++#
++# IEEE 1394 (FireWire) support (EXPERIMENTAL)
++#
++# CONFIG_IEEE1394 is not set
++
++#
++# Networking support
++#
++CONFIG_NET=y
++
++#
++# Networking options
++#
++CONFIG_PACKET=y
++# CONFIG_PACKET_MMAP is not set
++# CONFIG_NETLINK_DEV is not set
++CONFIG_UNIX=y
++# CONFIG_NET_KEY is not set
++CONFIG_INET=y
++# CONFIG_IP_MULTICAST is not set
++# CONFIG_IP_ADVANCED_ROUTER is not set
++# CONFIG_IP_PNP is not set
++# CONFIG_NET_IPIP is not set
++# CONFIG_NET_IPGRE is not set
++# CONFIG_ARPD is not set
++# CONFIG_INET_ECN is not set
++# CONFIG_SYN_COOKIES is not set
++# CONFIG_INET_AH is not set
++# CONFIG_INET_ESP is not set
++# CONFIG_INET_IPCOMP is not set
++# CONFIG_IPV6 is not set
++# CONFIG_DECNET is not set
++# CONFIG_BRIDGE is not set
++# CONFIG_NETFILTER is not set
++
++#
++# SCTP Configuration (EXPERIMENTAL)
++#
++CONFIG_IPV6_SCTP__=y
++# CONFIG_IP_SCTP is not set
++# CONFIG_ATM is not set
++# CONFIG_VLAN_8021Q is not set
++# CONFIG_LLC2 is not set
++# CONFIG_IPX is not set
++# CONFIG_ATALK is not set
++# CONFIG_X25 is not set
++# CONFIG_LAPB is not set
++# CONFIG_NET_DIVERT is not set
++# CONFIG_ECONET is not set
++# CONFIG_WAN_ROUTER is not set
++# CONFIG_NET_FASTROUTE is not set
++# CONFIG_NET_HW_FLOWCONTROL is not set
++
++#
++# QoS and/or fair queueing
++#
++# CONFIG_NET_SCHED is not set
++
++#
++# Network testing
++#
++# CONFIG_NET_PKTGEN is not set
++CONFIG_NETDEVICES=y
++
++#
++# ARCnet devices
++#
++# CONFIG_ARCNET is not set
++# CONFIG_DUMMY is not set
++# CONFIG_BONDING is not set
++# CONFIG_EQUALIZER is not set
++# CONFIG_TUN is not set
++
++#
++# Ethernet (10 or 100Mbit)
++#
++CONFIG_NET_ETHERNET=y
++CONFIG_MII=y
++# CONFIG_STNIC is not set
++# CONFIG_HAPPYMEAL is not set
++# CONFIG_SUNGEM is not set
++# CONFIG_NET_VENDOR_3COM is not set
++# CONFIG_LANCE is not set
++# CONFIG_NET_VENDOR_SMC is not set
++# CONFIG_NET_VENDOR_RACAL is not set
++
++#
++# Tulip family network device support
++#
++# CONFIG_NET_TULIP is not set
++# CONFIG_AT1700 is not set
++# CONFIG_DEPCA is not set
++# CONFIG_HP100 is not set
++CONFIG_NET_ISA=y
++# CONFIG_E2100 is not set
++# CONFIG_EWRK3 is not set
++# CONFIG_EEXPRESS is not set
++# CONFIG_EEXPRESS_PRO is not set
++# CONFIG_HPLAN_PLUS is not set
++# CONFIG_HPLAN is not set
++# CONFIG_LP486E is not set
++# CONFIG_ETH16I is not set
++CONFIG_NE2000=m
++# CONFIG_ZNET is not set
++# CONFIG_SEEQ8005 is not set
++CONFIG_NET_PCI=y
++# CONFIG_PCNET32 is not set
++# CONFIG_AMD8111_ETH is not set
++# CONFIG_ADAPTEC_STARFIRE is not set
++# CONFIG_AC3200 is not set
++# CONFIG_APRICOT is not set
++# CONFIG_B44 is not set
++# CONFIG_CS89x0 is not set
++# CONFIG_DGRS is not set
++# CONFIG_EEPRO100 is not set
++# CONFIG_E100 is not set
++# CONFIG_FEALNX is not set
++# CONFIG_NATSEMI is not set
++# CONFIG_NE2K_PCI is not set
++# CONFIG_8139CP is not set
++CONFIG_8139TOO=y
++# CONFIG_8139TOO_PIO is not set
++# CONFIG_8139TOO_TUNE_TWISTER is not set
++# CONFIG_8139TOO_8129 is not set
++# CONFIG_8139_OLD_RX_RESET is not set
++# CONFIG_SIS900 is not set
++# CONFIG_EPIC100 is not set
++# CONFIG_SUNDANCE is not set
++# CONFIG_TLAN is not set
++# CONFIG_VIA_RHINE is not set
++# CONFIG_NET_POCKET is not set
++
++#
++# Ethernet (1000 Mbit)
++#
++# CONFIG_ACENIC is not set
++# CONFIG_DL2K is not set
++# CONFIG_E1000 is not set
++# CONFIG_NS83820 is not set
++# CONFIG_HAMACHI is not set
++# CONFIG_YELLOWFIN is not set
++# CONFIG_R8169 is not set
++# CONFIG_SIS190 is not set
++# CONFIG_SK98LIN is not set
++# CONFIG_TIGON3 is not set
++
++#
++# Ethernet (10000 Mbit)
++#
++# CONFIG_IXGB is not set
++# CONFIG_FDDI is not set
++# CONFIG_HIPPI is not set
++# CONFIG_PPP is not set
++# CONFIG_SLIP is not set
++
++#
++# Wireless LAN (non-hamradio)
++#
++CONFIG_NET_RADIO=y
++
++#
++# Obsolete Wireless cards support (pre-802.11)
++#
++# CONFIG_STRIP is not set
++# CONFIG_ARLAN is not set
++# CONFIG_WAVELAN is not set
++# CONFIG_PCMCIA_WAVELAN is not set
++# CONFIG_PCMCIA_NETWAVE is not set
++
++#
++# Wireless 802.11 Frequency Hopping cards support
++#
++# CONFIG_PCMCIA_RAYCS is not set
++
++#
++# Wireless 802.11b ISA/PCI cards support
++#
++# CONFIG_AIRO is not set
++CONFIG_HERMES=m
++# CONFIG_PLX_HERMES is not set
++# CONFIG_TMD_HERMES is not set
++# CONFIG_PCI_HERMES is not set
++
++#
++# Wireless 802.11b Pcmcia/Cardbus cards support
++#
++CONFIG_PCMCIA_HERMES=m
++# CONFIG_AIRO_CS is not set
++# CONFIG_PCMCIA_ATMEL is not set
++# CONFIG_PCMCIA_WL3501 is not set
++CONFIG_NET_WIRELESS=y
++
++#
++# Token Ring devices
++#
++# CONFIG_TR is not set
++# CONFIG_RCPCI is not set
++# CONFIG_SHAPER is not set
++
++#
++# Wan interfaces
++#
++# CONFIG_WAN is not set
++
++#
++# PCMCIA network device support
++#
++# CONFIG_NET_PCMCIA is not set
++
++#
++# Amateur Radio support
++#
++# CONFIG_HAMRADIO is not set
++
++#
++# IrDA (infrared) support
++#
++# CONFIG_IRDA is not set
++
++#
++# Bluetooth support
++#
++# CONFIG_BT is not set
++
++#
++# ISDN subsystem
++#
++# CONFIG_ISDN_BOOL is not set
++
++#
++# Telephony Support
++#
++# CONFIG_PHONE is not set
++
++#
++# Input device support
++#
++# CONFIG_INPUT is not set
++
++#
++# Userland interfaces
++#
++
++#
++# Input I/O drivers
++#
++# CONFIG_GAMEPORT is not set
++CONFIG_SOUND_GAMEPORT=y
++# CONFIG_SERIO is not set
++# CONFIG_SERIO_I8042 is not set
++
++#
++# Input Device Drivers
++#
++
++#
++# Character devices
++#
++# CONFIG_VT is not set
++# CONFIG_SERIAL is not set
++CONFIG_SH_SCI=y
++CONFIG_SERIAL_CONSOLE=y
++CONFIG_RTC_9701JE=y
++
++#
++# Unix 98 PTY support
++#
++# CONFIG_UNIX98_PTYS is not set
++CONFIG_HEARTBEAT=y
++# CONFIG_PSMOUSE is not set
++
++#
++# Watchdog Cards
++#
++# CONFIG_WATCHDOG is not set
++# CONFIG_RTC is not set
++
++#
++# PCMCIA character devices
++#
++# CONFIG_SYNCLINK_CS is not set
++
++#
++# Serial drivers
++#
++# CONFIG_SERIAL_8250 is not set
++
++#
++# Non-8250 serial port support
++#
++# CONFIG_SERIAL_SH_SCI is not set
++
++#
++# I2C support
++#
++# CONFIG_I2C is not set
++
++#
++# I2C Algorithms
++#
++
++#
++# I2C Hardware Bus support
++#
++
++#
++# I2C Hardware Sensors Chip support
++#
++# CONFIG_I2C_SENSOR is not set
++
++#
++# File systems
++#
++CONFIG_EXT2_FS=y
++# CONFIG_EXT2_FS_XATTR is not set
++# CONFIG_EXT3_FS is not set
++# CONFIG_JBD is not set
++# CONFIG_REISERFS_FS is not set
++# CONFIG_JFS_FS is not set
++# CONFIG_XFS_FS is not set
++CONFIG_MINIX_FS=y
++# CONFIG_ROMFS_FS is not set
++# CONFIG_QUOTA is not set
++# CONFIG_AUTOFS_FS is not set
++# CONFIG_AUTOFS4_FS is not set
++
++#
++# CD-ROM/DVD Filesystems
++#
++# CONFIG_ISO9660_FS is not set
++# CONFIG_UDF_FS is not set
++
++#
++# DOS/FAT/NT Filesystems
++#
++CONFIG_FAT_FS=y
++CONFIG_MSDOS_FS=y
++CONFIG_VFAT_FS=y
++# CONFIG_NTFS_FS is not set
++
++#
++# Pseudo filesystems
++#
++CONFIG_PROC_FS=y
++CONFIG_PROC_KCORE=y
++# CONFIG_DEVFS_FS is not set
++# CONFIG_TMPFS is not set
++# CONFIG_HUGETLB_PAGE is not set
++CONFIG_RAMFS=y
++
++#
++# Miscellaneous filesystems
++#
++# CONFIG_ADFS_FS is not set
++# CONFIG_AFFS_FS is not set
++# CONFIG_HFS_FS is not set
++# CONFIG_BEFS_FS is not set
++# CONFIG_BFS_FS is not set
++# CONFIG_EFS_FS is not set
++# CONFIG_CRAMFS is not set
++# CONFIG_VXFS_FS is not set
++# CONFIG_HPFS_FS is not set
++# CONFIG_QNX4FS_FS is not set
++# CONFIG_SYSV_FS is not set
++# CONFIG_UFS_FS is not set
++
++#
++# Network File Systems
++#
++# CONFIG_NFS_FS is not set
++# CONFIG_NFSD is not set
++# CONFIG_EXPORTFS is not set
++# CONFIG_SMB_FS is not set
++# CONFIG_CIFS is not set
++# CONFIG_NCP_FS is not set
++# CONFIG_CODA_FS is not set
++# CONFIG_INTERMEZZO_FS is not set
++# CONFIG_AFS_FS is not set
++
++#
++# Partition Types
++#
++# CONFIG_PARTITION_ADVANCED is not set
++CONFIG_MSDOS_PARTITION=y
++CONFIG_NLS=y
++
++#
++# Native Language Support
++#
++CONFIG_NLS_DEFAULT="iso8859-1"
++# CONFIG_NLS_CODEPAGE_437 is not set
++# CONFIG_NLS_CODEPAGE_737 is not set
++# CONFIG_NLS_CODEPAGE_775 is not set
++# CONFIG_NLS_CODEPAGE_850 is not set
++# CONFIG_NLS_CODEPAGE_852 is not set
++# CONFIG_NLS_CODEPAGE_855 is not set
++# CONFIG_NLS_CODEPAGE_857 is not set
++# CONFIG_NLS_CODEPAGE_860 is not set
++# CONFIG_NLS_CODEPAGE_861 is not set
++# CONFIG_NLS_CODEPAGE_862 is not set
++# CONFIG_NLS_CODEPAGE_863 is not set
++# CONFIG_NLS_CODEPAGE_864 is not set
++# CONFIG_NLS_CODEPAGE_865 is not set
++# CONFIG_NLS_CODEPAGE_866 is not set
++# CONFIG_NLS_CODEPAGE_869 is not set
++# CONFIG_NLS_CODEPAGE_936 is not set
++# CONFIG_NLS_CODEPAGE_950 is not set
++CONFIG_NLS_CODEPAGE_932=y
++# CONFIG_NLS_CODEPAGE_949 is not set
++# CONFIG_NLS_CODEPAGE_874 is not set
++# CONFIG_NLS_ISO8859_8 is not set
++# CONFIG_NLS_CODEPAGE_1250 is not set
++# CONFIG_NLS_CODEPAGE_1251 is not set
++# CONFIG_NLS_ISO8859_1 is not set
++# CONFIG_NLS_ISO8859_2 is not set
++# CONFIG_NLS_ISO8859_3 is not set
++# CONFIG_NLS_ISO8859_4 is not set
++# CONFIG_NLS_ISO8859_5 is not set
++# CONFIG_NLS_ISO8859_6 is not set
++# CONFIG_NLS_ISO8859_7 is not set
++# CONFIG_NLS_ISO8859_9 is not set
++# CONFIG_NLS_ISO8859_13 is not set
++# CONFIG_NLS_ISO8859_14 is not set
++# CONFIG_NLS_ISO8859_15 is not set
++# CONFIG_NLS_KOI8_R is not set
++# CONFIG_NLS_KOI8_U is not set
++# CONFIG_NLS_UTF8 is not set
++
++#
++# Multimedia devices
++#
++# CONFIG_VIDEO_DEV is not set
++
++#
++# Digital Video Broadcasting Devices
++#
++# CONFIG_DVB is not set
++
++#
++# Graphics support
++#
++# CONFIG_FB is not set
++
++#
++# Sound
++#
++CONFIG_SOUND=y
++
++#
++# Advanced Linux Sound Architecture
++#
++CONFIG_SND=m
++# CONFIG_SND_SEQUENCER is not set
++# CONFIG_SND_OSSEMUL is not set
++# CONFIG_SND_VERBOSE_PRINTK is not set
++# CONFIG_SND_DEBUG is not set
++
++#
++# Generic devices
++#
++# CONFIG_SND_DUMMY is not set
++# CONFIG_SND_MTPAV is not set
++# CONFIG_SND_SERIAL_U16550 is not set
++# CONFIG_SND_MPU401 is not set
++
++#
++# ISA devices
++#
++# CONFIG_SND_AD1848 is not set
++# CONFIG_SND_CS4231 is not set
++# CONFIG_SND_CS4232 is not set
++# CONFIG_SND_CS4236 is not set
++# CONFIG_SND_ES1688 is not set
++# CONFIG_SND_ES18XX is not set
++# CONFIG_SND_GUSCLASSIC is not set
++# CONFIG_SND_GUSEXTREME is not set
++# CONFIG_SND_GUSMAX is not set
++# CONFIG_SND_INTERWAVE is not set
++# CONFIG_SND_INTERWAVE_STB is not set
++# CONFIG_SND_OPTI92X_AD1848 is not set
++# CONFIG_SND_OPTI92X_CS4231 is not set
++# CONFIG_SND_OPTI93X is not set
++# CONFIG_SND_SB8 is not set
++# CONFIG_SND_SB16 is not set
++# CONFIG_SND_SBAWE is not set
++# CONFIG_SND_WAVEFRONT is not set
++# CONFIG_SND_CMI8330 is not set
++# CONFIG_SND_OPL3SA2 is not set
++# CONFIG_SND_SGALAXY is not set
++# CONFIG_SND_SSCAPE is not set
++
++#
++# PCI devices
++#
++# CONFIG_SND_ALI5451 is not set
++# CONFIG_SND_AZT3328 is not set
++# CONFIG_SND_CS46XX is not set
++# CONFIG_SND_CS4281 is not set
++# CONFIG_SND_EMU10K1 is not set
++# CONFIG_SND_KORG1212 is not set
++# CONFIG_SND_NM256 is not set
++# CONFIG_SND_RME32 is not set
++# CONFIG_SND_RME96 is not set
++# CONFIG_SND_RME9652 is not set
++# CONFIG_SND_HDSP is not set
++# CONFIG_SND_TRIDENT is not set
++CONFIG_SND_YMFPCI=m
++# CONFIG_SND_ALS4000 is not set
++# CONFIG_SND_CMIPCI is not set
++# CONFIG_SND_ENS1370 is not set
++# CONFIG_SND_ENS1371 is not set
++# CONFIG_SND_ES1938 is not set
++# CONFIG_SND_ES1968 is not set
++# CONFIG_SND_MAESTRO3 is not set
++# CONFIG_SND_FM801 is not set
++# CONFIG_SND_ICE1712 is not set
++# CONFIG_SND_ICE1724 is not set
++# CONFIG_SND_INTEL8X0 is not set
++# CONFIG_SND_SONICVIBES is not set
++# CONFIG_SND_VIA82XX is not set
++# CONFIG_SND_VX222 is not set
++
++#
++# PCMCIA devices
++#
++# CONFIG_SND_VXPOCKET is not set
++# CONFIG_SND_VXP440 is not set
++
++#
++# Open Sound System
++#
++CONFIG_SOUND_PRIME=m
++# CONFIG_SOUND_BT878 is not set
++CONFIG_SOUND_CMPCI=m
++# CONFIG_SOUND_CMPCI_FM is not set
++# CONFIG_SOUND_CMPCI_MIDI is not set
++# CONFIG_SOUND_CMPCI_JOYSTICK is not set
++# CONFIG_SOUND_CMPCI_CM8738 is not set
++# CONFIG_SOUND_EMU10K1 is not set
++# CONFIG_SOUND_FUSION is not set
++# CONFIG_SOUND_CS4281 is not set
++# CONFIG_SOUND_ES1370 is not set
++# CONFIG_SOUND_ES1371 is not set
++# CONFIG_SOUND_ESSSOLO1 is not set
++# CONFIG_SOUND_MAESTRO is not set
++# CONFIG_SOUND_MAESTRO3 is not set
++# CONFIG_SOUND_ICH is not set
++# CONFIG_SOUND_SONICVIBES is not set
++# CONFIG_SOUND_TRIDENT is not set
++# CONFIG_SOUND_MSNDCLAS is not set
++# CONFIG_SOUND_MSNDPIN is not set
++# CONFIG_SOUND_VIA82CXXX is not set
++# CONFIG_SOUND_OSS is not set
++# CONFIG_SOUND_ALI5455 is not set
++# CONFIG_SOUND_FORTE is not set
++# CONFIG_SOUND_RME96XX is not set
++# CONFIG_SOUND_AD1980 is not set
++CONFIG_SOUND_VOYAGERGX=m
++
++#
++# USB support
++#
++# CONFIG_USB is not set
++# CONFIG_USB_GADGET is not set
++
++#
++# Profiling support
++#
++# CONFIG_PROFILING is not set
++
++#
++# Kernel hacking
++#
++# CONFIG_MAGIC_SYSRQ is not set
++# CONFIG_DEBUG_SPINLOCK is not set
++# CONFIG_SH_STANDARD_BIOS is not set
++# CONFIG_KGDB is not set
++# CONFIG_FRAME_POINTER is not set
++
++#
++# Security options
++#
++# CONFIG_SECURITY is not set
++
++#
++# Cryptographic options
++#
++# CONFIG_CRYPTO is not set
++
++#
++# Library routines
++#
++CONFIG_CRC32=y
+diff -puN /dev/null include/asm-sh/rts7751r2d/ide.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/rts7751r2d/ide.h	2004-06-23 20:00:18.989803136 -0700
+@@ -0,0 +1,8 @@
++#ifndef __ASM_SH_RTS7751R2D_IDE_H
++#define __ASM_SH_RTS7751R2D_IDE_H
++
++/* Nothing to see here.. */
++#include <asm/rts7751r2d/rts7751r2d.h>
++
++#endif /* __ASM_SH_RTS7751R2D_IDE_H */
++
+diff -puN /dev/null include/asm-sh/rts7751r2d/io.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/rts7751r2d/io.h	2004-06-23 20:00:18.990802984 -0700
+@@ -0,0 +1,37 @@
++/*
++ * include/asm-sh/io_rts7751r2d.h
++ *
++ * Modified version of io_se.h for the rts7751r2d-specific functions.
++ *
++ * May be copied or modified under the terms of the GNU General Public
++ * License.  See linux/COPYING for more information.
++ *
++ * IO functions for an Renesas Technology sales RTS7751R2D
++ */
++
++#ifndef _ASM_SH_IO_RTS7751R2D_H
++#define _ASM_SH_IO_RTS7751R2D_H
++
++extern unsigned char rts7751r2d_inb(unsigned long port);
++extern unsigned short rts7751r2d_inw(unsigned long port);
++extern unsigned int rts7751r2d_inl(unsigned long port);
++
++extern void rts7751r2d_outb(unsigned char value, unsigned long port);
++extern void rts7751r2d_outw(unsigned short value, unsigned long port);
++extern void rts7751r2d_outl(unsigned int value, unsigned long port);
++
++extern unsigned char rts7751r2d_inb_p(unsigned long port);
++extern void rts7751r2d_outb_p(unsigned char value, unsigned long port);
++
++extern void rts7751r2d_insb(unsigned long port, void *addr, unsigned long count);
++extern void rts7751r2d_insw(unsigned long port, void *addr, unsigned long count);
++extern void rts7751r2d_insl(unsigned long port, void *addr, unsigned long count);
++extern void rts7751r2d_outsb(unsigned long port, const void *addr, unsigned long count);
++extern void rts7751r2d_outsw(unsigned long port, const void *addr, unsigned long count);
++extern void rts7751r2d_outsl(unsigned long port, const void *addr, unsigned long count);
++
++extern void *rts7751r2d_ioremap(unsigned long offset, unsigned long size);
++
++extern unsigned long rts7751r2d_isa_port2addr(unsigned long offset);
++
++#endif /* _ASM_SH_IO_RTS7751R2D_H */
+diff -puN /dev/null include/asm-sh/rts7751r2d/rts7751r2d.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/rts7751r2d/rts7751r2d.h	2004-06-23 20:00:18.990802984 -0700
+@@ -0,0 +1,73 @@
++#ifndef __ASM_SH_RENESAS_RTS7751R2D_H
++#define __ASM_SH_RENESAS_RTS7751R2D_H
++
++/*
++ * linux/include/asm-sh/renesas_rts7751r2d.h
++ *
++ * Copyright (C) 2000  Atom Create Engineering Co., Ltd.
++ *
++ * Renesas Technology Sales RTS7751R2D support
++ */
++
++/* Box specific addresses.  */
++
++#define PA_BCR		0xa4000000	/* FPGA */
++#define PA_IRLMON	0xa4000002	/* Interrupt Status control */
++#define PA_CFCTL	0xa4000004	/* CF Timing control */
++#define PA_CFPOW	0xa4000006	/* CF Power control */
++#define PA_DISPCTL	0xa4000008	/* Display Timing control */
++#define PA_SDMPOW	0xa400000a	/* SD Power control */
++#define PA_RTCCE	0xa400000c	/* RTC(9701) Enable control */
++#define PA_PCICD	0xa400000e	/* PCI Extention detect control */
++#define PA_VOYAGERRTS	0xa4000020	/* VOYAGER Reset control */
++#if defined(CONFIG_RTS7751R2D_REV11)
++#define PA_AXRST	0xa4000022	/* AX_LAN Reset control */
++#define PA_CFRST	0xa4000024	/* CF Reset control */
++#define	PA_ADMRTS	0xa4000026	/* SD Reset control */
++#define PA_EXTRST	0xa4000028	/* Extention Reset control */
++#define PA_CFCDINTCLR	0xa400002a	/* CF Insert Interrupt clear */
++#else
++#define PA_CFRST	0xa4000022	/* CF Reset control */
++#define	PA_ADMRTS	0xa4000024	/* SD Reset control */
++#define PA_EXTRST	0xa4000026	/* Extention Reset control */
++#define PA_CFCDINTCLR	0xa4000028	/* CF Insert Interrupt clear */
++#define	PA_KEYCTLCLR	0xa400002a	/* Key Interrupt clear */
++#endif
++#define PA_POWOFF	0xa4000030	/* Board Power OFF control */
++#define PA_VERREG	0xa4000032	/* FPGA Version Register */
++#define PA_INPORT	0xa4000034	/* KEY Input Port control */
++#define PA_OUTPORT	0xa4000036	/* LED control */
++#define PA_DMPORT	0xa4000038	/* DM270 Output Port control */
++
++#define PA_AX88796L	0xaa000400	/* AX88796L Area */
++#define PA_VOYAGER	0xab000000	/* VOYAGER GX Area */
++#define PA_AREA5_IO	0xb4000000	/* Area 5 IO Memory */
++#define PA_AREA6_IO	0xb8000000	/* Area 6 IO Memory */
++#define PA_IDE_OFFSET	0x1f0		/* CF IDE Offset */
++#define AX88796L_IO_BASE	0x1000	/* AX88796L IO Base Address */
++
++#define IRLCNTR1	(PA_BCR + 0)	/* Interrupt Control Register1 */
++
++#if defined(CONFIG_RTS7751R2D_REV11)
++#define IRQ_PCIETH	0		/* PCI Ethernet IRQ */
++#define IRQ_CFCARD	1		/* CF Card IRQ */
++#define IRQ_CFINST	2		/* CF Card Insert IRQ */
++#define IRQ_PCMCIA	3		/* PCMCIA IRQ */
++#define IRQ_VOYAGER	4		/* VOYAGER IRQ */
++#define IRQ_ONETH	5		/* On board Ethernet IRQ */
++#else
++#define IRQ_KEYIN	0		/* Key Input IRQ */
++#define IRQ_PCIETH	1		/* PCI Ethernet IRQ */
++#define IRQ_CFCARD	2		/* CF Card IRQ */
++#define IRQ_CFINST	3		/* CF Card Insert IRQ */
++#define IRQ_PCMCIA	4		/* PCMCIA IRQ */
++#define IRQ_VOYAGER	5		/* VOYAGER IRQ */
++#endif
++#define IRQ_RTCALM	6		/* RTC Alarm IRQ */
++#define IRQ_RTCTIME	7		/* RTC Timer IRQ */
++#define IRQ_SDCARD	8		/* SD Card IRQ */
++#define IRQ_PCISLOT1	9		/* PCI Slot #1 IRQ */
++#define IRQ_PCISLOT2	10		/* PCI Slot #2 IRQ */
++#define	IRQ_EXTENTION	11		/* EXTn IRQ */
++
++#endif  /* __ASM_SH_RENESAS_RTS7751R2D */
+diff -puN /dev/null include/asm-sh/rts7751r2d/voyagergx_reg.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/rts7751r2d/voyagergx_reg.h	2004-06-23 20:00:18.993802528 -0700
+@@ -0,0 +1,313 @@
++/* -------------------------------------------------------------------- */
++/* voyagergx_reg.h                                                      */
++/* -------------------------------------------------------------------- */
++/*  This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++    Copyright 2003 (c) Lineo uSolutions,Inc.
++*/
++/* -------------------------------------------------------------------- */
++
++#ifndef _VOYAGER_GX_REG_H
++#define _VOYAGER_GX_REG_H
++
++#define VOYAGER_BASE			0xb3e00000
++#define VOYAGER_USBH_BASE		(0x40000 + VOYAGER_BASE)
++#define VOYAGER_UART_BASE		(0x30000 + VOYAGER_BASE)
++#define	VOYAGER_AC97_BASE		(0xa0000 + VOYAGER_BASE)
++
++#define VOYAGER_IRQ_NUM			32
++#define VOYAGER_IRQ_BASE		50
++#define VOYAGER_USBH_IRQ		VOYAGER_IRQ_BASE + 6
++#define VOYAGER_8051_IRQ		VOYAGER_IRQ_BASE + 10
++#define VOYAGER_UART0_IRQ		VOYAGER_IRQ_BASE + 12
++#define VOYAGER_UART1_IRQ		VOYAGER_IRQ_BASE + 13
++#define	VOYAGER_AC97_IRQ		VOYAGER_IRQ_BASE + 17
++
++/* ----- MISC controle  register ------------------------------ */
++#define MISC_CTRL			(0x000004 + VOYAGER_BASE)
++#define MISC_CTRL_USBCLK_48		(3 << 28)
++#define MISC_CTRL_USBCLK_96		(2 << 28)
++#define MISC_CTRL_USBCLK_CRYSTAL	(1 << 28)
++
++/* ----- GPIO[31:0] register --------------------------------- */
++#define GPIO_MUX_LOW			(0x000008 + VOYAGER_BASE)
++#define GPIO_MUX_LOW_AC97		0x1F000000
++#define GPIO_MUX_LOW_8051		0x0000ffff
++#define GPIO_MUX_LOW_PWM		(1 << 29)
++
++/* ----- GPIO[63:32] register --------------------------------- */
++#define GPIO_MUX_HIGH			(0x00000C + VOYAGER_BASE)
++
++/* ----- DRAM controle  register ------------------------------- */
++#define DRAM_CTRL			(0x000010 + VOYAGER_BASE)
++#define DRAM_CTRL_EMBEDDED		(1 << 31)
++#define DRAM_CTRL_CPU_BURST_1		(0 << 28)
++#define DRAM_CTRL_CPU_BURST_2		(1 << 28)
++#define DRAM_CTRL_CPU_BURST_4		(2 << 28)
++#define DRAM_CTRL_CPU_BURST_8		(3 << 28)
++#define DRAM_CTRL_CPU_CAS_LATENCY	(1 << 27)
++#define DRAM_CTRL_CPU_SIZE_2		(0 << 24)
++#define DRAM_CTRL_CPU_SIZE_4		(1 << 24)
++#define DRAM_CTRL_CPU_SIZE_64		(4 << 24)
++#define DRAM_CTRL_CPU_SIZE_32		(5 << 24)
++#define DRAM_CTRL_CPU_SIZE_16		(6 << 24)
++#define DRAM_CTRL_CPU_SIZE_8		(7 << 24)
++#define DRAM_CTRL_CPU_COLUMN_SIZE_1024	(0 << 22)
++#define DRAM_CTRL_CPU_COLUMN_SIZE_512	(2 << 22)
++#define DRAM_CTRL_CPU_COLUMN_SIZE_256	(3 << 22)
++#define DRAM_CTRL_CPU_ACTIVE_PRECHARGE	(1 << 21)
++#define DRAM_CTRL_CPU_RESET		(1 << 20)
++#define DRAM_CTRL_CPU_BANKS		(1 << 19)
++#define DRAM_CTRL_CPU_WRITE_PRECHARGE	(1 << 18)
++#define DRAM_CTRL_BLOCK_WRITE		(1 << 17)
++#define DRAM_CTRL_REFRESH_COMMAND	(1 << 16)
++#define DRAM_CTRL_SIZE_4		(0 << 13)
++#define DRAM_CTRL_SIZE_8		(1 << 13)
++#define DRAM_CTRL_SIZE_16		(2 << 13)
++#define DRAM_CTRL_SIZE_32		(3 << 13)
++#define DRAM_CTRL_SIZE_64		(4 << 13)
++#define DRAM_CTRL_SIZE_2		(5 << 13)
++#define DRAM_CTRL_COLUMN_SIZE_256	(0 << 11)
++#define DRAM_CTRL_COLUMN_SIZE_512	(2 << 11)
++#define DRAM_CTRL_COLUMN_SIZE_1024	(3 << 11)
++#define DRAM_CTRL_BLOCK_WRITE_TIME	(1 << 10)
++#define DRAM_CTRL_BLOCK_WRITE_PRECHARGE	(1 << 9)
++#define DRAM_CTRL_ACTIVE_PRECHARGE	(1 << 8)
++#define DRAM_CTRL_RESET			(1 << 7)
++#define DRAM_CTRL_REMAIN_ACTIVE		(1 << 6)
++#define DRAM_CTRL_BANKS			(1 << 1)
++#define DRAM_CTRL_WRITE_PRECHARGE	(1 << 0)
++
++/* ----- Arvitration control register -------------------------- */
++#define ARBITRATION_CTRL		(0x000014 + VOYAGER_BASE)
++#define ARBITRATION_CTRL_CPUMEM		(1 << 29)
++#define ARBITRATION_CTRL_INTMEM		(1 << 28)
++#define ARBITRATION_CTRL_USB_OFF	(0 << 24)
++#define ARBITRATION_CTRL_USB_PRIORITY_1	(1 << 24)
++#define ARBITRATION_CTRL_USB_PRIORITY_2	(2 << 24)
++#define ARBITRATION_CTRL_USB_PRIORITY_3	(3 << 24)
++#define ARBITRATION_CTRL_USB_PRIORITY_4	(4 << 24)
++#define ARBITRATION_CTRL_USB_PRIORITY_5	(5 << 24)
++#define ARBITRATION_CTRL_USB_PRIORITY_6	(6 << 24)
++#define ARBITRATION_CTRL_USB_PRIORITY_7	(7 << 24)
++#define ARBITRATION_CTRL_PANEL_OFF	(0 << 20)
++#define ARBITRATION_CTRL_PANEL_PRIORITY_1	(1 << 20)
++#define ARBITRATION_CTRL_PANEL_PRIORITY_2	(2 << 20)
++#define ARBITRATION_CTRL_PANEL_PRIORITY_3	(3 << 20)
++#define ARBITRATION_CTRL_PANEL_PRIORITY_4	(4 << 20)
++#define ARBITRATION_CTRL_PANEL_PRIORITY_5	(5 << 20)
++#define ARBITRATION_CTRL_PANEL_PRIORITY_6	(6 << 20)
++#define ARBITRATION_CTRL_PANEL_PRIORITY_7	(7 << 20)
++#define ARBITRATION_CTRL_ZVPORT_OFF	(0 << 16)
++#define ARBITRATION_CTRL_ZVPORTL_PRIORITY_1	(1 << 16)
++#define ARBITRATION_CTRL_ZVPORTL_PRIORITY_2	(2 << 16)
++#define ARBITRATION_CTRL_ZVPORTL_PRIORITY_3	(3 << 16)
++#define ARBITRATION_CTRL_ZVPORTL_PRIORITY_4	(4 << 16)
++#define ARBITRATION_CTRL_ZVPORTL_PRIORITY_5	(5 << 16)
++#define ARBITRATION_CTRL_ZVPORTL_PRIORITY_6	(6 << 16)
++#define ARBITRATION_CTRL_ZVPORTL_PRIORITY_7	(7 << 16)
++#define ARBITRATION_CTRL_CMD_INTPR_OFF	(0 << 12)
++#define ARBITRATION_CTRL_CMD_INTPR_PRIORITY_1	(1 << 12)
++#define ARBITRATION_CTRL_CMD_INTPR_PRIORITY_2	(2 << 12)
++#define ARBITRATION_CTRL_CMD_INTPR_PRIORITY_3	(3 << 12)
++#define ARBITRATION_CTRL_CMD_INTPR_PRIORITY_4	(4 << 12)
++#define ARBITRATION_CTRL_CMD_INTPR_PRIORITY_5	(5 << 12)
++#define ARBITRATION_CTRL_CMD_INTPR_PRIORITY_6	(6 << 12)
++#define ARBITRATION_CTRL_CMD_INTPR_PRIORITY_7	(7 << 12)
++#define ARBITRATION_CTRL_DMA_OFF	(0 << 8)
++#define ARBITRATION_CTRL_DMA_PRIORITY_1	(1 << 8)
++#define ARBITRATION_CTRL_DMA_PRIORITY_2	(2 << 8)
++#define ARBITRATION_CTRL_DMA_PRIORITY_3	(3 << 8)
++#define ARBITRATION_CTRL_DMA_PRIORITY_4	(4 << 8)
++#define ARBITRATION_CTRL_DMA_PRIORITY_5	(5 << 8)
++#define ARBITRATION_CTRL_DMA_PRIORITY_6	(6 << 8)
++#define ARBITRATION_CTRL_DMA_PRIORITY_7	(7 << 8)
++#define ARBITRATION_CTRL_VIDEO_OFF	(0 << 4)
++#define ARBITRATION_CTRL_VIDEO_PRIORITY_1	(1 << 4)
++#define ARBITRATION_CTRL_VIDEO_PRIORITY_2	(2 << 4)
++#define ARBITRATION_CTRL_VIDEO_PRIORITY_3	(3 << 4)
++#define ARBITRATION_CTRL_VIDEO_PRIORITY_4	(4 << 4)
++#define ARBITRATION_CTRL_VIDEO_PRIORITY_5	(5 << 4)
++#define ARBITRATION_CTRL_VIDEO_PRIORITY_6	(6 << 4)
++#define ARBITRATION_CTRL_VIDEO_PRIORITY_7	(7 << 4)
++#define ARBITRATION_CTRL_CRT_OFF	(0 << 0)
++#define ARBITRATION_CTRL_CRT_PRIORITY_1	(1 << 0)
++#define ARBITRATION_CTRL_CRT_PRIORITY_2	(2 << 0)
++#define ARBITRATION_CTRL_CRT_PRIORITY_3	(3 << 0)
++#define ARBITRATION_CTRL_CRT_PRIORITY_4	(4 << 0)
++#define ARBITRATION_CTRL_CRT_PRIORITY_5	(5 << 0)
++#define ARBITRATION_CTRL_CRT_PRIORITY_6	(6 << 0)
++#define ARBITRATION_CTRL_CRT_PRIORITY_7	(7 << 0)
++
++/* ----- Command list status register -------------------------- */
++#define CMD_INTPR_STATUS		(0x000024 + VOYAGER_BASE)
++
++/* ----- Interrupt status register ----------------------------- */
++#define INT_STATUS			(0x00002c + VOYAGER_BASE)
++#define INT_STATUS_UH			(1 << 6)
++#define INT_STATUS_MC			(1 << 10)
++#define INT_STATUS_U0			(1 << 12)
++#define INT_STATUS_U1			(1 << 13)
++#define	INT_STATUS_AC			(1 << 17)
++
++/* ----- Interrupt mask register ------------------------------ */
++#define VOYAGER_INT_MASK		(0x000030 + VOYAGER_BASE)
++#define VOYAGER_INT_MASK_AC		(1 << 17)
++
++/* ----- Current Gate register ---------------------------------*/
++#define CURRENT_GATE			(0x000038 + VOYAGER_BASE)
++
++/* ----- Power mode 0 gate register --------------------------- */
++#define POWER_MODE0_GATE		(0x000040 + VOYAGER_BASE)
++#define POWER_MODE0_GATE_G		(1 << 6)
++#define POWER_MODE0_GATE_U0		(1 << 7)
++#define POWER_MODE0_GATE_U1		(1 << 8)
++#define POWER_MODE0_GATE_UH		(1 << 11)
++#define	POWER_MODE0_GATE_AC		(1 << 18)
++
++/* ----- Power mode 1 gate register --------------------------- */
++#define POWER_MODE1_GATE		(0x000048 + VOYAGER_BASE)
++#define POWER_MODE1_GATE_G		(1 << 6)
++#define POWER_MODE1_GATE_U0		(1 << 7)
++#define POWER_MODE1_GATE_U1		(1 << 8)
++#define POWER_MODE1_GATE_UH		(1 << 11)
++#define	POWER_MODE1_GATE_AC		(1 << 18)
++
++/* ----- Power mode 0 clock register -------------------------- */
++#define POWER_MODE0_CLOCK		(0x000044 + VOYAGER_BASE)
++
++/* ----- Power mode 1 clock register -------------------------- */
++#define POWER_MODE1_CLOCK		(0x00004C + VOYAGER_BASE)
++
++/* ----- Power mode controll register ------------------------- */
++#define POWER_MODE_CTRL			(0x000054 + VOYAGER_BASE)
++
++/* ----- Miscellaneous Timing register ------------------------ */
++#define SYSTEM_DRAM_CTRL		(0x000068 + VOYAGER_BASE)
++
++/* ----- PWM register ------------------------------------------*/
++#define PWM_0				(0x010020 + VOYAGER_BASE)
++#define PWM_0_HC(x)			(((x)&0x0fff)<<20)
++#define PWM_0_LC(x)			(((x)&0x0fff)<<8 )
++#define PWM_0_CLK_DEV(x)		(((x)&0x000f)<<4 )
++#define PWM_0_EN			(1<<0)
++
++/* ----- I2C register ----------------------------------------- */
++#define I2C_BYTECOUNT			(0x010040 + VOYAGER_BASE)
++#define I2C_CONTROL			(0x010041 + VOYAGER_BASE)
++#define I2C_STATUS			(0x010042 + VOYAGER_BASE)
++#define I2C_RESET			(0x010042 + VOYAGER_BASE)
++#define I2C_SADDRESS			(0x010043 + VOYAGER_BASE)
++#define I2C_DATA			(0x010044 + VOYAGER_BASE)
++
++/* ----- Controle register bits ----------------------------------------- */
++#define I2C_CONTROL_E			(1 << 0)
++#define I2C_CONTROL_MODE		(1 << 1)
++#define I2C_CONTROL_STATUS		(1 << 2)
++#define I2C_CONTROL_INT			(1 << 4)
++#define I2C_CONTROL_INTACK		(1 << 5)
++#define I2C_CONTROL_REPEAT		(1 << 6)
++
++/* ----- Status register bits ----------------------------------------- */
++#define I2C_STATUS_BUSY			(1 << 0)
++#define I2C_STATUS_ACK			(1 << 1)
++#define I2C_STATUS_ERROR		(1 << 2)
++#define I2C_STATUS_COMPLETE		(1 << 3)
++
++/* ----- Reset register  ---------------------------------------------- */
++#define I2C_RESET_ERROR			(1 << 2)
++
++/* ----- transmission frequencies ------------------------------------- */
++#define I2C_SADDRESS_SELECT		(1 << 0)
++
++/* ----- Display Controll register ----------------------------------------- */
++#define PANEL_DISPLAY_CTRL		(0x080000 + VOYAGER_BASE)
++#define PANEL_DISPLAY_CTRL_BIAS         (1<<26)
++#define PANEL_PAN_CTRL			(0x080004 + VOYAGER_BASE)
++#define PANEL_COLOR_KEY			(0x080008 + VOYAGER_BASE)
++#define PANEL_FB_ADDRESS		(0x08000C + VOYAGER_BASE)
++#define PANEL_FB_WIDTH			(0x080010 + VOYAGER_BASE)
++#define PANEL_WINDOW_WIDTH		(0x080014 + VOYAGER_BASE)
++#define PANEL_WINDOW_HEIGHT		(0x080018 + VOYAGER_BASE)
++#define PANEL_PLANE_TL			(0x08001C + VOYAGER_BASE)
++#define PANEL_PLANE_BR			(0x080020 + VOYAGER_BASE)
++#define PANEL_HORIZONTAL_TOTAL		(0x080024 + VOYAGER_BASE)
++#define PANEL_HORIZONTAL_SYNC		(0x080028 + VOYAGER_BASE)
++#define PANEL_VERTICAL_TOTAL		(0x08002C + VOYAGER_BASE)
++#define PANEL_VERTICAL_SYNC		(0x080030 + VOYAGER_BASE)
++#define PANEL_CURRENT_LINE		(0x080034 + VOYAGER_BASE)
++#define VIDEO_DISPLAY_CTRL		(0x080040 + VOYAGER_BASE)
++#define VIDEO_FB_0_ADDRESS		(0x080044 + VOYAGER_BASE)
++#define VIDEO_FB_WIDTH			(0x080048 + VOYAGER_BASE)
++#define VIDEO_FB_0_LAST_ADDRESS		(0x08004C + VOYAGER_BASE)
++#define VIDEO_PLANE_TL			(0x080050 + VOYAGER_BASE)
++#define VIDEO_PLANE_BR			(0x080054 + VOYAGER_BASE)
++#define VIDEO_SCALE			(0x080058 + VOYAGER_BASE)
++#define VIDEO_INITIAL_SCALE		(0x08005C + VOYAGER_BASE)
++#define VIDEO_YUV_CONSTANTS		(0x080060 + VOYAGER_BASE)
++#define VIDEO_FB_1_ADDRESS		(0x080064 + VOYAGER_BASE)
++#define VIDEO_FB_1_LAST_ADDRESS		(0x080068 + VOYAGER_BASE)
++#define VIDEO_ALPHA_DISPLAY_CTRL	(0x080080 + VOYAGER_BASE)
++#define VIDEO_ALPHA_FB_ADDRESS		(0x080084 + VOYAGER_BASE)
++#define VIDEO_ALPHA_FB_WIDTH		(0x080088 + VOYAGER_BASE)
++#define VIDEO_ALPHA_FB_LAST_ADDRESS	(0x08008C + VOYAGER_BASE)
++#define VIDEO_ALPHA_PLANE_TL		(0x080090 + VOYAGER_BASE)
++#define VIDEO_ALPHA_PLANE_BR		(0x080094 + VOYAGER_BASE)
++#define VIDEO_ALPHA_SCALE		(0x080098 + VOYAGER_BASE)
++#define VIDEO_ALPHA_INITIAL_SCALE	(0x08009C + VOYAGER_BASE)
++#define VIDEO_ALPHA_CHROMA_KEY		(0x0800A0 + VOYAGER_BASE)
++#define PANEL_HWC_ADDRESS		(0x0800F0 + VOYAGER_BASE)
++#define PANEL_HWC_LOCATION		(0x0800F4 + VOYAGER_BASE)
++#define PANEL_HWC_COLOR_12		(0x0800F8 + VOYAGER_BASE)
++#define PANEL_HWC_COLOR_3		(0x0800FC + VOYAGER_BASE)
++#define ALPHA_DISPLAY_CTRL		(0x080100 + VOYAGER_BASE)
++#define ALPHA_FB_ADDRESS		(0x080104 + VOYAGER_BASE)
++#define ALPHA_FB_WIDTH			(0x080108 + VOYAGER_BASE)
++#define ALPHA_PLANE_TL			(0x08010C + VOYAGER_BASE)
++#define ALPHA_PLANE_BR			(0x080110 + VOYAGER_BASE)
++#define ALPHA_CHROMA_KEY		(0x080114 + VOYAGER_BASE)
++#define CRT_DISPLAY_CTRL		(0x080200 + VOYAGER_BASE)
++#define CRT_FB_ADDRESS			(0x080204 + VOYAGER_BASE)
++#define CRT_FB_WIDTH			(0x080208 + VOYAGER_BASE)
++#define CRT_HORIZONTAL_TOTAL		(0x08020C + VOYAGER_BASE)
++#define CRT_HORIZONTAL_SYNC		(0x080210 + VOYAGER_BASE)
++#define CRT_VERTICAL_TOTAL		(0x080214 + VOYAGER_BASE)
++#define CRT_VERTICAL_SYNC		(0x080218 + VOYAGER_BASE)
++#define CRT_SIGNATURE_ANALYZER		(0x08021C + VOYAGER_BASE)
++#define CRT_CURRENT_LINE		(0x080220 + VOYAGER_BASE)
++#define CRT_MONITOR_DETECT		(0x080224 + VOYAGER_BASE)
++#define CRT_HWC_ADDRESS			(0x080230 + VOYAGER_BASE)
++#define CRT_HWC_LOCATION		(0x080234 + VOYAGER_BASE)
++#define CRT_HWC_COLOR_12		(0x080238 + VOYAGER_BASE)
++#define CRT_HWC_COLOR_3			(0x08023C + VOYAGER_BASE)
++#define CRT_PALETTE_RAM			(0x080400 + VOYAGER_BASE)
++#define PANEL_PALETTE_RAM		(0x080800 + VOYAGER_BASE)
++#define VIDEO_PALETTE_RAM		(0x080C00 + VOYAGER_BASE)
++
++/* ----- 8051 Controle register ----------------------------------------- */
++#define VOYAGER_8051_BASE		(0x000c0000 + VOYAGER_BASE)
++#define VOYAGER_8051_RESET		(0x000b0000 + VOYAGER_BASE)
++#define VOYAGER_8051_SELECT		(0x000b0004 + VOYAGER_BASE)
++#define VOYAGER_8051_CPU_INT		(0x000b000c + VOYAGER_BASE)
++
++/* ----- AC97 Controle register ----------------------------------------- */
++#define AC97_TX_SLOT0			(0x00000000 + VOYAGER_AC97_BASE)
++#define AC97_CONTROL_STATUS		(0x00000080 + VOYAGER_AC97_BASE)
++#define AC97C_READ			(1 << 19)
++#define AC97C_WD_BIT			(1 << 2)
++#define AC97C_INDEX_MASK		0x7f
++/* -------------------------------------------------------------------- */
++
++#endif /* _VOYAGER_GX_REG_H */
+_

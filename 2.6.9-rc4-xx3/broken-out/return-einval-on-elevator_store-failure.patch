@@ -1,0 +1,26 @@
+
+From: Jens Axboe <axboe@suse.de>
+
+This one-liner should make writing to /sys/block/<dev>/queue/scheduler fail
+with -EINVAL if the specified elevator doesn't exist.
+
+Signed-off-by: Jens Axboe <axboe@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/elevator.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN drivers/block/elevator.c~return-einval-on-elevator_store-failure drivers/block/elevator.c
+--- 25/drivers/block/elevator.c~return-einval-on-elevator_store-failure	2004-10-03 16:36:38.269363432 -0700
++++ 25-akpm/drivers/block/elevator.c	2004-10-03 16:36:50.001579864 -0700
+@@ -566,7 +566,7 @@ ssize_t elv_iosched_store(request_queue_
+ 	e = elevator_find(elevator_name);
+ 	if (!e) {
+ 		printk("elevator: type %s not found\n", elevator_name);
+-		return count;
++		return -EINVAL;
+ 	}
+ 
+ 	elevator_switch(q, e);
+_

@@ -1,0 +1,48 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+During the kernel summit, some discussion was had about the support
+requirements for a userspace program loader that loads executables into
+hugetlb on behalf of a major application (Oracle).  In order to support
+this in a robust fashion, the cleanup of the hugetlb must be robust in the
+presence of disorderly termination of the programs (e.g.  kill -9).  Hence,
+the cleanup semantics are those of System V shared memory, but Linux'
+System V shared memory needs one critical extension for this use:
+executability.
+
+The following microscopic patch enables this major application to provide
+robust hugetlb cleanup.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/shm.h |    1 +
+ 25-akpm/ipc/shm.c           |    4 ++++
+ 2 files changed, 5 insertions(+)
+
+diff -puN include/linux/shm.h~executable-hugetlb-pages include/linux/shm.h
+--- 25/include/linux/shm.h~executable-hugetlb-pages	2004-08-09 02:06:56.445226264 -0700
++++ 25-akpm/include/linux/shm.h	2004-08-09 02:06:56.452225200 -0700
+@@ -44,6 +44,7 @@ struct shmid_ds {
+ #define	SHM_RDONLY	010000	/* read-only access */
+ #define	SHM_RND		020000	/* round attach address to SHMLBA boundary */
+ #define	SHM_REMAP	040000	/* take-over region on attach */
++#define	SHM_EXEC	0100000	/* execution access */
+ 
+ /* super user shmctl commands */
+ #define SHM_LOCK 	11
+diff -puN ipc/shm.c~executable-hugetlb-pages ipc/shm.c
+--- 25/ipc/shm.c~executable-hugetlb-pages	2004-08-09 02:06:56.447225960 -0700
++++ 25-akpm/ipc/shm.c	2004-08-09 02:06:56.453225048 -0700
+@@ -688,6 +688,10 @@ long do_shmat(int shmid, char __user *sh
+ 		o_flags = O_RDWR;
+ 		acc_mode = S_IRUGO | S_IWUGO;
+ 	}
++	if (shmflg & SHM_EXEC) {
++		prot |= PROT_EXEC;
++		acc_mode |= S_IXUGO;
++	}
+ 
+ 	/*
+ 	 * We cannot rely on the fs check since SYSV IPC does have an
+_

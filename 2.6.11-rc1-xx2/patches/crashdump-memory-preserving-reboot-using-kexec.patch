@@ -1,0 +1,368 @@
+
+From: Hariprasad Nellitheertha <hari@in.ibm.com>
+
+This patch contains the code that does the memory preserving reboot.  It
+copies over the first 640k into a backup region before handing over to kexec. 
+The second kernel will boot using only the backup region.
+
+Signed off by Hariprasad Nellitheertha <hari@in.ibm.com>
+Signed off by Adam Litke <litke@us.ibm.com>
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/Kconfig                |   20 +++++++++++
+ 25-akpm/arch/i386/kernel/machine_kexec.c |   31 +++++++++++++++++
+ 25-akpm/arch/i386/kernel/setup.c         |   13 +++++++
+ 25-akpm/fs/proc/proc_misc.c              |    2 +
+ 25-akpm/include/asm-i386/crash_dump.h    |   41 ++++++++++++++++++++++
+ 25-akpm/include/linux/bootmem.h          |    1 
+ 25-akpm/include/linux/crash_dump.h       |   19 ++++++++++
+ 25-akpm/kernel/Makefile                  |    1 
+ 25-akpm/kernel/crash.c                   |   56 +++++++++++++++++++++++++++++++
+ 25-akpm/kernel/panic.c                   |    7 +++
+ 25-akpm/mm/bootmem.c                     |    5 ++
+ 11 files changed, 196 insertions(+)
+
+diff -puN arch/i386/Kconfig~crashdump-memory-preserving-reboot-using-kexec arch/i386/Kconfig
+--- 25/arch/i386/Kconfig~crashdump-memory-preserving-reboot-using-kexec	2005-01-10 21:15:11.935639088 -0800
++++ 25-akpm/arch/i386/Kconfig	2005-01-10 21:15:11.961635136 -0800
+@@ -918,6 +918,26 @@ config KEXEC
+ 	  support.  As of this writing the exact hardware interface is
+ 	  strongly in flux, so no good recommendation can be made.
+ 
++config CRASH_DUMP
++	bool "kernel crash dumps (EXPERIMENTAL)"
++	depends on KEXEC
++	help
++	  Generate crash dump using kexec.
++
++config BACKUP_BASE
++	int "location from where the crash dumping kernel will boot (MB)"
++	depends on CRASH_DUMP
++	default 16
++	help
++	This is the location where the second kernel will boot from.
++
++config BACKUP_SIZE
++	int "Size of memory used by the crash dumping kernel (MB)"
++	depends on CRASH_DUMP
++	range 16 64
++	default 32
++	help
++	The size of the second kernel's memory.
+ endmenu
+ 
+ 
+diff -puN arch/i386/kernel/machine_kexec.c~crashdump-memory-preserving-reboot-using-kexec arch/i386/kernel/machine_kexec.c
+--- 25/arch/i386/kernel/machine_kexec.c~crashdump-memory-preserving-reboot-using-kexec	2005-01-10 21:15:11.937638784 -0800
++++ 25-akpm/arch/i386/kernel/machine_kexec.c	2005-01-10 21:15:11.962634984 -0800
+@@ -161,6 +161,30 @@ void machine_kexec_cleanup(struct kimage
+ }
+ 
+ /*
++ * We are going to do a memory preserving reboot. So, we copy over the
++ * first 640k of memory into a backup location. Though the second kernel
++ * boots from a different location, it still requires the first 640k.
++ * Hence this backup.
++ */
++void __crash_relocate_mem(unsigned long backup_addr, unsigned long backup_size)
++{
++	unsigned long pfn, pfn_max;
++	void *src_addr, *dest_addr;
++	struct page *page;
++
++	pfn_max = backup_size >> PAGE_SHIFT;
++	for (pfn = 0; pfn < pfn_max; pfn++) {
++		src_addr = phys_to_virt(pfn << PAGE_SHIFT);
++		dest_addr = backup_addr + src_addr;
++		if (!pfn_valid(pfn))
++			continue;
++		page = pfn_to_page(pfn);
++		if (PageReserved(page))
++			copy_page(dest_addr, src_addr);
++	}
++}
++
++/*
+  * Do not allocate memory (or fail in any way) in machine_kexec().
+  * We are past the point of no return, committed to rebooting now.
+  */
+@@ -180,6 +204,13 @@ void machine_kexec(struct kimage *image)
+ 	/* Set up an identity mapping for the reboot_code_buffer */
+ 	identity_map_page(reboot_code_buffer);
+ 
++	/*
++	 * If we are here to do a crash dump, save the memory from
++	 * 0-640k before we copy over the kexec kernel image.  Otherwise
++	 * our dump will show the wrong kernel entirely.
++	 */
++	crash_relocate_mem();
++
+ 	/* copy it out */
+ 	memcpy((void *)reboot_code_buffer, relocate_new_kernel, relocate_new_kernel_size);
+ 
+diff -puN arch/i386/kernel/setup.c~crashdump-memory-preserving-reboot-using-kexec arch/i386/kernel/setup.c
+--- 25/arch/i386/kernel/setup.c~crashdump-memory-preserving-reboot-using-kexec	2005-01-10 21:15:11.939638480 -0800
++++ 25-akpm/arch/i386/kernel/setup.c	2005-01-10 21:15:11.963634832 -0800
+@@ -49,6 +49,7 @@
+ #include <asm/io_apic.h>
+ #include <asm/ist.h>
+ #include <asm/io.h>
++#include <asm/crash_dump.h>
+ #include "setup_arch_pre.h"
+ #include <bios_ebda.h>
+ 
+@@ -58,6 +59,7 @@
+ unsigned long init_pg_tables_end __initdata = ~0UL;
+ 
+ int disable_pse __initdata = 0;
++unsigned int dump_enabled;
+ 
+ /*
+  * Machine setup..
+@@ -711,6 +713,11 @@ static void __init parse_cmdline_early (
+ 			if (to != command_line)
+ 				to--;
+ 			if (!memcmp(from+7, "exactmap", 8)) {
++				/* If we are doing a crash dump, we
++				 * still need to know the real mem
++				 * size.
++				 */
++				set_saved_max_pfn();
+ 				from += 8+7;
+ 				e820.nr_map = 0;
+ 				userdef = 1;
+@@ -821,6 +828,9 @@ static void __init parse_cmdline_early (
+ 		 */
+ 		if (c == ' ' && !memcmp(from, "highmem=", 8))
+ 			highmem_pages = memparse(from+8, &from) >> PAGE_SHIFT;
++
++		if (!memcmp(from, "dump", 4))
++			dump_enabled = 1;
+ 	
+ 		/*
+ 		 * vmalloc=size forces the vmalloc area to be exactly 'size'
+@@ -1117,6 +1127,9 @@ static unsigned long __init setup_memory
+ 		}
+ 	}
+ #endif
++
++	crash_reserve_bootmem();
++
+ 	return max_low_pfn;
+ }
+ #else
+diff -puN fs/proc/proc_misc.c~crashdump-memory-preserving-reboot-using-kexec fs/proc/proc_misc.c
+--- 25/fs/proc/proc_misc.c~crashdump-memory-preserving-reboot-using-kexec	2005-01-10 21:15:11.951636656 -0800
++++ 25-akpm/fs/proc/proc_misc.c	2005-01-10 21:15:11.964634680 -0800
+@@ -44,6 +44,7 @@
+ #include <linux/jiffies.h>
+ #include <linux/sysrq.h>
+ #include <linux/vmalloc.h>
++#include <linux/crash_dump.h>
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
+ #include <asm/io.h>
+@@ -604,6 +605,7 @@ void __init proc_misc_init(void)
+ 	if (entry)
+ 		entry->proc_fops = &proc_sysrq_trigger_operations;
+ #endif
++	crash_enable_by_proc();
+ #ifdef CONFIG_PPC32
+ 	{
+ 		extern struct file_operations ppc_htab_operations;
+diff -puN /dev/null include/asm-i386/crash_dump.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-i386/crash_dump.h	2005-01-10 21:15:11.964634680 -0800
+@@ -0,0 +1,41 @@
++/* asm-i386/crash_dump.h */
++#include <linux/bootmem.h>
++
++#ifdef CONFIG_CRASH_DUMP
++extern unsigned int dump_enabled;
++extern unsigned int crashed;
++
++extern void __crash_relocate_mem(unsigned long, unsigned long);
++extern unsigned long __init find_max_low_pfn(void);
++extern void __init find_max_pfn(void);
++
++#define CRASH_BACKUP_BASE ((unsigned long)CONFIG_BACKUP_BASE * 0x100000)
++#define CRASH_BACKUP_SIZE ((unsigned long)CONFIG_BACKUP_SIZE * 0x100000)
++#define CRASH_RELOCATE_SIZE 0xa0000
++
++static inline void crash_relocate_mem(void)
++{
++	if (crashed)
++		__crash_relocate_mem(CRASH_BACKUP_BASE + CRASH_BACKUP_SIZE,
++					CRASH_RELOCATE_SIZE);
++}
++
++static inline void set_saved_max_pfn(void)
++{
++	find_max_pfn();
++	saved_max_pfn = find_max_low_pfn();
++}
++
++static inline void crash_reserve_bootmem(void)
++{
++	if (!dump_enabled) {
++		reserve_bootmem(0, CRASH_RELOCATE_SIZE);
++		reserve_bootmem(CRASH_BACKUP_BASE,
++			CRASH_BACKUP_SIZE + CRASH_RELOCATE_SIZE);
++	}
++}
++#else
++#define crash_relocate_mem() do { } while(0)
++#define set_saved_max_pfn() do { } while(0)
++#define crash_reserve_bootmem() do { } while(0)
++#endif
+diff -puN include/linux/bootmem.h~crashdump-memory-preserving-reboot-using-kexec include/linux/bootmem.h
+--- 25/include/linux/bootmem.h~crashdump-memory-preserving-reboot-using-kexec	2005-01-10 21:15:11.953636352 -0800
++++ 25-akpm/include/linux/bootmem.h	2005-01-10 21:15:11.965634528 -0800
+@@ -21,6 +21,7 @@ extern unsigned long min_low_pfn;
+  * highest page
+  */
+ extern unsigned long max_pfn;
++extern unsigned long saved_max_pfn;
+ 
+ /*
+  * node_bootmem_map is a map pointer - the bits represent all physical 
+diff -puN /dev/null include/linux/crash_dump.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/linux/crash_dump.h	2005-01-10 21:15:11.965634528 -0800
+@@ -0,0 +1,19 @@
++#include <linux/kexec.h>
++#include <linux/smp_lock.h>
++#include <linux/device.h>
++#ifdef CONFIG_CRASH_DUMP
++#include <asm/crash_dump.h>
++#endif
++
++#ifdef CONFIG_CRASH_DUMP
++extern void __crash_machine_kexec(void);
++extern void crash_enable_by_proc(void);
++extern int crash_dump_on;
++static inline void crash_machine_kexec(void)
++{
++	 __crash_machine_kexec();
++}
++#else
++#define crash_enable_by_proc() do { } while(0)
++#define crash_machine_kexec()	do { } while(0)
++#endif
+diff -puN /dev/null kernel/crash.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/kernel/crash.c	2005-01-10 21:15:11.966634376 -0800
+@@ -0,0 +1,56 @@
++/*
++ *	kernel/crash.c - Memory preserving reboot related code.
++ *
++ *	Created by: Hariprasad Nellitheertha (hari@in.ibm.com)
++ *	Copyright (C) IBM Corporation, 2004. All rights reserved
++ */
++
++#include <linux/smp_lock.h>
++#include <linux/kexec.h>
++#include <linux/errno.h>
++#include <linux/proc_fs.h>
++#include <asm/io.h>
++#include <asm/uaccess.h>
++
++/*
++ * Enable kexec reboot upon panic; for dumping
++ */
++static ssize_t write_crash_dump_on(struct file *file, const char __user *buf,
++					size_t count, loff_t *ppos)
++{
++	if (count) {
++		if (get_user(crash_dump_on, buf))
++			return -EFAULT;
++	}
++	return count;
++}
++
++static struct file_operations proc_crash_dump_on_operations = {
++	.write = write_crash_dump_on,
++};
++
++void crash_enable_by_proc(void)
++{
++	struct proc_dir_entry *entry;
++
++	entry = create_proc_entry("kexec-dump", S_IWUSR, NULL);
++	if (entry)
++		entry->proc_fops = &proc_crash_dump_on_operations;
++}
++
++void __crash_machine_kexec(void)
++{
++	struct kimage *image;
++
++	if ((!crash_dump_on) || (crashed))
++		return;
++
++	image = xchg(&kexec_image, 0);
++	if (image) {
++		crashed = 1;
++		printk(KERN_EMERG "kexec: opening parachute\n");
++		machine_kexec(image);
++	} else {
++		printk(KERN_EMERG "kexec: No kernel image loaded!\n");
++	}
++}
+diff -puN kernel/Makefile~crashdump-memory-preserving-reboot-using-kexec kernel/Makefile
+--- 25/kernel/Makefile~crashdump-memory-preserving-reboot-using-kexec	2005-01-10 21:15:11.954636200 -0800
++++ 25-akpm/kernel/Makefile	2005-01-10 21:15:11.966634376 -0800
+@@ -27,6 +27,7 @@ obj-$(CONFIG_AUDITSYSCALL) += auditsc.o
+ obj-$(CONFIG_KPROBES) += kprobes.o
+ obj-$(CONFIG_SYSFS) += ksysfs.o
+ obj-$(CONFIG_GENERIC_HARDIRQS) += irq/
++obj-$(CONFIG_CRASH_DUMP) += crash.o
+ 
+ ifneq ($(CONFIG_IA64),y)
+ # According to Alan Modra <alan@linuxcare.com.au>, the -fno-omit-frame-pointer is
+diff -puN kernel/panic.c~crashdump-memory-preserving-reboot-using-kexec kernel/panic.c
+--- 25/kernel/panic.c~crashdump-memory-preserving-reboot-using-kexec	2005-01-10 21:15:11.956635896 -0800
++++ 25-akpm/kernel/panic.c	2005-01-10 21:15:11.966634376 -0800
+@@ -18,10 +18,14 @@
+ #include <linux/sysrq.h>
+ #include <linux/interrupt.h>
+ #include <linux/nmi.h>
++#include <linux/kexec.h>
++#include <linux/crash_dump.h>
+ 
+ int panic_timeout;
+ int panic_on_oops;
+ int tainted;
++unsigned int crashed;
++int crash_dump_on;
+ 
+ EXPORT_SYMBOL(panic_timeout);
+ 
+@@ -71,6 +75,9 @@ NORET_TYPE void panic(const char * fmt, 
+ 	printk(KERN_EMERG "Kernel panic - not syncing: %s\n",buf);
+ 	bust_spinlocks(0);
+ 
++	/* If we have crashed, perform a kexec reboot, for dump write-out */
++	crash_machine_kexec();
++
+ #ifdef CONFIG_SMP
+ 	smp_send_stop();
+ #endif
+diff -puN mm/bootmem.c~crashdump-memory-preserving-reboot-using-kexec mm/bootmem.c
+--- 25/mm/bootmem.c~crashdump-memory-preserving-reboot-using-kexec	2005-01-10 21:15:11.957635744 -0800
++++ 25-akpm/mm/bootmem.c	2005-01-10 21:15:11.967634224 -0800
+@@ -28,6 +28,11 @@
+ unsigned long max_low_pfn;
+ unsigned long min_low_pfn;
+ unsigned long max_pfn;
++/*
++ * If we have booted due to a crash, max_pfn will be a very low value. We need
++ * to know the amount of memory that the previous kernel used.
++ */
++unsigned long saved_max_pfn;
+ 
+ EXPORT_SYMBOL(max_pfn);		/* This is exported so
+ 				 * dma_get_required_mask(), which uses
+_

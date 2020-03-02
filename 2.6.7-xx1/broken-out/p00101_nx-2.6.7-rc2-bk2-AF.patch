@@ -1,0 +1,558 @@
+---
+
+ linux-2.6.7-xx1-xiphux/arch/i386/kernel/cpu/proc.c       |    2 
+ linux-2.6.7-xx1-xiphux/arch/i386/kernel/head.S           |   26 ++++
+ linux-2.6.7-xx1-xiphux/arch/i386/kernel/module.c         |    2 
+ linux-2.6.7-xx1-xiphux/arch/i386/kernel/sysenter.c       |    2 
+ linux-2.6.7-xx1-xiphux/arch/i386/mm/fault.c              |   15 ++
+ linux-2.6.7-xx1-xiphux/arch/i386/mm/init.c               |   84 ++++++++++++++-
+ linux-2.6.7-xx1-xiphux/arch/x86_64/kernel/module.c       |    2 
+ linux-2.6.7-xx1-xiphux/arch/x86_64/mm/pageattr.c         |    2 
+ linux-2.6.7-xx1-xiphux/include/asm-i386/cpufeature.h     |    2 
+ linux-2.6.7-xx1-xiphux/include/asm-i386/msr.h            |    9 +
+ linux-2.6.7-xx1-xiphux/include/asm-i386/page.h           |    4 
+ linux-2.6.7-xx1-xiphux/include/asm-i386/pgtable-3level.h |   12 +-
+ linux-2.6.7-xx1-xiphux/include/asm-i386/pgtable.h        |   65 ++++++++---
+ linux-2.6.7-xx1-xiphux/include/asm-x86_64/pgtable.h      |    4 
+ linux-2.6.7-xx1-xiphux/include/linux/vmalloc.h           |    1 
+ linux-2.6.7-xx1-xiphux/mm/vmalloc.c                      |   22 +++
+ 16 files changed, 222 insertions(+), 32 deletions(-)
+
+diff -puN arch/i386/kernel/cpu/proc.c~nx-2.6.7-rc2-bk2-AF arch/i386/kernel/cpu/proc.c
+--- linux-2.6.7-xx1/arch/i386/kernel/cpu/proc.c~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.106039552 -0400
++++ linux-2.6.7-xx1-xiphux/arch/i386/kernel/cpu/proc.c	2004-06-22 11:08:16.149033016 -0400
+@@ -27,7 +27,7 @@ static int show_cpuinfo(struct seq_file 
+ 		/* AMD-defined */
+ 		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 		NULL, NULL, NULL, "syscall", NULL, NULL, NULL, NULL,
+-		NULL, NULL, NULL, "mp", NULL, NULL, "mmxext", NULL,
++		NULL, NULL, NULL, "mp", "nx", NULL, "mmxext", NULL,
+ 		NULL, NULL, NULL, NULL, NULL, "lm", "3dnowext", "3dnow",
+ 
+ 		/* Transmeta-defined */
+diff -puN arch/i386/kernel/head.S~nx-2.6.7-rc2-bk2-AF arch/i386/kernel/head.S
+--- linux-2.6.7-xx1/arch/i386/kernel/head.S~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.108039248 -0400
++++ linux-2.6.7-xx1-xiphux/arch/i386/kernel/head.S	2004-06-22 11:08:16.156031952 -0400
+@@ -153,6 +153,32 @@ ENTRY(startup_32_smp)
+ 	orl %edx,%eax
+ 	movl %eax,%cr4
+ 
++	btl $5, %eax		# check if PAE is enabled
++	jnc 6f
++
++	/* Check if extended functions are implemented */
++	movl $0x80000000, %eax
++	cpuid
++	cmpl $0x80000000, %eax
++	jbe 6f
++	mov $0x80000001, %eax
++	cpuid
++	/* Execute Disable bit supported? */
++	btl $20, %edx
++	jnc 6f
++
++	/* Setup EFER (Extended Feature Enable Register) */
++	movl $0xc0000080, %ecx
++	rdmsr
++
++	btsl $11, %eax
++	/* Make changes effective */
++	wrmsr
++
++6:
++	/* cpuid clobbered ebx, set it up again: */
++	xorl %ebx,%ebx
++	incl %ebx
+ 3:
+ #endif /* CONFIG_SMP */
+ 
+diff -puN arch/i386/kernel/module.c~nx-2.6.7-rc2-bk2-AF arch/i386/kernel/module.c
+--- linux-2.6.7-xx1/arch/i386/kernel/module.c~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.111038792 -0400
++++ linux-2.6.7-xx1-xiphux/arch/i386/kernel/module.c	2004-06-22 11:08:16.163030888 -0400
+@@ -32,7 +32,7 @@ void *module_alloc(unsigned long size)
+ {
+ 	if (size == 0)
+ 		return NULL;
+-	return vmalloc(size);
++	return vmalloc_exec(size);
+ }
+ 
+ 
+diff -puN arch/i386/kernel/sysenter.c~nx-2.6.7-rc2-bk2-AF arch/i386/kernel/sysenter.c
+--- linux-2.6.7-xx1/arch/i386/kernel/sysenter.c~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.114038336 -0400
++++ linux-2.6.7-xx1-xiphux/arch/i386/kernel/sysenter.c	2004-06-22 11:08:16.164030736 -0400
+@@ -45,7 +45,7 @@ static int __init sysenter_setup(void)
+ {
+ 	unsigned long page = get_zeroed_page(GFP_ATOMIC);
+ 
+-	__set_fixmap(FIX_VSYSCALL, __pa(page), PAGE_READONLY);
++	__set_fixmap(FIX_VSYSCALL, __pa(page), PAGE_READONLY_EXEC);
+ 
+ 	if (!boot_cpu_has(X86_FEATURE_SEP)) {
+ 		memcpy((void *) page,
+diff -puN arch/i386/mm/fault.c~nx-2.6.7-rc2-bk2-AF arch/i386/mm/fault.c
+--- linux-2.6.7-xx1/arch/i386/mm/fault.c~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.118037728 -0400
++++ linux-2.6.7-xx1-xiphux/arch/i386/mm/fault.c	2004-06-22 11:08:16.552971608 -0400
+@@ -431,6 +431,21 @@ no_context:
+ 
+ 	bust_spinlocks(1);
+ 
++#ifdef CONFIG_X86_PAE
++	{
++		pgd_t *pgd;
++		pmd_t *pmd;
++
++
++
++		pgd = init_mm.pgd + pgd_index(address);
++		if (pgd_present(*pgd)) {
++			pmd = pmd_offset(pgd, address);
++			if (pmd_val(*pmd) & _PAGE_NX)
++				printk(KERN_CRIT "kernel tried to access NX-protected page - exploit attempt? (uid: %d)\n", current->uid);
++		}
++	}
++#endif
+ 	if (address < PAGE_SIZE)
+ 		printk(KERN_ALERT "Unable to handle kernel NULL pointer dereference");
+ 	else
+diff -puN arch/i386/mm/init.c~nx-2.6.7-rc2-bk2-AF arch/i386/mm/init.c
+--- linux-2.6.7-xx1/arch/i386/mm/init.c~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.120037424 -0400
++++ linux-2.6.7-xx1-xiphux/arch/i386/mm/init.c	2004-06-22 11:08:16.569969024 -0400
+@@ -122,6 +122,13 @@ static void __init page_table_range_init
+ 	}
+ }
+ 
++static inline int is_kernel_text(unsigned long addr)
++{
++	if (addr >= (unsigned long)_stext && addr <= (unsigned long)__init_end)
++		return 1;
++	return 0;
++}
++
+ /*
+  * This maps the physical memory to kernel virtual address space, a total 
+  * of max_low_pfn pages, by creating page tables starting from address 
+@@ -144,18 +151,29 @@ static void __init kernel_physical_mappi
+ 		if (pfn >= max_low_pfn)
+ 			continue;
+ 		for (pmd_idx = 0; pmd_idx < PTRS_PER_PMD && pfn < max_low_pfn; pmd++, pmd_idx++) {
++			unsigned int address = pfn * PAGE_SIZE + PAGE_OFFSET;
++
+ 			/* Map with big pages if possible, otherwise create normal page tables. */
+ 			if (cpu_has_pse) {
+-				set_pmd(pmd, pfn_pmd(pfn, PAGE_KERNEL_LARGE));
++				unsigned int address2 = (pfn + PTRS_PER_PTE - 1) * PAGE_SIZE + PAGE_OFFSET + PAGE_SIZE-1;
++
++				if (is_kernel_text(address) || is_kernel_text(address2))
++					set_pmd(pmd, pfn_pmd(pfn, PAGE_KERNEL_LARGE_EXEC));
++				else
++					set_pmd(pmd, pfn_pmd(pfn, PAGE_KERNEL_LARGE));
+ 				pfn += PTRS_PER_PTE;
+ 			} else {
+ 				pte = one_page_table_init(pmd);
+ 
+-				for (pte_ofs = 0; pte_ofs < PTRS_PER_PTE && pfn < max_low_pfn; pte++, pfn++, pte_ofs++)
+-					set_pte(pte, pfn_pte(pfn, PAGE_KERNEL));
++				for (pte_ofs = 0; pte_ofs < PTRS_PER_PTE && pfn < max_low_pfn; pte++, pfn++, pte_ofs++) {
++						if (is_kernel_text(address))
++							set_pte(pte, pfn_pte(pfn, PAGE_KERNEL_EXEC));
++						else
++							set_pte(pte, pfn_pte(pfn, PAGE_KERNEL));
++				}
+ 			}
+ 		}
+-	}	
++	}
+ }
+ 
+ static inline int page_kills_ppro(unsigned long pagenr)
+@@ -272,7 +290,8 @@ extern void set_highmem_pages_init(int);
+ #define set_highmem_pages_init(bad_ppro) do { } while (0)
+ #endif /* CONFIG_HIGHMEM */
+ 
+-unsigned long __PAGE_KERNEL = _PAGE_KERNEL;
++unsigned long long __PAGE_KERNEL = _PAGE_KERNEL;
++unsigned long long __PAGE_KERNEL_EXEC = _PAGE_KERNEL_EXEC;
+ 
+ #ifndef CONFIG_DISCONTIGMEM
+ #define remap_numa_kva() do {} while (0)
+@@ -301,6 +320,7 @@ static void __init pagetable_init (void)
+ 	if (cpu_has_pge) {
+ 		set_in_cr4(X86_CR4_PGE);
+ 		__PAGE_KERNEL |= _PAGE_GLOBAL;
++		__PAGE_KERNEL_EXEC |= _PAGE_GLOBAL;
+ 	}
+ 
+ 	kernel_physical_mapping_init(pgd_base);
+@@ -391,6 +411,52 @@ void __init zone_sizes_init(void)
+ extern void zone_sizes_init(void);
+ #endif /* !CONFIG_DISCONTIGMEM */
+ 
++static int disable_nx __initdata = 0;
++u64 __supported_pte_mask = ~_PAGE_NX;
++
++/*
++ * noexec = on|off
++ *
++ * Control non executable mappings.
++ *
++ * on      Enable
++ * off     Disable
++ */
++static int __init noexec_setup(char *str)
++{
++	if (!strncmp(str, "on",2) && cpu_has_nx) {
++		__supported_pte_mask |= _PAGE_NX;
++		disable_nx = 0;
++	} else if (!strncmp(str,"off",3)) {
++		disable_nx = 1;
++		__supported_pte_mask &= ~_PAGE_NX;
++	}
++	return 1;
++}
++
++__setup("noexec=", noexec_setup);
++
++#ifdef CONFIG_X86_PAE
++static int use_nx = 0;
++
++static void __init set_nx(void)
++{
++	unsigned int v[4], l, h;
++
++	if (cpu_has_pae && (cpuid_eax(0x80000000) > 0x80000001)) {
++		cpuid(0x80000001, &v[0], &v[1], &v[2], &v[3]);
++		if ((v[3] & (1 << 20)) && !disable_nx) {
++			rdmsr(MSR_EFER, l, h);
++			l |= EFER_NX;
++			wrmsr(MSR_EFER, l, h);
++			use_nx = 1;
++			__supported_pte_mask |= _PAGE_NX;
++		}
++	}
++}
++
++#endif
++
+ /*
+  * paging_init() sets up the page tables - note that the first 8MB are
+  * already mapped by head.S.
+@@ -400,6 +466,14 @@ extern void zone_sizes_init(void);
+  */
+ void __init paging_init(void)
+ {
++#ifdef CONFIG_X86_PAE
++	set_nx();
++	if (use_nx)
++		printk("NX (Execute Disable) protection: active\n");
++	else
++		printk("NX (Execute Disable) protection: not present!\n");
++#endif
++
+ 	pagetable_init();
+ 
+ 	load_cr3(swapper_pg_dir);
+diff -puN arch/x86_64/kernel/module.c~nx-2.6.7-rc2-bk2-AF arch/x86_64/kernel/module.c
+--- linux-2.6.7-xx1/arch/x86_64/kernel/module.c~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.122037120 -0400
++++ linux-2.6.7-xx1-xiphux/arch/x86_64/kernel/module.c	2004-06-22 11:08:16.570968872 -0400
+@@ -121,7 +121,7 @@ void *module_alloc(unsigned long size)
+ 			goto fail;
+ 	}
+ 	
+-	if (map_vm_area(area, PAGE_KERNEL_EXECUTABLE, &pages))
++	if (map_vm_area(area, PAGE_KERNEL_EXEC, &pages))
+ 		goto fail;
+ 	
+ 	memset(addr, 0, size);
+diff -puN arch/x86_64/mm/pageattr.c~nx-2.6.7-rc2-bk2-AF arch/x86_64/mm/pageattr.c
+--- linux-2.6.7-xx1/arch/x86_64/mm/pageattr.c~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.125036664 -0400
++++ linux-2.6.7-xx1-xiphux/arch/x86_64/mm/pageattr.c	2004-06-22 11:08:16.572968568 -0400
+@@ -180,7 +180,7 @@ int change_page_attr(struct page *page, 
+ 			unsigned long addr2;
+ 			addr2 = __START_KERNEL_map + page_to_phys(page);
+ 			err = __change_page_attr(addr2, page, prot,
+-						 PAGE_KERNEL_EXECUTABLE);
++						 PAGE_KERNEL_EXEC);
+ 		} 
+ 	} 	
+ 	up_write(&init_mm.mmap_sem); 
+diff -puN include/asm-i386/cpufeature.h~nx-2.6.7-rc2-bk2-AF include/asm-i386/cpufeature.h
+--- linux-2.6.7-xx1/include/asm-i386/cpufeature.h~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.127036360 -0400
++++ linux-2.6.7-xx1-xiphux/include/asm-i386/cpufeature.h	2004-06-22 11:08:16.573968416 -0400
+@@ -47,6 +47,7 @@
+ /* Don't duplicate feature flags which are redundant with Intel! */
+ #define X86_FEATURE_SYSCALL	(1*32+11) /* SYSCALL/SYSRET */
+ #define X86_FEATURE_MP		(1*32+19) /* MP Capable. */
++#define X86_FEATURE_NX		(1*32+20) /* Execute Disable */
+ #define X86_FEATURE_MMXEXT	(1*32+22) /* AMD MMX extensions */
+ #define X86_FEATURE_LM		(1*32+29) /* Long Mode (x86-64) */
+ #define X86_FEATURE_3DNOWEXT	(1*32+30) /* AMD 3DNow! extensions */
+@@ -100,6 +101,7 @@
+ #define cpu_has_xmm		boot_cpu_has(X86_FEATURE_XMM)
+ #define cpu_has_ht		boot_cpu_has(X86_FEATURE_HT)
+ #define cpu_has_mp		boot_cpu_has(X86_FEATURE_MP)
++#define cpu_has_nx		boot_cpu_has(X86_FEATURE_NX)
+ #define cpu_has_k6_mtrr		boot_cpu_has(X86_FEATURE_K6_MTRR)
+ #define cpu_has_cyrix_arr	boot_cpu_has(X86_FEATURE_CYRIX_ARR)
+ #define cpu_has_centaur_mcr	boot_cpu_has(X86_FEATURE_CENTAUR_MCR)
+diff -puN include/asm-i386/msr.h~nx-2.6.7-rc2-bk2-AF include/asm-i386/msr.h
+--- linux-2.6.7-xx1/include/asm-i386/msr.h~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.129036056 -0400
++++ linux-2.6.7-xx1-xiphux/include/asm-i386/msr.h	2004-06-22 11:08:16.574968264 -0400
+@@ -217,6 +217,15 @@ static inline void wrmsrl (unsigned long
+ #define MSR_K7_FID_VID_CTL		0xC0010041
+ #define MSR_K7_FID_VID_STATUS		0xC0010042
+ 
++/* extended feature register */
++#define MSR_EFER 			0xc0000080
++
++/* EFER bits: */
++
++/* Execute Disable enable */
++#define _EFER_NX			11
++#define EFER_NX				(1<<_EFER_NX)
++
+ /* Centaur-Hauls/IDT defined MSRs. */
+ #define MSR_IDT_FCR1			0x107
+ #define MSR_IDT_FCR2			0x108
+diff -puN include/asm-i386/page.h~nx-2.6.7-rc2-bk2-AF include/asm-i386/page.h
+--- linux-2.6.7-xx1/include/asm-i386/page.h~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.133035448 -0400
++++ linux-2.6.7-xx1-xiphux/include/asm-i386/page.h	2004-06-22 11:08:16.575968112 -0400
+@@ -40,15 +40,18 @@
+  * These are used to make use of C type-checking..
+  */
+ #ifdef CONFIG_X86_PAE
++extern unsigned long long __supported_pte_mask;
+ typedef struct { unsigned long pte_low, pte_high; } pte_t;
+ typedef struct { unsigned long long pmd; } pmd_t;
+ typedef struct { unsigned long long pgd; } pgd_t;
++typedef struct { unsigned long long pgprot; } pgprot_t;
+ #define pte_val(x)	((x).pte_low | ((unsigned long long)(x).pte_high << 32))
+ #define HPAGE_SHIFT	21
+ #else
+ typedef struct { unsigned long pte_low; } pte_t;
+ typedef struct { unsigned long pmd; } pmd_t;
+ typedef struct { unsigned long pgd; } pgd_t;
++typedef struct { unsigned long pgprot; } pgprot_t;
+ #define boot_pte_t pte_t /* or would you rather have a typedef */
+ #define pte_val(x)	((x).pte_low)
+ #define HPAGE_SHIFT	22
+@@ -61,7 +64,6 @@ typedef struct { unsigned long pgd; } pg
+ #define HUGETLB_PAGE_ORDER	(HPAGE_SHIFT - PAGE_SHIFT)
+ #endif
+ 
+-typedef struct { unsigned long pgprot; } pgprot_t;
+ 
+ #define pmd_val(x)	((x).pmd)
+ #define pgd_val(x)	((x).pgd)
+diff -puN include/asm-i386/pgtable-3level.h~nx-2.6.7-rc2-bk2-AF include/asm-i386/pgtable-3level.h
+--- linux-2.6.7-xx1/include/asm-i386/pgtable-3level.h~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.138034688 -0400
++++ linux-2.6.7-xx1-xiphux/include/asm-i386/pgtable-3level.h	2004-06-22 11:08:16.576967960 -0400
+@@ -101,18 +101,24 @@ static inline unsigned long pte_pfn(pte_
+ 		(pte.pte_high << (32 - PAGE_SHIFT));
+ }
+ 
++extern unsigned long long __supported_pte_mask;
++
+ static inline pte_t pfn_pte(unsigned long page_nr, pgprot_t pgprot)
+ {
+ 	pte_t pte;
+ 
+-	pte.pte_high = page_nr >> (32 - PAGE_SHIFT);
+-	pte.pte_low = (page_nr << PAGE_SHIFT) | pgprot_val(pgprot);
++	pte.pte_high = (page_nr >> (32 - PAGE_SHIFT)) | \
++					(pgprot_val(pgprot) >> 32);
++	pte.pte_high &= (__supported_pte_mask >> 32);
++	pte.pte_low = ((page_nr << PAGE_SHIFT) | pgprot_val(pgprot)) & \
++							__supported_pte_mask;
+ 	return pte;
+ }
+ 
+ static inline pmd_t pfn_pmd(unsigned long page_nr, pgprot_t pgprot)
+ {
+-	return __pmd(((unsigned long long)page_nr << PAGE_SHIFT) | pgprot_val(pgprot));
++	return __pmd((((unsigned long long)page_nr << PAGE_SHIFT) | \
++			pgprot_val(pgprot)) & __supported_pte_mask);
+ }
+ 
+ /*
+diff -puN include/asm-i386/pgtable.h~nx-2.6.7-rc2-bk2-AF include/asm-i386/pgtable.h
+--- linux-2.6.7-xx1/include/asm-i386/pgtable.h~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.140034384 -0400
++++ linux-2.6.7-xx1-xiphux/include/asm-i386/pgtable.h	2004-06-22 11:08:16.583966896 -0400
+@@ -110,6 +110,7 @@ void paging_init(void);
+ #define _PAGE_BIT_UNUSED1	9	/* available for programmer */
+ #define _PAGE_BIT_UNUSED2	10
+ #define _PAGE_BIT_UNUSED3	11
++#define _PAGE_BIT_NX		63
+ 
+ #define _PAGE_PRESENT	0x001
+ #define _PAGE_RW	0x002
+@@ -126,28 +127,51 @@ void paging_init(void);
+ 
+ #define _PAGE_FILE	0x040	/* set:pagecache unset:swap */
+ #define _PAGE_PROTNONE	0x080	/* If not present */
++#ifdef CONFIG_X86_PAE
++#define _PAGE_NX	(1ULL<<_PAGE_BIT_NX)
++#else
++#define _PAGE_NX	0
++#endif
+ 
+ #define _PAGE_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED | _PAGE_DIRTY)
+ #define _KERNPG_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_ACCESSED | _PAGE_DIRTY)
+ #define _PAGE_CHG_MASK	(PTE_MASK | _PAGE_ACCESSED | _PAGE_DIRTY)
+ 
+-#define PAGE_NONE	__pgprot(_PAGE_PROTNONE | _PAGE_ACCESSED)
+-#define PAGE_SHARED	__pgprot(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED)
+-#define PAGE_COPY	__pgprot(_PAGE_PRESENT | _PAGE_USER | _PAGE_ACCESSED)
+-#define PAGE_READONLY	__pgprot(_PAGE_PRESENT | _PAGE_USER | _PAGE_ACCESSED)
++#define PAGE_NONE \
++	__pgprot(_PAGE_PROTNONE | _PAGE_ACCESSED)
++#define PAGE_SHARED \
++	__pgprot(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED)
++
++#define PAGE_SHARED_EXEC \
++	__pgprot(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED)
++#define PAGE_COPY_NOEXEC \
++	__pgprot(_PAGE_PRESENT | _PAGE_USER | _PAGE_ACCESSED | _PAGE_NX)
++#define PAGE_COPY_EXEC \
++	__pgprot(_PAGE_PRESENT | _PAGE_USER | _PAGE_ACCESSED)
++#define PAGE_COPY \
++	PAGE_COPY_NOEXEC
++#define PAGE_READONLY \
++	__pgprot(_PAGE_PRESENT | _PAGE_USER | _PAGE_ACCESSED | _PAGE_NX)
++#define PAGE_READONLY_EXEC \
++	__pgprot(_PAGE_PRESENT | _PAGE_USER | _PAGE_ACCESSED)
+ 
+ #define _PAGE_KERNEL \
++	(_PAGE_PRESENT | _PAGE_RW | _PAGE_DIRTY | _PAGE_ACCESSED | _PAGE_NX)
++#define _PAGE_KERNEL_EXEC \
+ 	(_PAGE_PRESENT | _PAGE_RW | _PAGE_DIRTY | _PAGE_ACCESSED)
+ 
+-extern unsigned long __PAGE_KERNEL;
+-#define __PAGE_KERNEL_RO	(__PAGE_KERNEL & ~_PAGE_RW)
+-#define __PAGE_KERNEL_NOCACHE	(__PAGE_KERNEL | _PAGE_PCD)
+-#define __PAGE_KERNEL_LARGE	(__PAGE_KERNEL | _PAGE_PSE)
++extern unsigned long long __PAGE_KERNEL, __PAGE_KERNEL_EXEC;
++#define __PAGE_KERNEL_RO		(__PAGE_KERNEL & ~_PAGE_RW)
++#define __PAGE_KERNEL_NOCACHE		(__PAGE_KERNEL | _PAGE_PCD)
++#define __PAGE_KERNEL_LARGE		(__PAGE_KERNEL | _PAGE_PSE)
++#define __PAGE_KERNEL_LARGE_EXEC	(__PAGE_KERNEL_EXEC | _PAGE_PSE)
+ 
+ #define PAGE_KERNEL		__pgprot(__PAGE_KERNEL)
+ #define PAGE_KERNEL_RO		__pgprot(__PAGE_KERNEL_RO)
++#define PAGE_KERNEL_EXEC	__pgprot(__PAGE_KERNEL_EXEC)
+ #define PAGE_KERNEL_NOCACHE	__pgprot(__PAGE_KERNEL_NOCACHE)
+ #define PAGE_KERNEL_LARGE	__pgprot(__PAGE_KERNEL_LARGE)
++#define PAGE_KERNEL_LARGE_EXEC	__pgprot(__PAGE_KERNEL_LARGE_EXEC)
+ 
+ /*
+  * The i386 can't do page protection for execute, and considers that
+@@ -158,19 +182,19 @@ extern unsigned long __PAGE_KERNEL;
+ #define __P001	PAGE_READONLY
+ #define __P010	PAGE_COPY
+ #define __P011	PAGE_COPY
+-#define __P100	PAGE_READONLY
+-#define __P101	PAGE_READONLY
+-#define __P110	PAGE_COPY
+-#define __P111	PAGE_COPY
++#define __P100	PAGE_READONLY_EXEC
++#define __P101	PAGE_READONLY_EXEC
++#define __P110	PAGE_COPY_EXEC
++#define __P111	PAGE_COPY_EXEC
+ 
+ #define __S000	PAGE_NONE
+ #define __S001	PAGE_READONLY
+ #define __S010	PAGE_SHARED
+ #define __S011	PAGE_SHARED
+-#define __S100	PAGE_READONLY
+-#define __S101	PAGE_READONLY
+-#define __S110	PAGE_SHARED
+-#define __S111	PAGE_SHARED
++#define __S100	PAGE_READONLY_EXEC
++#define __S101	PAGE_READONLY_EXEC
++#define __S110	PAGE_SHARED_EXEC
++#define __S111	PAGE_SHARED_EXEC
+ 
+ /*
+  * Define this if things work differently on an i386 and an i486:
+@@ -256,6 +280,15 @@ static inline pte_t pte_modify(pte_t pte
+ {
+ 	pte.pte_low &= _PAGE_CHG_MASK;
+ 	pte.pte_low |= pgprot_val(newprot);
++#ifdef CONFIG_X86_PAE
++	/*
++	 * Chop off the NX bit (if present), and add the NX portion of
++	 * the newprot (if present):
++	 */
++	pte.pte_high &= -1 ^ (1 << (_PAGE_BIT_NX - 32));
++	pte.pte_high |= (pgprot_val(newprot) >> 32) & \
++					(__supported_pte_mask >> 32);
++#endif
+ 	return pte;
+ }
+ 
+diff -puN include/asm-x86_64/pgtable.h~nx-2.6.7-rc2-bk2-AF include/asm-x86_64/pgtable.h
+--- linux-2.6.7-xx1/include/asm-x86_64/pgtable.h~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.142034080 -0400
++++ linux-2.6.7-xx1-xiphux/include/asm-x86_64/pgtable.h	2004-06-22 11:08:16.593965376 -0400
+@@ -172,7 +172,7 @@ static inline void set_pml4(pml4_t *dst,
+ #define PAGE_READONLY_EXEC __pgprot(_PAGE_PRESENT | _PAGE_USER | _PAGE_ACCESSED)
+ #define __PAGE_KERNEL \
+ 	(_PAGE_PRESENT | _PAGE_RW | _PAGE_DIRTY | _PAGE_ACCESSED | _PAGE_NX)
+-#define __PAGE_KERNEL_EXECUTABLE \
++#define __PAGE_KERNEL_EXEC \
+ 	(_PAGE_PRESENT | _PAGE_RW | _PAGE_DIRTY | _PAGE_ACCESSED)
+ #define __PAGE_KERNEL_NOCACHE \
+ 	(_PAGE_PRESENT | _PAGE_RW | _PAGE_DIRTY | _PAGE_PCD | _PAGE_ACCESSED | _PAGE_NX)
+@@ -188,7 +188,7 @@ static inline void set_pml4(pml4_t *dst,
+ #define MAKE_GLOBAL(x) __pgprot((x) | _PAGE_GLOBAL)
+ 
+ #define PAGE_KERNEL MAKE_GLOBAL(__PAGE_KERNEL)
+-#define PAGE_KERNEL_EXECUTABLE MAKE_GLOBAL(__PAGE_KERNEL_EXECUTABLE)
++#define PAGE_KERNEL_EXEC MAKE_GLOBAL(__PAGE_KERNEL_EXEC)
+ #define PAGE_KERNEL_RO MAKE_GLOBAL(__PAGE_KERNEL_RO)
+ #define PAGE_KERNEL_NOCACHE MAKE_GLOBAL(__PAGE_KERNEL_NOCACHE)
+ #define PAGE_KERNEL_VSYSCALL MAKE_GLOBAL(__PAGE_KERNEL_VSYSCALL)
+diff -puN include/linux/vmalloc.h~nx-2.6.7-rc2-bk2-AF include/linux/vmalloc.h
+--- linux-2.6.7-xx1/include/linux/vmalloc.h~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.144033776 -0400
++++ linux-2.6.7-xx1-xiphux/include/linux/vmalloc.h	2004-06-22 11:08:16.602964008 -0400
+@@ -23,6 +23,7 @@ struct vm_struct {
+  *	Highlevel APIs for driver use
+  */
+ extern void *vmalloc(unsigned long size);
++extern void *vmalloc_exec(unsigned long size);
+ extern void *vmalloc_32(unsigned long size);
+ extern void *__vmalloc(unsigned long size, int gfp_mask, pgprot_t prot);
+ extern void vfree(void *addr);
+diff -puN mm/vmalloc.c~nx-2.6.7-rc2-bk2-AF mm/vmalloc.c
+--- linux-2.6.7-xx1/mm/vmalloc.c~nx-2.6.7-rc2-bk2-AF	2004-06-22 11:08:16.146033472 -0400
++++ linux-2.6.7-xx1-xiphux/mm/vmalloc.c	2004-06-22 11:08:16.609962944 -0400
+@@ -455,6 +455,28 @@ void *vmalloc(unsigned long size)
+ EXPORT_SYMBOL(vmalloc);
+ 
+ /**
++ *	vmalloc_exec  -  allocate virtually contiguous, executable memory
++ *
++ *	@size:		allocation size
++ *
++ *	Kernel-internal function to allocate enough pages to cover @size
++ *	the page level allocator and map them into contiguous and
++ *	executable kernel virtual space.
++ *
++ *	For tight cotrol over page level allocator and protection flags
++ *	use __vmalloc() instead.
++ */
++
++#ifndef PAGE_KERNEL_EXEC
++# define PAGE_KERNEL_EXEC PAGE_KERNEL
++#endif
++
++void *vmalloc_exec(unsigned long size)
++{
++	return __vmalloc(size, GFP_KERNEL | __GFP_HIGHMEM, PAGE_KERNEL_EXEC);
++}
++
++/**
+  *	vmalloc_32  -  allocate virtually contiguous memory (32bit addressable)
+  *
+  *	@size:		allocation size
+
+_

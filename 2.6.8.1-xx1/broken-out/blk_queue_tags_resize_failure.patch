@@ -1,0 +1,70 @@
+
+From: brking@us.ibm.com
+
+Fixes blk_queue_resize_tags to properly handle allocation failures. 
+Currently, if a memory allocation failure occurs during
+blk_queue_resize_tags, the tag map ends up getting freed, which should not
+happen.  The old tag map should be preserved and only the resize should
+fail.
+
+Signed-off-by: Jens Axboe <axboe@suse.de>
+Signed-off-by: Brian King <brking@us.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/ll_rw_blk.c |   20 ++++++++++++--------
+ 1 files changed, 12 insertions(+), 8 deletions(-)
+
+diff -puN drivers/block/ll_rw_blk.c~blk_queue_tags_resize_failure drivers/block/ll_rw_blk.c
+--- 25/drivers/block/ll_rw_blk.c~blk_queue_tags_resize_failure	Mon Aug  9 14:41:33 2004
++++ 25-akpm/drivers/block/ll_rw_blk.c	Mon Aug  9 14:41:33 2004
+@@ -571,6 +571,8 @@ static int
+ init_tag_map(request_queue_t *q, struct blk_queue_tag *tags, int depth)
+ {
+ 	int bits, i;
++	struct request **tag_index;
++	unsigned long *tag_map;
+ 
+ 	if (depth > q->nr_requests * 2) {
+ 		depth = q->nr_requests * 2;
+@@ -578,29 +580,31 @@ init_tag_map(request_queue_t *q, struct 
+ 				__FUNCTION__, depth);
+ 	}
+ 
+-	tags->tag_index = kmalloc(depth * sizeof(struct request *), GFP_ATOMIC);
+-	if (!tags->tag_index)
++	tag_index = kmalloc(depth * sizeof(struct request *), GFP_ATOMIC);
++	if (!tag_index)
+ 		goto fail;
+ 
+ 	bits = (depth / BLK_TAGS_PER_LONG) + 1;
+-	tags->tag_map = kmalloc(bits * sizeof(unsigned long), GFP_ATOMIC);
+-	if (!tags->tag_map)
++	tag_map = kmalloc(bits * sizeof(unsigned long), GFP_ATOMIC);
++	if (!tag_map)
+ 		goto fail;
+ 
+-	memset(tags->tag_index, 0, depth * sizeof(struct request *));
+-	memset(tags->tag_map, 0, bits * sizeof(unsigned long));
++	memset(tag_index, 0, depth * sizeof(struct request *));
++	memset(tag_map, 0, bits * sizeof(unsigned long));
+ 	tags->max_depth = depth;
+ 	tags->real_max_depth = bits * BITS_PER_LONG;
++	tags->tag_index = tag_index;
++	tags->tag_map = tag_map;
+ 
+ 	/*
+ 	 * set the upper bits if the depth isn't a multiple of the word size
+ 	 */
+ 	for (i = depth; i < bits * BLK_TAGS_PER_LONG; i++)
+-		__set_bit(i, tags->tag_map);
++		__set_bit(i, tag_map);
+ 
+ 	return 0;
+ fail:
+-	kfree(tags->tag_index);
++	kfree(tag_index);
+ 	return -ENOMEM;
+ }
+ 
+_

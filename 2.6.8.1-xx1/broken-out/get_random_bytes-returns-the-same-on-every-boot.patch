@@ -1,0 +1,42 @@
+
+From: Balint Marton <cus@fazekas.hu>
+
+At boot time, get_random_bytes always returns the same random data, as if
+there were a constant random seed.  For example, if I use the kernel level
+ip autoconfiguration with dhcp, the kernel will create a dhcp request
+packet with always the same transaction ID.  (If you have more than one
+computers, and they are booting at the same time, then this is a big
+problem)
+
+That happens, because only the primary entropy pool is initialized with the
+system time, in function rand_initialize.  The secondary pool is only
+cleared.  In this early stage of booting, there is usually no user
+interaction, or usable disk interrupts, so the kernel can't add any real
+random bytes to the primary pool.  And altough the system time is in the
+primary pool, the kernel does not consider it real random data, so you
+can't read from the primary pool, before at least a part of it will be
+filled with some real randomness (interrupt timing).  Therefore all random
+data will come from the secondary pool, and the kernel cannot reseed the
+secondary pool, because there is no real randomness in the primary one.
+
+The solution is simple: Initialize not just the primary, but also the
+secondary pool with the system time.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/random.c |    1 +
+ 1 files changed, 1 insertion(+)
+
+diff -puN drivers/char/random.c~get_random_bytes-returns-the-same-on-every-boot drivers/char/random.c
+--- 25/drivers/char/random.c~get_random_bytes-returns-the-same-on-every-boot	2004-07-26 17:46:43.063880512 -0700
++++ 25-akpm/drivers/char/random.c	2004-07-26 17:46:43.068879752 -0700
+@@ -1537,6 +1537,7 @@ static int __init rand_initialize(void)
+ 	clear_entropy_store(random_state);
+ 	clear_entropy_store(sec_random_state);
+ 	init_std_data(random_state);
++	init_std_data(sec_random_state);
+ #ifdef CONFIG_SYSCTL
+ 	sysctl_init_random(random_state);
+ #endif
+_

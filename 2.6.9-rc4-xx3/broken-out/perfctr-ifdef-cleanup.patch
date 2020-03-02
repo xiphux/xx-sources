@@ -1,0 +1,244 @@
+
+From: Valdis.Kletnieks@vt.edu
+
+Cleaning up some #if/#ifdef confusion in the perfctr patch.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/perfctr/cpumask.h |    2 +-
+ 25-akpm/drivers/perfctr/ppc.c     |    8 ++++----
+ 25-akpm/drivers/perfctr/virtual.c |   16 ++++++++--------
+ 25-akpm/drivers/perfctr/x86.c     |   18 +++++++++---------
+ 25-akpm/include/asm-ppc/perfctr.h |    2 +-
+ 25-akpm/include/linux/perfctr.h   |    2 +-
+ 6 files changed, 24 insertions(+), 24 deletions(-)
+
+diff -puN drivers/perfctr/cpumask.h~perfctr-ifdef-cleanup drivers/perfctr/cpumask.h
+--- 25/drivers/perfctr/cpumask.h~perfctr-ifdef-cleanup	2004-09-26 17:18:14.378472592 -0700
++++ 25-akpm/drivers/perfctr/cpumask.h	2004-09-26 17:18:14.389470920 -0700
+@@ -15,7 +15,7 @@
+ 
+ /* `perfctr_cpus_forbidden_mask' used to be defined in <asm/perfctr.h>,
+    but cpumask_t compatibility issues forced it to be moved here. */
+-#if PERFCTR_CPUS_FORBIDDEN_MASK_NEEDED
++#ifdef PERFCTR_CPUS_FORBIDDEN_MASK_NEEDED
+ extern cpumask_t perfctr_cpus_forbidden_mask;
+ #define perfctr_cpu_is_forbidden(cpu)	cpu_isset((cpu), perfctr_cpus_forbidden_mask)
+ #else
+diff -puN drivers/perfctr/ppc.c~perfctr-ifdef-cleanup drivers/perfctr/ppc.c
+--- 25/drivers/perfctr/ppc.c~perfctr-ifdef-cleanup	2004-09-26 17:18:14.380472288 -0700
++++ 25-akpm/drivers/perfctr/ppc.c	2004-09-26 17:18:14.390470768 -0700
+@@ -58,7 +58,7 @@ static unsigned int new_id(void)
+ 	return id;
+ }
+ 
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ static void perfctr_default_ihandler(unsigned long pc)
+ {
+ }
+@@ -81,7 +81,7 @@ void perfctr_cpu_set_ihandler(perfctr_ih
+ #define perfctr_cstatus_has_ictrs(cstatus)	0
+ #endif
+ 
+-#if defined(CONFIG_SMP) && PERFCTR_INTERRUPT_SUPPORT
++#if defined(CONFIG_SMP) && defined(PERFCTR_INTERRUPT_SUPPORT)
+ 
+ static inline void
+ set_isuspend_cpu(struct perfctr_cpu_state *state, int cpu)
+@@ -358,7 +358,7 @@ static int ppc_check_control(struct perf
+ 	return 0;
+ }
+ 
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ static void ppc_isuspend(struct perfctr_cpu_state *state)
+ {
+ 	// XXX
+@@ -456,7 +456,7 @@ static void perfctr_cpu_read_counters(st
+ 	return ppc_read_counters(state, ctrs);
+ }
+ 
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ static void perfctr_cpu_isuspend(struct perfctr_cpu_state *state)
+ {
+ 	return ppc_isuspend(state);
+diff -puN drivers/perfctr/virtual.c~perfctr-ifdef-cleanup drivers/perfctr/virtual.c
+--- 25/drivers/perfctr/virtual.c~perfctr-ifdef-cleanup	2004-09-26 17:18:14.381472136 -0700
++++ 25-akpm/drivers/perfctr/virtual.c	2004-09-26 17:18:14.391470616 -0700
+@@ -36,16 +36,16 @@ struct vperfctr {
+ 	/* sampling_timer and bad_cpus_allowed are frequently
+ 	   accessed, so they get to share a cache line */
+ 	unsigned int sampling_timer ____cacheline_aligned;
+-#if PERFCTR_CPUS_FORBIDDEN_MASK_NEEDED
++#ifdef PERFCTR_CPUS_FORBIDDEN_MASK_NEEDED
+ 	atomic_t bad_cpus_allowed;
+ #endif
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ 	unsigned int iresume_cstatus;
+ #endif
+ };
+ #define IS_RUNNING(perfctr)	perfctr_cstatus_enabled((perfctr)->cpu_state.cstatus)
+ 
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ 
+ static void vperfctr_ihandler(unsigned long pc);
+ 
+@@ -64,7 +64,7 @@ static inline void vperfctr_set_ihandler
+ static inline void vperfctr_clear_iresume_cstatus(struct vperfctr *perfctr) { }
+ #endif
+ 
+-#if PERFCTR_CPUS_FORBIDDEN_MASK_NEEDED
++#ifdef PERFCTR_CPUS_FORBIDDEN_MASK_NEEDED
+ 
+ static inline void vperfctr_init_bad_cpus_allowed(struct vperfctr *perfctr)
+ {
+@@ -229,7 +229,7 @@ static void vperfctr_sample(struct vperf
+ 	}
+ }
+ 
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ /* vperfctr interrupt handler (XXX: add buffering support) */
+ /* PREEMPT note: called in IRQ context with preemption disabled. */
+ static void vperfctr_ihandler(unsigned long pc)
+@@ -331,7 +331,7 @@ void __vperfctr_suspend(struct vperfctr 
+ void __vperfctr_resume(struct vperfctr *perfctr)
+ {
+ 	if (IS_RUNNING(perfctr)) {
+-#if PERFCTR_CPUS_FORBIDDEN_MASK_NEEDED
++#ifdef PERFCTR_CPUS_FORBIDDEN_MASK_NEEDED
+ 		if (unlikely(atomic_read(&perfctr->bad_cpus_allowed)) &&
+ 		    perfctr_cstatus_nrctrs(perfctr->cpu_state.cstatus)) {
+ 			perfctr->cpu_state.cstatus = 0;
+@@ -358,7 +358,7 @@ void __vperfctr_sample(struct vperfctr *
+ 		vperfctr_sample(perfctr);
+ }
+ 
+-#if PERFCTR_CPUS_FORBIDDEN_MASK_NEEDED
++#ifdef PERFCTR_CPUS_FORBIDDEN_MASK_NEEDED
+ /* Called from set_cpus_allowed().
+  * PRE: current holds task_lock(owner)
+  * PRE: owner->thread.perfctr == perfctr
+@@ -458,7 +458,7 @@ static int do_vperfctr_control(struct vp
+ 
+ static int do_vperfctr_iresume(struct vperfctr *perfctr, const struct task_struct *tsk)
+ {
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ 	unsigned int iresume_cstatus;
+ 
+ 	if (!tsk)
+diff -puN drivers/perfctr/x86.c~perfctr-ifdef-cleanup drivers/perfctr/x86.c
+--- 25/drivers/perfctr/x86.c~perfctr-ifdef-cleanup	2004-09-26 17:18:14.383471832 -0700
++++ 25-akpm/drivers/perfctr/x86.c	2004-09-26 17:18:14.393470312 -0700
+@@ -142,7 +142,7 @@ static unsigned int new_id(void)
+ 	return id;
+ }
+ 
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ static void perfctr_default_ihandler(unsigned long pc)
+ {
+ }
+@@ -173,7 +173,7 @@ void perfctr_cpu_set_ihandler(perfctr_ih
+ #define apic_write(reg,vector)			do{}while(0)
+ #endif
+ 
+-#if defined(CONFIG_SMP) && PERFCTR_INTERRUPT_SUPPORT
++#if defined(CONFIG_SMP) && defined(PERFCTR_INTERRUPT_SUPPORT)
+ 
+ static inline void
+ set_isuspend_cpu(struct perfctr_cpu_state *state, int cpu)
+@@ -443,7 +443,7 @@ static int p6_check_control(struct perfc
+ 	return p6_like_check_control(state, 0);
+ }
+ 
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ /* PRE: perfctr_cstatus_has_ictrs(state->cstatus) != 0 */
+ /* shared with K7 and P4 */
+ static void p6_like_isuspend(struct perfctr_cpu_state *state,
+@@ -578,7 +578,7 @@ static int k7_check_control(struct perfc
+ 	return p6_like_check_control(state, 1);
+ }
+ 
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ static void k7_isuspend(struct perfctr_cpu_state *state)
+ {
+ 	p6_like_isuspend(state, MSR_K7_EVNTSEL0);
+@@ -811,7 +811,7 @@ static int p4_check_control(struct perfc
+ 	return 0;
+ }
+ 
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ static void p4_isuspend(struct perfctr_cpu_state *state)
+ {
+ 	return p6_like_isuspend(state, MSR_P4_CCCR0);
+@@ -943,7 +943,7 @@ static noinline void perfctr_cpu_read_co
+ 	return read_counters(state, ctrs);
+ }
+ 
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ static void (*cpu_isuspend)(struct perfctr_cpu_state*);
+ static noinline void perfctr_cpu_isuspend(struct perfctr_cpu_state *state)
+ {
+@@ -1263,7 +1263,7 @@ static int __init intel_init(void)
+ 		write_control = p6_write_control;
+ 		check_control = p6_check_control;
+ 		clear_counters = p6_clear_counters;
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ 		if (cpu_has_apic) {
+ 			perfctr_info.cpu_features |= PERFCTR_FEATURE_PCINT;
+ 			cpu_isuspend = p6_isuspend;
+@@ -1291,7 +1291,7 @@ static int __init intel_init(void)
+ 		write_control = p4_write_control;
+ 		check_control = p4_check_control;
+ 		clear_counters = p4_clear_counters;
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ 		if (cpu_has_apic) {
+ 			perfctr_info.cpu_features |= PERFCTR_FEATURE_PCINT;
+ 			cpu_isuspend = p4_isuspend;
+@@ -1323,7 +1323,7 @@ static int __init amd_init(void)
+ 	write_control = k7_write_control;
+ 	check_control = k7_check_control;
+ 	clear_counters = k7_clear_counters;
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ 	if (cpu_has_apic) {
+ 		perfctr_info.cpu_features |= PERFCTR_FEATURE_PCINT;
+ 		cpu_isuspend = k7_isuspend;
+diff -puN include/asm-ppc/perfctr.h~perfctr-ifdef-cleanup include/asm-ppc/perfctr.h
+--- 25/include/asm-ppc/perfctr.h~perfctr-ifdef-cleanup	2004-09-26 17:18:14.384471680 -0700
++++ 25-akpm/include/asm-ppc/perfctr.h	2004-09-26 17:18:14.393470312 -0700
+@@ -156,7 +156,7 @@ typedef void (*perfctr_ihandler_t)(unsig
+    does not yet enable this due to an erratum in 750/7400/7410. */
+ //#define PERFCTR_INTERRUPT_SUPPORT 1
+ 
+-#if PERFCTR_INTERRUPT_SUPPORT
++#ifdef PERFCTR_INTERRUPT_SUPPORT
+ extern void perfctr_cpu_set_ihandler(perfctr_ihandler_t);
+ extern void perfctr_cpu_ireload(struct perfctr_cpu_state*);
+ extern unsigned int perfctr_cpu_identify_overflow(struct perfctr_cpu_state*);
+diff -puN include/linux/perfctr.h~perfctr-ifdef-cleanup include/linux/perfctr.h
+--- 25/include/linux/perfctr.h~perfctr-ifdef-cleanup	2004-09-26 17:18:14.386471376 -0700
++++ 25-akpm/include/linux/perfctr.h	2004-09-26 17:18:14.393470312 -0700
+@@ -134,7 +134,7 @@ static inline void perfctr_sample_thread
+ 
+ static inline void perfctr_set_cpus_allowed(struct task_struct *p, cpumask_t new_mask)
+ {
+-#if PERFCTR_CPUS_FORBIDDEN_MASK_NEEDED
++#ifdef PERFCTR_CPUS_FORBIDDEN_MASK_NEEDED
+ 	struct vperfctr *perfctr;
+ 
+ 	task_lock(p);
+_

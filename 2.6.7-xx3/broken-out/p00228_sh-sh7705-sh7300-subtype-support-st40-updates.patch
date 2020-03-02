@@ -1,0 +1,980 @@
+
+From: Paul Mundt <lethal@Linux-SH.ORG>
+
+This adds support for the SH7705 and SH7300 subtypes and also updates some
+ST40-specific FRQCR handling code.
+
+Signed-off-by: Alex Bennee <kernel-hacker@bennee.com>
+Signed-off-by: Hiroshi DOYU <Hiroshi_DOYU@montavista.co.jp>
+Signed-off-by: Paul Mundt <lethal@linux-sh.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/sh/kernel/cpu/irq_ipr.c |   39 +++-
+ 25-akpm/arch/sh/kernel/cpu/sh3/ex.S  |   79 +++++++++
+ 25-akpm/arch/sh/kernel/entry.S       |    5 
+ 25-akpm/arch/sh/kernel/time.c        |  182 +++++++++++++++++++++
+ 25-akpm/include/asm-sh/bugs.h        |    2 
+ 25-akpm/include/asm-sh/irq.h         |  290 ++++++++++++++++++++++++++++++++---
+ 25-akpm/include/asm-sh/processor.h   |    4 
+ 25-akpm/include/asm-sh/ubc.h         |    3 
+ 8 files changed, 560 insertions(+), 44 deletions(-)
+
+diff -puN arch/sh/kernel/cpu/irq_ipr.c~sh-sh7705-sh7300-subtype-support-st40-updates arch/sh/kernel/cpu/irq_ipr.c
+--- 25/arch/sh/kernel/cpu/irq_ipr.c~sh-sh7705-sh7300-subtype-support-st40-updates	2004-06-23 20:00:19.932659800 -0700
++++ 25-akpm/arch/sh/kernel/cpu/irq_ipr.c	2004-06-23 20:00:19.947657520 -0700
+@@ -4,12 +4,13 @@
+  *
+  * Copyright (C) 1999  Niibe Yutaka & Takeshi Yaegashi
+  * Copyright (C) 2000  Kazumoto Kojima
++ * Copyright (C) 2003 Takashi Kusuda <kusuda-takashi@hitachi-ul.co.jp>
+  *
+  * Interrupt handling for IPR-based IRQ.
+  *
+  * Supported system:
+  *	On-chip supporting modules (TMU, RTC, etc.).
+- *	On-chip supporting modules for SH7709/SH7709A/SH7729.
++ *	On-chip supporting modules for SH7709/SH7709A/SH7729/SH7300.
+  *	Hitachi SolutionEngine external I/O:
+  *		MS7709SE01, MS7709ASE01, and MS7750SE01
+  *
+@@ -88,7 +89,8 @@ static void mask_and_ack_ipr(unsigned in
+ {
+ 	disable_ipr_irq(irq);
+ 
+-#if defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709)
++#if defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709) || \
++    defined(CONFIG_CPU_SUBTYPE_SH7300) || defined(CONFIG_CPU_SUBTYPE_SH7705)
+ 	/* This is needed when we use edge triggered setting */
+ 	/* XXX: Is it really needed? */
+ 	if (IRQ0_IRQ <= irq && irq <= IRQ5_IRQ) {
+@@ -117,7 +119,9 @@ void make_ipr_irq(unsigned int irq, unsi
+ 	disable_ipr_irq(irq);
+ }
+ 
+-#if defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709)
++#if defined(CONFIG_CPU_SUBTYPE_SH7705) || \
++    defined(CONFIG_CPU_SUBTYPE_SH7707) || \
++    defined(CONFIG_CPU_SUBTYPE_SH7709)
+ static unsigned char pint_map[256];
+ static unsigned long portcr_mask = 0;
+ 
+@@ -131,7 +135,7 @@ static void mask_and_ack_pint(unsigned i
+ static void end_pint_irq(unsigned int irq);
+ 
+ static unsigned int startup_pint_irq(unsigned int irq)
+-{ 
++{
+ 	enable_pint_irq(irq);
+ 	return 0; /* never anything pending */
+ }
+@@ -191,13 +195,17 @@ void make_pint_irq(unsigned int irq)
+ 
+ void __init init_IRQ(void)
+ {
+-#if defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709)
++#if defined(CONFIG_CPU_SUBTYPE_SH7705) || \
++    defined(CONFIG_CPU_SUBTYPE_SH7707) || \
++    defined(CONFIG_CPU_SUBTYPE_SH7709)
+ 	int i;
+ #endif
+ 
+ 	make_ipr_irq(TIMER_IRQ, TIMER_IPR_ADDR, TIMER_IPR_POS, TIMER_PRIORITY);
+ 	make_ipr_irq(TIMER1_IRQ, TIMER1_IPR_ADDR, TIMER1_IPR_POS, TIMER1_PRIORITY);
++#if defined(CONFIG_SH_RTC)
+ 	make_ipr_irq(RTC_IRQ, RTC_IPR_ADDR, RTC_IPR_POS, RTC_PRIORITY);
++#endif
+ 
+ #ifdef SCI_ERI_IRQ
+ 	make_ipr_irq(SCI_ERI_IRQ, SCI_IPR_ADDR, SCI_IPR_POS, SCI_PRIORITY);
+@@ -212,6 +220,13 @@ void __init init_IRQ(void)
+ 	make_ipr_irq(SCIF1_TXI_IRQ, SCIF1_IPR_ADDR, SCIF1_IPR_POS, SCIF1_PRIORITY);
+ #endif
+ 
++#if defined(CONFIG_CPU_SUBTYPE_SH7300)
++	make_ipr_irq(SCIF0_IRQ, SCIF0_IPR_ADDR, SCIF0_IPR_POS, SCIF0_PRIORITY);
++	make_ipr_irq(DMTE2_IRQ, DMA1_IPR_ADDR, DMA1_IPR_POS, DMA1_PRIORITY);
++	make_ipr_irq(DMTE3_IRQ, DMA1_IPR_ADDR, DMA1_IPR_POS, DMA1_PRIORITY);
++	make_ipr_irq(VIO_IRQ, VIO_IPR_ADDR, VIO_IPR_POS, VIO_PRIORITY);
++#endif
++
+ #ifdef SCIF_ERI_IRQ
+ 	make_ipr_irq(SCIF_ERI_IRQ, SCIF_IPR_ADDR, SCIF_IPR_POS, SCIF_PRIORITY);
+ 	make_ipr_irq(SCIF_RXI_IRQ, SCIF_IPR_ADDR, SCIF_IPR_POS, SCIF_PRIORITY);
+@@ -226,11 +241,12 @@ void __init init_IRQ(void)
+ 	make_ipr_irq(IRDA_TXI_IRQ, IRDA_IPR_ADDR, IRDA_IPR_POS, IRDA_PRIORITY);
+ #endif
+ 
+-#if defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709)
++#if defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709) || \
++    defined(CONFIG_CPU_SUBTYPE_SH7300) || defined(CONFIG_CPU_SUBTYPE_SH7705)
+ 	/*
+ 	 * Initialize the Interrupt Controller (INTC)
+ 	 * registers to their power on values
+-	 */ 
++	 */
+ 
+ 	/*
+ 	 * Enable external irq (INTC IRQ mode).
+@@ -243,6 +259,7 @@ void __init init_IRQ(void)
+ 	make_ipr_irq(IRQ3_IRQ, IRQ3_IPR_ADDR, IRQ3_IPR_POS, IRQ3_PRIORITY);
+ 	make_ipr_irq(IRQ4_IRQ, IRQ4_IPR_ADDR, IRQ4_IPR_POS, IRQ4_PRIORITY);
+ 	make_ipr_irq(IRQ5_IRQ, IRQ5_IPR_ADDR, IRQ5_IPR_POS, IRQ5_PRIORITY);
++#if !defined(CONFIG_CPU_SUBTYPE_SH7300)
+ 	make_ipr_irq(PINT0_IRQ, PINT0_IPR_ADDR, PINT0_IPR_POS, PINT0_PRIORITY);
+ 	make_ipr_irq(PINT8_IRQ, PINT8_IPR_ADDR, PINT8_IPR_POS, PINT8_PRIORITY);
+ 	enable_ipr_irq(PINT0_IRQ);
+@@ -261,16 +278,19 @@ void __init init_IRQ(void)
+ 		else if(i & 0x40) pint_map[i] = 6;
+ 		else if(i & 0x80) pint_map[i] = 7;
+ 	}
+-#endif /* CONFIG_CPU_SUBTYPE_SH7707 || CONFIG_CPU_SUBTYPE_SH7709 */
++#endif /* !CONFIG_CPU_SUBTYPE_SH7300 */
++#endif /* CONFIG_CPU_SUBTYPE_SH7707 || CONFIG_CPU_SUBTYPE_SH7709  || CONFIG_CPU_SUBTYPE_SH7300*/
+ 
+ 	/* Perform the machine specific initialisation */
+ 	if (sh_mv.mv_init_irq != NULL) {
+ 		sh_mv.mv_init_irq();
+ 	}
+ }
+-#if defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709)
++#if defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709) || \
++    defined(CONFIG_CPU_SUBTYPE_SH7300) || defined(CONFIG_CPU_SUBTYPE_SH7705)
+ int ipr_irq_demux(int irq)
+ {
++#if !defined(CONFIG_CPU_SUBTYPE_SH7300)
+ 	unsigned long creg, dreg, d, sav;
+ 
+ 	if(irq == PINT0_IRQ)
+@@ -305,6 +325,7 @@ int ipr_irq_demux(int irq)
+ 		if(d == 0) return irq;
+ 		return PINT_IRQ_BASE + 8 + pint_map[d];
+ 	}
++#endif
+ 	return irq;
+ }
+ #endif
+diff -puN arch/sh/kernel/cpu/sh3/ex.S~sh-sh7705-sh7300-subtype-support-st40-updates arch/sh/kernel/cpu/sh3/ex.S
+--- 25/arch/sh/kernel/cpu/sh3/ex.S~sh-sh7705-sh7300-subtype-support-st40-updates	2004-06-23 20:00:19.933659648 -0700
++++ 25-akpm/arch/sh/kernel/cpu/sh3/ex.S	2004-06-23 20:00:19.947657520 -0700
+@@ -85,7 +85,8 @@ ENTRY(interrupt_table)
+ 	.long	do_IRQ	!      rovi
+ 	.long	do_IRQ			
+ 	.long	do_IRQ			/* 5E0 */
+-#if  defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709)
++#if  defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709) || \
++     defined(CONFIG_CPU_SUBTYPE_SH7300) || defined(CONFIG_CPU_SUBTYPE_SH7705)
+ 	.long	do_IRQ	! 32 IRQ  irq0	/* 600 */
+ 	.long	do_IRQ	! 33      irq1
+ 	.long	do_IRQ	! 34      irq2
+@@ -115,10 +116,84 @@ ENTRY(interrupt_table)
+ 	.long	do_IRQ	! 58      bri2
+ 	.long	do_IRQ	! 59      txi2
+ 	.long	do_IRQ	! 60 ADC  adi	/* 980 */
+-#if defined(CONFIG_CPU_SUBTYPE_SH7707)
++#if defined(CONFIG_CPU_SUBTYPE_SH7705)
++	.long	exception_none	! 61	/* 9A0 */
++	.long	exception_none	! 62
++	.long	exception_none	! 63
++	.long	exception_none	! 64	/* A00 */
++	.long	do_IRQ	! 65 USB  usi0
++	.long	do_IRQ	! 66      usi1
++	.long	exception_none	! 67
++	.long	exception_none	! 68
++	.long	exception_none	! 69
++	.long	exception_none	! 70
++	.long	exception_none	! 71
++	.long	exception_none	! 72	/* B00 */
++	.long	exception_none	! 73
++	.long	exception_none	! 74
++	.long	exception_none	! 75
++	.long	exception_none	! 76
++	.long	exception_none	! 77
++	.long	exception_none	! 78
++	.long	exception_none	! 79
++	.long	do_IRQ	! 80 TPU0 tpi0	/* C00 */
++	.long	do_IRQ	! 81 TPU1 tpi1
++	.long	exception_none	! 82
++	.long	exception_none	! 83
++	.long	do_IRQ	! 84 TPU2 tpi2
++	.long	do_IRQ	! 85 TPU3 tpi3	/* CA0 */
++#endif
++#if defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7300)
+ 	.long   do_IRQ	! 61 LCDC lcdi	/* 9A0 */
+ 	.long   do_IRQ	! 62 PCC  pcc0i
+ 	.long   do_IRQ	! 63      pcc1i	/* 9E0 */
+ #endif
++#if defined(CONFIG_CPU_SUBTYPE_SH7300)
++	.long   do_IRQ	! 64
++	.long   do_IRQ	! 65
++	.long   do_IRQ	! 66
++	.long   do_IRQ	! 67
++	.long   do_IRQ	! 68
++	.long   do_IRQ	! 69
++	.long   do_IRQ	! 70
++	.long   do_IRQ	! 71
++	.long   do_IRQ	! 72
++	.long   do_IRQ	! 73
++	.long   do_IRQ	! 74
++	.long   do_IRQ	! 75
++	.long   do_IRQ	! 76
++	.long   do_IRQ	! 77
++	.long   do_IRQ	! 78
++	.long   do_IRQ	! 79
++	.long   do_IRQ	! 80 SCIF0(SH7300)
++	.long   do_IRQ	! 81
++	.long   do_IRQ	! 82
++	.long   do_IRQ	! 83
++	.long   do_IRQ	! 84
++	.long   do_IRQ	! 85
++	.long   do_IRQ	! 86
++	.long   do_IRQ	! 87
++	.long   do_IRQ	! 88
++	.long   do_IRQ	! 89
++	.long   do_IRQ	! 90
++	.long   do_IRQ	! 91
++	.long   do_IRQ	! 92
++	.long   do_IRQ	! 93
++	.long   do_IRQ	! 94
++	.long   do_IRQ	! 95
++	.long   do_IRQ	! 96
++	.long   do_IRQ	! 97
++	.long   do_IRQ	! 98
++	.long   do_IRQ	! 99
++	.long   do_IRQ	! 100
++	.long   do_IRQ	! 101
++	.long   do_IRQ	! 102
++	.long   do_IRQ	! 103
++	.long   do_IRQ	! 104
++	.long   do_IRQ	! 105
++	.long   do_IRQ	! 106
++	.long   do_IRQ	! 107
++	.long   do_IRQ	! 108
++#endif
+ #endif
+ 
+diff -puN arch/sh/kernel/entry.S~sh-sh7705-sh7300-subtype-support-st40-updates arch/sh/kernel/entry.S
+--- 25/arch/sh/kernel/entry.S~sh-sh7705-sh7300-subtype-support-st40-updates	2004-06-23 20:00:19.935659344 -0700
++++ 25-akpm/arch/sh/kernel/entry.S	2004-06-23 20:00:19.948657368 -0700
+@@ -1,4 +1,4 @@
+-/* $Id: entry.S,v 1.35 2004/02/21 14:45:47 lethal Exp $
++/* $Id: entry.S,v 1.37 2004/06/11 13:02:46 doyu Exp $
+  *
+  *  linux/arch/sh/entry.S
+  *
+@@ -77,7 +77,8 @@ EINVAL = 22
+ #if defined(CONFIG_CPU_SH3)
+ TRA     = 0xffffffd0
+ EXPEVT  = 0xffffffd4
+-#if defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709)
++#if defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709) || \
++    defined(CONFIG_CPU_SUBTYPE_SH7300) || defined(CONFIG_CPU_SUBTYPE_SH7705)
+ INTEVT  = 0xa4000000		! INTEVTE2(0xa4000000)
+ #else
+ INTEVT  = 0xffffffd8
+diff -puN arch/sh/kernel/time.c~sh-sh7705-sh7300-subtype-support-st40-updates arch/sh/kernel/time.c
+--- 25/arch/sh/kernel/time.c~sh-sh7705-sh7300-subtype-support-st40-updates	2004-06-23 20:00:19.937659040 -0700
++++ 25-akpm/arch/sh/kernel/time.c	2004-06-23 20:00:19.950657064 -0700
+@@ -1,10 +1,10 @@
+-/* $Id: time.c,v 1.19 2004/02/27 00:40:48 lethal Exp $
++/* $Id: time.c,v 1.21 2004/04/21 00:09:15 lethal Exp $
+  *
+  *  linux/arch/sh/kernel/time.c
+  *
+  *  Copyright (C) 1999  Tetsuya Okada & Niibe Yutaka
+  *  Copyright (C) 2000  Philipp Rumpf <prumpf@tux.org>
+- *  Copyright (C) 2002, 2003  Paul Mundt
++ *  Copyright (C) 2002, 2003, 2004  Paul Mundt
+  *  Copyright (C) 2002  M. R. Brown  <mrbrown@linux-sh.org>
+  *
+  *  Some code taken from i386 version.
+@@ -47,12 +47,26 @@
+ #define TMU0_TCR_CALIB	0x0000
+ 
+ #if defined(CONFIG_CPU_SH3)
++#if defined(CONFIG_CPU_SUBTYPE_SH7300)
++#define TMU_TSTR        0xA412FE92      /* Byte access */
++
++#define TMU0_TCOR       0xA412FE94      /* Long access */
++#define TMU0_TCNT       0xA412FE98      /* Long access */
++#define TMU0_TCR        0xA412FE9C      /* Word access */
++
++#define TMU1_TCOR	0xA412FEA0	/* Long access */
++#define TMU1_TCNT	0xA412FEA4	/* Long access */
++#define TMU1_TCR	0xA412FEA8	/* Word access */
++
++#define FRQCR           0xA415FF80
++#else
+ #define TMU_TOCR	0xfffffe90	/* Byte access */
+ #define TMU_TSTR	0xfffffe92	/* Byte access */
+ 
+ #define TMU0_TCOR	0xfffffe94	/* Long access */
+ #define TMU0_TCNT	0xfffffe98	/* Long access */
+ #define TMU0_TCR	0xfffffe9c	/* Word access */
++#endif
+ #elif defined(CONFIG_CPU_SH4)
+ #define TMU_TOCR	0xffd80000	/* Byte access */
+ #define TMU_TSTR	0xffd80004	/* Byte access */
+@@ -85,6 +99,9 @@ void (*rtc_get_time)(struct timespec *) 
+ int (*rtc_set_time)(const time_t) = 0;
+ #endif
+ 
++#if defined(CONFIG_CPU_SUBTYPE_SH7300)
++static int md_table[] = { 1, 2, 3, 4, 6, 8, 12 };
++#endif
+ #if defined(CONFIG_CPU_SH3)
+ static int stc_multipliers[] = { 1, 2, 3, 4, 6, 1, 1, 1 };
+ static int stc_values[]      = { 0, 1, 4, 2, 5, 0, 0, 0 };
+@@ -337,7 +354,9 @@ static unsigned int __init get_timer_fre
+ 	 * have it count down at its natural rate.
+ 	 */
+ 	ctrl_outb(0, TMU_TSTR);
++#if !defined(CONFIG_CPU_SUBTYPE_SH7300)
+ 	ctrl_outb(TMU_TOCR_INIT, TMU_TOCR);
++#endif
+ 	ctrl_outw(TMU0_TCR_CALIB, TMU0_TCR);
+ 	ctrl_outl(0xffffffff, TMU0_TCOR);
+ 	ctrl_outl(0xffffffff, TMU0_TCNT);
+@@ -398,6 +417,15 @@ void get_current_frequency_divisors(unsi
+ 	unsigned int frqcr = ctrl_inw(FRQCR);
+ 
+ #if defined(CONFIG_CPU_SH3)
++#if defined(CONFIG_CPU_SUBTYPE_SH7300)
++	*ifc = md_table[((frqcr & 0x0070) >> 4)];
++	*bfc = md_table[((frqcr & 0x0700) >> 8)];
++	*pfc = md_table[frqcr & 0x0007];
++#elif defined(CONFIG_CPU_SUBTYPE_SH7705)
++	*bfc = stc_multipliers[(frqcr & 0x0300) >> 8];
++	*ifc = ifc_divisors[(frqcr & 0x0030) >> 4];
++	*pfc = pfc_divisors[frqcr & 0x0003];
++#else
+ 	unsigned int tmp;
+ 
+ 	tmp  = (frqcr & 0x8000) >> 13;
+@@ -409,6 +437,7 @@ void get_current_frequency_divisors(unsi
+ 	tmp  = (frqcr & 0x2000) >> 11;
+ 	tmp |= frqcr & 0x0003;
+ 	*pfc = pfc_divisors[tmp];
++#endif
+ #elif defined(CONFIG_CPU_SH4)
+ 	*ifc = ifc_divisors[(frqcr >> 6) & 0x0007];
+ 	*bfc = bfc_divisors[(frqcr >> 3) & 0x0007];
+@@ -431,26 +460,139 @@ _FREQ_TABLE(ifc);
+ _FREQ_TABLE(bfc);
+ _FREQ_TABLE(pfc);
+ 
++#ifdef CONFIG_CPU_SUBTYPE_ST40STB1
++
++/* The ST40 divisors are totally different so we set the cpu data
++** clocks using a different algorithm
++**
++** I've just plugged this from the 2.4 code - Alex Bennee <kernel-hacker@bennee.com>
++*/
++#define CCN_PVR_CHIP_SHIFT 24
++#define CCN_PVR_CHIP_MASK  0xff
++#define CCN_PVR_CHIP_ST40STB1 0x4
++
++
++struct frqcr_data {
++    unsigned short frqcr;
++    struct {
++	unsigned char multiplier;
++	unsigned char divisor;
++    } factor[3];
++};
++
++static struct frqcr_data st40_frqcr_table[] = {
++    { 0x000, {{1,1}, {1,1}, {1,2}}},
++    { 0x002, {{1,1}, {1,1}, {1,4}}},
++    { 0x004, {{1,1}, {1,1}, {1,8}}},
++    { 0x008, {{1,1}, {1,2}, {1,2}}},
++    { 0x00A, {{1,1}, {1,2}, {1,4}}},
++    { 0x00C, {{1,1}, {1,2}, {1,8}}},
++    { 0x011, {{1,1}, {2,3}, {1,6}}},
++    { 0x013, {{1,1}, {2,3}, {1,3}}},
++    { 0x01A, {{1,1}, {1,2}, {1,4}}},
++    { 0x01C, {{1,1}, {1,2}, {1,8}}},
++    { 0x023, {{1,1}, {2,3}, {1,3}}},
++    { 0x02C, {{1,1}, {1,2}, {1,8}}},
++    { 0x048, {{1,2}, {1,2}, {1,4}}},
++    { 0x04A, {{1,2}, {1,2}, {1,6}}},
++    { 0x04C, {{1,2}, {1,2}, {1,8}}},
++    { 0x05A, {{1,2}, {1,3}, {1,6}}},
++    { 0x05C, {{1,2}, {1,3}, {1,6}}},
++    { 0x063, {{1,2}, {1,4}, {1,4}}},
++    { 0x06C, {{1,2}, {1,4}, {1,8}}},
++    { 0x091, {{1,3}, {1,3}, {1,6}}},
++    { 0x093, {{1,3}, {1,3}, {1,6}}},
++    { 0x0A3, {{1,3}, {1,6}, {1,6}}},
++    { 0x0DA, {{1,4}, {1,4}, {1,8}}},
++    { 0x0DC, {{1,4}, {1,4}, {1,8}}},
++    { 0x0EC, {{1,4}, {1,8}, {1,8}}},
++    { 0x123, {{1,4}, {1,4}, {1,8}}},
++    { 0x16C, {{1,4}, {1,8}, {1,8}}},
++};
++
++struct memclk_data {
++    unsigned char multiplier;
++    unsigned char divisor;
++};
++static struct memclk_data st40_memclk_table[8] = {
++    {1,1},	// 000
++    {1,2},	// 001
++    {1,3},	// 010
++    {2,3},	// 011
++    {1,4},	// 100
++    {1,6},	// 101
++    {1,8},	// 110
++    {1,8}	// 111
++};
++
++static void st40_specific_time_init(unsigned int module_clock, unsigned short frqcr)
++{
++    unsigned int cpu_clock, master_clock, bus_clock, memory_clock;
++    struct frqcr_data *d;
++    int a;
++    unsigned long memclkcr;
++    struct memclk_data *e;
++
++    for (a=0; a<ARRAY_SIZE(st40_frqcr_table); a++) {
++	d = &st40_frqcr_table[a];
++	if (d->frqcr == (frqcr & 0x1ff))
++	    break;
++    }
++    if (a == ARRAY_SIZE(st40_frqcr_table)) {
++	d = st40_frqcr_table;
++	printk("ERROR: Unrecognised FRQCR value (0x%x), using default multipliers\n",frqcr);
++    }
++
++    memclkcr = ctrl_inl(CLOCKGEN_MEMCLKCR);
++    e = &st40_memclk_table[memclkcr & MEMCLKCR_RATIO_MASK];
++
++    printk("Clock multipliers: CPU: %d/%d Bus: %d/%d Mem: %d/%d Periph: %d/%d\n",
++	    d->factor[0].multiplier, d->factor[0].divisor,
++	    d->factor[1].multiplier, d->factor[1].divisor,
++	    e->multiplier,           e->divisor,
++	    d->factor[2].multiplier, d->factor[2].divisor);
++
++    master_clock = module_clock * d->factor[2].divisor    / d->factor[2].multiplier;
++    bus_clock    = master_clock * d->factor[1].multiplier / d->factor[1].divisor;
++    memory_clock = master_clock * e->multiplier           / e->divisor;
++    cpu_clock    = master_clock * d->factor[0].multiplier / d->factor[0].divisor;
++
++    current_cpu_data.cpu_clock    = cpu_clock;
++    current_cpu_data.master_clock = master_clock;
++    current_cpu_data.bus_clock    = bus_clock;
++    current_cpu_data.memory_clock = memory_clock;
++    current_cpu_data.module_clock = module_clock;
++
++}
++
++#endif
++
+ void __init time_init(void)
+ {
+ 	unsigned int timer_freq = 0;
+ 	unsigned int ifc, pfc, bfc;
+ 	unsigned long interval;
++#ifdef CONFIG_CPU_SUBTYPE_ST40STB1
++	unsigned long pvr;
++	unsigned short frqcr;
++#endif
+ 
+ 	if (board_time_init)
+ 		board_time_init();
+ 
+-	get_current_frequency_divisors(&ifc, &bfc, &pfc);
+ 
+ 	/*
+ 	 * If we don't have an RTC (such as with the SH7300), don't attempt to
+ 	 * probe the timer frequency. Rely on an either hardcoded peripheral
+-	 * clock value, or on the sh_pclk command line option.
++	 * clock value, or on the sh_pclk command line option. Note that we
++	 * still need to have CONFIG_SH_PCLK_FREQ set in order for things like
++	 * CLOCK_TICK_RATE to be sane.
+ 	 */
+ 	current_cpu_data.module_clock = sh_pclk_freq;
+ 
++#ifdef CONFIG_SH_PCLK_CALC
+ 	/* XXX: Switch this over to a more generic test. */
+-	if (current_cpu_data.type != CPU_SH7300) {
++	{
+ 		unsigned int freq;
+ 
+ 		/* 
+@@ -466,15 +608,31 @@ void __init time_init(void)
+ 		timer_freq = get_timer_frequency();
+ 		freq = timer_freq * 4;
+ 
+-		if (sh_pclk_freq && sh_pclk_freq != freq) {
++		if (sh_pclk_freq && (sh_pclk_freq/100*99 > freq || sh_pclk_freq/100*101 < freq)) {
+ 			printk(KERN_NOTICE "Calculated peripheral clock value "
+ 			       "%d differs from sh_pclk value %d, fixing..\n",
+ 			       freq, sh_pclk_freq);
+ 			current_cpu_data.module_clock = freq;
+ 		}
+ 	}
++#endif
+ 
+-	rtc_get_time(&xtime);
++#ifdef CONFIG_CPU_SUBTYPE_ST40STB1
++	pvr = ctrl_inl(CCN_PVR);
++	frqcr = ctrl_inw(FRQCR);
++	printk("time.c ST40 Probe: PVR %08lx, FRQCR %04hx\n", pvr, frqcr);
++	if (((pvr >>CCN_PVR_CHIP_SHIFT) & CCN_PVR_CHIP_MASK) == CCN_PVR_CHIP_ST40STB1)
++	    st40_specific_time_init(current_cpu_data.module_clock, frqcr);
++	else
++#endif
++	    get_current_frequency_divisors(&ifc, &bfc, &pfc);
++
++	if (rtc_get_time)
++		rtc_get_time(&xtime);
++	else {
++         	xtime.tv_sec = mktime(2000, 1, 1, 0, 0, 0);
++         	xtime.tv_nsec = 0;
++	}
+ 
+         set_normalized_timespec(&wall_to_monotonic,
+                                 -xtime.tv_sec, -xtime.tv_nsec);
+@@ -485,6 +643,10 @@ void __init time_init(void)
+ 		setup_irq(TIMER_IRQ, &irq0);
+ 	}
+ 
++	/*
++	** for ST40 chips the current_cpu_data should already be set
++	** so not having valid pfc/bfc/ifc shouldn't be a problem
++	*/
+ 	if (!current_cpu_data.master_clock)
+ 		current_cpu_data.master_clock = current_cpu_data.module_clock * pfc;
+ 	if (!current_cpu_data.bus_clock)
+@@ -506,13 +668,19 @@ void __init time_init(void)
+ 	printk("Module clock: %d.%02dMHz\n",
+ 	       (current_cpu_data.module_clock / 1000000),
+ 	       (current_cpu_data.module_clock % 1000000)/10000);
++#if defined(CONFIG_SH_HS7751RVOIP) || defined(CONFIG_SH_RTS7751R2D)
++	interval = ((current_cpu_data.module_clock/4 + HZ/2) / HZ) - 1;
++#else
+ 	interval = (current_cpu_data.module_clock/4 + HZ/2) / HZ;
++#endif
+ 
+ 	printk("Interval = %ld\n", interval);
+ 
+ 	/* Start TMU0 */
+ 	ctrl_outb(0, TMU_TSTR);
++#if !defined(CONFIG_CPU_SUBTYPE_SH7300)
+ 	ctrl_outb(TMU_TOCR_INIT, TMU_TOCR);
++#endif
+ 	ctrl_outw(TMU0_TCR_INIT, TMU0_TCR);
+ 	ctrl_outl(interval, TMU0_TCOR);
+ 	ctrl_outl(interval, TMU0_TCNT);
+diff -puN include/asm-sh/bugs.h~sh-sh7705-sh7300-subtype-support-st40-updates include/asm-sh/bugs.h
+--- 25/include/asm-sh/bugs.h~sh-sh7705-sh7300-subtype-support-st40-updates	2004-06-23 20:00:19.938658888 -0700
++++ 25-akpm/include/asm-sh/bugs.h	2004-06-23 20:00:19.951656912 -0700
+@@ -26,7 +26,7 @@ static void __init check_bugs(void)
+ 	case CPU_SH7604:
+ 		*p++ = '2';
+ 		break;
+-	case CPU_SH7708 ... CPU_SH7729:
++	case CPU_SH7705 ... CPU_SH7300:
+ 		*p++ = '3';
+ 		break;
+ 	case CPU_SH7750 ... CPU_ST40GX1:
+diff -puN include/asm-sh/irq.h~sh-sh7705-sh7300-subtype-support-st40-updates include/asm-sh/irq.h
+--- 25/include/asm-sh/irq.h~sh-sh7705-sh7300-subtype-support-st40-updates	2004-06-23 20:00:19.940658584 -0700
++++ 25-akpm/include/asm-sh/irq.h	2004-06-23 20:00:19.953656608 -0700
+@@ -15,9 +15,15 @@
+ #include <asm/machvec.h>
+ #include <asm/ptrace.h>		/* for pt_regs */
+ 
++#if defined(CONFIG_SH_HP600) || \
++    defined(CONFIG_SH_RTS7751R2D) || \
++    defined(CONFIG_SH_HS7751RVOIP)
++#include <asm/mach/ide.h>
++#endif
++
+ #if defined(CONFIG_CPU_SH3)
+-#define INTC_IPRA  	0xfffffee2UL
+-#define INTC_IPRB  	0xfffffee4UL
++#define INTC_IPRA	0xfffffee2UL
++#define INTC_IPRB	0xfffffee4UL
+ #elif defined(CONFIG_CPU_SH4)
+ #define INTC_IPRA	0xffd00004UL
+ #define INTC_IPRB	0xffd00008UL
+@@ -25,6 +31,15 @@
+ #define INTC_IPRD	0xffd00010UL
+ #endif
+ 
++#ifdef CONFIG_IDE
++# ifndef IRQ_CFCARD
++#  define IRQ_CFCARD	14
++# endif
++# ifndef IRQ_PCMCIA
++#  define IRQ_PCMCIA	15
++# endif
++#endif
++
+ #define TIMER_IRQ	16
+ #define TIMER_IPR_ADDR	INTC_IPRA
+ #define TIMER_IPR_POS	 3
+@@ -48,6 +63,111 @@
+ #define DMA_IPR_ADDR	INTC_IPRE
+ #define DMA_IPR_POS	3
+ #define DMA_PRIORITY	7
++#if defined(CONFIG_CPU_SUBTYPE_SH7300)
++/* TMU2 */
++#define TIMER2_IRQ      18
++#define TIMER2_IPR_ADDR INTC_IPRA
++#define TIMER2_IPR_POS   1
++#define TIMER2_PRIORITY  2
++
++/* WDT */
++#define WDT_IRQ		27
++#define WDT_IPR_ADDR	INTC_IPRB
++#define WDT_IPR_POS	 3
++#define WDT_PRIORITY	 2
++
++/* SIM (SIM Card Module) */
++#define SIM_ERI_IRQ	23
++#define SIM_RXI_IRQ	24
++#define SIM_TXI_IRQ	25
++#define SIM_TEND_IRQ	26
++#define SIM_IPR_ADDR	INTC_IPRB
++#define SIM_IPR_POS	 1
++#define SIM_PRIORITY	 2
++
++/* VIO (Video I/O) */
++#define VIO_IRQ		52
++#define VIO_IPR_ADDR	INTC_IPRE
++#define VIO_IPR_POS	 2
++#define VIO_PRIORITY	 2
++
++/* MFI (Multi Functional Interface) */
++#define MFI_IRQ		56
++#define MFI_IPR_ADDR	INTC_IPRE
++#define MFI_IPR_POS	 1
++#define MFI_PRIORITY	 2
++
++/* VPU (Video Processing Unit) */
++#define VPU_IRQ		60
++#define VPU_IPR_ADDR	INTC_IPRE
++#define VPU_IPR_POS	 0
++#define VPU_PRIORITY	 2
++
++/* KEY (Key Scan Interface) */
++#define KEY_IRQ		79
++#define KEY_IPR_ADDR	INTC_IPRF
++#define KEY_IPR_POS	 3
++#define KEY_PRIORITY	 2
++
++/* CMT (Compare Match Timer) */
++#define CMT_IRQ		104
++#define CMT_IPR_ADDR	INTC_IPRF
++#define CMT_IPR_POS	 0
++#define CMT_PRIORITY	 2
++
++/* DMAC(1) */
++#define DMTE0_IRQ	48
++#define DMTE1_IRQ	49
++#define DMTE2_IRQ	50
++#define DMTE3_IRQ	51
++#define DMA1_IPR_ADDR	INTC_IPRE
++#define DMA1_IPR_POS	3
++#define DMA1_PRIORITY	7
++
++/* DMAC(2) */
++#define DMTE4_IRQ	76
++#define DMTE5_IRQ	77
++#define DMA2_IPR_ADDR	INTC_IPRF
++#define DMA2_IPR_POS	2
++#define DMA2_PRIORITY	7
++
++/* SIOF0 */
++#define SIOF0_IRQ	84
++#define SIOF0_IPR_ADDR	INTC_IPRH
++#define SIOF0_IPR_POS	3
++#define SIOF0_PRIORITY	3
++
++/* FLCTL (Flash Memory Controller) */
++#define FLSTE_IRQ	92
++#define FLTEND_IRQ	93
++#define FLTRQ0_IRQ	94
++#define FLTRQ1_IRQ	95
++#define FLCTL_IPR_ADDR	INTC_IPRH
++#define FLCTL_IPR_POS	1
++#define FLCTL_PRIORITY	3
++
++/* IIC (IIC Bus Interface) */
++#define IIC_ALI_IRQ	96
++#define IIC_TACKI_IRQ	97
++#define IIC_WAITI_IRQ	98
++#define IIC_DTEI_IRQ	99
++#define IIC_IPR_ADDR	INTC_IPRH
++#define IIC_IPR_POS	0
++#define IIC_PRIORITY	3
++
++/* SIO0 */
++#define SIO0_IRQ	88
++#define SIO0_IPR_ADDR	INTC_IPRI
++#define SIO0_IPR_POS	3
++#define SIO0_PRIORITY	3
++
++/* SIU (Sound Interface Unit) */
++#define SIU_IRQ		108
++#define SIU_IPR_ADDR	INTC_IPRJ
++#define SIU_IPR_POS	1
++#define SIU_PRIORITY	3
++
++#endif
+ #elif defined(CONFIG_CPU_SH4)
+ #define DMTE0_IRQ	34
+ #define DMTE1_IRQ	35
+@@ -74,7 +194,14 @@
+ #define SCI_PRIORITY	3
+ #endif
+ 
+-#if defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709)
++#if defined(CONFIG_CPU_SUBTYPE_SH7300)
++#define SCIF0_IRQ	80
++#define SCIF0_IPR_ADDR	INTC_IPRG
++#define SCIF0_IPR_POS	3
++#define SCIF0_PRIORITY	3
++#elif defined(CONFIG_CPU_SUBTYPE_SH7705) || \
++      defined(CONFIG_CPU_SUBTYPE_SH7707) || \
++      defined(CONFIG_CPU_SUBTYPE_SH7709)
+ #define SCIF_ERI_IRQ	56
+ #define SCIF_RXI_IRQ	57
+ #define SCIF_BRI_IRQ	58
+@@ -127,7 +254,8 @@
+ #  define PINT_NR_IRQS   16
+ # elif defined(CONFIG_CPU_SUBTYPE_SH7708)
+ #  define ONCHIP_NR_IRQS 32
+-# elif defined(CONFIG_CPU_SUBTYPE_SH7709)
++# elif defined(CONFIG_CPU_SUBTYPE_SH7709) || \
++       defined(CONFIG_CPU_SUBTYPE_SH7705)
+ #  define ONCHIP_NR_IRQS 64	// Actually 61
+ #  define PINT_NR_IRQS   16
+ # elif defined(CONFIG_CPU_SUBTYPE_SH7750)
+@@ -138,6 +266,8 @@
+ #  define ONCHIP_NR_IRQS 110
+ # elif defined(CONFIG_CPU_SUBTYPE_ST40STB1)
+ #  define ONCHIP_NR_IRQS 144
++# elif defined(CONFIG_CPU_SUBTYPE_SH7300)
++#  define ONCHIP_NR_IRQS 109
+ # endif
+ #endif
+ 
+@@ -207,7 +337,121 @@ extern void make_ipr_irq(unsigned int ir
+ 			 int pos,  int priority);
+ extern void make_imask_irq(unsigned int irq);
+ 
+-#if defined(CONFIG_CPU_SUBTYPE_SH7604)
++#if defined(CONFIG_CPU_SUBTYPE_SH7300)
++#undef INTC_IPRA
++#undef INTC_IPRB
++#define INTC_IPRA  	0xA414FEE2UL
++#define INTC_IPRB  	0xA414FEE4UL
++#define INTC_IPRC  	0xA4140016UL
++#define INTC_IPRD  	0xA4140018UL
++#define INTC_IPRE  	0xA414001AUL
++#define INTC_IPRF  	0xA4080000UL
++#define INTC_IPRG  	0xA4080002UL
++#define INTC_IPRH  	0xA4080004UL
++#define INTC_IPRI  	0xA4080006UL
++#define INTC_IPRJ  	0xA4080008UL
++
++#define INTC_IMR0	0xA4080040UL
++#define INTC_IMR1	0xA4080042UL
++#define INTC_IMR2	0xA4080044UL
++#define INTC_IMR3	0xA4080046UL
++#define INTC_IMR4	0xA4080048UL
++#define INTC_IMR5	0xA408004AUL
++#define INTC_IMR6	0xA408004CUL
++#define INTC_IMR7	0xA408004EUL
++#define INTC_IMR8	0xA4080050UL
++#define INTC_IMR9	0xA4080052UL
++#define INTC_IMR10	0xA4080054UL
++
++#define INTC_IMCR0	0xA4080060UL
++#define INTC_IMCR1	0xA4080062UL
++#define INTC_IMCR2	0xA4080064UL
++#define INTC_IMCR3	0xA4080066UL
++#define INTC_IMCR4	0xA4080068UL
++#define INTC_IMCR5	0xA408006AUL
++#define INTC_IMCR6	0xA408006CUL
++#define INTC_IMCR7	0xA408006EUL
++#define INTC_IMCR8	0xA4080070UL
++#define INTC_IMCR9	0xA4080072UL
++#define INTC_IMCR10	0xA4080074UL
++
++#define INTC_ICR0	0xA414FEE0UL
++#define INTC_ICR1	0xA4140010UL
++
++#define INTC_IRR0	0xA4140004UL
++
++#define PORT_PACR	0xA4050100UL
++#define PORT_PBCR	0xA4050102UL
++#define PORT_PCCR	0xA4050104UL
++#define PORT_PDCR	0xA4050106UL
++#define PORT_PECR	0xA4050108UL
++#define PORT_PFCR	0xA405010AUL
++#define PORT_PGCR	0xA405010CUL
++#define PORT_PHCR	0xA405010EUL
++#define PORT_PJCR	0xA4050110UL
++#define PORT_PKCR	0xA4050112UL
++#define PORT_PLCR	0xA4050114UL
++#define PORT_SCPCR	0xA4050116UL
++#define PORT_PMCR	0xA4050118UL
++#define PORT_PNCR	0xA405011AUL
++#define PORT_PQCR	0xA405011CUL
++
++#define PORT_PSELA	0xA4050140UL
++#define PORT_PSELB	0xA4050142UL
++#define PORT_PSELC	0xA4050144UL
++
++#define PORT_HIZCRA	0xA4050146UL
++#define PORT_HIZCRB	0xA4050148UL
++#define PORT_DRVCR	0xA4050150UL
++
++#define PORT_PADR  	0xA4050120UL
++#define PORT_PBDR  	0xA4050122UL
++#define PORT_PCDR  	0xA4050124UL
++#define PORT_PDDR  	0xA4050126UL
++#define PORT_PEDR  	0xA4050128UL
++#define PORT_PFDR  	0xA405012AUL
++#define PORT_PGDR  	0xA405012CUL
++#define PORT_PHDR  	0xA405012EUL
++#define PORT_PJDR  	0xA4050130UL
++#define PORT_PKDR  	0xA4050132UL
++#define PORT_PLDR  	0xA4050134UL
++#define PORT_SCPDR  	0xA4050136UL
++#define PORT_PMDR  	0xA4050138UL
++#define PORT_PNDR  	0xA405013AUL
++#define PORT_PQDR  	0xA405013CUL
++
++#define IRQ0_IRQ	32
++#define IRQ1_IRQ	33
++#define IRQ2_IRQ	34
++#define IRQ3_IRQ	35
++#define IRQ4_IRQ	36
++#define IRQ5_IRQ	37
++
++#define IRQ0_IPR_ADDR	INTC_IPRC
++#define IRQ1_IPR_ADDR	INTC_IPRC
++#define IRQ2_IPR_ADDR	INTC_IPRC
++#define IRQ3_IPR_ADDR	INTC_IPRC
++#define IRQ4_IPR_ADDR	INTC_IPRD
++#define IRQ5_IPR_ADDR	INTC_IPRD
++
++#define IRQ0_IPR_POS	0
++#define IRQ1_IPR_POS	1
++#define IRQ2_IPR_POS	2
++#define IRQ3_IPR_POS	3
++#define IRQ4_IPR_POS	0
++#define IRQ5_IPR_POS	1
++
++#define IRQ0_PRIORITY	1
++#define IRQ1_PRIORITY	1
++#define IRQ2_PRIORITY	1
++#define IRQ3_PRIORITY	1
++#define IRQ4_PRIORITY	1
++#define IRQ5_PRIORITY	1
++
++extern int ipr_irq_demux(int irq);
++#define __irq_demux(irq) ipr_irq_demux(irq)
++
++#elif defined(CONFIG_CPU_SUBTYPE_SH7604)
+ #define INTC_IPRA	0xfffffee2UL
+ #define INTC_IPRB	0xfffffe60UL
+ 
+@@ -222,21 +466,27 @@ extern void make_imask_irq(unsigned int 
+ #define INTC_VCRDMA1	0xffffffa8UL
+ 
+ #define INTC_ICR	0xfffffee0UL
+-#elif defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709)
++#elif defined(CONFIG_CPU_SUBTYPE_SH7705) || \
++      defined(CONFIG_CPU_SUBTYPE_SH7707) || \
++      defined(CONFIG_CPU_SUBTYPE_SH7709)
+ #define INTC_IRR0	0xa4000004UL
+ #define INTC_IRR1	0xa4000006UL
+ #define INTC_IRR2	0xa4000008UL
+ 
+-#define INTC_ICR0  	0xfffffee0UL
+-#define INTC_ICR1  	0xa4000010UL
+-#define INTC_ICR2  	0xa4000012UL
+-#define INTC_INTER 	0xa4000014UL
+-
+-#define INTC_IPRC  	0xa4000016UL
+-#define INTC_IPRD  	0xa4000018UL
+-#define INTC_IPRE  	0xa400001aUL
++#define INTC_ICR0	0xfffffee0UL
++#define INTC_ICR1	0xa4000010UL
++#define INTC_ICR2	0xa4000012UL
++#define INTC_INTER	0xa4000014UL
++
++#define INTC_IPRC	0xa4000016UL
++#define INTC_IPRD	0xa4000018UL
++#define INTC_IPRE	0xa400001aUL
+ #if defined(CONFIG_CPU_SUBTYPE_SH7707)
+ #define INTC_IPRF	0xa400001cUL
++#elif defined(CONFIG_CPU_SUBTYPE_SH7705)
++#define INTC_IPRF	0xa4080000UL
++#define INTC_IPRG	0xa4080002UL
++#define INTC_IPRH	0xa4080004UL
+ #endif
+ 
+ #define PORT_PACR	0xa4000100UL
+@@ -307,20 +557,20 @@ extern int ipr_irq_demux(int irq);
+ #ifdef CONFIG_CPU_SUBTYPE_ST40STB1
+ #define INTC2_FIRST_IRQ 64
+ #define NR_INTC2_IRQS 25
+- 
++
+ #define INTC2_BASE0 0xfe080000
+ #define INTC2_INTC2MODE  (INTC2_BASE0+0x80)
+- 
++
+ #define INTC2_INTPRI_OFFSET	0x00
+ #define INTC2_INTREQ_OFFSET	0x20
+ #define INTC2_INTMSK_OFFSET	0x40
+ #define INTC2_INTMSKCLR_OFFSET	0x60
+- 
++
+ extern void make_intc2_irq(unsigned int irq,unsigned int addr,
+                            unsigned int group,int pos,int priority);
+- 
+-#endif                                                                        
+-       
++
++#endif
++
+ static inline int generic_irq_demux(int irq)
+ {
+ 	return irq;
+diff -puN include/asm-sh/processor.h~sh-sh7705-sh7300-subtype-support-st40-updates include/asm-sh/processor.h
+--- 25/include/asm-sh/processor.h~sh-sh7705-sh7300-subtype-support-st40-updates	2004-06-23 20:00:19.941658432 -0700
++++ 25-akpm/include/asm-sh/processor.h	2004-06-23 20:00:19.953656608 -0700
+@@ -37,8 +37,8 @@ enum cpu_type {
+ 	CPU_SH7604,
+ 
+ 	/* SH-3 types */
+-	CPU_SH7707,  CPU_SH7708, CPU_SH7708S, CPU_SH7708R, CPU_SH7709,
+-	CPU_SH7709A, CPU_SH7729, CPU_SH7300,
++	CPU_SH7705, CPU_SH7707,  CPU_SH7708, CPU_SH7708S, CPU_SH7708R,
++	CPU_SH7709, CPU_SH7709A, CPU_SH7729, CPU_SH7300,
+ 
+ 	/* SH-4 types */
+ 	CPU_SH7750, CPU_SH7750S, CPU_SH7750R, CPU_SH7751, CPU_SH7751R,
+diff -puN include/asm-sh/ubc.h~sh-sh7705-sh7300-subtype-support-st40-updates include/asm-sh/ubc.h
+--- 25/include/asm-sh/ubc.h~sh-sh7705-sh7300-subtype-support-st40-updates	2004-06-23 20:00:19.943658128 -0700
++++ 25-akpm/include/asm-sh/ubc.h	2004-06-23 20:00:19.953656608 -0700
+@@ -14,7 +14,8 @@
+ #include <asm/cpu/ubc.h>
+ 
+ /* User Break Controller */
+-#if defined(CONFIG_CPU_SUBTYPE_SH7709)
++#if defined(CONFIG_CPU_SUBTYPE_SH7707) || defined(CONFIG_CPU_SUBTYPE_SH7709) || \
++    defined(CONFIG_CPU_SUBTYPE_SH7300)
+ #define UBC_TYPE_SH7729	(cpu_data->type == CPU_SH7729)
+ #else
+ #define UBC_TYPE_SH7729	0
+_

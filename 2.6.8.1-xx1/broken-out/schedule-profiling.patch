@@ -1,0 +1,147 @@
+
+From: Arjan van de Ven <arjanv@redhat.com>
+
+The patch (from Ingo) below is quite interesting, it allows the use of
+readprofile not for statistical tine sampling, but for seeing where calls
+to schedule() come from, so it can give some insight to the "where do my
+context switches come from" question...
+DESC
+From: Arjan van de Ven <arjanv@redhat.com>
+Subject: Re: schedule profileing
+EDESC
+
+On Wed, Jul 07, 2004 at 02:15:42PM -0700, Andrew Morton wrote:
+> Arjan van de Ven <arjanv@redhat.com> wrote:
+> >
+> > +
+> > +	if (!strncmp(str, "schedule", 8)) {
+> > +		prof_on = 2;
+> > +		printk(KERN_INFO "kernel schedule profiling enabled\n");
+> > +		if (str[7] == ',')
+> > +			str += 8;
+> > +	}
+> 
+> u o me patch 2 Documentation/kernel-parameters.txt.
+
+how's this:
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/kernel-parameters.txt |    5 +++-
+ 25-akpm/include/asm-i386/hw_irq.h           |   34 +++++++++++++++-------------
+ 25-akpm/kernel/profile.c                    |   10 +++++++-
+ 25-akpm/kernel/sched.c                      |    4 +++
+ 4 files changed, 36 insertions(+), 17 deletions(-)
+
+diff -puN Documentation/kernel-parameters.txt~schedule-profiling Documentation/kernel-parameters.txt
+--- 25/Documentation/kernel-parameters.txt~schedule-profiling	Fri Aug  6 15:18:50 2004
++++ 25-akpm/Documentation/kernel-parameters.txt	Fri Aug  6 15:18:50 2004
+@@ -893,7 +893,10 @@ running once the system is up.
+ 			Ranges are in pairs (memory base and size).
+ 
+ 	profile=	[KNL] Enable kernel profiling via /proc/profile
+-			(param: profile step/bucket size as a power of 2)
++			{ schedule | <number> }
++			(param: schedule - profile schedule points}
++			(param: profile step/bucket size as a power of 2 for
++				statistical time based profiling)
+ 
+ 	prompt_ramdisk=	[RAM] List of RAM disks to prompt for floppy disk
+ 			before loading.
+diff -puN include/asm-i386/hw_irq.h~schedule-profiling include/asm-i386/hw_irq.h
+--- 25/include/asm-i386/hw_irq.h~schedule-profiling	Fri Aug  6 15:18:50 2004
++++ 25-akpm/include/asm-i386/hw_irq.h	Fri Aug  6 15:18:50 2004
+@@ -68,27 +68,13 @@ extern atomic_t irq_mis_count;
+ 
+ #define IO_APIC_IRQ(x) (((x) >= 16) || ((1<<(x)) & io_apic_irqs))
+ 
+-/*
+- * The profiling function is SMP safe. (nothing can mess
+- * around with "current", and the profiling counters are
+- * updated with atomic operations). This is especially
+- * useful with a profiling multiplier != 1
+- */
+-static inline void x86_do_profile(struct pt_regs * regs)
++static inline void __do_profile(unsigned long eip)
+ {
+-	unsigned long eip;
+ 	extern unsigned long prof_cpu_mask;
+  
+-	profile_hook(regs);
+- 
+-	if (user_mode(regs))
+-		return;
+- 
+ 	if (!prof_buffer)
+ 		return;
+ 
+-	eip = regs->eip;
+- 
+ 	/*
+ 	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+ 	 * (default is all CPUs.)
+@@ -108,6 +94,24 @@ static inline void x86_do_profile(struct
+ 	atomic_inc((atomic_t *)&prof_buffer[eip]);
+ }
+  
++#define kern_profile(eip) __do_profile(eip)
++
++/*
++ * The profiling function is SMP safe. (nothing can mess
++ * around with "current", and the profiling counters are
++ * updated with atomic operations). This is especially
++ * useful with a profiling multiplier != 1
++ */
++static inline void x86_do_profile(struct pt_regs * regs)
++{
++	profile_hook(regs);
++
++	if (prof_on != 1 || user_mode(regs))
++		return;
++
++	__do_profile(regs->eip);
++}
++
+ #if defined(CONFIG_X86_IO_APIC)
+ static inline void hw_resend_irq(struct hw_interrupt_type *h, unsigned int i)
+ {
+diff -puN kernel/profile.c~schedule-profiling kernel/profile.c
+--- 25/kernel/profile.c~schedule-profiling	Fri Aug  6 15:18:50 2004
++++ 25-akpm/kernel/profile.c	Fri Aug  6 15:18:50 2004
+@@ -18,10 +18,18 @@ int prof_on;
+ int __init profile_setup(char * str)
+ {
+ 	int par;
++
++	if (!strncmp(str, "schedule", 8)) {
++		prof_on = 2;
++		printk(KERN_INFO "kernel schedule profiling enabled\n");
++		if (str[7] == ',')
++			str += 8;
++	}
+ 	if (get_option(&str,&par)) {
+ 		prof_shift = par;
+ 		prof_on = 1;
+-		printk(KERN_INFO "kernel profiling enabled\n");
++		printk(KERN_INFO "kernel profiling enabled (shift: %ld)\n",
++			prof_shift);
+ 	}
+ 	return 1;
+ }
+diff -puN kernel/sched.c~schedule-profiling kernel/sched.c
+--- 25/kernel/sched.c~schedule-profiling	Fri Aug  6 15:18:50 2004
++++ 25-akpm/kernel/sched.c	Fri Aug  6 15:18:50 2004
+@@ -2602,6 +2602,10 @@ asmlinkage void __sched schedule(void)
+ 			dump_stack();
+ 		}
+ 	}
++#ifdef kern_profile
++	if (unlikely(prof_on == 2))
++		__do_profile((unsigned long)__builtin_return_address(0));
++#endif
+ 
+ need_resched:
+ 	preempt_disable();
+_

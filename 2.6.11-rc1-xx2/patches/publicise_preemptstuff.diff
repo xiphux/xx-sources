@@ -1,0 +1,272 @@
+Preempt functions are common and go in scheduler.c
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2005-01-14 19:11:57.007884520 +0000
++++ xx-sources/kernel/sched.c	2005-01-14 19:16:09.581487496 +0000
+@@ -2602,38 +2602,6 @@
+ }
+ #endif
+ 
+-#if defined(CONFIG_PREEMPT) && defined(CONFIG_DEBUG_PREEMPT)
+-
+-void fastcall add_preempt_count(int val)
+-{
+-	/*
+-	 * Underflow?
+-	 */
+-	BUG_ON(((int)preempt_count() < 0));
+-	preempt_count() += val;
+-	/*
+-	 * Spinlock count overflowing soon?
+-	 */
+-	BUG_ON((preempt_count() & PREEMPT_MASK) >= PREEMPT_MASK-10);
+-}
+-EXPORT_SYMBOL(add_preempt_count);
+-
+-void fastcall sub_preempt_count(int val)
+-{
+-	/*
+-	 * Underflow?
+-	 */
+-	BUG_ON(val > preempt_count());
+-	/*
+-	 * Is the spinlock portion underflowing?
+-	 */
+-	BUG_ON((val < PREEMPT_MASK) && !(preempt_count() & PREEMPT_MASK));
+-	preempt_count() -= val;
+-}
+-EXPORT_SYMBOL(sub_preempt_count);
+-
+-#endif
+-
+ /*
+  * schedule() is the main scheduler function.
+  */
+@@ -2806,94 +2774,6 @@
+ 		goto need_resched;
+ }
+ 
+-#ifdef CONFIG_PREEMPT
+-/*
+- * this is is the entry point to schedule() from in-kernel preemption
+- * off of preempt_enable.  Kernel preemptions off return from interrupt
+- * occur there and call schedule directly.
+- */
+-asmlinkage void __sched preempt_schedule(void)
+-{
+-	struct thread_info *ti = current_thread_info();
+-#ifdef CONFIG_PREEMPT_BKL
+-	struct task_struct *task = current;
+-	int saved_lock_depth;
+-#endif
+-	/*
+-	 * If there is a non-zero preempt_count or interrupts are disabled,
+-	 * we do not want to preempt the current task.  Just return..
+-	 */
+-	if (unlikely(ti->preempt_count || irqs_disabled()))
+-		return;
+-
+-need_resched:
+-	add_preempt_count(PREEMPT_ACTIVE);
+-	/*
+-	 * We keep the big kernel semaphore locked, but we
+-	 * clear ->lock_depth so that schedule() doesnt
+-	 * auto-release the semaphore:
+-	 */
+-#ifdef CONFIG_PREEMPT_BKL
+-	saved_lock_depth = task->lock_depth;
+-	task->lock_depth = -1;
+-#endif
+-	schedule();
+-#ifdef CONFIG_PREEMPT_BKL
+-	task->lock_depth = saved_lock_depth;
+-#endif
+-	sub_preempt_count(PREEMPT_ACTIVE);
+-
+-	/* we could miss a preemption opportunity between schedule and now */
+-	barrier();
+-	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
+-		goto need_resched;
+-}
+-
+-EXPORT_SYMBOL(preempt_schedule);
+-
+-/*
+- * this is is the entry point to schedule() from kernel preemption
+- * off of irq context.
+- * Note, that this is called and return with irqs disabled. This will
+- * protect us against recursive calling from irq.
+- */
+-asmlinkage void __sched preempt_schedule_irq(void)
+-{
+-	struct thread_info *ti = current_thread_info();
+-#ifdef CONFIG_PREEMPT_BKL
+-	struct task_struct *task = current;
+-	int saved_lock_depth;
+-#endif
+-	/* Catch callers which need to be fixed*/
+-	BUG_ON(ti->preempt_count || !irqs_disabled());
+-
+-need_resched:
+-	add_preempt_count(PREEMPT_ACTIVE);
+-	/*
+-	 * We keep the big kernel semaphore locked, but we
+-	 * clear ->lock_depth so that schedule() doesnt
+-	 * auto-release the semaphore:
+-	 */
+-#ifdef CONFIG_PREEMPT_BKL
+-	saved_lock_depth = task->lock_depth;
+-	task->lock_depth = -1;
+-#endif
+-	local_irq_enable();
+-	schedule();
+-	local_irq_disable();
+-#ifdef CONFIG_PREEMPT_BKL
+-	task->lock_depth = saved_lock_depth;
+-#endif
+-	sub_preempt_count(PREEMPT_ACTIVE);
+-
+-	/* we could miss a preemption opportunity between schedule and now */
+-	barrier();
+-	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
+-		goto need_resched;
+-}
+-
+-#endif /* CONFIG_PREEMPT */
+-
+ int default_wake_function(wait_queue_t *curr, unsigned mode, int sync, void *key)
+ {
+ 	task_t *p = curr->task;
+Index: xx-sources/kernel/scheduler.c
+===================================================================
+--- xx-sources.orig/kernel/scheduler.c	2005-01-14 19:11:57.007884520 +0000
++++ xx-sources/kernel/scheduler.c	2005-01-14 19:16:04.792215576 +0000
+@@ -63,6 +63,125 @@
+ }
+ #endif
+ 
++#ifdef CONFIG_PREEMPT
++#ifdef CONFIG_DEBUG_PREEMPT
++
++void fastcall add_preempt_count(int val)
++{
++	/*
++	 * Underflow?
++	 */
++	BUG_ON(((int)preempt_count() < 0));
++	preempt_count() += val;
++	/*
++	 * Spinlock count overflowing soon?
++	 */
++	BUG_ON((preempt_count() & PREEMPT_MASK) >= PREEMPT_MASK-10);
++}
++EXPORT_SYMBOL(add_preempt_count);
++
++void fastcall sub_preempt_count(int val)
++{
++	/*
++	 * Underflow?
++	 */
++	BUG_ON(val > preempt_count());
++	/*
++	 * Is the spinlock portion underflowing?
++	 */
++	BUG_ON((val < PREEMPT_MASK) && !(preempt_count() & PREEMPT_MASK));
++	preempt_count() -= val;
++}
++EXPORT_SYMBOL(sub_preempt_count);
++
++#endif
++
++/*
++ * this is is the entry point to schedule() from in-kernel preemption
++ * off of preempt_enable.  Kernel preemptions off return from interrupt
++ * occur there and call schedule directly.
++ */
++asmlinkage void __sched preempt_schedule(void)
++{
++	struct thread_info *ti = current_thread_info();
++#ifdef CONFIG_PREEMPT_BKL
++	struct task_struct *task = current;
++	int saved_lock_depth;
++#endif
++	/*
++	 * If there is a non-zero preempt_count or interrupts are disabled,
++	 * we do not want to preempt the current task.  Just return..
++	 */
++	if (unlikely(ti->preempt_count || irqs_disabled()))
++		return;
++
++need_resched:
++	add_preempt_count(PREEMPT_ACTIVE);
++	/*
++	 * We keep the big kernel semaphore locked, but we
++	 * clear ->lock_depth so that schedule() doesnt
++	 * auto-release the semaphore:
++	 */
++#ifdef CONFIG_PREEMPT_BKL
++	saved_lock_depth = task->lock_depth;
++	task->lock_depth = -1;
++#endif
++	schedule();
++#ifdef CONFIG_PREEMPT_BKL
++	task->lock_depth = saved_lock_depth;
++#endif
++	sub_preempt_count(PREEMPT_ACTIVE);
++
++	/* we could miss a preemption opportunity between schedule and now */
++	barrier();
++	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
++		goto need_resched;
++}
++
++EXPORT_SYMBOL(preempt_schedule);
++
++/*
++ * this is is the entry point to schedule() from kernel preemption
++ * off of irq context.
++ * Note, that this is called and return with irqs disabled. This will
++ * protect us against recursive calling from irq.
++ */
++asmlinkage void __sched preempt_schedule_irq(void)
++{
++	struct thread_info *ti = current_thread_info();
++#ifdef CONFIG_PREEMPT_BKL
++	struct task_struct *task = current;
++	int saved_lock_depth;
++#endif
++	/* Catch callers which need to be fixed*/
++	BUG_ON(ti->preempt_count || !irqs_disabled());
++
++need_resched:
++	add_preempt_count(PREEMPT_ACTIVE);
++	/*
++	 * We keep the big kernel semaphore locked, but we
++	 * clear ->lock_depth so that schedule() doesnt
++	 * auto-release the semaphore:
++	 */
++#ifdef CONFIG_PREEMPT_BKL
++	saved_lock_depth = task->lock_depth;
++	task->lock_depth = -1;
++#endif
++	local_irq_enable();
++	schedule();
++	local_irq_disable();
++#ifdef CONFIG_PREEMPT_BKL
++	task->lock_depth = saved_lock_depth;
++#endif
++	sub_preempt_count(PREEMPT_ACTIVE);
++
++	/* we could miss a preemption opportunity between schedule and now */
++	barrier();
++	if (unlikely(test_thread_flag(TIF_NEED_RESCHED)))
++		goto need_resched;
++}
++#endif /* CONFIG_PREEMPT */
++
+ extern struct sched_drv ingo_sched_drv;
+ static const struct sched_drv *scheduler = &ingo_sched_drv;
+ 

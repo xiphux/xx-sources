@@ -1,0 +1,77 @@
+
+From: Takashi Iwai <tiwai@suse.de>
+
+From: Egbert Eich <eich@suse.de>
+
+I would like to utilize kernel ioctls to save/restore console fonts 
+in VGA text mode when running X. So far the Xserver takes care of this
+however there more and more problems with this:
+        1. On some platforms (IA64) we need to POST the BIOS before
+	   we even have a chance to access the hardware ourselves.
+	   This POSTing will usually undo any changes to the graphics
+	   hardware that the kernel may have done.
+	2. More and more drivers fully rely on BIOS support however
+	   the BIOS functions which could be used to save/restore 
+	   register settings may be broken so the only way of mode
+	   save/restore is getting/setting the BIOS mode ID.
+
+I've hacked up some code for X however I ran into two problems:
+
+1. con_font_get() in linux/drivers/char/vt.c seems to be broken as
+   the font parameters (height, width, charcount) are never reported
+   back. Therefore this function seems to be pretty useless.
+   The fix is simple (please see below).
+
+2. fb consoles seem to allow to install fonts per vt so that the user
+   can have a different font on every console. The text console driver
+   doesn't support this: the font is downloaded to the video card 
+   and will be used for all systems. Still the vga_con driver stores
+   the font parameters per console with the effect that setting a 
+   font with different parameters on one console will result in the
+   wron values when this font information is read back from another
+   console.
+   Appearantly this broken feature has been introduced in 2.6 as 
+   in the 2.4 kernel the vga_con font information is stored in one
+   single global variable.
+
+The IA64 platform at least still heavily relies on the VGA text console.
+To be able to fix some VT switching issues with X on this platform I
+need these two issues resolved.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-power4-akpm/drivers/char/vt.c              |    4 ++++
+ 25-power4-akpm/drivers/video/console/vgacon.c |    4 +++-
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff -puN drivers/char/vt.c~vga-console-font-problems-on-26-kernel drivers/char/vt.c
+--- 25-power4/drivers/char/vt.c~vga-console-font-problems-on-26-kernel	2004-09-26 14:04:38.628335024 -0700
++++ 25-power4-akpm/drivers/char/vt.c	2004-09-26 14:04:38.635333960 -0700
+@@ -3077,6 +3077,10 @@ int con_font_get(int currcons, struct co
+ 	if (rc)
+ 		goto out;
+ 
++	op->height = font.height;
++	op->width = font.width;
++	op->charcount = font.charcount;
++
+ 	if (op->data && copy_to_user(op->data, font.data, c))
+ 		rc = -EFAULT;
+ 
+diff -puN drivers/video/console/vgacon.c~vga-console-font-problems-on-26-kernel drivers/video/console/vgacon.c
+--- 25-power4/drivers/video/console/vgacon.c~vga-console-font-problems-on-26-kernel	2004-09-26 14:04:38.630334720 -0700
++++ 25-power4-akpm/drivers/video/console/vgacon.c	2004-09-26 14:04:38.637333656 -0700
+@@ -904,8 +904,10 @@ static int vgacon_adjust_height(struct v
+ 	for (i = 0; i < MAX_NR_CONSOLES; i++) {
+ 		struct vc_data *c = vc_cons[i].d;
+ 
+-		if (c && c->vc_sw == &vga_con)
++		if (c && c->vc_sw == &vga_con) {
++			c->vc_font.height = fontheight;
+ 			vc_resize(c->vc_num, 0, rows);	/* Adjust console size */
++		}
+ 	}
+ 	return 0;
+ }
+_

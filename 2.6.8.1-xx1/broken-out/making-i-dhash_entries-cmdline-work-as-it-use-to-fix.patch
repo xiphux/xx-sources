@@ -1,0 +1,45 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-sparc64-akpm/mm/page_alloc.c |   12 ++++++------
+ 1 files changed, 6 insertions(+), 6 deletions(-)
+
+diff -puN mm/page_alloc.c~making-i-dhash_entries-cmdline-work-as-it-use-to-fix mm/page_alloc.c
+--- 25-sparc64/mm/page_alloc.c~making-i-dhash_entries-cmdline-work-as-it-use-to-fix	2004-07-31 20:57:39.890195728 -0700
++++ 25-sparc64-akpm/mm/page_alloc.c	2004-07-31 20:57:39.895194968 -0700
+@@ -1993,7 +1993,8 @@ void *__init alloc_large_system_hash(con
+ 				     unsigned int *_hash_shift,
+ 				     unsigned int *_hash_mask)
+ {
+-	unsigned long max, log2qty, size;
++	unsigned long long max;
++	unsigned long log2qty, size;
+ 	void *table;
+ 
+ 	/* allow the kernel cmdline to have a say */
+@@ -2014,7 +2015,8 @@ void *__init alloc_large_system_hash(con
+ 	numentries = 1UL << (long_log2(numentries) + 1);
+ 
+ 	/* limit allocation size to 1/16 total memory */
+-	max = ((nr_all_pages << PAGE_SHIFT)/16) / bucketsize;
++	max = ((unsigned long long)nr_all_pages << PAGE_SHIFT) >> 4;
++	do_div(max, bucketsize);
+ 
+ 	if (numentries > max)
+ 		numentries = max;
+@@ -2023,10 +2025,8 @@ void *__init alloc_large_system_hash(con
+ 
+ 	do {
+ 		size = bucketsize << log2qty;
+-
+-		table = (void *) alloc_bootmem(size);
+-
+-	} while (!table && size > PAGE_SIZE);
++		table = alloc_bootmem(size);
++	} while (!table && size > PAGE_SIZE && --log2qty);
+ 
+ 	if (!table)
+ 		panic("Failed to allocate %s hash table\n", tablename);
+_

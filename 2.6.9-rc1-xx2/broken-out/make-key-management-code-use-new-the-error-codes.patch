@@ -1,0 +1,293 @@
+
+From: David Howells <dhowells@redhat.com>
+
+This patch makes the key management code use the new error codes ENOKEY,
+EKEYEXPIRED, and EKEYREVOKED instead of ENOENT, EIO and EIDRM.  This is
+particularly important for when filesystem operations such as open() wish
+to make use of keys - in that case the old error codes have specific
+filesystem-related meanings and shouldn't be made non-obviously ambiguous.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/keys.txt       |   24 ++++++++++++------------
+ 25-akpm/security/keys/key.c          |    4 ++--
+ 25-akpm/security/keys/keyctl.c       |    2 +-
+ 25-akpm/security/keys/keyring.c      |   10 +++++-----
+ 25-akpm/security/keys/process_keys.c |   16 ++++++++--------
+ 25-akpm/security/keys/request_key.c  |   10 +++++-----
+ 6 files changed, 33 insertions(+), 33 deletions(-)
+
+diff -puN Documentation/keys.txt~make-key-management-code-use-new-the-error-codes Documentation/keys.txt
+--- 25/Documentation/keys.txt~make-key-management-code-use-new-the-error-codes	2004-08-28 15:20:50.599058944 -0700
++++ 25-akpm/Documentation/keys.txt	2004-08-28 15:20:50.610057272 -0700
+@@ -317,7 +317,7 @@ The additional prctl syscall functions a
+      returned if it exists.
+ 
+      If the key does not yet exist, the key will be created if "create" is
+-     non-zero; and the error ENOENT will be returned if "create" is zero.
++     non-zero; and the error ENOKEY will be returned if "create" is zero.
+ 
+ 
+  (*) Replace the session keyring this process subscribes to with a new one:
+@@ -394,8 +394,8 @@ The new keyctl syscall functions are:
+ 	long keyctl(KEYCTL_REVOKE, key_serial_t key);
+ 
+      This makes a key unavailable for further operations. Further attempts to
+-     use it will be met with error EIO, and the key will no longer be
+-     findable.
++     use the key will be met with error EKEYREVOKED, and the key will no longer
++     be findable.
+ 
+ 
+  (*) Change the ownership of a key:
+@@ -507,8 +507,8 @@ The new keyctl syscall functions are:
+      into the destination keyring if one is supplied (non-zero ID). All the
+      constraints applicable to KEYCTL_LINK apply in this case too.
+ 
+-     Error ENOENT will be returned if the search fails. On success, the
+-     resulting key ID will be returned.
++     Error ENOKEY, EKEYREVOKED or EKEYEXPIRED will be returned if the search
++     fails. On success, the resulting key ID will be returned.
+ 
+ 
+  (*) Search the process's keyrings for a key:
+@@ -606,11 +606,11 @@ locked, or else the data may be changed 
+ 
+     This is used to request a key or keyring with a description that matches
+     the description specified according to the key type's match function. This
+-    permits approximate matching to occur. If callout is non-zero, then the
+-    key service is allowed to ask userspace to create or update the key.
++    permits approximate matching to occur. If callout is non-zero, then the key
++    service is allowed to ask userspace to create or update the key.
+ 
+-    Should the function fail error ENOENT (absent), EIO (expired) or EIDRM
+-    (revoked or dead) will be returned.
++    Should the function fail error ENOKEY, EKEYEXPIRED or EKEYREVOKED will be
++    returned.
+ 
+ 
+ (*) When it is no longer required, the key should be released using:
+@@ -626,7 +626,7 @@ locked, or else the data may be changed 
+ 				   const struct key_type *type,
+ 				   const char *description)
+ 
+-    This searches the keyring tree specified for a matching key. Error ENOENT
++    This searches the keyring tree specified for a matching key. Error ENOKEY
+     is returned upon failure. If successful, the returned key will need to be
+     released.
+ 
+@@ -636,8 +636,8 @@ locked, or else the data may be changed 
+ 	int validate_key(struct key *key);
+ 
+     This checks that the key in question hasn't expired or and hasn't been
+-    revoked. Should the key be invalid, error EIO (expired) or EIDRM (revoked
+-    or dead) will be returned.
++    revoked. Should the key be invalid, error EKEYEXPIRED or EKEYREVOKED will
++    be returned.
+ 
+ 
+ (*) To register a key type, the following function should be called:
+diff -puN security/keys/key.c~make-key-management-code-use-new-the-error-codes security/keys/key.c
+--- 25/security/keys/key.c~make-key-management-code-use-new-the-error-codes	2004-08-28 15:20:50.600058792 -0700
++++ 25-akpm/security/keys/key.c	2004-08-28 15:20:50.611057120 -0700
+@@ -619,7 +619,7 @@ struct key *key_lookup(key_serial_t id)
+ 	spin_unlock(&key_serial_lock);
+ 
+  not_found:
+-	key = ERR_PTR(-ENOENT);
++	key = ERR_PTR(-ENOKEY);
+ 	goto error;
+ 
+  found:
+@@ -659,7 +659,7 @@ struct key_type *key_type_lookup(const c
+ 	}
+ 
+ 	up_read(&key_types_sem);
+-	ktype = ERR_PTR(-ENOENT);
++	ktype = ERR_PTR(-ENOKEY);
+ 
+  found_kernel_type:
+ 	return ktype;
+diff -puN security/keys/keyctl.c~make-key-management-code-use-new-the-error-codes security/keys/keyctl.c
+--- 25/security/keys/keyctl.c~make-key-management-code-use-new-the-error-codes	2004-08-28 15:20:50.602058488 -0700
++++ 25-akpm/security/keys/keyctl.c	2004-08-28 15:20:50.612056968 -0700
+@@ -423,7 +423,7 @@ static long user_keyring_search(key_seri
+ 
+ 		/* treat lack or presence of a negative key the same */
+ 		if (ret == -EAGAIN)
+-			ret = -ENOENT;
++			ret = -ENOKEY;
+ 		goto error5;
+ 	}
+ 
+diff -puN security/keys/keyring.c~make-key-management-code-use-new-the-error-codes security/keys/keyring.c
+--- 25/security/keys/keyring.c~make-key-management-code-use-new-the-error-codes	2004-08-28 15:20:50.603058336 -0700
++++ 25-akpm/security/keys/keyring.c	2004-08-28 15:20:50.613056816 -0700
+@@ -310,7 +310,7 @@ struct key *keyring_alloc(const char *de
+  * - we only find keys on which we have search permission
+  * - we readlock the keyrings as we search down the tree
+  * - we return -EAGAIN if we didn't find any matching key
+- * - we return -ENOENT if we only found negative matching keys
++ * - we return -ENOKEY if we only found negative matching keys
+  */
+ struct key *keyring_search(struct key *keyring,
+ 			   struct key_type *type,
+@@ -377,7 +377,7 @@ struct key *keyring_search(struct key *k
+ 
+ 		/* we set a different error code if we find a negative key */
+ 		if (key->flags & KEY_FLAG_NEGATIVE) {
+-			err = -ENOENT;
++			err = -ENOKEY;
+ 			continue;
+ 		}
+ 
+@@ -483,7 +483,7 @@ struct key *__keyring_search_one(struct 
+ 		}
+ 	}
+ 
+-	key = ERR_PTR(-ENOENT);
++	key = ERR_PTR(-ENOKEY);
+ 	goto error;
+ 
+  found:
+@@ -542,7 +542,7 @@ struct key *find_keyring_by_name(const c
+ 	}
+ 
+ 	read_unlock(&keyring_name_lock);
+-	keyring = ERR_PTR(-ENOENT);
++	keyring = ERR_PTR(-ENOKEY);
+ 
+  error:
+ 	return keyring;
+@@ -658,7 +658,7 @@ int __key_link(struct key *keyring, stru
+ 	size_t size;
+ 	int ret;
+ 
+-	ret = -EINVAL;
++	ret = -EKEYREVOKED;
+ 	if (keyring->flags & KEY_FLAG_REVOKED)
+ 		goto error;
+ 
+diff -puN security/keys/process_keys.c~make-key-management-code-use-new-the-error-codes security/keys/process_keys.c
+--- 25/security/keys/process_keys.c~make-key-management-code-use-new-the-error-codes	2004-08-28 15:20:50.605058032 -0700
++++ 25-akpm/security/keys/process_keys.c	2004-08-28 15:20:50.614056664 -0700
+@@ -364,7 +364,7 @@ void key_fsgid_changed(struct task_struc
+ /*
+  * search the process keyrings for the first matching key
+  * - we return -EAGAIN if we didn't find any matching key
+- * - we return -ENOENT if we found only negative matching keys
++ * - we return -ENOKEY if we found only negative matching keys
+  */
+ struct key *search_process_keyrings(struct key_type *type,
+ 				    const char *description)
+@@ -372,12 +372,12 @@ struct key *search_process_keyrings(stru
+ 	struct task_struct *tsk = current;
+ 	struct key *key, *ret, *err;
+ 
+-	/* we want to return -EAGAIN or -ENOENT if any of the keyrings were
++	/* we want to return -EAGAIN or -ENOKEY if any of the keyrings were
+ 	 * searchable, but we failed to find a key or we found a negative key;
+ 	 * otherwise we want to return a sample error (probably -EACCES) if
+ 	 * none of the keyrings were searchable
+ 	 *
+-	 * in terms of priority: success > -ENOENT > -EAGAIN > other error
++	 * in terms of priority: success > -ENOKEY > -EAGAIN > other error
+ 	 */
+ 	key = NULL;
+ 	ret = NULL;
+@@ -393,7 +393,7 @@ struct key *search_process_keyrings(stru
+ 		case -EAGAIN: /* no key */
+ 			if (ret)
+ 				break;
+-		case -ENOENT: /* negative key */
++		case -ENOKEY: /* negative key */
+ 			ret = key;
+ 			break;
+ 		default:
+@@ -412,7 +412,7 @@ struct key *search_process_keyrings(stru
+ 		case -EAGAIN: /* no key */
+ 			if (ret)
+ 				break;
+-		case -ENOENT: /* negative key */
++		case -ENOKEY: /* negative key */
+ 			ret = key;
+ 			break;
+ 		default:
+@@ -431,7 +431,7 @@ struct key *search_process_keyrings(stru
+ 		case -EAGAIN: /* no key */
+ 			if (ret)
+ 				break;
+-		case -ENOENT: /* negative key */
++		case -ENOKEY: /* negative key */
+ 			ret = key;
+ 			break;
+ 		default:
+@@ -461,7 +461,7 @@ struct key *lookup_user_key(key_serial_t
+ 	struct key *key;
+ 	int ret;
+ 
+-	key = ERR_PTR(-ENOENT);
++	key = ERR_PTR(-ENOKEY);
+ 
+ 	switch (id) {
+ 	case PR_SPEC_THREAD_KEYRING:
+@@ -613,7 +613,7 @@ long join_session_keyring(const char *na
+ 
+ 	/* look for an existing keyring of this name */
+ 	keyring = find_keyring_by_name(name, 0);
+-	if (PTR_ERR(keyring) == -ENOENT) {
++	if (PTR_ERR(keyring) == -ENOKEY) {
+ 		/* not found - try and create a new one */
+ 		keyring = keyring_alloc(name, tsk->uid, tsk->gid, 0, NULL);
+ 		if (IS_ERR(keyring)) {
+diff -puN security/keys/request_key.c~make-key-management-code-use-new-the-error-codes security/keys/request_key.c
+--- 25/security/keys/request_key.c~make-key-management-code-use-new-the-error-codes	2004-08-28 15:20:50.606057880 -0700
++++ 25-akpm/security/keys/request_key.c	2004-08-28 15:20:50.614056664 -0700
+@@ -111,7 +111,7 @@ static struct key *__request_key_constru
+ 		goto request_failed;
+ 
+ 	/* if the key wasn't instantiated, then we want to give an error */
+-	ret = -ENOENT;
++	ret = -ENOKEY;
+ 	if (!(key->flags & KEY_FLAG_INSTANTIATED))
+ 		goto request_failed;
+ 
+@@ -123,7 +123,7 @@ static struct key *__request_key_constru
+  check_not_negative:
+ 	if (key->flags & KEY_FLAG_NEGATIVE) {
+ 		key_put(key);
+-		key = ERR_PTR(-ENOENT);
++		key = ERR_PTR(-ENOKEY);
+ 	}
+ 
+  out:
+@@ -259,7 +259,7 @@ struct key *request_key(struct key_type 
+ 	if (PTR_ERR(key) == -EAGAIN) {
+ 		/* the search failed, but the keyrings were searchable, so we
+ 		 * should consult userspace if we can */
+-		key = ERR_PTR(-ENOENT);
++		key = ERR_PTR(-ENOKEY);
+ 		if (!callout)
+ 			goto error;
+ 
+@@ -305,7 +305,7 @@ int key_validate(struct key *key)
+ 	int ret;
+ 
+ 	/* check it's still accessible */
+-	ret = -EIDRM;
++	ret = -EKEYREVOKED;
+ 	if (key->flags & (KEY_FLAG_REVOKED | KEY_FLAG_DEAD))
+ 		goto error;
+ 
+@@ -314,7 +314,7 @@ int key_validate(struct key *key)
+ 	if (key->expiry) {
+ 		now = current_kernel_time();
+ 		if (now.tv_sec >= key->expiry)
+-			ret = -EIO;
++			ret = -EKEYEXPIRED;
+ 	}
+ 
+  error:
+_

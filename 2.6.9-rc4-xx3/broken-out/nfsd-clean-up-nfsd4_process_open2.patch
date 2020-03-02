@@ -1,0 +1,46 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+Comments, dprintk cleanup
+
+Signed-off-by: Andy Adamson <andros@citi.umich.edu>
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/nfsd/nfs4state.c |    7 ++++++-
+ 1 files changed, 6 insertions(+), 1 deletion(-)
+
+diff -puN fs/nfsd/nfs4state.c~nfsd-clean-up-nfsd4_process_open2 fs/nfsd/nfs4state.c
+--- 25/fs/nfsd/nfs4state.c~nfsd-clean-up-nfsd4_process_open2	2004-09-23 22:13:28.911843648 -0700
++++ 25-akpm/fs/nfsd/nfs4state.c	2004-09-23 22:13:28.916842888 -0700
+@@ -1364,6 +1364,10 @@ nfsd4_process_open2(struct svc_rqst *rqs
+ 			goto out;
+ 	}
+ 
++	/*
++	 * OPEN the file, or upgrade an existing OPEN.
++	 * If truncate fails, the OPEN fails.
++	 */
+ 	if (stp) {
+ 		/* Stateid was found, this is an OPEN upgrade */
+ 		status = nfs4_upgrade_open(rqstp, current_fh, stp, open);
+@@ -1380,7 +1384,7 @@ nfsd4_process_open2(struct svc_rqst *rqs
+ 			goto out;
+ 		init_stateid(stp, fp, sop, open);
+ 	}
+-	dprintk("nfs4_process_open2: stateid=(%08x/%08x/%08x/%08x)\n\n",
++	dprintk("nfs4_process_open2: stateid=(%08x/%08x/%08x/%08x)\n",
+ 	            stp->st_stateid.si_boot, stp->st_stateid.si_stateownerid,
+ 	            stp->st_stateid.si_fileid, stp->st_stateid.si_generation);
+ 
+@@ -1396,6 +1400,7 @@ nfsd4_process_open2(struct svc_rqst *rqs
+ 	open->op_delegate_type = NFS4_OPEN_DELEGATE_NONE;
+ 	status = nfs_ok;
+ out:
++	/* take the opportunity to clean up unused state */
+ 	if (fp && list_empty(&fp->fi_perfile))
+ 		release_file(fp);
+ 
+_

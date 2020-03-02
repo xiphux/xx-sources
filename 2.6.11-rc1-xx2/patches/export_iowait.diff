@@ -1,0 +1,97 @@
+Make io_schedule and friends private to each scheduler as well.
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+
+Index: linux-2.6.10-rc1-mm5/include/linux/sched.h
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/include/linux/sched.h	2004-11-11 21:45:07.934063111 +1100
++++ linux-2.6.10-rc1-mm5/include/linux/sched.h	2004-11-11 21:45:20.308156513 +1100
+@@ -165,9 +165,6 @@ extern void show_regs(struct pt_regs *);
+  */
+ extern void show_stack(struct task_struct *task, unsigned long *sp);
+ 
+-void io_schedule(void);
+-long io_schedule_timeout(long timeout);
+-
+ extern void cpu_init (void);
+ extern void trap_init(void);
+ extern void update_process_times(int user);
+@@ -179,6 +176,9 @@ extern unsigned long cache_decay_ticks;
+ /* Is this address in the __sched functions? */
+ extern int in_sched_functions(unsigned long addr);
+ 
++void __sched io_schedule(void);
++long __sched io_schedule_timeout(long timeout);
++
+ #define	MAX_SCHEDULE_TIMEOUT	LONG_MAX
+ extern signed long FASTCALL(schedule_timeout(signed long timeout));
+ asmlinkage void schedule(void);
+Index: linux-2.6.10-rc1-mm5/include/linux/scheduler.h
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/include/linux/scheduler.h	2004-11-11 21:45:07.934063111 +1100
++++ linux-2.6.10-rc1-mm5/include/linux/scheduler.h	2004-11-11 21:47:50.390030854 +1100
+@@ -3,6 +3,8 @@
+ 
+ struct sched_drv
+ {
++	void (*io_schedule)(void);
++	long (*io_schedule_timeout)(long);
+ 	void (*sched_idle_next)(void);
+ 	void (*set_oom_timeslice)(task_t *);
+ 	unsigned long (*nr_running)(void);
+Index: linux-2.6.10-rc1-mm5/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/kernel/sched.c	2004-11-11 21:45:18.728399922 +1100
++++ linux-2.6.10-rc1-mm5/kernel/sched.c	2004-11-11 21:45:20.311156051 +1100
+@@ -3173,7 +3173,7 @@ static long ingo_sys_sched_yield(void)
+  * But don't do that if it is a deliberate, throttling IO wait (this task
+  * has set its backing_dev_info: the queue against which it should throttle)
+  */
+-void __sched io_schedule(void)
++static void __sched ingo_io_schedule(void)
+ {
+ 	struct runqueue *rq = &per_cpu(runqueues, _smp_processor_id());
+ 
+@@ -3182,9 +3182,7 @@ void __sched io_schedule(void)
+ 	atomic_dec(&rq->nr_iowait);
+ }
+ 
+-EXPORT_SYMBOL(io_schedule);
+-
+-long __sched io_schedule_timeout(long timeout)
++static long __sched ingo_io_schedule_timeout(long timeout)
+ {
+ 	struct runqueue *rq = &per_cpu(runqueues, _smp_processor_id());
+ 	long ret;
+@@ -4418,6 +4416,8 @@ void normalize_rt_tasks(void)
+ #endif /* CONFIG_MAGIC_SYSRQ */
+ 
+ struct sched_drv ingo_sched_drv = {
++	.io_schedule		= ingo_io_schedule,
++	.io_schedule_timeout	= ingo_io_schedule_timeout,
+ 	.set_oom_timeslice	= ingo_set_oom_timeslice,
+ 	.nr_running		= ingo_nr_running,
+ 	.nr_uninterruptible	= ingo_nr_uninterruptible,
+Index: linux-2.6.10-rc1-mm5/kernel/scheduler.c
+===================================================================
+--- linux-2.6.10-rc1-mm5.orig/kernel/scheduler.c	2004-11-11 21:45:18.729399768 +1100
++++ linux-2.6.10-rc1-mm5/kernel/scheduler.c	2004-11-11 21:45:20.312155897 +1100
+@@ -643,6 +643,17 @@ void sched_idle_next(void)
+ 	scheduler->sched_idle_next();
+ }
+ 
++void __sched io_schedule(void)
++{
++	scheduler->io_schedule();
++}
++EXPORT_SYMBOL(io_schedule);
++
++long __sched io_schedule_timeout(long timeout)
++{
++	return scheduler->io_schedule_timeout(timeout);
++}
++
+ unsigned long nr_running(void)
+ {
+ 	return scheduler->nr_running();

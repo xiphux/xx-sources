@@ -1,0 +1,165 @@
+
+
+Some people want the dentry and inode caches shrink harder, others want them
+shrunk more reluctantly.
+
+The patch adds /proc/sys/vm/vfs_cache_pressure, which tunes the vfs cache
+versus pagecache scanning pressure.
+
+- at vfs_cache_pressure=0 we don't shrink dcache and icache at all.
+
+- at vfs_cache_pressure=100 there is no change in behaviour.
+
+- at vfs_cache_pressure > 100 we reclaim dentries and inodes harder.
+
+
+The number of megabytes of slab left after a slocate.cron on my 256MB test
+box:
+
+vfs_cache_pressure=100000   33480
+vfs_cache_pressure=10000    61996
+vfs_cache_pressure=1000     104056
+vfs_cache_pressure=200      166340
+vfs_cache_pressure=100      190200
+vfs_cache_pressure=50       206168
+
+Of course, this just left more directory and inode pagecache behind instead of
+vfs cache.  Interestingly, on this machine the entire slocate run fits into
+pagecache, but not into VFS caches.
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/filesystems/proc.txt |   12 ++++++++++++
+ 25-akpm/Documentation/sysctl/vm.txt        |    2 +-
+ 25-akpm/fs/dcache.c                        |    5 +++--
+ 25-akpm/fs/inode.c                         |    2 +-
+ 25-akpm/include/linux/dcache.h             |    2 ++
+ 25-akpm/include/linux/sysctl.h             |    1 +
+ 25-akpm/kernel/sysctl.c                    |   12 ++++++++++++
+ 7 files changed, 32 insertions(+), 4 deletions(-)
+
+diff -puN kernel/sysctl.c~vfs-shrinkage-tuning kernel/sysctl.c
+--- 25/kernel/sysctl.c~vfs-shrinkage-tuning	2004-06-20 02:21:09.414196568 -0700
++++ 25-akpm/kernel/sysctl.c	2004-06-20 02:21:09.427194592 -0700
+@@ -39,6 +39,8 @@
+ #include <linux/initrd.h>
+ #include <linux/times.h>
+ #include <linux/limits.h>
++#include <linux/dcache.h>
++
+ #include <asm/uaccess.h>
+ 
+ #ifdef CONFIG_ROOT_NFS
+@@ -777,6 +779,16 @@ static ctl_table vm_table[] = {
+ 		.strategy	= &sysctl_intvec,
+ 		.extra1		= &zero,
+ 	},
++	{
++		.ctl_name	= VM_VFS_CACHE_PRESSURE,
++		.procname	= "vfs_cache_pressure",
++		.data		= &sysctl_vfs_cache_pressure,
++		.maxlen		= sizeof(sysctl_vfs_cache_pressure),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++		.strategy	= &sysctl_intvec,
++		.extra1		= &zero,
++	},
+ 	{ .ctl_name = 0 }
+ };
+ 
+diff -puN fs/dcache.c~vfs-shrinkage-tuning fs/dcache.c
+--- 25/fs/dcache.c~vfs-shrinkage-tuning	2004-06-20 02:21:09.415196416 -0700
++++ 25-akpm/fs/dcache.c	2004-06-20 02:21:09.429194288 -0700
+@@ -32,9 +32,10 @@
+ #include <linux/swap.h>
+ #include <linux/bootmem.h>
+ 
+-#define DCACHE_PARANOIA 1
+ /* #define DCACHE_DEBUG 1 */
+ 
++int sysctl_vfs_cache_pressure = 100;
++
+ spinlock_t dcache_lock __cacheline_aligned_in_smp = SPIN_LOCK_UNLOCKED;
+ seqlock_t rename_lock __cacheline_aligned_in_smp = SEQLOCK_UNLOCKED;
+ 
+@@ -664,7 +665,7 @@ static int shrink_dcache_memory(int nr, 
+ 			return -1;
+ 		prune_dcache(nr);
+ 	}
+-	return dentry_stat.nr_unused;
++	return (dentry_stat.nr_unused / 100) * sysctl_vfs_cache_pressure;
+ }
+ 
+ /**
+diff -puN fs/inode.c~vfs-shrinkage-tuning fs/inode.c
+--- 25/fs/inode.c~vfs-shrinkage-tuning	2004-06-20 02:21:09.416196264 -0700
++++ 25-akpm/fs/inode.c	2004-06-20 02:21:09.430194136 -0700
+@@ -485,7 +485,7 @@ static int shrink_icache_memory(int nr, 
+ 		if (gfp_mask & __GFP_FS)
+ 			prune_icache(nr);
+ 	}
+-	return inodes_stat.nr_unused;
++	return (inodes_stat.nr_unused / 100) * sysctl_vfs_cache_pressure;
+ }
+ 
+ static void __wait_on_freeing_inode(struct inode *inode);
+diff -puN include/linux/sysctl.h~vfs-shrinkage-tuning include/linux/sysctl.h
+--- 25/include/linux/sysctl.h~vfs-shrinkage-tuning	2004-06-20 02:21:09.418195960 -0700
++++ 25-akpm/include/linux/sysctl.h	2004-06-20 02:21:09.431193984 -0700
+@@ -164,6 +164,7 @@ enum
+ 	VM_LAPTOP_MODE=23,	/* vm laptop mode */
+ 	VM_BLOCK_DUMP=24,	/* block dump mode */
+ 	VM_HUGETLB_GROUP=25,	/* permitted hugetlb group */
++	VM_VFS_CACHE_PRESSURE=26, /* dcache/icache reclaim pressure */
+ };
+ 
+ 
+diff -puN include/linux/dcache.h~vfs-shrinkage-tuning include/linux/dcache.h
+--- 25/include/linux/dcache.h~vfs-shrinkage-tuning	2004-06-20 02:21:09.419195808 -0700
++++ 25-akpm/include/linux/dcache.h	2004-06-20 02:21:09.431193984 -0700
+@@ -313,6 +313,8 @@ static inline int d_mountpoint(struct de
+ extern struct vfsmount *lookup_mnt(struct vfsmount *, struct dentry *);
+ extern struct dentry *lookup_create(struct nameidata *nd, int is_dir);
+ 
++extern int sysctl_vfs_cache_pressure;
++
+ #endif /* __KERNEL__ */
+ 
+ #endif	/* __LINUX_DCACHE_H */
+diff -puN Documentation/sysctl/vm.txt~vfs-shrinkage-tuning Documentation/sysctl/vm.txt
+--- 25/Documentation/sysctl/vm.txt~vfs-shrinkage-tuning	2004-06-20 02:21:09.421195504 -0700
++++ 25-akpm/Documentation/sysctl/vm.txt	2004-06-20 02:21:09.432193832 -0700
+@@ -28,7 +28,7 @@ Currently, these files are in /proc/sys/
+ ==============================================================
+ 
+ dirty_ratio, dirty_background_ratio, dirty_expire_centisecs,
+-dirty_writeback_centisecs:
++dirty_writeback_centisecs, vfs_cache_pressure:
+ 
+ See Documentation/filesystems/proc.txt
+ 
+diff -puN Documentation/filesystems/proc.txt~vfs-shrinkage-tuning Documentation/filesystems/proc.txt
+--- 25/Documentation/filesystems/proc.txt~vfs-shrinkage-tuning	2004-06-20 02:21:09.423195200 -0700
++++ 25-akpm/Documentation/filesystems/proc.txt	2004-06-20 02:21:09.433193680 -0700
+@@ -1115,6 +1115,18 @@ program to load modules on demand.
+ The files  in  this directory can be used to tune the operation of the virtual
+ memory (VM)  subsystem  of  the  Linux  kernel.
+ 
++vfs_cache_pressure
++------------------
++
++Controls the tendency of the kernel to reclaim the memory which is used for
++caching of directory and inode objects.
++
++At the default value of vfs_cache_pressure=100 the kernel will attempt to
++reclaim dentries and inodes at a "fair" rate with respect to pagecache and
++swapcache reclaim.  Decreasing vfs_cache_pressure causes the kernel to prefer
++to retain dentry and inode caches.  Increasing vfs_cache_pressure beyond 100
++causes the kernel to prefer to reclaim dentries and inodes.
++
+ dirty_background_ratio
+ ----------------------
+ 
+_

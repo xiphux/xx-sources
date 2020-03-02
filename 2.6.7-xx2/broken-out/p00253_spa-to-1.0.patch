@@ -1,0 +1,569 @@
+---
+
+ kernel/sysctl.c                              |    0 
+ linux-2.6.7-xx1-xiphux/fs/proc/proc_misc.c   |   39 +++++
+ linux-2.6.7-xx1-xiphux/include/linux/sched.h |   20 ++
+ linux-2.6.7-xx1-xiphux/init/main.c           |   15 +
+ linux-2.6.7-xx1-xiphux/kernel/sched.c        |  205 ++++++++++++++++++++++-----
+ 5 files changed, 239 insertions(+), 40 deletions(-)
+
+diff -puN fs/proc/array.c~spa-to-1.0 fs/proc/array.c
+diff -puN fs/proc/base.c~spa-to-1.0 fs/proc/base.c
+diff -puN fs/proc/proc_misc.c~spa-to-1.0 fs/proc/proc_misc.c
+--- linux-2.6.7-xx1/fs/proc/proc_misc.c~spa-to-1.0	2004-06-22 05:30:10.720545528 -0400
++++ linux-2.6.7-xx1-xiphux/fs/proc/proc_misc.c	2004-06-22 05:30:10.744541880 -0400
+@@ -44,6 +44,9 @@
+ #include <linux/jiffies.h>
+ #include <linux/sysrq.h>
+ #include <linux/vmalloc.h>
++#ifdef CONFIG_SPA
++#include <linux/sched.h>
++#endif
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
+ #include <asm/io.h>
+@@ -270,6 +273,39 @@ static struct file_operations proc_cpuin
+ 	.release	= seq_release,
+ };
+ 
++#ifdef CONFIG_SPA
++static int cpustats_read_proc(char *page, char **start, off_t off,
++				 int count, int *eof, void *data)
++{
++	int i;
++	int len = 0;
++	struct cpu_sched_stats total = {0, };
++
++	for_each_online_cpu(i) {
++		struct cpu_sched_stats stats;
++
++		get_cpu_sched_stats(i, &stats);
++		len += sprintf(page + len, "cpu%02d %llu %llu %llu %llu @ %llu\n", i,
++		stats.total_idle,
++		stats.total_busy,
++		stats.total_delay,
++		stats.nr_switches,
++		stats.timestamp);
++		total.total_idle += stats.total_idle;
++		total.total_busy += stats.total_busy;
++		total.total_delay += stats.total_delay;
++		total.nr_switches += stats.nr_switches;
++	}
++	len += sprintf(page + len, "total %llu %llu %llu %llu\n",
++		total.total_idle,
++		total.total_busy,
++		total.total_delay,
++		total.nr_switches);
++
++	return proc_calc_metrics(page, start, off, count, eof, len);
++}
++#endif
++
+ extern struct seq_operations vmstat_op;
+ static int vmstat_open(struct inode *inode, struct file *file)
+ {
+@@ -693,6 +729,9 @@ void __init proc_misc_init(void)
+ 		{"cmdline",	cmdline_read_proc},
+ 		{"locks",	locks_read_proc},
+ 		{"execdomains",	execdomains_read_proc},
++#ifdef CONFIG_SPA
++		{"cpustats",	cpustats_read_proc},
++#endif
+ 		{NULL,}
+ 	};
+ 	for (p = simple_ones; p->name; p++)
+diff -puN include/linux/init_task.h~spa-to-1.0 include/linux/init_task.h
+diff -puN include/linux/sched.h~spa-to-1.0 include/linux/sched.h
+--- linux-2.6.7-xx1/include/linux/sched.h~spa-to-1.0	2004-06-22 05:30:10.725544768 -0400
++++ linux-2.6.7-xx1-xiphux/include/linux/sched.h	2004-06-22 05:30:10.748541272 -0400
+@@ -763,6 +763,22 @@ struct task_sched_stats {
+  * structure and the correct values could be quite large for sleeping tasks.
+  */
+ extern void get_task_sched_stats(const struct task_struct *tsk, struct task_sched_stats *stats);
++
++/*
++ * Scheduling statistics for a CPU
++ */
++struct cpu_sched_stats {
++	u64 timestamp;
++	u64 total_idle;
++	u64 total_busy;
++	u64 total_delay;
++	u64 nr_switches;
++};
++
++/*
++ * Get scheduling statistics for the nominated CPU
++ */
++extern void get_cpu_sched_stats(unsigned int cpu, struct cpu_sched_stats *stats);
+ #endif
+ 
+ #ifdef CONFIG_SMP
+@@ -839,11 +855,7 @@ extern void FASTCALL(wake_up_forked_proc
+  }
+ #endif
+ extern void FASTCALL(sched_fork(task_t * p));
+-#ifdef CONFIG_SPA
+-static inline void sched_exit(task_t * p) {}
+-#else
+ extern void FASTCALL(sched_exit(task_t * p));
+-#endif
+ 
+ extern int in_group_p(gid_t);
+ extern int in_egroup_p(gid_t);
+diff -puN include/linux/sysctl.h~spa-to-1.0 include/linux/sysctl.h
+diff -puN init/main.c~spa-to-1.0 init/main.c
+--- linux-2.6.7-xx1/init/main.c~spa-to-1.0	2004-06-22 05:30:10.731543856 -0400
++++ linux-2.6.7-xx1-xiphux/init/main.c	2004-06-22 05:30:10.749541120 -0400
+@@ -326,8 +326,23 @@ static void __init smp_init(void)
+ #define smp_init()	do { } while (0)
+ #endif
+ 
++#ifdef CONFIG_SPA
++unsigned long cache_decay_ticks;
++#endif
+ static inline void setup_per_cpu_areas(void) { }
++#ifdef CONFIG_SPA
++static void smp_prepare_cpus(unsigned int maxcpus)
++{
++	/*
++	 * Generic 2 tick cache_decay for uniprocessor
++	 */
++	cache_decay_ticks = 2;
++	printk("Generic cache decay timeout: %ld msecs.\n",
++		(cache_decay_ticks * 1000 / HZ));
++}
++#else
+ static inline void smp_prepare_cpus(unsigned int maxcpus) { }
++#endif
+ 
+ #else
+ 
+diff -puN kernel/sched.c~spa-to-1.0 kernel/sched.c
+--- linux-2.6.7-xx1/kernel/sched.c~spa-to-1.0	2004-06-22 05:30:10.733543552 -0400
++++ linux-2.6.7-xx1-xiphux/kernel/sched.c	2004-06-22 05:30:37.255511600 -0400
+@@ -18,6 +18,7 @@
+  *  2004-04-02	Scheduler domains code by Nick Piggin
+  *  2004-06-03	Single priority array, simplified interactive bonus
+  *		mechanism and throughput bonus mechanism by Peter Williams
++ *		(Courtesy of Aurema Pty Ltd, www.aurema.com)
+  */
+ 
+ #include <linux/mm.h>
+@@ -363,6 +364,11 @@ struct runqueue {
+ 	unsigned long long timestamp_last_tick;
+ 	task_t *curr, *idle;
+ 
++#ifdef CONFIG_SPA
++	u64 total_delay;
++	unsigned int cache_ticks, preempted;
++#endif
++
+ 	struct mm_struct *prev_mm;
+ #ifdef CONFIG_SPA
+ 	DECLARE_BITMAP(bitmap, NUM_PRIO_SLOTS);
+@@ -561,6 +567,18 @@ static inline void rq_unlock(runqueue_t 
+ }
+ 
+ #ifdef CONFIG_SPA
++static inline int preemption_warranted(unsigned int prio,
++	const struct task_struct *p, runqueue_t *rq)
++{
++	if (prio >= rq->current_prio_slot->prio)
++		return 0;
++	if (rq->cache_ticks >= cache_decay_ticks ||
++		rt_task(p) || !p->mm || rq->curr == rq->idle)
++			return 1;
++	rq->preempted = 1;
++		return 0;
++}
++
+ static inline int task_queued(const task_t *task)
+ {
+ 	return !list_empty(&task->run_list);
+@@ -782,14 +800,26 @@ static void reassess_cpu_boundness(task_
+ 	u64 off_cpu_avg;
+ 
+ 	/*
+-	 * No cpu use means not cpu bound
++	 * No point going any further if there's no bonus to lose
++	 */
++	if (p->interactive_bonus == 0)
++		return;
++	/*
++	 * If the maximum bonus is zero and this task has a bonus reduce it to
++	 * zero
++	 */
++	if (unlikely(max_ia_bonus == 0)) {
++		p->interactive_bonus = 0;
++		return;
++	}
++	/* No cpu use means not cpu bound
+ 	 * NB this also prevents divide by zero later if cpu is also zero
+ 	 */
+ 	if (p->avg_cpu_per_cycle == 0)
+ 		return;
+ 	off_cpu_avg = p->avg_sleep_per_cycle + p->avg_delay_per_cycle;
+-	bonus = MILLI_BONUS_RND(off_cpu_avg, p->avg_cpu_per_cycle);
+-	if (bonus < cpu_hog_threshold)
++	bonus = MILLI_BONUS_RND(p->avg_cpu_per_cycle, off_cpu_avg);
++	if (bonus > cpu_hog_threshold)
+ 		update_sched_ia_bonus(p, 0);
+ }
+ 
+@@ -798,6 +828,11 @@ static void reassess_interactiveness(tas
+ 	unsigned int bonus;
+ 
+ 	/*
++	 * If the maximum bonus is zero there's no point going any further
++	 */
++	if (unlikely(max_ia_bonus == 0))
++		return;
++	/*
+ 	 * No sleep means not interactive (in most cases), but
+ 	 * NB this also prevents divide by zero later if cpu is also zero
+ 	 */
+@@ -824,11 +859,12 @@ static void recalc_throughput_bonus(task
+ {
+ 	unsigned int bonus;
+ 	/*
++	 * If the maximum bonus is zero there's no point going any further
+ 	 * No delay means no bonus, but
+ 	 * NB this test also avoids a possible divide by zero error if
+ 	 * cpu is also zero
+ 	 */
+-	if (p->avg_delay_per_cycle == 0) {
++	if ((p->avg_delay_per_cycle == 0) || unlikely(max_tpt_bonus == 0)) {
+ 		p->throughput_bonus = 0;
+ 		return;
+ 	}
+@@ -1380,7 +1416,7 @@ out_activate:
+ #endif
+ 	if (!sync || cpu != this_cpu) {
+ #ifdef CONFIG_SPA
+-		if (PRIO_PREEMPTS_CURR(prio, rq))
++		if (preemption_warranted(prio, p, rq))
+ #else
+ 		if (TASK_PREEMPTS_CURR(p, rq))
+ #endif
+@@ -1409,6 +1445,33 @@ int fastcall wake_up_state(task_t *p, un
+ 	return try_to_wake_up(p, state, 0);
+ }
+ 
++#ifdef CONFIG_SPA
++/*
++ * Initialize the scheduling statistics counters
++ */
++static inline void initialize_stats(task_t *p)
++{
++	p->avg_sleep_per_cycle = 0;
++	p->avg_delay_per_cycle = 0;
++	p->avg_cpu_per_cycle = 0;
++	p->total_sleep = 0;
++	p->total_delay = 0;
++	p->total_cpu = 0;
++	p->cycle_count = 0;
++	p->sched_timestamp = 0 /* set this to current time later */;
++}
++
++/*
++ * Initialize the scheduling bonuses
++ */
++static inline void initialize_bonuses(task_t *p)
++{
++	p->interactive_bonus = 0;
++	p->throughput_bonus =  0;
++	p->sub_cycle_count = 0;
++}
++#endif
++
+ /*
+  * Perform scheduler related setup for a newly forked process p.
+  * p is forked by current.
+@@ -1444,16 +1507,8 @@ void fastcall sched_fork(task_t *p)
+ 	/*
+ 	 * Initialize the scheduler statistics counters
+ 	 */
+-	p->sched_timestamp = 0 /* set this to current time later */;
+-	p->avg_sleep_per_cycle = 0;
+-	p->avg_delay_per_cycle = 0;
+-	p->avg_cpu_per_cycle = 0;
+-	p->total_sleep = 0;
+-	p->total_delay = 0;
+-	p->total_cpu = 0;
+-	p->interactive_bonus = 0;
+-	p->throughput_bonus = 0;
+-	p->sub_cycle_count = 0;
++	initialize_stats(p);
++	initialize_bonuses(p);
+ #else
+ 	/*
+ 	 * Share the timeslice between parent and child, thus the
+@@ -1546,7 +1601,6 @@ void fastcall wake_up_forked_process(tas
+ 	task_rq_unlock(rq, &flags);
+ }
+ 
+-#ifndef CONFIG_SPA
+ /*
+  * Potentially available exiting-child timeslices are
+  * retrieved here - this way the parent does not get
+@@ -1556,8 +1610,22 @@ void fastcall wake_up_forked_process(tas
+  * artificially, because any timeslice recovered here
+  * was given away by the parent in the first place.)
+  */
++#ifdef CONFIG_SPA
++static int log_at_exit = 0;
++#endif
+ void fastcall sched_exit(task_t * p)
+ {
++#ifdef CONFIG_SPA
++	struct task_sched_stats stats;
++	if (!log_at_exit)
++		return;
++	get_task_sched_stats(p, &stats);
++	printk("SCHED_EXIT[%d] (%s) %llu %llu %llu %llu %lu %lu %lu %lu\n",
++		p->pid, p->comm,
++		stats.total_sleep, stats.total_cpu, stats.total_delay,
++		stats.cycle_count,
++		p->nvcsw, p->nivcsw, p->cnvcsw, p->cnivcsw);
++#else
+ 	unsigned long flags;
+ 	runqueue_t *rq;
+ 
+@@ -1578,8 +1646,8 @@ void fastcall sched_exit(task_t * p)
+ 		(EXIT_WEIGHT + 1) * EXIT_WEIGHT + p->sleep_avg /
+ 		(EXIT_WEIGHT + 1);
+ 	task_rq_unlock(rq, &flags);
+-}
+ #endif
++}
+ 
+ /**
+  * finish_task_switch - clean up after a task-switch
+@@ -1899,7 +1967,7 @@ lock_again:
+ 					+ rq->timestamp_last_tick;
+ #ifdef CONFIG_SPA
+ 		__activate_task(p, rq, prio);
+-		if (PRIO_PREEMPTS_CURR(prio, rq))
++		if (preemption_warranted(prio, p, rq))
+ #else
+ 		__activate_task(p, rq);
+ 		if (TASK_PREEMPTS_CURR(p, rq))
+@@ -2039,7 +2107,7 @@ void pull_task(runqueue_t *src_rq,
+ 	 * to be always true for them.
+ 	 */
+ #ifdef CONFIG_SPA
+-	if (PRIO_PREEMPTS_CURR(prio, this_rq))
++	if (preemption_warranted(prio, p, this_rq))
+ #else
+ 	if (TASK_PREEMPTS_CURR(p, this_rq))
+ #endif
+@@ -2825,6 +2893,9 @@ void scheduler_tick(int user_ticks, int 
+ 		}
+ 		goto out_unlock;
+ 	}
++#ifdef CONFIG_SPA
++	rq->cache_ticks++;
++#endif
+ 	if (!--p->time_slice) {
+ #ifdef CONFIG_SPA
+ 		u64 delta;
+@@ -2865,7 +2936,10 @@ void scheduler_tick(int user_ticks, int 
+ 			enqueue_task(p, rq->active);
+ #endif
+ 	}
+-#ifndef CONFIG_SPA
++#ifdef CONFIG_SPA
++	if (rq->preempted && rq->cache_ticks >= cache_decay_ticks)
++		set_tsk_need_resched(p);
++#else
+ 	else {
+ 		/*
+ 		 * Prevent a too long timeslice allowing a task to monopolize
+@@ -3172,6 +3246,8 @@ switch_tasks:
+ 
+ 	if (likely(prev != next)) {
+ #ifdef CONFIG_SPA
++		rq->preempted = 0;
++		rq->cache_ticks = 0;
+ 		/*
+ 		 * Update estimate of average delay on run queue per cycle
+ 		 */
+@@ -3179,6 +3255,7 @@ switch_tasks:
+ 		next->avg_delay_per_cycle += delta;
+ 		next->total_delay += delta;
+ 		next->timestamp = next->sched_timestamp = rq->timestamp_last_tick;
++		rq->total_delay += delta;
+ #else
+ 		next->timestamp = now;
+ #endif
+@@ -3741,7 +3818,7 @@ static int setscheduler(pid_t pid, int p
+ 		 * this runqueue and our priority is higher than the current's
+ 		 */
+ #ifdef CONFIG_SPA
+-		if (PRIO_PREEMPTS_CURR(prio, rq))
++		if (preemption_warranted(prio, p, rq))
+ #else
+ 		if (task_running(rq, p)) {
+ 			if (p->prio > oldprio)
+@@ -4005,6 +4082,50 @@ void get_task_sched_stats(const struct t
+ }
+ 
+ EXPORT_SYMBOL(get_task_sched_stats);
++
++/*
++ * Get scheduling statistics for the nominated CPU
++ */
++void get_cpu_sched_stats(unsigned int cpu, struct cpu_sched_stats *stats)
++{
++	int idle;
++	u64 idle_timestamp;
++	runqueue_t *rq = cpu_rq(cpu);
++
++	/*
++	 * No need to crash the whole machine if they've asked for stats for
++	 * a non existent CPU, just send back zero.
++	 */
++	if (rq == NULL) {
++		stats->timestamp = 0;
++		stats->total_idle = 0;
++		stats->total_busy = 0;
++		stats->total_delay = 0;
++		stats->nr_switches = 0;
++
++		return;
++	}
++	local_irq_disable();
++	spin_lock(&rq->lock);
++	idle = rq->curr == rq->idle;
++	stats->timestamp = rq->timestamp_last_tick;
++	idle_timestamp = rq->idle->sched_timestamp;
++	stats->total_idle = rq->idle->total_cpu;
++	stats->total_busy = rq->idle->total_delay;
++	stats->total_delay = rq->total_delay;
++	stats->nr_switches = rq->nr_switches;
++	rq_unlock(rq);
++
++	/*
++	 * Update idle/busy time to the current tick
++	 */
++	if (idle)
++		stats->total_idle += (stats->timestamp - idle_timestamp);
++	else
++		stats->total_busy += (stats->timestamp - idle_timestamp);
++}
++
++EXPORT_SYMBOL(get_cpu_sched_stats);
+ #endif
+ 
+ /**
+@@ -4310,13 +4431,9 @@ void __devinit init_idle(task_t *idle, i
+ 	 * valuable about the CPU e.g. avg_cpu_time_per_cycle for the idle
+ 	 * task will be an estimate of the average time the CPU is idle
+ 	 */
++	initialize_stats(idle);
++	initialize_bonuses(idle);
+ 	idle->sched_timestamp = rq->timestamp_last_tick;
+-	idle->avg_sleep_per_cycle = 0;
+-	idle->avg_delay_per_cycle = 0;
+-	idle->avg_cpu_per_cycle = 0;
+-	idle->interactive_bonus = 0;
+-	idle->throughput_bonus = 0;
+-	idle->sub_cycle_count = 0;
+ #else
+ 	idle->array = NULL;
+ 	idle->prio = MAX_PRIO;
+@@ -4467,7 +4584,7 @@ static void __migrate_task(struct task_s
+ 		delta = (rq_dest->timestamp_last_tick - p->sched_timestamp);
+ 		p->avg_delay_per_cycle += delta;
+ 		p->total_delay += delta;
+-		if (PRIO_PREEMPTS_CURR(activate_task(p, rq_dest, 0), rq_dest))
++		if (preemption_warranted(activate_task(p, rq_dest, 0), p, rq_dest))
+ #else
+ 		activate_task(p, rq_dest, 0);
+ 		if (TASK_PREEMPTS_CURR(p, rq_dest))
+@@ -5036,7 +5153,10 @@ void __init sched_init(void)
+ 
+ 		rq = cpu_rq(i);
+ 		spin_lock_init(&rq->lock);
+-#ifndef CONFIG_SPA
++#ifdef CONFIG_SPA
++		rq->cache_ticks = 0;
++		rq->preempted = 0;
++#else
+ 		rq->active = rq->arrays;
+ 		rq->expired = rq->arrays + 1;
+ 		rq->best_expired_prio = MAX_PRIO;
+@@ -5056,7 +5176,6 @@ void __init sched_init(void)
+ 		for (j = 0; j <= IDLE_PRIO; j++) {
+ 			rq->queues[j].prio = j;
+ 			INIT_LIST_HEAD(&rq->queues[j].queue);
+-			__clear_bit(j, rq->bitmap);
+ 		}
+ 		bitmap_zero(rq->bitmap, NUM_PRIO_SLOTS);
+ 		// delimiter for bitsearch
+@@ -5064,6 +5183,7 @@ void __init sched_init(void)
+ 		rq->current_prio_slot = rq->queues + (IDLE_PRIO - 20);
+ 		rq->timestamp_last_tick = sched_clock();
+ 		rq->next_prom_due = (jiffies + get_prom_interval(rq));
++		rq->total_delay = 0;
+ #else
+ 		for (j = 0; j < 2; j++) {
+ 			array = rq->arrays + j;
+@@ -5174,19 +5294,22 @@ enum
+ 	CPU_SCHED_MAX_TPT_BONUS,
+ 	CPU_SCHED_IA_THRESHOLD,
+ 	CPU_SCHED_CPU_HOG_THRESHOLD,
++	CPU_SCHED_LOG_AT_EXIT,
+ };
+ 
+-static const unsigned int min_milli_value = 0;
++static const unsigned int zero = 0;
++static const unsigned int one = 1;
++#define min_milli_value zero
+ static const unsigned int max_milli_value = 1000;
+-static const unsigned int min_max_ia_bonus = 0;
++#define min_max_ia_bonus zero
+ static const unsigned int max_max_ia_bonus = MAX_MAX_IA_BONUS;
+-#define min_max_tpt_bonus min_max_ia_bonus
++#define min_max_tpt_bonus zero
+ static const unsigned int max_max_tpt_bonus = MAX_MAX_TPT_BONUS;
+ static unsigned int time_slice_msecs = DEFAULT_TIME_SLICE_MSECS;
+-static const unsigned int min_time_slice_msecs = 1;
++#define min_time_slice_msecs one
+ static const unsigned int max_time_slice_msecs = MAX_TIME_SLICE_MSECS;
+ static unsigned int base_prom_interval_msecs = BASE_PROM_INTERVAL_MSECS;
+-static const unsigned int min_base_prom_interval_msecs = 1;
++#define min_base_prom_interval_msecs one
+ static const unsigned int max_base_prom_interval_msecs = UINT_MAX;
+ 
+ static int proc_time_slice_msecs(ctl_table *ctp, int write, struct file *fp,
+@@ -5235,7 +5358,7 @@ ctl_table cpu_sched_table[] = {
+ 	},
+ 	{
+ 		.ctl_name	= CPU_SCHED_MAX_IA_BONUS,
+-		.procname	= "max_ai_bonus",
++		.procname	= "max_ia_bonus",
+ 		.data		= &max_ia_bonus,
+ 		.maxlen		= sizeof (unsigned int),
+ 		.mode		= 0644,
+@@ -5273,6 +5396,16 @@ ctl_table cpu_sched_table[] = {
+ 		.extra1		= (void *)&min_milli_value,
+ 		.extra2		= (void *)&max_milli_value
+ 	},
++	{
++		.ctl_name	= CPU_SCHED_LOG_AT_EXIT,
++		.procname	= "log_at_exit",
++		.data		= &log_at_exit,
++		.maxlen		= sizeof (unsigned int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec_minmax,
++		.extra1		= (void *)&zero,
++		.extra2		= (void *)&one
++	},
+ 	{ .ctl_name = CPU_SCHED_END_OF_LIST }
+ };
+ #endif
+diff -puN kernel/sysctl.c~spa-to-1.0 kernel/sysctl.c
+
+_

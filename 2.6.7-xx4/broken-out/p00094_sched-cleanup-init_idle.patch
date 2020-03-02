@@ -1,0 +1,366 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Clean up init_idle to not use wake_up_forked_process, then undo all the
+stuff that call does.  Instead, do everything in init_idle.
+
+Make double_rq_lock depend on CONFIG_SMP because it is no longer used on UP.
+
+Signed-off-by: Nick Piggin <nickpiggin@yahoo.com.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/alpha/kernel/smp.c      |    2 
+ 25-akpm/arch/i386/kernel/smpboot.c   |    7 --
+ 25-akpm/arch/ia64/kernel/smpboot.c   |    7 --
+ 25-akpm/arch/mips/kernel/smp.c       |    8 --
+ 25-akpm/arch/parisc/kernel/smp.c     |    1 
+ 25-akpm/arch/ppc/kernel/smp.c        |    2 
+ 25-akpm/arch/ppc64/kernel/smp.c      |    1 
+ 25-akpm/arch/s390/kernel/smp.c       |    7 --
+ 25-akpm/arch/sh/kernel/smp.c         |    2 
+ 25-akpm/arch/x86_64/kernel/smpboot.c |    7 --
+ 25-akpm/init/main.c                  |   15 ++---
+ 25-akpm/kernel/sched.c               |  101 +++++++++++++++++------------------
+ 12 files changed, 68 insertions(+), 92 deletions(-)
+
+diff -puN arch/alpha/kernel/smp.c~sched-cleanup-init_idle arch/alpha/kernel/smp.c
+--- 25/arch/alpha/kernel/smp.c~sched-cleanup-init_idle	2004-06-27 17:24:05.048121000 -0700
++++ 25-akpm/arch/alpha/kernel/smp.c	2004-06-27 17:24:05.114110968 -0700
+@@ -439,8 +439,6 @@ smp_boot_one_cpu(int cpuid)
+ 	if (IS_ERR(idle))
+ 		panic("failed fork for CPU %d", cpuid);
+ 
+-	wake_up_forked_process(idle);
+-
+ 	init_idle(idle, cpuid);
+ 	unhash_process(idle);
+ 
+diff -puN arch/i386/kernel/smpboot.c~sched-cleanup-init_idle arch/i386/kernel/smpboot.c
+--- 25/arch/i386/kernel/smpboot.c~sched-cleanup-init_idle	2004-06-27 17:24:05.050120696 -0700
++++ 25-akpm/arch/i386/kernel/smpboot.c	2004-06-27 17:24:05.115110816 -0700
+@@ -795,16 +795,13 @@ static int __init do_boot_cpu(int apicid
+ 	idle = fork_by_hand();
+ 	if (IS_ERR(idle))
+ 		panic("failed fork for CPU %d", cpu);
+-	wake_up_forked_process(idle);
+ 
+-	/*
+-	 * We remove it from the pidhash and the runqueue
+-	 * once we got the process:
+-	 */
++	/* Make this the idle thread */
+ 	init_idle(idle, cpu);
+ 
+ 	idle->thread.eip = (unsigned long) start_secondary;
+ 
++	/* Remove it from the pidhash */
+ 	unhash_process(idle);
+ 
+ 	/* start_eip had better be page-aligned! */
+diff -puN arch/ia64/kernel/smpboot.c~sched-cleanup-init_idle arch/ia64/kernel/smpboot.c
+--- 25/arch/ia64/kernel/smpboot.c~sched-cleanup-init_idle	2004-06-27 17:24:05.051120544 -0700
++++ 25-akpm/arch/ia64/kernel/smpboot.c	2004-06-27 17:24:05.116110664 -0700
+@@ -400,14 +400,11 @@ do_boot_cpu (int sapicid, int cpu)
+ 
+ 	if (IS_ERR(c_idle.idle))
+ 		panic("failed fork for CPU %d", cpu);
+-	wake_up_forked_process(c_idle.idle);
+ 
+-	/*
+-	 * We remove it from the pidhash and the runqueue
+-	 * once we got the process:
+-	 */
++	/* Make this the idle thread */
+ 	init_idle(c_idle.idle, cpu);
+ 
++	/* Remove it from the pidhash */
+ 	unhash_process(c_idle.idle);
+ 
+ 	task_for_booting_cpu = c_idle.idle;
+diff -puN arch/mips/kernel/smp.c~sched-cleanup-init_idle arch/mips/kernel/smp.c
+--- 25/arch/mips/kernel/smp.c~sched-cleanup-init_idle	2004-06-27 17:24:05.053120240 -0700
++++ 25-akpm/arch/mips/kernel/smp.c	2004-06-27 17:24:05.117110512 -0700
+@@ -279,14 +279,10 @@ static int __init do_boot_cpu(int cpu)
+ 	if (IS_ERR(idle))
+ 		panic("failed fork for CPU %d\n", cpu);
+ 
+-	wake_up_forked_process(idle);
+-
+-	/*
+-	 * We remove it from the pidhash and the runqueue once we've
+-	 * got the process:
+-	 */
++	/* Make this the idle thread */
+ 	init_idle(idle, cpu);
+ 
++	/* Remove it from the pidhash */
+ 	unhash_process(idle);
+ 
+ 	prom_boot_secondary(cpu, idle);
+diff -puN arch/parisc/kernel/smp.c~sched-cleanup-init_idle arch/parisc/kernel/smp.c
+--- 25/arch/parisc/kernel/smp.c~sched-cleanup-init_idle	2004-06-27 17:24:05.054120088 -0700
++++ 25-akpm/arch/parisc/kernel/smp.c	2004-06-27 17:24:05.117110512 -0700
+@@ -543,7 +543,6 @@ int __init smp_boot_one_cpu(int cpuid, i
+ 	if (IS_ERR(idle))
+ 		panic("SMP: fork failed for CPU:%d", cpuid);
+ 
+-	wake_up_forked_process(idle);
+ 	init_idle(idle, cpunum);
+ 	unhash_process(idle);
+ 	idle->thread_info->cpu = cpunum;
+diff -puN arch/ppc64/kernel/smp.c~sched-cleanup-init_idle arch/ppc64/kernel/smp.c
+--- 25/arch/ppc64/kernel/smp.c~sched-cleanup-init_idle	2004-06-27 17:24:05.068117960 -0700
++++ 25-akpm/arch/ppc64/kernel/smp.c	2004-06-27 17:24:05.118110360 -0700
+@@ -812,7 +812,6 @@ static void __init smp_create_idle(unsig
+ 	if (IS_ERR(p))
+ 		panic("failed fork for CPU %u: %li", cpu, PTR_ERR(p));
+ 
+-	wake_up_forked_process(p);
+ 	init_idle(p, cpu);
+ 	unhash_process(p);
+ 
+diff -puN arch/ppc/kernel/smp.c~sched-cleanup-init_idle arch/ppc/kernel/smp.c
+--- 25/arch/ppc/kernel/smp.c~sched-cleanup-init_idle	2004-06-27 17:24:05.069117808 -0700
++++ 25-akpm/arch/ppc/kernel/smp.c	2004-06-27 17:24:05.119110208 -0700
+@@ -375,8 +375,6 @@ int __cpu_up(unsigned int cpu)
+ 	p = copy_process(CLONE_VM|CLONE_IDLETASK, 0, &regs, 0, NULL, NULL);
+ 	if (IS_ERR(p))
+ 		panic("failed fork for CPU %u: %li", cpu, PTR_ERR(p));
+-	wake_up_forked_process(p);
+-
+ 	init_idle(p, cpu);
+ 	unhash_process(p);
+ 
+diff -puN arch/s390/kernel/smp.c~sched-cleanup-init_idle arch/s390/kernel/smp.c
+--- 25/arch/s390/kernel/smp.c~sched-cleanup-init_idle	2004-06-27 17:24:05.082115832 -0700
++++ 25-akpm/arch/s390/kernel/smp.c	2004-06-27 17:24:05.119110208 -0700
+@@ -567,14 +567,11 @@ int __cpu_up(unsigned int cpu)
+                 printk("failed fork for CPU %d", cpu);
+ 		return -EIO;
+ 	}
+-	wake_up_forked_process(idle);
+ 
+-        /*
+-         * We remove it from the pidhash and the runqueue
+-         * once we got the process:
+-         */
++	/* Make this the idle thread */
+ 	init_idle(idle, cpu);
+ 
++	/* Remove it from the pidhash */
+         unhash_process(idle);
+ 
+         cpu_lowcore = lowcore_ptr[cpu];
+diff -puN arch/sh/kernel/smp.c~sched-cleanup-init_idle arch/sh/kernel/smp.c
+--- 25/arch/sh/kernel/smp.c~sched-cleanup-init_idle	2004-06-27 17:24:05.094114008 -0700
++++ 25-akpm/arch/sh/kernel/smp.c	2004-06-27 17:24:05.120110056 -0700
+@@ -106,8 +106,6 @@ int __cpu_up(unsigned int cpu)
+ 	if (IS_ERR(tsk))
+ 		panic("Failed forking idle task for cpu %d\n", cpu);
+ 	
+-	wake_up_forked_process(tsk);
+-
+ 	init_idle(tsk, cpu);
+ 	unhash_process(tsk);
+ 	
+diff -puN arch/x86_64/kernel/smpboot.c~sched-cleanup-init_idle arch/x86_64/kernel/smpboot.c
+--- 25/arch/x86_64/kernel/smpboot.c~sched-cleanup-init_idle	2004-06-27 17:24:05.107112032 -0700
++++ 25-akpm/arch/x86_64/kernel/smpboot.c	2004-06-27 17:24:05.121109904 -0700
+@@ -576,15 +576,12 @@ static void __init do_boot_cpu (int apic
+ 	idle = fork_by_hand();
+ 	if (IS_ERR(idle))
+ 		panic("failed fork for CPU %d", cpu);
+-	wake_up_forked_process(idle);	
+ 	x86_cpu_to_apicid[cpu] = apicid;
+ 
+-	/*
+-	 * We remove it from the pidhash and the runqueue
+-	 * once we got the process:
+-	 */
++	/* Make this the idle thread */
+ 	init_idle(idle,cpu);
+ 
++	/* Remove it from the pidhash */
+ 	unhash_process(idle);
+ 
+ 	cpu_pda[cpu].pcurrent = idle;
+diff -puN init/main.c~sched-cleanup-init_idle init/main.c
+--- 25/init/main.c~sched-cleanup-init_idle	2004-06-27 17:24:05.109111728 -0700
++++ 25-akpm/init/main.c	2004-06-27 17:24:05.121109904 -0700
+@@ -466,6 +466,14 @@ asmlinkage void __init start_kernel(void
+ 	 */
+ 	sched_init();
+ 
++	/*
++	 * Make us the idle thread. Technically, schedule() should not be
++	 * called from this thread, however somewhere below it might be,
++	 * but because we are the idle thread, we just pick up running again
++	 * when this runqueue becomes "idle".
++	 */
++	init_idle(current, smp_processor_id());
++
+ 	build_all_zonelists();
+ 	page_alloc_init();
+ 	trap_init();
+@@ -530,13 +538,6 @@ asmlinkage void __init start_kernel(void
+ #endif
+ 	check_bugs();
+ 
+-	/* 
+-	 *	We count on the initial thread going ok 
+-	 *	Like idlers init is an unlocked kernel thread, which will
+-	 *	make syscalls (and thus be locked).
+-	 */
+-	init_idle(current, smp_processor_id());
+-
+ 	/* Do the rest non-__init'ed, we're now alive */
+ 	rest_init();
+ }
+diff -puN kernel/sched.c~sched-cleanup-init_idle kernel/sched.c
+--- 25/kernel/sched.c~sched-cleanup-init_idle	2004-06-27 17:24:05.110111576 -0700
++++ 25-akpm/kernel/sched.c	2004-06-27 17:24:05.125109296 -0700
+@@ -1122,40 +1122,6 @@ unsigned long nr_iowait(void)
+ 	return sum;
+ }
+ 
+-/*
+- * double_rq_lock - safely lock two runqueues
+- *
+- * Note this does not disable interrupts like task_rq_lock,
+- * you need to do so manually before calling.
+- */
+-static void double_rq_lock(runqueue_t *rq1, runqueue_t *rq2)
+-{
+-	if (rq1 == rq2)
+-		spin_lock(&rq1->lock);
+-	else {
+-		if (rq1 < rq2) {
+-			spin_lock(&rq1->lock);
+-			spin_lock(&rq2->lock);
+-		} else {
+-			spin_lock(&rq2->lock);
+-			spin_lock(&rq1->lock);
+-		}
+-	}
+-}
+-
+-/*
+- * double_rq_unlock - safely unlock two runqueues
+- *
+- * Note this does not restore interrupts like task_rq_unlock,
+- * you need to do so manually after calling.
+- */
+-static void double_rq_unlock(runqueue_t *rq1, runqueue_t *rq2)
+-{
+-	spin_unlock(&rq1->lock);
+-	if (rq1 != rq2)
+-		spin_unlock(&rq2->lock);
+-}
+-
+ enum idle_type
+ {
+ 	IDLE,
+@@ -1359,6 +1325,40 @@ out:
+ }
+ 
+ /*
++ * double_rq_lock - safely lock two runqueues
++ *
++ * Note this does not disable interrupts like task_rq_lock,
++ * you need to do so manually before calling.
++ */
++static void double_rq_lock(runqueue_t *rq1, runqueue_t *rq2)
++{
++	if (rq1 == rq2)
++		spin_lock(&rq1->lock);
++	else {
++		if (rq1 < rq2) {
++			spin_lock(&rq1->lock);
++			spin_lock(&rq2->lock);
++		} else {
++			spin_lock(&rq2->lock);
++			spin_lock(&rq1->lock);
++		}
++	}
++}
++
++/*
++ * double_rq_unlock - safely unlock two runqueues
++ *
++ * Note this does not restore interrupts like task_rq_unlock,
++ * you need to do so manually after calling.
++ */
++static void double_rq_unlock(runqueue_t *rq1, runqueue_t *rq2)
++{
++	spin_unlock(&rq1->lock);
++	if (rq1 != rq2)
++		spin_unlock(&rq2->lock);
++}
++
++/*
+  * double_lock_balance - lock the busiest runqueue, this_rq is locked already.
+  */
+ static void double_lock_balance(runqueue_t *this_rq, runqueue_t *busiest)
+@@ -2210,6 +2210,15 @@ need_resched:
+ 	prev = current;
+ 	rq = this_rq();
+ 
++	/*
++	 * The idle thread is not allowed to schedule!
++	 * Remove this check after it has been exercised a bit.
++	 */
++	if (unlikely(current == rq->idle) && current->state != TASK_RUNNING) {
++		printk(KERN_ERR "bad: scheduling from the idle thread!\n");
++		dump_stack();
++	}
++
+ 	release_kernel_lock(prev);
+ 	now = sched_clock();
+ 	if (likely(now - prev->timestamp < NS_MAX_SLEEP_AVG))
+@@ -3276,21 +3285,20 @@ void show_state(void)
+ 
+ void __devinit init_idle(task_t *idle, int cpu)
+ {
+-	runqueue_t *idle_rq = cpu_rq(cpu), *rq = cpu_rq(task_cpu(idle));
++	runqueue_t *rq = cpu_rq(cpu);
+ 	unsigned long flags;
+ 
+-	local_irq_save(flags);
+-	double_rq_lock(idle_rq, rq);
+-
+-	idle_rq->curr = idle_rq->idle = idle;
+-	deactivate_task(idle, rq);
++	idle->sleep_avg = 0;
++	idle->interactive_credit = 0;
+ 	idle->array = NULL;
+ 	idle->prio = MAX_PRIO;
+ 	idle->state = TASK_RUNNING;
+ 	set_task_cpu(idle, cpu);
+-	double_rq_unlock(idle_rq, rq);
++
++	spin_lock_irqsave(&rq->lock, flags);
++	rq->curr = rq->idle = idle;
+ 	set_tsk_need_resched(idle);
+-	local_irq_restore(flags);
++	spin_unlock_irqrestore(&rq->lock, flags);
+ 
+ 	/* Set the preempt count _outside_ the spinlocks! */
+ #ifdef CONFIG_PREEMPT
+@@ -3968,15 +3976,6 @@ void __init sched_init(void)
+ 			__set_bit(MAX_PRIO, array->bitmap);
+ 		}
+ 	}
+-	/*
+-	 * We have to do a little magic to get the first
+-	 * thread right in SMP mode.
+-	 */
+-	rq = this_rq();
+-	rq->curr = current;
+-	rq->idle = current;
+-	set_task_cpu(current, smp_processor_id());
+-	wake_up_forked_process(current);
+ 
+ 	/*
+ 	 * The boot idle thread does lazy MMU switching as well:
+_

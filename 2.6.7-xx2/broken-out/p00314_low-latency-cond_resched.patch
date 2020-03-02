@@ -1,0 +1,31 @@
+---
+
+ linux-2.6.6-xx2-xiphux/fs/fs-writeback.c |    1 +
+ linux-2.6.6-xx2-xiphux/fs/super.c        |    1 +
+ 2 files changed, 2 insertions(+)
+
+diff -puN fs/fs-writeback.c~low-latency-cond_resched fs/fs-writeback.c
+--- linux-2.6.6-xx2/fs/fs-writeback.c~low-latency-cond_resched	2004-05-28 05:32:24.542359816 -0400
++++ linux-2.6.6-xx2-xiphux/fs/fs-writeback.c	2004-05-28 05:32:24.551358448 -0400
+@@ -419,6 +419,7 @@ restart:
+ 	}
+ 	spin_unlock(&sb_lock);
+ 	spin_unlock(&inode_lock);
++	cond_resched();
+ }
+ 
+ /*
+diff -puN fs/mpage.c~low-latency-cond_resched fs/mpage.c
+diff -puN fs/super.c~low-latency-cond_resched fs/super.c
+--- linux-2.6.6-xx2/fs/super.c~low-latency-cond_resched	2004-05-28 05:32:24.546359208 -0400
++++ linux-2.6.6-xx2-xiphux/fs/super.c	2004-05-28 05:32:26.046131208 -0400
+@@ -523,6 +523,7 @@ void sync_supers(void)
+ {
+ 	struct super_block * sb;
+ restart:
++	cond_resched();
+ 	spin_lock(&sb_lock);
+ 	sb = sb_entry(super_blocks.next);
+ 	while (sb != sb_entry(&super_blocks))
+
+_

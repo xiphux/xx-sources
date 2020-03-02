@@ -1,0 +1,28 @@
+
+From: Balint Marton <cus@fazekas.hu>
+
+The urandom driver returns the same thing after every boot.
+
+The urandom pool is only cleared, and not initialized, and because there is
+nothing in the primary pool, the reseeding is not successful.  The solution
+is also the same, initialize not just the primary and secondary, but also
+the urandom pool.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/random.c |    1 +
+ 1 files changed, 1 insertion(+)
+
+diff -puN drivers/char/random.c~urandom-initialisation-fix drivers/char/random.c
+--- 25/drivers/char/random.c~urandom-initialisation-fix	2004-08-30 00:06:50.080492016 -0700
++++ 25-akpm/drivers/char/random.c	2004-08-30 00:06:50.086491104 -0700
+@@ -1541,6 +1541,7 @@ static int __init rand_initialize(void)
+ 	clear_entropy_store(urandom_state);
+ 	init_std_data(random_state);
+ 	init_std_data(sec_random_state);
++	init_std_data(urandom_state);
+ #ifdef CONFIG_SYSCTL
+ 	sysctl_init_random(random_state);
+ #endif
+_

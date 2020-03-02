@@ -1,0 +1,86 @@
+
+From: Jesse Barnes <jbarnes@engr.sgi.com>
+
+Small patch to export sys_ioctl if CONFIG_COMPAT is set.  This allows 
+platforms to implement 32 bit compatibility ioctl handlers in modules.
+
+Submitted-by: Jesse Barnes <jbarnes@sgi.com>
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc64/kernel/ppc_ksyms.c       |    1 -
+ 25-akpm/arch/s390/kernel/s390_ksyms.c       |    1 -
+ 25-akpm/arch/sparc64/kernel/sparc64_ksyms.c |    1 -
+ 25-akpm/arch/x86_64/kernel/x8664_ksyms.c    |    1 -
+ 25-akpm/fs/ioctl.c                          |   10 ++++++++++
+ 5 files changed, 10 insertions(+), 4 deletions(-)
+
+diff -puN arch/ppc64/kernel/ppc_ksyms.c~sys_ioctl-export arch/ppc64/kernel/ppc_ksyms.c
+--- 25/arch/ppc64/kernel/ppc_ksyms.c~sys_ioctl-export	2004-06-19 14:00:43.412975328 -0700
++++ 25-akpm/arch/ppc64/kernel/ppc_ksyms.c	2004-06-19 14:00:43.444970464 -0700
+@@ -50,7 +50,6 @@ extern int do_signal(sigset_t *, struct 
+ int abs(int);
+ 
+ EXPORT_SYMBOL(do_signal);
+-EXPORT_SYMBOL(sys_ioctl);
+ 
+ EXPORT_SYMBOL(isa_io_base);
+ EXPORT_SYMBOL(pci_io_base);
+diff -puN arch/s390/kernel/s390_ksyms.c~sys_ioctl-export arch/s390/kernel/s390_ksyms.c
+--- 25/arch/s390/kernel/s390_ksyms.c~sys_ioctl-export	2004-06-19 14:00:43.426973200 -0700
++++ 25-akpm/arch/s390/kernel/s390_ksyms.c	2004-06-19 14:00:43.445970312 -0700
+@@ -76,4 +76,3 @@ EXPORT_SYMBOL(console_device);
+ EXPORT_SYMBOL_NOVERS(do_call_softirq);
+ EXPORT_SYMBOL(sys_wait4);
+ EXPORT_SYMBOL(cpcmd);
+-EXPORT_SYMBOL(sys_ioctl);
+diff -puN arch/sparc64/kernel/sparc64_ksyms.c~sys_ioctl-export arch/sparc64/kernel/sparc64_ksyms.c
+--- 25/arch/sparc64/kernel/sparc64_ksyms.c~sys_ioctl-export	2004-06-19 14:00:43.438971376 -0700
++++ 25-akpm/arch/sparc64/kernel/sparc64_ksyms.c	2004-06-19 14:00:43.445970312 -0700
+@@ -327,7 +327,6 @@ EXPORT_SYMBOL(sys_getegid);
+ EXPORT_SYMBOL(sys_getgid);
+ EXPORT_SYMBOL(svr4_getcontext);
+ EXPORT_SYMBOL(svr4_setcontext);
+-EXPORT_SYMBOL(sys_ioctl);
+ EXPORT_SYMBOL(compat_sys_ioctl);
+ EXPORT_SYMBOL(sparc32_open);
+ EXPORT_SYMBOL(sys_close);
+diff -puN arch/x86_64/kernel/x8664_ksyms.c~sys_ioctl-export arch/x86_64/kernel/x8664_ksyms.c
+--- 25/arch/x86_64/kernel/x8664_ksyms.c~sys_ioctl-export	2004-06-19 14:00:43.440971072 -0700
++++ 25-akpm/arch/x86_64/kernel/x8664_ksyms.c	2004-06-19 14:00:43.446970160 -0700
+@@ -218,4 +218,3 @@ EXPORT_SYMBOL(flush_tlb_page);
+ EXPORT_SYMBOL_GPL(flush_tlb_all);
+ #endif
+ 
+-EXPORT_SYMBOL(sys_ioctl);
+diff -puN fs/ioctl.c~sys_ioctl-export fs/ioctl.c
+--- 25/fs/ioctl.c~sys_ioctl-export	2004-06-19 14:00:43.441970920 -0700
++++ 25-akpm/fs/ioctl.c	2004-06-19 14:00:43.446970160 -0700
+@@ -4,11 +4,13 @@
+  *  Copyright (C) 1991, 1992  Linus Torvalds
+  */
+ 
++#include <linux/config.h>
+ #include <linux/mm.h>
+ #include <linux/smp_lock.h>
+ #include <linux/file.h>
+ #include <linux/fs.h>
+ #include <linux/security.h>
++#include <linux/module.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/ioctls.h>
+@@ -133,3 +135,11 @@ asmlinkage long sys_ioctl(unsigned int f
+ out:
+ 	return error;
+ }
++
++/*
++ * Platforms implementing 32 bit compatibility ioctl handlers in
++ * modules need this exported
++ */
++#ifdef CONFIG_COMPAT
++EXPORT_SYMBOL(sys_ioctl);
++#endif
+_

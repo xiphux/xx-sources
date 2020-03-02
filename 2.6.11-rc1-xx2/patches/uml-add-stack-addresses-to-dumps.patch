@@ -1,0 +1,42 @@
+
+From: Paolo 'Blaisorblade' Giarrusso <blaisorblade_spam@yahoo.it>,
+      Bodo Stroesser <bstroesser@fujitsu-siemens.com>
+
+Add stack addresses to print of symbols from stack trace.
+For stack analysis it's important to have this information.
+
+Signed-off-by: Bodo Stroesser <bstroesser@fujitsu-siemens.com>
+
+For UML, we should also copy the CONFIG_FRAME_POINTER stack walking from i386,
+and move the result to sys-i386.
+
+Another note: this should be done for i386 also, if ksymoops does not have
+problems.
+
+Signed-off-by: Paolo 'Blaisorblade' Giarrusso <blaisorblade_spam@yahoo.it>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/um/kernel/sysrq.c |    5 +++--
+ 1 files changed, 3 insertions(+), 2 deletions(-)
+
+diff -puN arch/um/kernel/sysrq.c~uml-add-stack-addresses-to-dumps arch/um/kernel/sysrq.c
+--- 25/arch/um/kernel/sysrq.c~uml-add-stack-addresses-to-dumps	Thu Jan 13 15:32:27 2005
++++ 25-akpm/arch/um/kernel/sysrq.c	Thu Jan 13 15:32:27 2005
+@@ -25,12 +25,13 @@ void show_trace(unsigned long * stack)
+ 
+         printk("Call Trace: \n");
+         while (((long) stack & (THREAD_SIZE-1)) != 0) {
+-                addr = *stack++;
++                addr = *stack;
+ 		if (__kernel_text_address(addr)) {
+-			printk(" [<%08lx>]", addr);
++			printk("%08lx:  [<%08lx>]", (unsigned long) stack, addr);
+ 			print_symbol(" %s", addr);
+ 			printk("\n");
+                 }
++                stack++;
+         }
+         printk("\n");
+ }
+_

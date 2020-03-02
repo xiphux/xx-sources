@@ -1,0 +1,155 @@
+
+From: <viro@parcelfarce.linux.theplanet.co.uk>
+
+ext2 conversion (helper functions for that one will be actually used a lot by
+other filesystems, so to fs/namei.c they go)
+
+
+---
+
+ 25-akpm/fs/ext2/symlink.c  |   17 +++++----------
+ 25-akpm/fs/namei.c         |   49 +++++++++++++++++++++++++++++++++++++++++++--
+ 25-akpm/include/linux/fs.h |    3 ++
+ 3 files changed, 56 insertions(+), 13 deletions(-)
+
+diff -puN fs/ext2/symlink.c~SL1-ext2-RC6-bk5 fs/ext2/symlink.c
+--- 25/fs/ext2/symlink.c~SL1-ext2-RC6-bk5	2004-05-19 20:49:57.991492856 -0700
++++ 25-akpm/fs/ext2/symlink.c	2004-05-19 20:49:57.997491944 -0700
+@@ -20,22 +20,17 @@
+ #include "ext2.h"
+ #include "xattr.h"
+ 
+-static int
+-ext2_readlink(struct dentry *dentry, char __user *buffer, int buflen)
+-{
+-	struct ext2_inode_info *ei = EXT2_I(dentry->d_inode);
+-	return vfs_readlink(dentry, buffer, buflen, (char *)ei->i_data);
+-}
+-
+ static int ext2_follow_link(struct dentry *dentry, struct nameidata *nd)
+ {
+ 	struct ext2_inode_info *ei = EXT2_I(dentry->d_inode);
+-	return vfs_follow_link(nd, (char *)ei->i_data);
++	nd_set_link(nd, (char *)ei->i_data);
++	return 0;
+ }
+ 
+ struct inode_operations ext2_symlink_inode_operations = {
+-	.readlink	= page_readlink,
+-	.follow_link	= page_follow_link,
++	.readlink	= generic_readlink,
++	.follow_link	= page_follow_link_light,
++	.put_link	= page_put_link,
+ 	.setxattr	= ext2_setxattr,
+ 	.getxattr	= ext2_getxattr,
+ 	.listxattr	= ext2_listxattr,
+@@ -43,7 +38,7 @@ struct inode_operations ext2_symlink_ino
+ };
+  
+ struct inode_operations ext2_fast_symlink_inode_operations = {
+-	.readlink	= ext2_readlink,
++	.readlink	= generic_readlink,
+ 	.follow_link	= ext2_follow_link,
+ 	.setxattr	= ext2_setxattr,
+ 	.getxattr	= ext2_getxattr,
+diff -puN fs/namei.c~SL1-ext2-RC6-bk5 fs/namei.c
+--- 25/fs/namei.c~SL1-ext2-RC6-bk5	2004-05-19 20:49:57.993492552 -0700
++++ 25-akpm/fs/namei.c	2004-05-19 20:49:57.999491640 -0700
+@@ -2192,6 +2192,23 @@ out:
+ 	return len;
+ }
+ 
++/*
++ * A helper for ->readlink().  This should be used *ONLY* for symlinks that
++ * have ->follow_link() touching nd only in nd_set_link().  Using (or not
++ * using) it for any given inode is up to filesystem.
++ */
++int generic_readlink(struct dentry *dentry, char __user *buffer, int buflen)
++{
++	struct nameidata nd;
++	int res = dentry->d_inode->i_op->follow_link(dentry, &nd);
++	if (!res) {
++		res = vfs_readlink(dentry, buffer, buflen, nd_get_link(&nd));
++		if (dentry->d_inode->i_op->put_link)
++			dentry->d_inode->i_op->put_link(dentry, &nd);
++	}
++	return res;
++}
++
+ static inline int
+ __vfs_follow_link(struct nameidata *nd, const char *link)
+ {
+@@ -2268,6 +2285,30 @@ int page_readlink(struct dentry *dentry,
+ 	return res;
+ }
+ 
++int page_follow_link_light(struct dentry *dentry, struct nameidata *nd)
++{
++	struct page *page;
++	char *s = page_getlink(dentry, &page);
++	if (!IS_ERR(s)) {
++		nd_set_link(nd, s);
++		s = NULL;
++	}
++	return PTR_ERR(s);
++}
++
++void page_put_link(struct dentry *dentry, struct nameidata *nd)
++{
++	if (!IS_ERR(nd_get_link(nd))) {
++		struct page *page;
++		page = find_get_page(dentry->d_inode->i_mapping, 0);
++		if (!page)
++			BUG();
++		kunmap(page);
++		page_cache_release(page);
++		page_cache_release(page);
++	}
++}
++
+ int page_follow_link(struct dentry *dentry, struct nameidata *nd)
+ {
+ 	struct page *page = NULL;
+@@ -2322,8 +2363,9 @@ fail:
+ }
+ 
+ struct inode_operations page_symlink_inode_operations = {
+-	.readlink	= page_readlink,
+-	.follow_link	= page_follow_link,
++	.readlink	= generic_readlink,
++	.follow_link	= page_follow_link_light,
++	.put_link	= page_put_link,
+ };
+ 
+ EXPORT_SYMBOL(__user_walk);
+@@ -2336,6 +2378,8 @@ EXPORT_SYMBOL(lookup_create);
+ EXPORT_SYMBOL(lookup_hash);
+ EXPORT_SYMBOL(lookup_one_len);
+ EXPORT_SYMBOL(page_follow_link);
++EXPORT_SYMBOL(page_follow_link_light);
++EXPORT_SYMBOL(page_put_link);
+ EXPORT_SYMBOL(page_readlink);
+ EXPORT_SYMBOL(page_symlink);
+ EXPORT_SYMBOL(page_symlink_inode_operations);
+@@ -2355,3 +2399,4 @@ EXPORT_SYMBOL(vfs_rename);
+ EXPORT_SYMBOL(vfs_rmdir);
+ EXPORT_SYMBOL(vfs_symlink);
+ EXPORT_SYMBOL(vfs_unlink);
++EXPORT_SYMBOL(generic_readlink);
+diff -puN include/linux/fs.h~SL1-ext2-RC6-bk5 include/linux/fs.h
+--- 25/include/linux/fs.h~SL1-ext2-RC6-bk5	2004-05-19 20:49:57.995492248 -0700
++++ 25-akpm/include/linux/fs.h	2004-05-19 20:49:58.010489968 -0700
+@@ -1468,8 +1468,11 @@ extern int vfs_readlink(struct dentry *,
+ extern int vfs_follow_link(struct nameidata *, const char *);
+ extern int page_readlink(struct dentry *, char __user *, int);
+ extern int page_follow_link(struct dentry *, struct nameidata *);
++extern int page_follow_link_light(struct dentry *, struct nameidata *);
++extern void page_put_link(struct dentry *, struct nameidata *);
+ extern int page_symlink(struct inode *inode, const char *symname, int len);
+ extern struct inode_operations page_symlink_inode_operations;
++extern int generic_readlink(struct dentry *, char __user *, int);
+ extern void generic_fillattr(struct inode *, struct kstat *);
+ extern int vfs_getattr(struct vfsmount *, struct dentry *, struct kstat *);
+ void inode_add_bytes(struct inode *inode, loff_t bytes);
+
+_

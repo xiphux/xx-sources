@@ -1,0 +1,80 @@
+---
+
+ linux-2.6.7-rc3-xx4-xiphux/Makefile                |   13 +++++++
+ linux-2.6.7-rc3-xx4-xiphux/kernel/Kconfig-extra.xx |   38 +++++++++++++++++++++
+ 2 files changed, 51 insertions(+)
+
+diff -puN Makefile~alignment-config Makefile
+--- linux-2.6.7-rc3-xx4/Makefile~alignment-config	2004-06-14 07:28:49.698225496 -0400
++++ linux-2.6.7-rc3-xx4-xiphux/Makefile	2004-06-14 07:28:49.711223520 -0400
+@@ -470,6 +470,19 @@ else
+ CFLAGS		+= -O2
+ endif
+ 
++ifneq ($(CONFIG_CC_ALIGN_FUNCTIONS),0)
++CFLAGS		+= -falign-functions=$(CONFIG_CC_ALIGN_FUNCTIONS)
++endif
++ifneq ($(CONFIG_CC_ALIGN_LABELS),0)
++CFLAGS		+= -falign-labels=$(CONFIG_CC_ALIGN_LABELS)
++endif
++ifneq ($(CONFIG_CC_ALIGN_LOOPS),0)
++CFLAGS		+= -falign-loops=$(CONFIG_CC_ALIGN_LOOPS)
++endif
++ifneq ($(CONFIG_CC_ALIGN_JUMPS),0)
++CFLAGS		+= -falign-jumps=$(CONFIG_CC_ALIGN_JUMPS)
++endif
++
+ ifndef CONFIG_FRAME_POINTER
+ CFLAGS		+= -fomit-frame-pointer
+ endif
+diff -puN init/Kconfig~alignment-config init/Kconfig
+diff -puN kernel/Kconfig-extra.xx~alignment-config kernel/Kconfig-extra.xx
+--- linux-2.6.7-rc3-xx4/kernel/Kconfig-extra.xx~alignment-config	2004-06-14 07:28:56.256228528 -0400
++++ linux-2.6.7-rc3-xx4-xiphux/kernel/Kconfig-extra.xx	2004-06-14 07:29:56.379088464 -0400
+@@ -311,6 +311,44 @@ config CFLAGS_OVERRIDE
+ 	  There is no reason to enable this. You always want the bare minimum for
+ 	  your processor. Say N.
+ 
++config CC_ALIGN_FUNCTIONS
++	int "Function alignment"
++	default 0
++	help
++	  Align the start of functions to the next power-of-two
++          greater than n, skipping up to n bytes. For instance, 32
++          aligns functions to the next 32-byte boundary, but 24 would
++          align to the next 32-byte boundary only if this can be done
++          by skipping 23 bytes or less. Zero means use compiler's
++          default.
++
++config CC_ALIGN_LABELS
++	int "Label alignment"
++	default 0
++	help
++	  Align all branch targets to a power-of-two boundary, skipping
++	  up to n bytes like ALIGN_FUNCTIONS.  This option can easily
++	  make code slower, because it must insert dummy operations for
++	  when the branch target is reached in the usual flow of the code.
++	  Zero means use compiler's default.
++
++config CC_ALIGN_LOOPS
++	int "Loop alignment"
++	default 0
++	help
++	  Align loops to a power-of-two boundary, skipping up to n bytes.
++	  Zero means use compiler's default.
++
++config CC_ALIGN_JUMPS
++	int "Jump alignment"
++	default 0
++	help
++	  Align branch targets to a power-of-two boundary, for branch
++	  targets where the targets can only be reached by jumping,
++	  skipping up to n bytes like ALIGN_FUNCTIONS.  In this case,
++	  no dummy operations need be executed.
++	  Zero means use compiler's default.
++
+ endmenu
+ 
+ config CORE_SMALL
+
+_

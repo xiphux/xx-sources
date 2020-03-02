@@ -1,0 +1,187 @@
+
+From: Jon Smirl <jonsmirl@gmail.com>
+
+This sorts out the usage of PCI_ROM_ADDRESS_ENABLE vs
+IORESOURCE_ROM_ENABLE.  PCI_ROM_ADDRESS_ENABLE is for actually manipulating
+the ROM's PCI config space.  IORESOURCE_ROM_ENABLE is for tracking the
+IORESOURCE that the ROM is enabled.  Both are defined to 1 so code
+shouldn't change.
+
+Just to remind people, there are new PCI routines for enable/disable ROMs
+so please call them instead of directly coding access in device drivers. 
+There are ten or so drivers that need to be converted to the new API.
+
+Signed off by: Jon Smirl <jonsmirl@gmail.com>
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/frv/mb93090-mb00/pci-frv.c    |    6 +++---
+ 25-akpm/arch/i386/pci/i386.c               |    4 ++--
+ 25-akpm/arch/mips/pmc-sierra/yosemite/ht.c |    2 +-
+ 25-akpm/arch/ppc/kernel/pci.c              |    4 ++--
+ 25-akpm/arch/sh/drivers/pci/pci.c          |    2 +-
+ 25-akpm/arch/sh64/kernel/pcibios.c         |    2 +-
+ 25-akpm/arch/sparc64/kernel/pci_psycho.c   |    2 +-
+ 25-akpm/arch/sparc64/kernel/pci_sabre.c    |    2 +-
+ 25-akpm/arch/sparc64/kernel/pci_schizo.c   |    2 +-
+ 25-akpm/drivers/mtd/maps/pci.c             |    6 +++---
+ 10 files changed, 16 insertions(+), 16 deletions(-)
+
+diff -puN arch/frv/mb93090-mb00/pci-frv.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable arch/frv/mb93090-mb00/pci-frv.c
+--- 25/arch/frv/mb93090-mb00/pci-frv.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable	2005-01-09 22:36:20.666276016 -0800
++++ 25-akpm/arch/frv/mb93090-mb00/pci-frv.c	2005-01-09 22:36:20.827251544 -0800
+@@ -31,7 +31,7 @@ pcibios_update_resource(struct pci_dev *
+ 	if (resource < 6) {
+ 		reg = PCI_BASE_ADDRESS_0 + 4*resource;
+ 	} else if (resource == PCI_ROM_RESOURCE) {
+-		res->flags |= PCI_ROM_ADDRESS_ENABLE;
++		res->flags |= IORESOURCE_ROM_ENABLE;
+ 		new |= PCI_ROM_ADDRESS_ENABLE;
+ 		reg = dev->rom_base_reg;
+ 	} else {
+@@ -170,11 +170,11 @@ static void __init pcibios_allocate_reso
+ 		}
+ 		if (!pass) {
+ 			r = &dev->resource[PCI_ROM_RESOURCE];
+-			if (r->flags & PCI_ROM_ADDRESS_ENABLE) {
++			if (r->flags & IORESOURCE_ROM_ENABLE) {
+ 				/* Turn the ROM off, leave the resource region, but keep it unregistered. */
+ 				u32 reg;
+ 				DBG("PCI: Switching off ROM of %s\n", pci_name(dev));
+-				r->flags &= ~PCI_ROM_ADDRESS_ENABLE;
++				r->flags &= ~IORESOURCE_ROM_ENABLE;
+ 				pci_read_config_dword(dev, dev->rom_base_reg, &reg);
+ 				pci_write_config_dword(dev, dev->rom_base_reg, reg & ~PCI_ROM_ADDRESS_ENABLE);
+ 			}
+diff -puN arch/i386/pci/i386.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable arch/i386/pci/i386.c
+--- 25/arch/i386/pci/i386.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable	2005-01-09 22:36:20.668275712 -0800
++++ 25-akpm/arch/i386/pci/i386.c	2005-01-09 22:36:20.827251544 -0800
+@@ -150,11 +150,11 @@ static void __init pcibios_allocate_reso
+ 		}
+ 		if (!pass) {
+ 			r = &dev->resource[PCI_ROM_RESOURCE];
+-			if (r->flags & PCI_ROM_ADDRESS_ENABLE) {
++			if (r->flags & IORESOURCE_ROM_ENABLE) {
+ 				/* Turn the ROM off, leave the resource region, but keep it unregistered. */
+ 				u32 reg;
+ 				DBG("PCI: Switching off ROM of %s\n", pci_name(dev));
+-				r->flags &= ~PCI_ROM_ADDRESS_ENABLE;
++				r->flags &= ~IORESOURCE_ROM_ENABLE;
+ 				pci_read_config_dword(dev, dev->rom_base_reg, &reg);
+ 				pci_write_config_dword(dev, dev->rom_base_reg, reg & ~PCI_ROM_ADDRESS_ENABLE);
+ 			}
+diff -puN arch/mips/pmc-sierra/yosemite/ht.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable arch/mips/pmc-sierra/yosemite/ht.c
+--- 25/arch/mips/pmc-sierra/yosemite/ht.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable	2005-01-09 22:36:20.669275560 -0800
++++ 25-akpm/arch/mips/pmc-sierra/yosemite/ht.c	2005-01-09 22:36:20.828251392 -0800
+@@ -361,7 +361,7 @@ void pcibios_update_resource(struct pci_
+         if (resource < 6) {
+                 reg = PCI_BASE_ADDRESS_0 + 4 * resource;
+         } else if (resource == PCI_ROM_RESOURCE) {
+-                res->flags |= PCI_ROM_ADDRESS_ENABLE;
++		res->flags |= IORESOURCE_ROM_ENABLE;
+                 reg = dev->rom_base_reg;
+         } else {
+                 /*
+diff -puN arch/ppc/kernel/pci.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable arch/ppc/kernel/pci.c
+--- 25/arch/ppc/kernel/pci.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable	2005-01-09 22:36:20.746263856 -0800
++++ 25-akpm/arch/ppc/kernel/pci.c	2005-01-09 22:36:20.829251240 -0800
+@@ -521,11 +521,11 @@ pcibios_allocate_resources(int pass)
+ 		if (pass)
+ 			continue;
+ 		r = &dev->resource[PCI_ROM_RESOURCE];
+-		if (r->flags & PCI_ROM_ADDRESS_ENABLE) {
++		if (r->flags & IORESOURCE_ROM_ENABLE) {
+ 			/* Turn the ROM off, leave the resource region, but keep it unregistered. */
+ 			u32 reg;
+ 			DBG("PCI: Switching off ROM of %s\n", pci_name(dev));
+-			r->flags &= ~PCI_ROM_ADDRESS_ENABLE;
++			r->flags &= ~IORESOURCE_ROM_ENABLE;
+ 			pci_read_config_dword(dev, dev->rom_base_reg, &reg);
+ 			pci_write_config_dword(dev, dev->rom_base_reg,
+ 					       reg & ~PCI_ROM_ADDRESS_ENABLE);
+diff -puN arch/sh64/kernel/pcibios.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable arch/sh64/kernel/pcibios.c
+--- 25/arch/sh64/kernel/pcibios.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable	2005-01-09 22:36:20.791257016 -0800
++++ 25-akpm/arch/sh64/kernel/pcibios.c	2005-01-09 22:36:20.830251088 -0800
+@@ -45,7 +45,7 @@ pcibios_update_resource(struct pci_dev *
+ 	if (resource < 6) {
+ 		reg = PCI_BASE_ADDRESS_0 + 4*resource;
+ 	} else if (resource == PCI_ROM_RESOURCE) {
+-		res->flags |= PCI_ROM_ADDRESS_ENABLE;
++		res->flags |= IORESOURCE_ROM_ENABLE;
+ 		new |= PCI_ROM_ADDRESS_ENABLE;
+ 		reg = dev->rom_base_reg;
+ 	} else {
+diff -puN arch/sh/drivers/pci/pci.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable arch/sh/drivers/pci/pci.c
+--- 25/arch/sh/drivers/pci/pci.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable	2005-01-09 22:36:20.803255192 -0800
++++ 25-akpm/arch/sh/drivers/pci/pci.c	2005-01-09 22:36:20.829251240 -0800
+@@ -57,7 +57,7 @@ pcibios_update_resource(struct pci_dev *
+ 	if (resource < 6) {
+ 		reg = PCI_BASE_ADDRESS_0 + 4*resource;
+ 	} else if (resource == PCI_ROM_RESOURCE) {
+-		res->flags |= PCI_ROM_ADDRESS_ENABLE;
++		res->flags |= IORESOURCE_ROM_ENABLE;
+ 		new |= PCI_ROM_ADDRESS_ENABLE;
+ 		reg = dev->rom_base_reg;
+ 	} else {
+diff -puN arch/sparc64/kernel/pci_psycho.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable arch/sparc64/kernel/pci_psycho.c
+--- 25/arch/sparc64/kernel/pci_psycho.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable	2005-01-09 22:36:20.819252760 -0800
++++ 25-akpm/arch/sparc64/kernel/pci_psycho.c	2005-01-09 22:36:20.831250936 -0800
+@@ -1133,7 +1133,7 @@ static void __init psycho_base_address_u
+ 	       (((u32)(res->start - root->start)) & ~size));
+ 	if (resource == PCI_ROM_RESOURCE) {
+ 		reg |= PCI_ROM_ADDRESS_ENABLE;
+-		res->flags |= PCI_ROM_ADDRESS_ENABLE;
++		res->flags |= IORESOURCE_ROM_ENABLE;
+ 	}
+ 	pci_write_config_dword(pdev, where, reg);
+ 
+diff -puN arch/sparc64/kernel/pci_sabre.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable arch/sparc64/kernel/pci_sabre.c
+--- 25/arch/sparc64/kernel/pci_sabre.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable	2005-01-09 22:36:20.821252456 -0800
++++ 25-akpm/arch/sparc64/kernel/pci_sabre.c	2005-01-09 22:36:20.832250784 -0800
+@@ -1100,7 +1100,7 @@ static void __init sabre_base_address_up
+ 	       (((u32)(res->start - base)) & ~size));
+ 	if (resource == PCI_ROM_RESOURCE) {
+ 		reg |= PCI_ROM_ADDRESS_ENABLE;
+-		res->flags |= PCI_ROM_ADDRESS_ENABLE;
++		res->flags |= IORESOURCE_ROM_ENABLE;
+ 	}
+ 	pci_write_config_dword(pdev, where, reg);
+ 
+diff -puN arch/sparc64/kernel/pci_schizo.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable arch/sparc64/kernel/pci_schizo.c
+--- 25/arch/sparc64/kernel/pci_schizo.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable	2005-01-09 22:36:20.822252304 -0800
++++ 25-akpm/arch/sparc64/kernel/pci_schizo.c	2005-01-09 22:36:20.834250480 -0800
+@@ -1554,7 +1554,7 @@ static void __init schizo_base_address_u
+ 	       (((u32)(res->start - root->start)) & ~size));
+ 	if (resource == PCI_ROM_RESOURCE) {
+ 		reg |= PCI_ROM_ADDRESS_ENABLE;
+-		res->flags |= PCI_ROM_ADDRESS_ENABLE;
++		res->flags |= IORESOURCE_ROM_ENABLE;
+ 	}
+ 	pci_write_config_dword(pdev, where, reg);
+ 
+diff -puN drivers/mtd/maps/pci.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable drivers/mtd/maps/pci.c
+--- 25/drivers/mtd/maps/pci.c~sort-out-pci_rom_address_enable-vs-ioresource_rom_enable	2005-01-09 22:36:20.824252000 -0800
++++ 25-akpm/drivers/mtd/maps/pci.c	2005-01-09 22:36:20.835250328 -0800
+@@ -205,9 +205,9 @@ intel_dc21285_init(struct pci_dev *dev, 
+ 		 * or simply enabling it?
+ 		 */
+ 		if (!(pci_resource_flags(dev, PCI_ROM_RESOURCE) &
+-		     PCI_ROM_ADDRESS_ENABLE)) {
++				    IORESOURCE_ROM_ENABLE)) {
+ 		     	u32 val;
+-			pci_resource_flags(dev, PCI_ROM_RESOURCE) |= PCI_ROM_ADDRESS_ENABLE;
++			pci_resource_flags(dev, PCI_ROM_RESOURCE) |= IORESOURCE_ROM_ENABLE;
+ 			pci_read_config_dword(dev, PCI_ROM_ADDRESS, &val);
+ 			val |= PCI_ROM_ADDRESS_ENABLE;
+ 			pci_write_config_dword(dev, PCI_ROM_ADDRESS, val);
+@@ -241,7 +241,7 @@ intel_dc21285_exit(struct pci_dev *dev, 
+ 	/*
+ 	 * We need to undo the PCI BAR2/PCI ROM BAR address alteration.
+ 	 */
+-	pci_resource_flags(dev, PCI_ROM_RESOURCE) &= ~PCI_ROM_ADDRESS_ENABLE;
++	pci_resource_flags(dev, PCI_ROM_RESOURCE) &= ~IORESOURCE_ROM_ENABLE;
+ 	pci_read_config_dword(dev, PCI_ROM_ADDRESS, &val);
+ 	val &= ~PCI_ROM_ADDRESS_ENABLE;
+ 	pci_write_config_dword(dev, PCI_ROM_ADDRESS, val);
+_

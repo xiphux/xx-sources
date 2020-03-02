@@ -1,0 +1,33 @@
+
+From: Alan Cox <alan@redhat.com>
+
+OSS avoids the Dell lockup by not hitting the problem register (which
+apparently breaks resume on a Sony laptop).  ALSA keeps a flag and uses pci
+subvendor info to clear it for problem Dell laptops.  Unfortunately there
+is at least one other Dell laptop which is affected.  This adds its sub
+id's
+
+[Patch from Dan Williams @ Red Hat slightly reformatted by me]
+
+Signed-off-by: Alan Cox <alan@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/sound/pci/nm256/nm256.c |    4 ++++
+ 1 files changed, 4 insertions(+)
+
+diff -puN sound/pci/nm256/nm256.c~dell-laptop-lockup-fix-for-alsa sound/pci/nm256/nm256.c
+--- 25/sound/pci/nm256/nm256.c~dell-laptop-lockup-fix-for-alsa	2004-06-23 21:44:38.845160472 -0700
++++ 25-akpm/sound/pci/nm256/nm256.c	2004-06-23 21:44:38.849159864 -0700
+@@ -1505,6 +1505,10 @@ snd_nm256_create(snd_card_t *card, struc
+ 		/* this workaround will cause lock-up after suspend/resume on Sony PCG-F305 */
+ 		chip->latitude_workaround = 0;
+ 	}
++	if (subsystem_vendor == 0x1028 && subsystem_device == 0x0080) {
++		/* this workaround will cause lock-up after suspend/resume on a Dell laptop */
++		chip->latitude_workaround = 0;
++	}
+ 
+ 	snd_nm256_init_chip(chip);
+ 
+_

@@ -1,0 +1,1161 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+With prof_cpu_mask and profile_pc() in hand, the core is now able to perform
+all the profile accounting work on behalf of arches.  Consolidate the profile
+accounting and convert all arches to call the core function.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Index: xx-sources/arch/alpha/kernel/irq_impl.h
+===================================================================
+--- xx-sources.orig/arch/alpha/kernel/irq_impl.h	2004-08-14 13:27:28.630970000 -0400
++++ xx-sources/arch/alpha/kernel/irq_impl.h	2004-08-14 13:28:56.243650848 -0400
+@@ -40,30 +40,3 @@
+ extern void init_i8259a_irqs(void);
+ 
+ extern void handle_irq(int irq, struct pt_regs * regs);
+-
+-static inline void
+-alpha_do_profile(unsigned long pc)
+-{
+-	extern char _stext;
+-
+-	if (!prof_buffer)
+-		return;
+-
+-	/*
+-	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+-	 * (default is all CPUs.)
+-	 */
+-	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+-		return;
+-
+-	pc -= (unsigned long) &_stext;
+-	pc >>= prof_shift;
+-	/*
+-	 * Don't ignore out-of-bounds PC values silently,
+-	 * put them into the last histogram slot, so if
+-	 * present, they will show up as a sharp peak.
+-	 */
+-	if (pc > prof_len - 1)
+-		pc = prof_len - 1;
+-	atomic_inc((atomic_t *)&prof_buffer[pc]);
+-}
+Index: xx-sources/arch/alpha/kernel/smp.c
+===================================================================
+--- xx-sources.orig/arch/alpha/kernel/smp.c	2004-08-14 13:24:36.616120232 -0400
++++ xx-sources/arch/alpha/kernel/smp.c	2004-08-14 13:28:56.245650544 -0400
+@@ -25,6 +25,7 @@
+ #include <linux/spinlock.h>
+ #include <linux/irq.h>
+ #include <linux/cache.h>
++#include <linux/profile.h>
+ 
+ #include <asm/hwrpb.h>
+ #include <asm/ptrace.h>
+@@ -599,8 +600,7 @@
+ 	struct cpuinfo_alpha *data = &cpu_data[cpu];
+ 
+ 	/* Record kernel PC.  */
+-	if (!user)
+-		alpha_do_profile(regs->pc);
++	profile_tick(CPU_PROFILING, regs);
+ 
+ 	if (!--data->prof_counter) {
+ 		/* We need to make like a normal interrupt -- otherwise
+Index: xx-sources/arch/alpha/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/alpha/kernel/time.c	2004-08-14 01:36:58.000000000 -0400
++++ xx-sources/arch/alpha/kernel/time.c	2004-08-14 13:28:56.246650392 -0400
+@@ -41,6 +41,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/init.h>
+ #include <linux/bcd.h>
++#include <linux/profile.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/io.h>
+@@ -118,8 +119,7 @@
+ 
+ #ifndef CONFIG_SMP
+ 	/* Not SMP, do kernel PC profiling here.  */
+-	if (!user_mode(regs))
+-		alpha_do_profile(regs->pc);
++	profile_tick(CPU_PROFILING, regs);
+ #endif
+ 
+ 	write_seqlock(&xtime_lock);
+Index: xx-sources/arch/arm/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/arm/kernel/time.c	2004-08-14 01:37:26.000000000 -0400
++++ xx-sources/arch/arm/kernel/time.c	2004-08-14 13:28:56.250649784 -0400
+@@ -79,31 +79,6 @@
+ 	return (unsigned long long)jiffies * (1000000000 / HZ);
+ }
+ 
+-/*
+- * Handle kernel profile stuff...
+- */
+-static inline void do_profile(struct pt_regs *regs)
+-{
+-
+-	profile_hook(regs);
+-
+-	if (!user_mode(regs) &&
+-	    prof_buffer &&
+-	    current->pid) {
+-		unsigned long pc = instruction_pointer(regs);
+-		extern int _stext;
+-
+-		pc -= (unsigned long)&_stext;
+-
+-		pc >>= prof_shift;
+-
+-		if (pc >= prof_len)
+-			pc = prof_len - 1;
+-
+-		prof_buffer[pc] += 1;
+-	}
+-}
+-
+ static unsigned long next_rtc_update;
+ 
+ /*
+@@ -317,7 +292,7 @@
+ 
+ void timer_tick(struct pt_regs *regs)
+ {
+-	do_profile(regs);
++	profile_tick(CPU_PROFILING, regs);
+ 	do_leds();
+ 	do_set_rtc();
+ 	do_timer(regs);
+Index: xx-sources/arch/arm26/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/arm26/kernel/time.c	2004-08-14 01:37:25.000000000 -0400
++++ xx-sources/arch/arm26/kernel/time.c	2004-08-14 13:28:56.247650240 -0400
+@@ -67,28 +67,6 @@
+  */
+ unsigned long (*gettimeoffset)(void) = dummy_gettimeoffset;
+ 
+-/*
+- * Handle kernel profile stuff...
+- */
+-static inline void do_profile(struct pt_regs *regs)
+-{
+-	if (!user_mode(regs) &&
+-	    prof_buffer &&
+-	    current->pid) {
+-		unsigned long pc = instruction_pointer(regs);
+-		extern int _stext;
+-
+-		pc -= (unsigned long)&_stext;
+-
+-		pc >>= prof_shift;
+-
+-		if (pc >= prof_len)
+-			pc = prof_len - 1;
+-
+-		prof_buffer[pc] += 1;
+-	}
+-}
+-
+ static unsigned long next_rtc_update;
+ 
+ /*
+@@ -189,7 +167,7 @@
+ {
+         do_timer(regs);
+         do_set_rtc(); //FIME - EVERY timer IRQ?
+-        do_profile(regs);
++        profile_tick(CPU_PROFILING, regs);
+ 	return IRQ_HANDLED; //FIXME - is this right?
+ }
+ 
+Index: xx-sources/arch/h8300/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/h8300/kernel/time.c	2004-08-14 01:36:44.000000000 -0400
++++ xx-sources/arch/h8300/kernel/time.c	2004-08-14 13:28:56.252649480 -0400
+@@ -36,24 +36,6 @@
+ 
+ EXPORT_SYMBOL(jiffies_64);
+ 
+-static inline void do_profile (unsigned long pc)
+-{
+-	if (prof_buffer && current->pid) {
+-		extern int _stext;
+-		pc -= (unsigned long) &_stext;
+-		pc >>= prof_shift;
+-		if (pc < prof_len)
+-			++prof_buffer[pc];
+-		else
+-		/*
+-		 * Don't ignore out-of-bounds PC values silently,
+-		 * put them into the last histogram slot, so if
+-		 * present, they will show up as a sharp peak.
+-		 */
+-			++prof_buffer[prof_len-1];
+-	}
+-}
+-
+ /*
+  * timer_interrupt() needs to keep up the real-time clock,
+  * as well as call the "do_timer()" routine every clocktick
+@@ -64,10 +46,7 @@
+ 	platform_timer_eoi();
+ 
+ 	do_timer(regs);
+-
+-	if (!user_mode(regs))
+-		do_profile(regs->pc);
+-
++	profile_tick(CPU_PROFILING, regs);
+ }
+ 
+ void time_init(void)
+Index: xx-sources/arch/i386/kernel/apic.c
+===================================================================
+--- xx-sources.orig/arch/i386/kernel/apic.c	2004-08-14 13:27:23.528745656 -0400
++++ xx-sources/arch/i386/kernel/apic.c	2004-08-14 13:28:56.255649024 -0400
+@@ -1072,8 +1072,7 @@
+ {
+ 	int cpu = smp_processor_id();
+ 
+-	x86_do_profile(regs);
+-
++	profile_tick(CPU_PROFILING, regs);
+ 	if (--per_cpu(prof_counter, cpu) <= 0) {
+ 		/*
+ 		 * The multiplier may have changed since the last time we got
+Index: xx-sources/arch/i386/mach-voyager/voyager_smp.c
+===================================================================
+--- xx-sources.orig/arch/i386/mach-voyager/voyager_smp.c	2004-08-14 13:25:30.530923936 -0400
++++ xx-sources/arch/i386/mach-voyager/voyager_smp.c	2004-08-14 13:28:56.258648568 -0400
+@@ -1287,8 +1287,7 @@
+ 	int cpu = smp_processor_id();
+ 	long weight;
+ 
+-	x86_do_profile(regs);
+-
++	profile_tick(CPU_PROFILING, regs);
+ 	if (--per_cpu(prof_counter, cpu) <= 0) {
+ 		/*
+ 		 * The multiplier may have changed since the last time we got
+Index: xx-sources/arch/ia64/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/ia64/kernel/time.c	2004-08-14 13:27:33.670203920 -0400
++++ xx-sources/arch/ia64/kernel/time.c	2004-08-14 13:28:56.259648416 -0400
+@@ -186,49 +186,6 @@
+ 
+ EXPORT_SYMBOL(do_gettimeofday);
+ 
+-/*
+- * The profiling function is SMP safe. (nothing can mess
+- * around with "current", and the profiling counters are
+- * updated with atomic operations). This is especially
+- * useful with a profiling multiplier != 1
+- */
+-static inline void
+-ia64_do_profile (struct pt_regs * regs)
+-{
+-	unsigned long ip;
+-
+-	profile_hook(regs);
+-
+-	if (user_mode(regs))
+-		return;
+-
+-	if (!prof_buffer)
+-		return;
+-
+-	/* Conserve space in histogram by encoding slot bits in address
+-	 * bits 2 and 3 rather than bits 0 and 1.
+-	 */
+-	ip = profile_pc(regs);
+-
+-	/*
+-	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+-	 * (default is all CPUs.)
+-	 */
+-	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+-		return;
+-
+-	ip -= (unsigned long) &_stext;
+-	ip >>= prof_shift;
+-	/*
+-	 * Don't ignore out-of-bounds IP values silently,
+-	 * put them into the last histogram slot, so if
+-	 * present, they will show up as a sharp peak.
+-	 */
+-	if (ip > prof_len-1)
+-		ip = prof_len-1;
+-	atomic_inc((atomic_t *)&prof_buffer[ip]);
+-}
+-
+ static irqreturn_t
+ timer_interrupt (int irq, void *dev_id, struct pt_regs *regs)
+ {
+@@ -246,7 +203,7 @@
+ 		printk(KERN_ERR "Oops: timer tick before it's due (itc=%lx,itm=%lx)\n",
+ 		       ia64_get_itc(), new_itm);
+ 
+-	ia64_do_profile(regs);
++	profile_tick(CPU_PROFILING, regs);
+ 
+ 	while (1) {
+ #ifdef CONFIG_SMP
+Index: xx-sources/arch/m68k/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/m68k/kernel/time.c	2004-08-14 01:36:32.000000000 -0400
++++ xx-sources/arch/m68k/kernel/time.c	2004-08-14 13:28:56.261648112 -0400
+@@ -38,24 +38,6 @@
+   return -1;
+ }
+ 
+-static inline void do_profile (unsigned long pc)
+-{
+-	if (prof_buffer && current->pid) {
+-		extern int _stext;
+-		pc -= (unsigned long) &_stext;
+-		pc >>= prof_shift;
+-		if (pc < prof_len)
+-			++prof_buffer[pc];
+-		else
+-		/*
+-		 * Don't ignore out-of-bounds PC values silently,
+-		 * put them into the last histogram slot, so if
+-		 * present, they will show up as a sharp peak.
+-		 */
+-			++prof_buffer[prof_len-1];
+-	}
+-}
+-
+ /*
+  * timer_interrupt() needs to keep up the real-time clock,
+  * as well as call the "do_timer()" routine every clocktick
+@@ -63,9 +45,7 @@
+ static irqreturn_t timer_interrupt(int irq, void *dummy, struct pt_regs * regs)
+ {
+ 	do_timer(regs);
+-
+-	if (!user_mode(regs))
+-		do_profile(regs->pc);
++	profile_tick(CPU_PROFILING, regs);
+ 
+ #ifdef CONFIG_HEARTBEAT
+ 	/* use power LED as a heartbeat instead -- much more useful
+Index: xx-sources/arch/m68knommu/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/m68knommu/kernel/time.c	2004-08-14 01:37:25.000000000 -0400
++++ xx-sources/arch/m68knommu/kernel/time.c	2004-08-14 13:28:56.262647960 -0400
+@@ -41,24 +41,6 @@
+ 	return -1;
+ }
+ 
+-static inline void do_profile (unsigned long pc)
+-{
+-	if (prof_buffer && current->pid) {
+-		extern int _stext;
+-		pc -= (unsigned long) &_stext;
+-		pc >>= prof_shift;
+-		if (pc < prof_len)
+-			++prof_buffer[pc];
+-		else
+-		/*
+-		 * Don't ignore out-of-bounds PC values silently,
+-		 * put them into the last histogram slot, so if
+-		 * present, they will show up as a sharp peak.
+-		 */
+-			++prof_buffer[prof_len-1];
+-	}
+-}
+-
+ /*
+  * timer_interrupt() needs to keep up the real-time clock,
+  * as well as call the "do_timer()" routine every clocktick
+@@ -75,9 +57,8 @@
+ 	write_seqlock(&xtime_lock);
+ 
+ 	do_timer(regs);
+-
+-	if (!user_mode(regs))
+-		do_profile(regs->pc);
++	if (current->pid)
++		profile_tick(CPU_PROFILING, regs);
+ 
+ 	/*
+ 	 * If we have an externally synchronized Linux clock, then update
+Index: xx-sources/arch/m68knommu/platform/5307/timers.c
+===================================================================
+--- xx-sources.orig/arch/m68knommu/platform/5307/timers.c	2004-08-14 01:38:10.000000000 -0400
++++ xx-sources/arch/m68knommu/platform/5307/timers.c	2004-08-14 13:28:56.264647656 -0400
+@@ -110,17 +110,8 @@
+ {
+ 	/* Reset ColdFire timer2 */
+ 	mcf_proftp->ter = MCFTIMER_TER_CAP | MCFTIMER_TER_REF;
+-
+-        if (!user_mode(regs)) {
+-                if (prof_buffer && current->pid) {
+-                        extern int _stext;
+-                        unsigned long ip = instruction_pointer(regs);
+-                        ip -= (unsigned long) &_stext;
+-                        ip >>= prof_shift;
+-                        if (ip < prof_len)
+-                                prof_buffer[ip]++;
+-                }
+-        }
++	if (current->pid)
++		profile_tick(CPU_PROFILING, regs);
+ }
+ 
+ /***************************************************************************/
+Index: xx-sources/arch/mips/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/mips/kernel/time.c	2004-08-14 01:36:56.000000000 -0400
++++ xx-sources/arch/mips/kernel/time.c	2004-08-14 13:28:56.265647504 -0400
+@@ -417,23 +417,8 @@
+  */
+ void local_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ {
+-	if (!user_mode(regs)) {
+-		if (prof_buffer && current->pid) {
+-			unsigned long pc = regs->cp0_epc;
+-
+-			pc -= (unsigned long) _stext;
+-			pc >>= prof_shift;
+-			/*
+-			 * Dont ignore out-of-bounds pc values silently,
+-			 * put them into the last histogram slot, so if
+-			 * present, they will show up as a sharp peak.
+-			 */
+-			if (pc > prof_len - 1)
+-				pc = prof_len - 1;
+-			atomic_inc((atomic_t *)&prof_buffer[pc]);
+-		}
+-	}
+-
++	if (current->pid)
++		profile_tick(CPU_PROFILING, regs);
+ #ifdef CONFIG_SMP
+ 	/* in UP mode, update_process_times() is invoked by do_timer() */
+ 	update_process_times(user_mode(regs));
+Index: xx-sources/arch/parisc/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/parisc/kernel/time.c	2004-08-14 13:27:28.637968936 -0400
++++ xx-sources/arch/parisc/kernel/time.c	2004-08-14 13:28:56.267647200 -0400
+@@ -47,41 +47,6 @@
+ extern void smp_do_timer(struct pt_regs *regs);
+ #endif
+ 
+-static inline void
+-parisc_do_profile(struct pt_regs *regs)
+-{
+-	unsigned long pc = regs->iaoq[0];
+-	extern char _stext;
+-
+-	profile_hook(regs);
+-
+-	if (user_mode(regs))
+-		return;
+-
+-	if (!prof_buffer)
+-		return;
+-
+-#if 0
+-	/* FIXME: when we have irq affinity to cpu, we need to
+-	 * only look at the cpus specified in this mask 
+-	 */
+-
+-	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+-		return;
+-#endif
+-
+-	pc -= (unsigned long) &_stext;
+-	pc >>= prof_shift;
+-	/*
+-	 * Don't ignore out-of-bounds PC values silently,
+-	 * put them into the last histogram slot, so if
+-	 * present, they will show up as a sharp peak.
+-	 */
+-	if (pc > prof_len - 1)
+-		pc = prof_len - 1;
+-	atomic_inc((atomic_t *)&prof_buffer[pc]);
+-}
+-
+ irqreturn_t timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ {
+ 	long now;
+@@ -89,7 +54,7 @@
+ 	int nticks;
+ 	int cpu = smp_processor_id();
+ 
+-	parisc_do_profile(regs);
++	profile_tick(CPU_PROFILING, regs);
+ 
+ 	now = mfctl(16);
+ 	/* initialize next_tick to time at last clocktick */
+Index: xx-sources/arch/ppc/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/ppc/kernel/time.c	2004-08-14 13:27:28.697959816 -0400
++++ xx-sources/arch/ppc/kernel/time.c	2004-08-14 13:28:56.271646592 -0400
+@@ -108,41 +108,6 @@
+ 	return delta;
+ }
+ 
+-extern char _stext;
+-
+-static inline void ppc_do_profile (struct pt_regs *regs)
+-{
+-	unsigned long nip;
+-
+-	profile_hook(regs);
+-
+-	if (user_mode(regs))
+-		return;
+-
+-	if (!prof_buffer)
+-		return;
+-
+-	nip = instruction_pointer(regs);
+-
+-	/*
+-	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+-	 * (default is all CPUs.)
+-	 */
+-	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+-		return;
+-
+-	nip -= (unsigned long) &_stext;
+-	nip >>= prof_shift;
+-	/*
+-	 * Don't ignore out-of-bounds EIP values silently,
+-	 * put them into the last histogram slot, so if
+-	 * present, they will show up as a sharp peak.
+-	 */
+-	if (nip > prof_len-1)
+-		nip = prof_len-1;
+-	atomic_inc((atomic_t *)&prof_buffer[nip]);
+-}
+-
+ /*
+  * timer_interrupt - gets called when the decrementer overflows,
+  * with interrupts disabled.
+@@ -163,7 +128,7 @@
+ 	while ((next_dec = tb_ticks_per_jiffy - tb_delta(&jiffy_stamp)) <= 0) {
+ 		jiffy_stamp += tb_ticks_per_jiffy;
+ 		
+-		ppc_do_profile(regs);
++		profile_tick(CPU_PROFILING, regs);
+ 
+ 	  	if (smp_processor_id())
+ 			continue;
+Index: xx-sources/arch/ppc64/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/ppc64/kernel/time.c	2004-08-14 13:27:28.639968632 -0400
++++ xx-sources/arch/ppc64/kernel/time.c	2004-08-14 13:28:56.269646896 -0400
+@@ -105,45 +105,6 @@
+ 
+ static unsigned adjusting_time = 0;
+ 
+-/*
+- * The profiling function is SMP safe. (nothing can mess
+- * around with "current", and the profiling counters are
+- * updated with atomic operations). This is especially
+- * useful with a profiling multiplier != 1
+- */
+-static inline void ppc64_do_profile(struct pt_regs *regs)
+-{
+-	unsigned long nip;
+-
+-	profile_hook(regs);
+-
+-	if (user_mode(regs))
+-		return;
+-
+-	if (!prof_buffer)
+-		return;
+-
+-	nip = instruction_pointer(regs);
+-
+-	/*
+-	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+-	 * (default is all CPUs.)
+-	 */
+-	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+-		return;
+-
+-	nip -= (unsigned long)_stext;
+-	nip >>= prof_shift;
+-	/*
+-	 * Don't ignore out-of-bounds EIP values silently,
+-	 * put them into the last histogram slot, so if
+-	 * present, they will show up as a sharp peak.
+-	 */
+-	if (nip > prof_len-1)
+-		nip = prof_len-1;
+-	atomic_inc((atomic_t *)&prof_buffer[nip]);
+-}
+-
+ static __inline__ void timer_check_rtc(void)
+ {
+         /*
+@@ -272,7 +233,7 @@
+ 	irq_enter();
+ 
+ #ifndef CONFIG_PPC_ISERIES
+-	ppc64_do_profile(regs);
++	profile_tick(CPU_PROFILING, regs);
+ #endif
+ 
+ 	lpaca->lppaca.xIntDword.xFields.xDecrInt = 0;
+Index: xx-sources/arch/s390/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/s390/kernel/time.c	2004-08-14 13:27:28.699959512 -0400
++++ xx-sources/arch/s390/kernel/time.c	2004-08-14 13:28:56.272646440 -0400
+@@ -174,46 +174,7 @@
+ 
+ 
+ #ifdef CONFIG_PROFILING
+-extern char _stext, _etext;
+-
+-/*
+- * The profiling function is SMP safe. (nothing can mess
+- * around with "current", and the profiling counters are
+- * updated with atomic operations). This is especially
+- * useful with a profiling multiplier != 1
+- */
+-static inline void s390_do_profile(struct pt_regs * regs)
+-{
+-	unsigned long eip;
+-
+-	profile_hook(regs);
+-
+-	if (user_mode(regs))
+-		return;
+-
+-	if (!prof_buffer)
+-		return;
+-
+-	eip = instruction_pointer(regs);
+-
+-	/*
+-	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+-	 * (default is all CPUs.)
+-	 */
+-	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+-		return;
+-
+-	eip -= (unsigned long) &_stext;
+-	eip >>= prof_shift;
+-	/*
+-	 * Don't ignore out-of-bounds EIP values silently,
+-	 * put them into the last histogram slot, so if
+-	 * present, they will show up as a sharp peak.
+-	 */
+-	if (eip > prof_len-1)
+-		eip = prof_len-1;
+-	atomic_inc((atomic_t *)&prof_buffer[eip]);
+-}
++#define s390_do_profile(regs)	profile_tick(CPU_PROFILING, regs)
+ #else
+ #define s390_do_profile(regs)  do { ; } while(0)
+ #endif /* CONFIG_PROFILING */
+Index: xx-sources/arch/sh/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/sh/kernel/time.c	2004-08-14 13:27:34.250115760 -0400
++++ xx-sources/arch/sh/kernel/time.c	2004-08-14 13:28:56.278645528 -0400
+@@ -24,6 +24,7 @@
+ #include <linux/delay.h>
+ #include <linux/init.h>
+ #include <linux/smp.h>
++#include <linux/profile.h>
+ 
+ #include <asm/processor.h>
+ #include <asm/uaccess.h>
+@@ -250,32 +251,6 @@
+ /* last time the RTC clock got updated */
+ static long last_rtc_update;
+ 
+-/* Profiling definitions */
+-extern unsigned int * prof_buffer;
+-extern unsigned long prof_len;
+-extern unsigned long prof_shift;
+-extern char _stext;
+-
+-static inline void sh_do_profile(unsigned long pc)
+-{
+-	/* Don't profile cpu_idle.. */
+-	if (!prof_buffer || !current->pid)
+-		return;
+-
+-	pc -= (unsigned long)&_stext;
+-	pc >>= prof_shift;
+-
+-	/*
+-	 * Don't ignore out-of-bounds PC values silently,
+-	 * put them into the last histogram slot, so if
+-	 * present, they will show up as a sharp peak.
+-	 */
+-	if (pc > prof_len - 1)
+-		pc = prof_len - 1;
+-
+-	atomic_inc((atomic_t *)&prof_buffer[pc]);
+-}
+-
+ /*
+  * timer_interrupt() needs to keep up the real-time clock,
+  * as well as call the "do_timer()" routine every clocktick
+@@ -283,9 +258,7 @@
+ static inline void do_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ {
+ 	do_timer(regs);
+-
+-	if (!user_mode(regs))
+-		sh_do_profile(profile_pc(regs));
++	profile_tick(CPU_PROFILING, regs);
+ 
+ #ifdef CONFIG_HEARTBEAT
+ 	if (sh_mv.mv_heartbeat != NULL) 
+Index: xx-sources/arch/sh64/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/sh64/kernel/time.c	2004-08-14 01:36:59.000000000 -0400
++++ xx-sources/arch/sh64/kernel/time.c	2004-08-14 13:28:56.274646136 -0400
+@@ -298,37 +298,6 @@
+ /* last time the RTC clock got updated */
+ static long last_rtc_update = 0;
+ 
+-static inline void sh64_do_profile(struct pt_regs *regs)
+-{
+-	extern int _stext;
+-	unsigned long pc;
+-
+-	profile_hook(regs);
+-
+-	if (user_mode(regs))
+-		return;
+-
+-	/* Don't profile cpu_idle..  */
+-	if (!prof_buffer || !current->pid)
+-		return;
+-
+-	pc = instruction_pointer(regs);
+-	pc -= (unsigned long) &_stext;
+-	pc >>= prof_shift;
+-
+-	/*
+-	 * Don't ignore out-of-bounds PC values silently, put them into the
+-	 * last histogram slot, so if present, they will show up as a sharp
+-	 * peak.
+-	 */
+-	if (pc > prof_len - 1)
+-		pc = prof_len - 1;
+-
+-	/* We could just be sloppy and not lock against a re-entry on this
+-	   increment, but the profiling code won't always be linked in anyway. */
+-	atomic_inc((atomic_t *)&prof_buffer[pc]);
+-}
+-
+ /*
+  * timer_interrupt() needs to keep up the real-time clock,
+  * as well as call the "do_timer()" routine every clocktick
+@@ -340,8 +309,7 @@
+ 	ctc_last_interrupt = (unsigned long) current_ctc;
+ 
+ 	do_timer(regs);
+-
+-	sh64_do_profile(regs);
++	profile_tick(CPU_PROFILING, regs);
+ 
+ #ifdef CONFIG_HEARTBEAT
+ 	{
+Index: xx-sources/arch/sparc/kernel/sun4d_smp.c
+===================================================================
+--- xx-sources.orig/arch/sparc/kernel/sun4d_smp.c	2004-08-14 13:28:40.905982528 -0400
++++ xx-sources/arch/sparc/kernel/sun4d_smp.c	2004-08-14 13:28:56.291643552 -0400
+@@ -410,8 +410,6 @@
+ 	panic("Bogon SMP message pass.");
+ }
+ 
+-extern void sparc_do_profile(unsigned long pc, unsigned long o7);
+-
+ void smp4d_percpu_timer_interrupt(struct pt_regs *regs)
+ {
+ 	int cpu = hard_smp4d_processor_id();
+@@ -429,8 +427,7 @@
+ 		show_leds(cpu);
+ 	}
+ 
+-	if(!user_mode(regs))
+-		sparc_do_profile(regs->pc, regs->u_regs[UREG_RETPC]);
++	profile_tick(CPU_PROFILING, regs);
+ 
+ 	if(!--prof_counter(cpu)) {
+ 		int user = user_mode(regs);
+Index: xx-sources/arch/sparc/kernel/sun4m_smp.c
+===================================================================
+--- xx-sources.orig/arch/sparc/kernel/sun4m_smp.c	2004-08-14 13:28:40.906982376 -0400
++++ xx-sources/arch/sparc/kernel/sun4m_smp.c	2004-08-14 13:28:56.292643400 -0400
+@@ -392,16 +392,13 @@
+ 	ccall_info.processors_out[i] = 1;
+ }
+ 
+-extern void sparc_do_profile(unsigned long pc, unsigned long o7);
+-
+ void smp4m_percpu_timer_interrupt(struct pt_regs *regs)
+ {
+ 	int cpu = smp_processor_id();
+ 
+ 	clear_profile_irq(cpu);
+ 
+-	if(!user_mode(regs))
+-		sparc_do_profile(regs->pc, regs->u_regs[UREG_RETPC]);
++	profile_tick(CPU_PROFILING, regs);
+ 
+ 	if(!--prof_counter(cpu)) {
+ 		int user = user_mode(regs);
+Index: xx-sources/arch/sparc/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/sparc/kernel/time.c	2004-08-14 13:27:34.254115152 -0400
++++ xx-sources/arch/sparc/kernel/time.c	2004-08-14 13:28:56.294643096 -0400
+@@ -99,26 +99,6 @@
+ 	return pc;
+ }
+ 
+-static spinlock_t ticker_lock = SPIN_LOCK_UNLOCKED;
+-
+-/* 32-bit Sparc specific profiling function. */
+-void sparc_do_profile(unsigned long pc, unsigned long o7)
+-{
+-	if(prof_buffer && current->pid) {
+-		extern int _stext;
+-
+-		pc -= (unsigned long) &_stext;
+-		pc >>= prof_shift;
+-
+-		spin_lock(&ticker_lock);
+-		if(pc < prof_len)
+-			prof_buffer[pc]++;
+-		else
+-			prof_buffer[prof_len - 1]++;
+-		spin_unlock(&ticker_lock);
+-	}
+-}
+-
+ __volatile__ unsigned int *master_l10_counter;
+ __volatile__ unsigned int *master_l10_limit;
+ 
+@@ -135,8 +115,7 @@
+ 	static long last_rtc_update;
+ 
+ #ifndef CONFIG_SMP
+-	if(!user_mode(regs))
+-		sparc_do_profile(profile_pc(regs));
++	profile_tick(CPU_PROFILING, regs);
+ #endif
+ 
+ 	/* Protect counter clear so that do_gettimeoffset works */
+Index: xx-sources/arch/sparc64/kernel/smp.c
+===================================================================
+--- xx-sources.orig/arch/sparc64/kernel/smp.c	2004-08-14 13:28:49.224717888 -0400
++++ xx-sources/arch/sparc64/kernel/smp.c	2004-08-14 13:28:56.280645224 -0400
+@@ -975,8 +975,6 @@
+ 	smp_cross_call(&xcall_promstop, 0, 0, 0);
+ }
+ 
+-extern void sparc64_do_profile(struct pt_regs *regs);
+-
+ #define prof_multiplier(__cpu)		cpu_data(__cpu).multiplier
+ #define prof_counter(__cpu)		cpu_data(__cpu).counter
+ 
+@@ -1002,7 +1000,7 @@
+ 	}
+ 
+ 	do {
+-		sparc64_do_profile(regs);
++		profile_tick(CPU_PROFILING, regs);
+ 		if (!--prof_counter(cpu)) {
+ 			irq_enter();
+ 
+Index: xx-sources/arch/sparc64/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/sparc64/kernel/time.c	2004-08-14 13:28:49.227717432 -0400
++++ xx-sources/arch/sparc64/kernel/time.c	2004-08-14 13:28:56.285644464 -0400
+@@ -472,7 +472,7 @@
+ 
+ 	do {
+ #ifndef CONFIG_SMP
+-		sparc64_do_profile(regs);
++		profile_tick(CPU_PROFILING, regs);
+ #endif
+ 		do_timer(regs);
+ 
+Index: xx-sources/arch/v850/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/v850/kernel/time.c	2004-08-14 01:37:25.000000000 -0400
++++ xx-sources/arch/v850/kernel/time.c	2004-08-14 13:28:56.297642640 -0400
+@@ -40,24 +40,6 @@
+ 	return (unsigned long long)jiffies * (1000000000 / HZ);
+ }
+ 
+-static inline void do_profile (unsigned long pc)
+-{
+-	if (prof_buffer && current->pid) {
+-		extern int _stext;
+-		pc -= (unsigned long) &_stext;
+-		pc >>= prof_shift;
+-		if (pc < prof_len)
+-			++prof_buffer[pc];
+-		else
+-		/*
+-		 * Don't ignore out-of-bounds PC values silently,
+-		 * put them into the last histogram slot, so if
+-		 * present, they will show up as a sharp peak.
+-		 */
+-			++prof_buffer[prof_len-1];
+-	}
+-}
+-
+ /*
+  * timer_interrupt() needs to keep up the real-time clock,
+  * as well as call the "do_timer()" routine every clocktick
+@@ -74,10 +56,7 @@
+ 	  mach_tick ();
+ 
+ 	do_timer (regs);
+-
+-	if (! user_mode (regs))
+-		do_profile (regs->pc);
+-
++	profile_tick(CPU_PROFILING, regs);
+ #if 0
+ 	/*
+ 	 * If we have an externally synchronized Linux clock, then update
+Index: xx-sources/arch/x86_64/kernel/apic.c
+===================================================================
+--- xx-sources.orig/arch/x86_64/kernel/apic.c	2004-08-14 01:36:17.000000000 -0400
++++ xx-sources/arch/x86_64/kernel/apic.c	2004-08-14 13:28:56.299642336 -0400
+@@ -836,8 +836,7 @@
+ {
+ 	int cpu = smp_processor_id();
+ 
+-	x86_do_profile(regs);
+-
++	profile_tick(CPU_PROFILING, regs);
+ 	if (--per_cpu(prof_counter, cpu) <= 0) {
+ 		/*
+ 		 * The multiplier may have changed since the last time we got
+Index: xx-sources/arch/x86_64/kernel/time.c
+===================================================================
+--- xx-sources.orig/arch/x86_64/kernel/time.c	2004-08-14 13:26:51.547607528 -0400
++++ xx-sources/arch/x86_64/kernel/time.c	2004-08-14 13:28:56.302641880 -0400
+@@ -396,7 +396,7 @@
+  */
+ 
+ #ifndef CONFIG_X86_LOCAL_APIC
+-	x86_do_profile(regs);
++	profile_tick(CPU_PROFILING, regs);
+ #else
+ 	if (!using_apic_timer)
+ 		smp_local_timer_interrupt(regs);
+Index: xx-sources/include/asm-i386/hw_irq.h
+===================================================================
+--- xx-sources.orig/include/asm-i386/hw_irq.h	2004-08-14 13:27:28.704958752 -0400
++++ xx-sources/include/asm-i386/hw_irq.h	2004-08-14 13:28:56.303641728 -0400
+@@ -68,48 +68,6 @@
+ 
+ #define IO_APIC_IRQ(x) (((x) >= 16) || ((1<<(x)) & io_apic_irqs))
+ 
+-static inline void __do_profile(unsigned long eip)
+-{
+-	if (!prof_buffer)
+-		return;
+-
+-	/*
+-	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+-	 * (default is all CPUs.)
+-	 */
+-	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+-		return;
+-
+-	eip -= (unsigned long)_stext;
+-	eip >>= prof_shift;
+-	/*
+-	 * Don't ignore out-of-bounds EIP values silently,
+-	 * put them into the last histogram slot, so if
+-	 * present, they will show up as a sharp peak.
+-	 */
+-	if (eip > prof_len-1)
+-		eip = prof_len-1;
+-	atomic_inc((atomic_t *)&prof_buffer[eip]);
+-}
+- 
+-#define kern_profile(eip) __do_profile(eip)
+-
+-/*
+- * The profiling function is SMP safe. (nothing can mess
+- * around with "current", and the profiling counters are
+- * updated with atomic operations). This is especially
+- * useful with a profiling multiplier != 1
+- */
+-static inline void x86_do_profile(struct pt_regs * regs)
+-{
+-	profile_hook(regs);
+-
+-	if (prof_on != 1 || user_mode(regs))
+-		return;
+-
+-	__do_profile(regs->eip);
+-}
+-
+ #if defined(CONFIG_X86_IO_APIC)
+ static inline void hw_resend_irq(struct hw_interrupt_type *h, unsigned int i)
+ {
+Index: xx-sources/include/asm-i386/mach-default/do_timer.h
+===================================================================
+--- xx-sources.orig/include/asm-i386/mach-default/do_timer.h	2004-08-14 01:37:41.000000000 -0400
++++ xx-sources/include/asm-i386/mach-default/do_timer.h	2004-08-14 13:28:56.303641728 -0400
+@@ -22,7 +22,7 @@
+  * system, in that case we have to call the local interrupt handler.
+  */
+ #ifndef CONFIG_X86_LOCAL_APIC
+-	x86_do_profile(regs);
++	profile_tick(CPU_PROFILING, regs);
+ #else
+ 	if (!using_apic_timer)
+ 		smp_local_timer_interrupt(regs);
+Index: xx-sources/include/asm-i386/mach-visws/do_timer.h
+===================================================================
+--- xx-sources.orig/include/asm-i386/mach-visws/do_timer.h	2004-08-14 01:36:44.000000000 -0400
++++ xx-sources/include/asm-i386/mach-visws/do_timer.h	2004-08-14 13:28:56.304641576 -0400
+@@ -15,7 +15,7 @@
+  * system, in that case we have to call the local interrupt handler.
+  */
+ #ifndef CONFIG_X86_LOCAL_APIC
+-	x86_do_profile(regs);
++	profile_tick(CPU_PROFILING, regs);
+ #else
+ 	if (!using_apic_timer)
+ 		smp_local_timer_interrupt(regs);
+Index: xx-sources/include/asm-x86_64/hw_irq.h
+===================================================================
+--- xx-sources.orig/include/asm-x86_64/hw_irq.h	2004-08-14 13:27:28.704958752 -0400
++++ xx-sources/include/asm-x86_64/hw_irq.h	2004-08-14 13:28:56.305641424 -0400
+@@ -130,39 +130,6 @@
+ 	"push $" #nr "-256 ; " \
+ 	"jmp common_interrupt");
+ 
+-static inline void x86_do_profile (struct pt_regs *regs) 
+-{
+-	unsigned long rip;
+-	extern char _stext[];
+- 
+-	profile_hook(regs);
+-
+-	if (user_mode(regs))
+-		return;
+-	if (!prof_buffer)
+-		return;
+-
+-	rip = regs->rip;
+-
+-	/*
+-	 * Only measure the CPUs specified by /proc/irq/prof_cpu_mask.
+-	 * (default is all CPUs.)
+-	 */
+-	if (!cpu_isset(smp_processor_id(), prof_cpu_mask))
+-		return;
+-
+-	rip -= (unsigned long) &_stext;
+-	rip >>= prof_shift;
+-	/*
+-	 * Don't ignore out-of-bounds EIP values silently,
+-	 * put them into the last histogram slot, so if
+-	 * present, they will show up as a sharp peak.
+-	 */
+-	if (rip > prof_len-1)
+-		rip = prof_len-1;
+-	atomic_inc((atomic_t *)&prof_buffer[rip]);
+-}
+-
+ #if defined(CONFIG_X86_IO_APIC) && defined(CONFIG_SMP)
+ static inline void hw_resend_irq(struct hw_interrupt_type *h, unsigned int i) {
+ 	if (IO_APIC_IRQ(i))
+Index: xx-sources/include/linux/profile.h
+===================================================================
+--- xx-sources.orig/include/linux/profile.h	2004-08-14 13:27:28.705958600 -0400
++++ xx-sources/include/linux/profile.h	2004-08-14 13:28:56.306641272 -0400
+@@ -9,7 +9,11 @@
+ #include <linux/cpumask.h>
+ #include <asm/errno.h>
+ 
++#define CPU_PROFILING	1
++#define SCHED_PROFILING	2
++
+ struct proc_dir_entry;
++struct pt_regs;
+ 
+ /* parse command line */
+ int __init profile_setup(char * str);
+@@ -17,6 +21,8 @@
+ /* init basic kernel profiler */
+ void __init profile_init(void);
+ void create_prof_cpu_mask(struct proc_dir_entry *);
++void profile_tick(int, struct pt_regs *);
++void profile_hit(int, void *);
+ 
+ extern unsigned int * prof_buffer;
+ extern unsigned long prof_len;
+Index: xx-sources/kernel/profile.c
+===================================================================
+--- xx-sources.orig/kernel/profile.c	2004-08-14 13:27:28.706958448 -0400
++++ xx-sources/kernel/profile.c	2004-08-14 13:28:56.306641272 -0400
+@@ -9,6 +9,7 @@
+ #include <linux/notifier.h>
+ #include <linux/mm.h>
+ #include <linux/cpumask.h>
++#include <linux/profile.h>
+ #include <asm/sections.h>
+ 
+ unsigned int * prof_buffer;
+@@ -169,6 +170,25 @@
+ #ifdef CONFIG_PROC_FS
+ #include <linux/proc_fs.h>
+ #include <asm/uaccess.h>
++#include <asm/ptrace.h>
++
++void profile_hit(int type, void *__pc)
++{
++	unsigned long pc;
++
++	if (prof_on != type)
++		return;
++	pc = ((unsigned long)__pc - (unsigned long)_stext) >> prof_shift;
++	atomic_inc((atomic_t *)&prof_buffer[min(pc, prof_len - 1)]);
++}
++
++void profile_tick(int type, struct pt_regs *regs)
++{
++	if (type == CPU_PROFILING)
++		profile_hook(regs);
++	if (!user_mode(regs) && cpu_isset(smp_processor_id(), prof_cpu_mask))
++		profile_hit(type, (void *)profile_pc(regs));
++}
+ 
+ static int prof_cpu_mask_read_proc (char *page, char **start, off_t off,
+ 			int count, int *eof, void *data)
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-08-14 13:27:22.718868776 -0400
++++ xx-sources/kernel/sched.c	2004-08-14 13:28:56.309640816 -0400
+@@ -2602,10 +2602,7 @@
+ 			dump_stack();
+ 		}
+ 	}
+-#ifdef kern_profile
+-	if (unlikely(prof_on == 2))
+-		__do_profile((unsigned long)__builtin_return_address(0));
+-#endif
++	profile_hit(SCHED_PROFILING, __builtin_return_address(0));
+ 
+ need_resched:
+ 	preempt_disable();

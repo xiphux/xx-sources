@@ -1,0 +1,238 @@
+
+
+Patch from me and "Martin J. Bligh" <mbligh@aracnet.com>
+
+Adds a config option which permits the out-of-line spinlock spinning code to
+be moved inline.  So when a kernel is profiled, the cost of the spin appears
+in the right function, not in .text.lock.foo.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/Kconfig           |    9 ++
+ 25-akpm/include/asm-i386/rwlock.h   |  135 ++++++++++++++++++++++++------------
+ 25-akpm/include/asm-i386/spinlock.h |   39 +++++++---
+ 3 files changed, 128 insertions(+), 55 deletions(-)
+
+diff -puN arch/i386/Kconfig~config_spinline arch/i386/Kconfig
+--- 25/arch/i386/Kconfig~config_spinline	Fri Jun 18 15:40:12 2004
++++ 25-akpm/arch/i386/Kconfig	Fri Jun 18 15:40:12 2004
+@@ -1259,6 +1259,15 @@ config DEBUG_PAGEALLOC
+ 	  This results in a large slowdown, but helps to find certain types
+ 	  of memory corruptions.
+ 
++config SPINLINE
++	bool "Spinlock inlining"
++	depends on DEBUG_KERNEL
++	help
++	  This will change spinlocks from out of line to inline, making them
++	  account cost to the callers in readprofile, rather than the lock
++	  itself (as ".text.lock.filename"). This can be helpful for finding
++	  the callers of locks.
++
+ config DEBUG_HIGHMEM
+ 	bool "Highmem debugging"
+ 	depends on DEBUG_KERNEL && HIGHMEM
+diff -puN include/asm-i386/rwlock.h~config_spinline include/asm-i386/rwlock.h
+--- 25/include/asm-i386/rwlock.h~config_spinline	Fri Jun 18 15:40:12 2004
++++ 25-akpm/include/asm-i386/rwlock.h	Fri Jun 18 15:40:12 2004
+@@ -20,28 +20,52 @@
+ #define RW_LOCK_BIAS		 0x01000000
+ #define RW_LOCK_BIAS_STR	"0x01000000"
+ 
+-#define __build_read_lock_ptr(rw, helper)   \
+-	asm volatile(LOCK "subl $1,(%0)\n\t" \
+-		     "js 2f\n" \
+-		     "1:\n" \
+-		     LOCK_SECTION_START("") \
+-		     "2:\tcall " helper "\n\t" \
+-		     "jmp 1b\n" \
+-		     LOCK_SECTION_END \
+-		     ::"a" (rw) : "memory")
+-
+-#define __build_read_lock_const(rw, helper)   \
+-	asm volatile(LOCK "subl $1,%0\n\t" \
+-		     "js 2f\n" \
+-		     "1:\n" \
+-		     LOCK_SECTION_START("") \
+-		     "2:\tpushl %%eax\n\t" \
+-		     "leal %0,%%eax\n\t" \
+-		     "call " helper "\n\t" \
+-		     "popl %%eax\n\t" \
+-		     "jmp 1b\n" \
+-		     LOCK_SECTION_END \
+-		     :"=m" (*(volatile int *)rw) : : "memory")
++#ifdef CONFIG_SPINLINE
++
++	#define __build_read_lock_ptr(rw, helper)   \
++		asm volatile(LOCK "subl $1,(%0)\n\t" \
++			     "jns 1f\n\t" \
++			     "call " helper "\n\t" \
++			     "1:\t" \
++			     ::"a" (rw) : "memory")
++
++	#define __build_read_lock_const(rw, helper)   \
++		asm volatile(LOCK "subl $1,%0\n\t" \
++			     "jns 1f\n\t" \
++			     "pushl %%eax\n\t" \
++			     "leal %0,%%eax\n\t" \
++			     "call " helper "\n\t" \
++			     "popl %%eax\n\t" \
++			     "1:\t" \
++			     :"=m" (*(volatile int *)rw) : : "memory")
++
++#else /* !CONFIG_SPINLINE */
++
++	#define __build_read_lock_ptr(rw, helper)   \
++		asm volatile(LOCK "subl $1,(%0)\n\t" \
++			     "js 2f\n" \
++			     "1:\n" \
++			     LOCK_SECTION_START("") \
++			     "2:\tcall " helper "\n\t" \
++			     "jmp 1b\n" \
++			     LOCK_SECTION_END \
++			     ::"a" (rw) : "memory")
++
++	#define __build_read_lock_const(rw, helper)   \
++		asm volatile(LOCK "subl $1,%0\n\t" \
++			     "js 2f\n" \
++			     "1:\n" \
++			     LOCK_SECTION_START("") \
++			     "2:\tpushl %%eax\n\t" \
++			     "leal %0,%%eax\n\t" \
++			     "call " helper "\n\t" \
++			     "popl %%eax\n\t" \
++			     "jmp 1b\n" \
++			     LOCK_SECTION_END \
++			     :"=m" (*(volatile int *)rw) : : "memory")
++
++#endif /* CONFIG_SPINLINE */
++
+ 
+ #define __build_read_lock(rw, helper)	do { \
+ 						if (__builtin_constant_p(rw)) \
+@@ -50,28 +74,51 @@
+ 							__build_read_lock_ptr(rw, helper); \
+ 					} while (0)
+ 
+-#define __build_write_lock_ptr(rw, helper) \
+-	asm volatile(LOCK "subl $" RW_LOCK_BIAS_STR ",(%0)\n\t" \
+-		     "jnz 2f\n" \
+-		     "1:\n" \
+-		     LOCK_SECTION_START("") \
+-		     "2:\tcall " helper "\n\t" \
+-		     "jmp 1b\n" \
+-		     LOCK_SECTION_END \
+-		     ::"a" (rw) : "memory")
+-
+-#define __build_write_lock_const(rw, helper) \
+-	asm volatile(LOCK "subl $" RW_LOCK_BIAS_STR ",%0\n\t" \
+-		     "jnz 2f\n" \
+-		     "1:\n" \
+-		     LOCK_SECTION_START("") \
+-		     "2:\tpushl %%eax\n\t" \
+-		     "leal %0,%%eax\n\t" \
+-		     "call " helper "\n\t" \
+-		     "popl %%eax\n\t" \
+-		     "jmp 1b\n" \
+-		     LOCK_SECTION_END \
+-		     :"=m" (*(volatile int *)rw) : : "memory")
++#ifdef CONFIG_SPINLINE
++
++	#define __build_write_lock_ptr(rw, helper) \
++		asm volatile(LOCK "subl $" RW_LOCK_BIAS_STR ",(%0)\n\t" \
++			     "jz 1f\n\t" \
++			     "call " helper "\n\t" \
++			     "1:\n" \
++			     ::"a" (rw) : "memory")
++
++	#define __build_write_lock_const(rw, helper) \
++		asm volatile(LOCK "subl $" RW_LOCK_BIAS_STR ",%0\n\t" \
++			     "jz 1f\n\t" \
++			     "pushl %%eax\n\t" \
++			     "leal %0,%%eax\n\t" \
++			     "call " helper "\n\t" \
++			     "popl %%eax\n\t" \
++			     "1:\n" \
++			     :"=m" (*(volatile int *)rw) : : "memory")
++
++#else /* !CONFIG_SPINLINE */
++
++	#define __build_write_lock_ptr(rw, helper) \
++		asm volatile(LOCK "subl $" RW_LOCK_BIAS_STR ",(%0)\n\t" \
++			     "jnz 2f\n" \
++			     "1:\n" \
++			     LOCK_SECTION_START("") \
++			     "2:\tcall " helper "\n\t" \
++			     "jmp 1b\n" \
++			     LOCK_SECTION_END \
++			     ::"a" (rw) : "memory")
++
++	#define __build_write_lock_const(rw, helper) \
++		asm volatile(LOCK "subl $" RW_LOCK_BIAS_STR ",%0\n\t" \
++			     "jnz 2f\n" \
++			     "1:\n" \
++			     LOCK_SECTION_START("") \
++			     "2:\tpushl %%eax\n\t" \
++			     "leal %0,%%eax\n\t" \
++			     "call " helper "\n\t" \
++			     "popl %%eax\n\t" \
++			     "jmp 1b\n" \
++			     LOCK_SECTION_END \
++			     :"=m" (*(volatile int *)rw) : : "memory")
++
++#endif /* CONFIG_SPINLINE */
+ 
+ #define __build_write_lock(rw, helper)	do { \
+ 						if (__builtin_constant_p(rw)) \
+diff -puN include/asm-i386/spinlock.h~config_spinline include/asm-i386/spinlock.h
+--- 25/include/asm-i386/spinlock.h~config_spinline	Fri Jun 18 15:40:12 2004
++++ 25-akpm/include/asm-i386/spinlock.h	Fri Jun 18 15:40:12 2004
+@@ -44,18 +44,35 @@ typedef struct {
+ #define spin_unlock_wait(x)	do { barrier(); } while(spin_is_locked(x))
+ #define _raw_spin_lock_flags(lock, flags) _raw_spin_lock(lock)
+ 
+-#define spin_lock_string \
+-	"\n1:\t" \
+-	"lock ; decb %0\n\t" \
+-	"js 2f\n" \
+-	LOCK_SECTION_START("") \
+-	"2:\t" \
+-	"rep;nop\n\t" \
+-	"cmpb $0,%0\n\t" \
+-	"jle 2b\n\t" \
+-	"jmp 1b\n" \
+-	LOCK_SECTION_END
++#ifdef CONFIG_SPINLINE
+ 
++	#define spin_lock_string \
++		"\n1:\t" \
++		"lock ; decb %0\n\t" \
++		"js 2f\n" \
++		"jmp 3f\n" \
++		"2:\t" \
++		"rep;nop\n\t" \
++		"cmpb $0,%0\n\t" \
++		"jle 2b\n\t" \
++		"jmp 1b\n" \
++		"3:\t"
++
++#else /* !CONFIG_SPINLINE */
++
++	#define spin_lock_string \
++		"\n1:\t" \
++		"lock ; decb %0\n\t" \
++		"js 2f\n" \
++		LOCK_SECTION_START("") \
++		"2:\t" \
++		"rep;nop\n\t" \
++		"cmpb $0,%0\n\t" \
++		"jle 2b\n\t" \
++		"jmp 1b\n" \
++		LOCK_SECTION_END
++
++#endif /* CONFIG_SPINLINE */
+ /*
+  * This works. Despite all the confusion.
+  * (except on PPro SMP or if we are using OOSTORE)
+_

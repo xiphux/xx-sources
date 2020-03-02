@@ -1,0 +1,78 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+- fall back to the bottom-up layout if the stack can grow unlimited
+  (if the stack ulimit has been set to RLIM_INFINITY)
+
+- try the bottom-up allocator if the top-down allocator fails - this can
+  utilize the hole between the true bottom of the stack and its ulimit,
+  as a last-resort effort.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/mm/mmap.c |    5 +++--
+ 25-akpm/mm/mmap.c           |   23 ++++++++++++++++++-----
+ 2 files changed, 21 insertions(+), 7 deletions(-)
+
+diff -puN arch/i386/mm/mmap.c~flexible-mmap-updatepatch-267-mm5 arch/i386/mm/mmap.c
+--- 25/arch/i386/mm/mmap.c~flexible-mmap-updatepatch-267-mm5	2004-07-26 23:22:37.941873328 -0700
++++ 25-akpm/arch/i386/mm/mmap.c	2004-07-26 23:22:37.946872568 -0700
+@@ -55,9 +55,10 @@ void arch_pick_mmap_layout(struct mm_str
+ {
+ 	/*
+ 	 * Fall back to the standard layout if the personality
+-	 * bit is set:
++	 * bit is set, or if the expected stack growth is unlimited:
+ 	 */
+-	if (current->personality & ADDR_COMPAT_LAYOUT) {
++	if ((current->personality & ADDR_COMPAT_LAYOUT) ||
++			current->rlim[RLIMIT_STACK].rlim_cur == RLIM_INFINITY) {
+ 		mm->mmap_base = TASK_UNMAPPED_BASE;
+ 		mm->get_unmapped_area = arch_get_unmapped_area;
+ 		mm->unmap_area = arch_unmap_area;
+diff -puN mm/mmap.c~flexible-mmap-updatepatch-267-mm5 mm/mmap.c
+--- 25/mm/mmap.c~flexible-mmap-updatepatch-267-mm5	2004-07-26 23:22:37.943873024 -0700
++++ 25-akpm/mm/mmap.c	2004-07-26 23:22:37.947872416 -0700
+@@ -1081,13 +1081,13 @@ void arch_unmap_area(struct vm_area_stru
+  * stack's low limit (the base):
+  */
+ unsigned long
+-arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
+-			  unsigned long len, unsigned long pgoff,
+-			  unsigned long flags)
++arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
++			  const unsigned long len, const unsigned long pgoff,
++			  const unsigned long flags)
+ {
+ 	struct vm_area_struct *vma, *prev_vma;
+ 	struct mm_struct *mm = current->mm;
+-	unsigned long base = mm->mmap_base;
++	unsigned long base = mm->mmap_base, addr = addr0;
+ 	int first_time = 1;
+ 
+ 	/* requested length too big for entire address space */
+@@ -1149,7 +1149,20 @@ fail:
+ 		first_time = 0;
+ 		goto try_again;
+ 	}
+-	return -ENOMEM;
++	/*
++	 * A failed mmap() very likely causes application failure,
++	 * so fall back to the bottom-up function here. This scenario
++	 * can happen with large stack limits and large mmap()
++	 * allocations.
++	 */
++	mm->free_area_cache = TASK_UNMAPPED_BASE;
++	addr = arch_get_unmapped_area(filp, addr0, len, pgoff, flags);
++	/*
++	 * Restore the topdown base:
++	 */
++	mm->free_area_cache = base;
++
++	return addr;
+ }
+ 
+ void arch_unmap_area_topdown(struct vm_area_struct *area)
+_

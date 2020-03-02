@@ -1,0 +1,75 @@
+
+From: Prasanna S Panchamukhi <prasanna@in.ibm.com>
+
+Calculating the base address of the segment is tricky and is used in
+several places as well.  This patch moves this tricky part in a common
+place as suggested by Andi Kleen.
+
+Signed-of-by: Prasanna S Panchamukhi <prasanna@in.ibm.com>
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/kprobes.c |    7 +++----
+ 25-akpm/arch/i386/mm/fault.c       |    4 +---
+ 25-akpm/include/asm-i386/desc.h    |    9 +++++++++
+ 3 files changed, 13 insertions(+), 7 deletions(-)
+
+diff -puN arch/i386/kernel/kprobes.c~x86-consolidate-code-segment-base-calculation arch/i386/kernel/kprobes.c
+--- 25/arch/i386/kernel/kprobes.c~x86-consolidate-code-segment-base-calculation	2005-01-13 00:13:47.850979360 -0800
++++ 25-akpm/arch/i386/kernel/kprobes.c	2005-01-13 00:13:47.857978296 -0800
+@@ -31,6 +31,7 @@
+ #include <linux/spinlock.h>
+ #include <linux/preempt.h>
+ #include <asm/kdebug.h>
++#include <asm/desc.h>
+ 
+ /* kprobe_status settings */
+ #define KPROBE_HIT_ACTIVE	0x00000001
+@@ -101,10 +102,8 @@ static int kprobe_handler(struct pt_regs
+ 	if ((regs->xcs & 4) && (current->mm)) {
+ 		lp = (unsigned long *) ((unsigned long)((regs->xcs >> 3) * 8)
+ 					+ (char *) current->mm->context.ldt);
+-		addr = (kprobe_opcode_t *) ((((*lp) >> 16 &  0x0000ffff)
+-				| (*(lp +1) & 0xff000000)
+-				| ((*(lp +1) << 16) & 0x00ff0000))
+-				+ regs->eip - sizeof(kprobe_opcode_t));
++		addr = (kprobe_opcode_t *) (get_desc_base(lp) + regs->eip -
++						sizeof(kprobe_opcode_t));
+ 	} else {
+ 		addr = (kprobe_opcode_t *)(regs->eip - sizeof(kprobe_opcode_t));
+ 	}
+diff -puN arch/i386/mm/fault.c~x86-consolidate-code-segment-base-calculation arch/i386/mm/fault.c
+--- 25/arch/i386/mm/fault.c~x86-consolidate-code-segment-base-calculation	2005-01-13 00:13:47.851979208 -0800
++++ 25-akpm/arch/i386/mm/fault.c	2005-01-13 00:13:47.857978296 -0800
+@@ -112,9 +112,7 @@ static inline unsigned long get_segment_
+ 	}
+ 
+ 	/* Decode the code segment base from the descriptor */
+-	base =   (desc[0] >> 16) |
+-		((desc[1] & 0xff) << 16) |
+-		 (desc[1] & 0xff000000);
++	base = get_desc_base((unsigned long *)desc);
+ 
+ 	if (seg & (1<<2)) { 
+ 		up(&current->mm->context.sem);
+diff -puN include/asm-i386/desc.h~x86-consolidate-code-segment-base-calculation include/asm-i386/desc.h
+--- 25/include/asm-i386/desc.h~x86-consolidate-code-segment-base-calculation	2005-01-13 00:13:47.853978904 -0800
++++ 25-akpm/include/asm-i386/desc.h	2005-01-13 00:13:47.858978144 -0800
+@@ -126,6 +126,15 @@ static inline void load_LDT(mm_context_t
+ 	put_cpu();
+ }
+ 
++static inline unsigned long get_desc_base(unsigned long *desc)
++{
++	unsigned long base;
++	base = ((desc[0] >> 16)  & 0x0000ffff) |
++		((desc[1] << 16) & 0x00ff0000) |
++		(desc[1] & 0xff000000);
++	return base;
++}
++
+ #endif /* !__ASSEMBLY__ */
+ 
+ #endif
+_

@@ -1,0 +1,76 @@
+
+From: Paul Jackson <pj@sgi.com>
+
+This patch fixes a missing down()/up() pair in cpuset_add_file().
+
+Without this patch, sometimes it is possible to have two duplicate dentries
+for a single file of a cpuset, with one of them being invalid, and thus the
+file is present but cannot be opened...
+
+By holding the cpuset directory inode (after the directory is created,
+while each file in it is being populated), we prevent a stat(2) or open(2)
+from creating a second, invalid directory entry for one of the files in a
+cpuset directory, while cpuset_populate_dir is trying to create the same
+file.
+
+Signed-off-by: Simon Derr <simon.derr@bull.net>
+Signed-off-by: Paul Jackson <pj@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/cpuset.c |   14 ++++++++++----
+ 1 files changed, 10 insertions(+), 4 deletions(-)
+
+diff -puN kernel/cpuset.c~cpusets-fix-race-in-cpuset_add_file kernel/cpuset.c
+--- 25/kernel/cpuset.c~cpusets-fix-race-in-cpuset_add_file	Fri Sep 17 16:44:45 2004
++++ 25-akpm/kernel/cpuset.c	Fri Sep 17 16:44:45 2004
+@@ -961,13 +961,12 @@ static int cpuset_create_dir(struct cpus
+ 	return error;
+ }
+ 
+-/* MUST be called with dir->d_inode->i_sem held */
+-
+ static int cpuset_add_file(struct dentry *dir, const struct cftype *cft)
+ {
+ 	struct dentry *dentry;
+ 	int error;
+ 
++	down(&dir->d_inode->i_sem);
+ 	dentry = cpuset_get_dentry(dir, cft->name);
+ 	if (!IS_ERR(dentry)) {
+ 		error = cpuset_create_file(dentry, 0644 | S_IFREG);
+@@ -976,6 +975,7 @@ static int cpuset_add_file(struct dentry
+ 		dput(dentry);
+ 	} else
+ 		error = PTR_ERR(dentry);
++	up(&dir->d_inode->i_sem);
+ 	return error;
+ }
+ 
+@@ -1194,7 +1194,6 @@ static struct cftype cft_notify_on_relea
+ 	.private = FILE_NOTIFY_ON_RELEASE,
+ };
+ 
+-/* MUST be called with ->d_inode->i_sem held */
+ static int cpuset_populate_dir(struct dentry *cs_dentry)
+ {
+ 	int err;
+@@ -1252,9 +1251,16 @@ static long cpuset_create(struct cpuset 
+ 	err = cpuset_create_dir(cs, name, mode);
+ 	if (err < 0)
+ 		goto err;
++
++	/*
++	 * Release cpuset_sem before cpuset_populate_dir() because it
++	 * will down() this new directory's i_sem and if we race with
++	 * another mkdir, we might deadlock.
++	 */
++	up(&cpuset_sem);
++
+ 	err = cpuset_populate_dir(cs->dentry);
+ 	/* If err < 0, we have a half-filled directory - oh well ;) */
+-	up(&cpuset_sem);
+ 	return 0;
+ err:
+ 	list_del(&cs->sibling);
+_

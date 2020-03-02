@@ -1,0 +1,58 @@
+
+From: David Howells <dhowells@redhat.com>
+
+The attached patch makes CacheFS return -EINVAL if the magic number on disc
+doesn't match what it's expecting (rather than -EIO).  Also it moves the
+check that the partition is not read-only further down to avoid a return of
+-EROFS instead or -EINVAL.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/cachefs/super.c |   22 +++++++++++-----------
+ 1 files changed, 11 insertions(+), 11 deletions(-)
+
+diff -puN fs/cachefs/super.c~cachefs-return-the-right-error-upon-invalid-mount fs/cachefs/super.c
+--- 25/fs/cachefs/super.c~cachefs-return-the-right-error-upon-invalid-mount	Wed Sep  8 14:25:28 2004
++++ 25-akpm/fs/cachefs/super.c	Wed Sep  8 14:25:28 2004
+@@ -232,16 +232,6 @@ static int cachefs_fill_super(struct sup
+ 
+ 	_enter("");
+ 
+-	if (bdev_read_only(sb->s_bdev)) {
+-		printk("CacheFS: blockdev read-only\n");
+-		return -EROFS;
+-	}
+-
+-	if (sb->s_flags & MS_RDONLY) {
+-		printk("CacheFS: filesystem mounted read-only\n");
+-		return -EROFS;
+-	}
+-
+ 	/* we want the block size to be at least as big as the size of a
+ 	 * journal entry */
+ 	if (!sb_min_blocksize(sb,
+@@ -398,10 +388,20 @@ static int cachefs_fill_super(struct sup
+ 	}
+ 	else {
+ 		printk("CacheFS: Wrong magic number on cache\n");
+-		ret = -EIO;
++		ret = -EINVAL;
+ 		goto error;
+ 	}
+ 
++	/* a read-only cache isn't a lot of use */
++	ret = -EROFS;
++	if (bdev_read_only(sb->s_bdev)) {
++		printk("CacheFS: blockdev read-only\n");
++	}
++
++	if (sb->s_flags & MS_RDONLY) {
++		printk("CacheFS: filesystem mounted read-only\n");
++	}
++
+ 	/* replay the journal if the cache was initialised */
+ 	super->ujnl_jsof = super->layout->bix_ujournal;
+ 	super->ujnl_jsof <<= (PAGE_SHIFT - super->sb->s_blocksize_bits);
+_

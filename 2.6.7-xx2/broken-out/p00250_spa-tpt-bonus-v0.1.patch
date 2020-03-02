@@ -1,0 +1,108 @@
+---
+
+ linux-2.6.7-rc3-xx5-xiphux/include/linux/sched.h |    2 -
+ linux-2.6.7-rc3-xx5-xiphux/kernel/sched.c        |   29 +++++++++++++++++++----
+ 2 files changed, 25 insertions(+), 6 deletions(-)
+
+diff -puN include/linux/sched.h~spa-tpt-bonus-v0.1 include/linux/sched.h
+--- linux-2.6.7-rc3-xx5/include/linux/sched.h~spa-tpt-bonus-v0.1	2004-06-15 21:47:50.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/include/linux/sched.h	2004-06-15 21:49:47.000000000 -0400
+@@ -425,7 +425,7 @@ struct task_struct {
+ 	u64 avg_sleep_per_cycle;
+ 	u64 avg_delay_per_cycle;
+ 	u64 avg_cpu_per_cycle;
+-	unsigned int interactive_bonus, sub_cycle_count;
++	unsigned int interactive_bonus, throughput_bonus, sub_cycle_count;
+ #else
+ 	unsigned long sleep_avg;
+ 	long interactive_credit;
+diff -puN kernel/sched.c~spa-tpt-bonus-v0.1 kernel/sched.c
+--- linux-2.6.7-rc3-xx5/kernel/sched.c~spa-tpt-bonus-v0.1	2004-06-15 21:47:54.000000000 -0400
++++ linux-2.6.7-rc3-xx5-xiphux/kernel/sched.c	2004-06-15 21:57:26.585464904 -0400
+@@ -16,9 +16,8 @@
+  *		by Davide Libenzi, preemptible kernel bits by Robert Love.
+  *  2003-09-03	Interactivity tuning by Con Kolivas.
+  *  2004-04-02	Scheduler domains code by Nick Piggin
+- *  2004-06-03	Single priority array and simplified interactive bonus
+- *		mechanism by Peter Williams
+- *		(Courtesy of Aurema Pty Ltd, www.aurema.com)
++ *  2004-06-03	Single priority array, simplified interactive bonus
++ *		mechanism and throughput bonus mechanism by Peter Williams
+  */
+ 
+ #include <linux/mm.h>
+@@ -94,7 +93,8 @@
+  * These are the 'tuning knobs' of the scheduler:
+  */
+ #define MAX_IA_BONUS 10
+-#define MAX_BONUS MAX_IA_BONUS
++#define MAX_TPT_BONUS ((MAX_IA_BONUS) / 2)
++#define MAX_BONUS (MAX_IA_BONUS + MAX_TPT_BONUS)
+ 
+ /*
+  * Define some mini Kalman filter for estimating various averages, etc.
+@@ -138,7 +138,7 @@ static inline void update_sched_ia_bonus
+ 	p->interactive_bonus += incr;
+ }
+ 
+-#define CURRENT_BONUS(p) SCHED_IA_BONUS_RND((p)->interactive_bonus)
++#define CURRENT_BONUS(p) (SCHED_IA_BONUS_RND((p)->interactive_bonus) + (p)->throughput_bonus)
+ 
+ /*
+  * Tasks with a CPU usage rate greater than 50% are considered to be CPU bound
+@@ -796,6 +796,21 @@ static void reassess_interactiveness(tas
+ 	else if (p->sub_cycle_count == 0)
+ 		reassess_cpu_boundness(p);
+ }
++
++static void recalc_throughput_bonus(task_t *p, u64 load)
++{
++	/*
++	 * No delay means no bonus, but
++	 * NB this test also avoids a possible divide by zero error if
++	 * cpu is also zero
++	 */
++	if (p->avg_delay_per_cycle == 0) {
++		p->throughput_bonus = 0;
++		return;
++	}
++	p->throughput_bonus = BONUS_RND(MAX_TPT_BONUS, p->avg_delay_per_cycle,
++			load * p->avg_cpu_per_cycle);
++}
+ #else
+ static void recalc_task_prio(task_t *p, unsigned long long now)
+ {
+@@ -1323,6 +1338,7 @@ out_activate:
+ 	 * of the next
+ 	 */
+ 	update_stats_for_cycle(p, rq);
++	recalc_throughput_bonus(p, rq->nr_running + 1);
+ 	reassess_interactiveness(p);
+ #endif
+ 	/*
+@@ -1409,6 +1425,7 @@ void fastcall sched_fork(task_t *p)
+ 	p->avg_delay_per_cycle = 0;
+ 	p->avg_cpu_per_cycle = 0;
+ 	p->interactive_bonus = 0;
++	p->throughput_bonus = 0;
+ 	p->sub_cycle_count = 0;
+ #else
+ 	/*
+@@ -2792,6 +2809,7 @@ void scheduler_tick(int user_ticks, int 
+ #ifdef CONFIG_SPA
+ 		p->avg_cpu_per_cycle += (rq->timestamp_last_tick - p->sched_timestamp);
+ 		p->sched_timestamp = rq->timestamp_last_tick;
++		recalc_throughput_bonus(p, rq->nr_running);
+ 		reassess_cpu_boundness(p);
+ 		/*
+ 		 * Arguably the interactive bonus should be updated here
+@@ -4205,6 +4223,7 @@ void __devinit init_idle(task_t *idle, i
+ 	idle->avg_delay_per_cycle = 0;
+ 	idle->avg_cpu_per_cycle = 0;
+ 	idle->interactive_bonus = 0;
++	idle->throughput_bonus = 0;
+ 	idle->sub_cycle_count = 0;
+ #else
+ 	idle->array = NULL;
+
+_

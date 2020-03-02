@@ -1,0 +1,33 @@
+
+From: Mikael Pettersson <mikpe@csd.uu.se>
+
+Clean up perfctr/virtual by using the new cpus_andnot() operation instead
+of messing with cpus_complement() and a new temporary.
+
+Signed-off-by: Mikael Pettersson <mikpe@csd.uu.se>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/perfctr/virtual.c |    6 ++----
+ 1 files changed, 2 insertions(+), 4 deletions(-)
+
+diff -puN drivers/perfctr/virtual.c~perfctr-cpumask-cleanup drivers/perfctr/virtual.c
+--- 25/drivers/perfctr/virtual.c~perfctr-cpumask-cleanup	Wed Jun  9 14:50:45 2004
++++ 25-akpm/drivers/perfctr/virtual.c	Wed Jun  9 14:50:45 2004
+@@ -403,13 +403,11 @@ static int do_vperfctr_control(struct vp
+ 		return -EFAULT;
+ 
+ 	if (control.cpu_control.nractrs || control.cpu_control.nrictrs) {
+-		cpumask_t tmp, old_mask, new_mask, tmp1;
++		cpumask_t tmp, old_mask, new_mask;
+ 
+ 		tmp = perfctr_cpus_forbidden_mask;
+-		cpus_complement(tmp1, tmp);
+-		tmp = tmp1;
+ 		old_mask = tsk->cpus_allowed;
+-		cpus_and(new_mask, old_mask, tmp);
++		cpus_andnot(new_mask, old_mask, tmp);
+ 
+ 		if (cpus_empty(new_mask))
+ 			return -EINVAL;
+_

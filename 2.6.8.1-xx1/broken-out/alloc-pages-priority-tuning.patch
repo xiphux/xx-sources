@@ -1,0 +1,69 @@
+
+
+Fix up the logic which decides when the caller can dip into page reserves.
+
+- If the caller has realtime scheduling policy, or if the caller cannot run
+  direct reclaim, then allow the caller to use up to a quarter of the page
+  reserves.
+
+- If the caller has __GFP_HIGH then allow the caller to use up to half of
+  the page reserves.
+
+- If the caller has PF_MEMALLOC then the caller can use 100% of the page
+  reserves.
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/page_alloc.c |   20 ++++++++++++++------
+ 1 files changed, 14 insertions(+), 6 deletions(-)
+
+diff -puN mm/page_alloc.c~alloc-pages-priority-tuning mm/page_alloc.c
+--- 25/mm/page_alloc.c~alloc-pages-priority-tuning	2004-08-06 02:21:04.452699000 -0700
++++ 25-akpm/mm/page_alloc.c	2004-08-06 02:24:22.580578984 -0700
+@@ -609,9 +609,17 @@ __alloc_pages(unsigned int gfp_mask, uns
+ 	int i;
+ 	int alloc_type;
+ 	int do_retry;
++	int can_try_harder;
+ 
+ 	might_sleep_if(wait);
+ 
++	/*
++	 * The caller may dip into page reserves a bit more if the caller
++	 * cannot run direct reclaim, or is the caller has realtime scheduling
++	 * policy
++	 */
++	can_try_harder = (unlikely(rt_task(p)) && !in_interrupt()) || !wait;
++
+ 	zones = zonelist->zones;  /* the list of zones suitable for gfp_mask */
+ 
+ 	if (unlikely(zones[0] == NULL)) {
+@@ -643,9 +651,9 @@ __alloc_pages(unsigned int gfp_mask, uns
+ 	for (i = 0; (z = zones[i]) != NULL; i++) {
+ 		min = z->pages_min;
+ 		if (gfp_mask & __GFP_HIGH)
+-			min -= min>>1;
+-		if (unlikely(rt_task(p)) && !in_interrupt())
+-			min -= min>>2;
++			min /= 2;
++		if (can_try_harder)
++			min -= min / 4;
+ 		min += (1<<order) + z->protection[alloc_type];
+ 
+ 		if (z->free_pages < min)
+@@ -686,9 +694,9 @@ rebalance:
+ 	for (i = 0; (z = zones[i]) != NULL; i++) {
+ 		min = z->pages_min;
+ 		if (gfp_mask & __GFP_HIGH)
+-			min -= min>>1;
+-		if (unlikely(rt_task(p)) && !in_interrupt())
+-			min -= min>>2;
++			min /= 2;
++		if (can_try_harder)
++			min -= min / 4;
+ 		min += (1<<order) + z->protection[alloc_type];
+ 
+ 		if (z->free_pages < min)
+_

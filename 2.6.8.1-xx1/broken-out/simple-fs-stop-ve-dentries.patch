@@ -1,0 +1,54 @@
+
+From: Hugh Dickins <hugh@veritas.com>
+
+A tmpfs user reported increasingly slow directory reads when repeatedly
+creating and unlinking in a mkstemp-like way.  The negative dentries
+accumulate alarmingly (until memory pressure finally frees them), and are
+just a hindrance to any in-memory filesystem.  simple_lookup set d_op to
+arrange for negative dentries to be deleted immediately.
+
+(But I failed to discover how it is that on-disk filesystems seem to keep
+their negative dentries within manageable bounds: this effect was gross
+with tmpfs or ramfs, but no problem at all with extN or reiser.)
+
+Signed-off-by: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/libfs.c |   17 +++++++++++++++--
+ 1 files changed, 15 insertions(+), 2 deletions(-)
+
+diff -puN fs/libfs.c~simple-fs-stop-ve-dentries fs/libfs.c
+--- 25/fs/libfs.c~simple-fs-stop-ve-dentries	Fri Aug  6 15:20:11 2004
++++ 25-akpm/fs/libfs.c	Fri Aug  6 15:20:11 2004
+@@ -27,14 +27,27 @@ int simple_statfs(struct super_block *sb
+ }
+ 
+ /*
+- * Lookup the data. This is trivial - if the dentry didn't already
+- * exist, we know it is negative.
++ * Retaining negative dentries for an in-memory filesystem just wastes
++ * memory and lookup time: arrange for them to be deleted immediately.
+  */
++static int simple_delete_dentry(struct dentry *dentry)
++{
++	return 1;
++}
+ 
++/*
++ * Lookup the data. This is trivial - if the dentry didn't already
++ * exist, we know it is negative.  Set d_op to delete negative dentries.
++ */
+ struct dentry *simple_lookup(struct inode *dir, struct dentry *dentry, struct nameidata *nd)
+ {
++	static struct dentry_operations simple_dentry_operations = {
++		.d_delete = simple_delete_dentry,
++	};
++
+ 	if (dentry->d_name.len > NAME_MAX)
+ 		return ERR_PTR(-ENAMETOOLONG);
++	dentry->d_op = &simple_dentry_operations;
+ 	d_add(dentry, NULL);
+ 	return NULL;
+ }
+_

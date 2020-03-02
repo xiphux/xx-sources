@@ -1,0 +1,404 @@
+---
+
+ linux-2.6.7-rc2-xx2-xiphux/arch/i386/power/suspend2.c               |    7 
+ linux-2.6.7-rc2-xx2-xiphux/drivers/md/dm-raid1.c                    |    2 
+ linux-2.6.7-rc2-xx2-xiphux/drivers/md/kcopyd.c                      |    2 
+ linux-2.6.7-rc2-xx2-xiphux/drivers/scsi/libata-core.c               |    2 
+ linux-2.6.7-rc2-xx2-xiphux/include/linux/suspend-version-specific.h |   21 ++
+ linux-2.6.7-rc2-xx2-xiphux/kernel/power/memory_pool.c               |    2 
+ linux-2.6.7-rc2-xx2-xiphux/kernel/power/pagedir.c                   |    6 
+ linux-2.6.7-rc2-xx2-xiphux/kernel/power/swapwriter.c                |   82 +++++-----
+ 8 files changed, 69 insertions(+), 55 deletions(-)
+
+diff -puN kernel/power/swapwriter.c~swsusp2-compile-fixes-xx kernel/power/swapwriter.c
+--- linux-2.6.7-rc2-xx2/kernel/power/swapwriter.c~swsusp2-compile-fixes-xx	2004-06-03 17:50:27.454693000 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/kernel/power/swapwriter.c	2004-06-03 17:50:27.472690264 -0400
+@@ -105,7 +105,7 @@ static spinlock_t readahead_flags_lock =
+ 
+ static char * swapwriter_buffer = NULL;
+ static int swapwriter_buffer_posn = 0;
+-static int page_index = 0;
++static int sw_page_index = 0;
+ static unsigned long * header_link = NULL;
+ #define BYTES_PER_HEADER_PAGE (PAGE_SIZE - sizeof(swp_entry_t))
+ 
+@@ -903,7 +903,7 @@ static struct io_info * start_one(int rw
+ 		kunmap(io_info->data_page);
+ 	}
+ 
+-	atomic_inc(&buffer_page->count);
++	atomic_inc(&buffer_page->_count);
+ 
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
+ 	lock_page(buffer_page);
+@@ -990,10 +990,10 @@ static void cleanup_one(struct io_info *
+ 
+ 	}
+ 
+-	if (atomic_read(&buffer_page->count) != 2)
++	if (page_count(buffer_page) != 2)
+ 		printk(KERN_EMERG "Cleanup IO: Page count is %d. Not good!\n",
+-				atomic_read(&buffer_page->count));
+-	atomic_dec(&buffer_page->count);
++				page_count(buffer_page));
++	atomic_dec(&buffer_page->_count);
+ 	__free_pages(buffer_page, 0);
+ 
+ 	outstanding_io--;
+@@ -1459,7 +1459,7 @@ static int swapwriter_write_header_init(
+ 	swapwriter_buffer = (char *) get_zeroed_page(GFP_ATOMIC);
+ 	header_link =
+ 		(unsigned long *) (swapwriter_buffer + BYTES_PER_HEADER_PAGE);
+-	page_index = 1;
++	sw_page_index = 1;
+ 
+ 	/* Info needed to bootstrap goes at the start of the header.
+ 	 * First we save the 'header_data' struct, including the number
+@@ -1500,7 +1500,7 @@ static int swapwriter_write_header_chunk
+ 				"Storing %d bytes from %p-%p in page %d, %p-%p.\n",
+ 				bytes_left,
+ 				source_start, source_start + bytes_left - 1,
+-				page_index,
++				sw_page_index,
+ 				dest_start, dest_start + bytes_left - 1);
+ 			memcpy(dest_start, source_start, bytes_left);
+ 			swapwriter_buffer_posn += bytes_left;
+@@ -1512,18 +1512,18 @@ static int swapwriter_write_header_chunk
+ 			"Storing %d bytes from %p-%p in page %d, %p-%p.\n",
+ 			dest_capacity,
+ 			source_start, source_start + dest_capacity - 1,
+-			page_index,
++			sw_page_index,
+ 			dest_start, dest_start + dest_capacity - 1);
+ 		memcpy(dest_start, source_start, dest_capacity);
+ 		bytes_left -= dest_capacity;
+ 
+-		if (page_index == header_pages_allocated)
++		if (sw_page_index == header_pages_allocated)
+ 			*header_link = 0;
+ 		else {
+ 			next_header_page =
+ 				SWP_ENTRY(SWP_TYPE(
+-				 header_page_info[page_index].swap_address),
+-				 header_page_info[page_index].blocks[0]);
++				 header_page_info[sw_page_index].swap_address),
++				 header_page_info[sw_page_index].blocks[0]);
+ 
+ 			*header_link = next_header_page.val;
+ 		}
+@@ -1538,18 +1538,18 @@ static int swapwriter_write_header_chunk
+ 		printnolog(SUSPEND_IO, SUSPEND_HIGH, 0,
+ 			"Writing header page %d/%d. "
+ 			"Dev is %x. Block is %lu. Blocksperpage is %d.\n",
+-			page_index, header_pages_allocated,
++			sw_page_index, header_pages_allocated,
+ 			BDEV_TO_DEVICE_ID(
+-				header_page_info[page_index-1].dev),
+-			header_page_info[page_index-1].blocks[0],
+-			header_page_info[page_index-1].blocks_used);
++				header_page_info[sw_page_index-1].dev),
++			header_page_info[sw_page_index-1].blocks[0],
++			header_page_info[sw_page_index-1].blocks_used);
+ 
+-		header_page_info[page_index-1].page =
++		header_page_info[sw_page_index-1].page =
+ 			virt_to_page(swapwriter_buffer);
+-		do_suspend_io(WRITE, &header_page_info[page_index-1], 0);
++		do_suspend_io(WRITE, &header_page_info[sw_page_index-1], 0);
+ 
+ 		swapwriter_buffer_posn = 0;
+-		page_index++;
++		sw_page_index++;
+ 	}
+ 
+ 	return 0;
+@@ -1564,8 +1564,8 @@ static int swapwriter_write_header_clean
+ #if 0
+ 		next_header_page =
+ 			SWP_ENTRY(SWP_TYPE(
+-			 header_page_info[page_index].swap_address),
+-			 header_page_info[page_index].blocks[0]);
++			 header_page_info[sw_page_index].swap_address),
++			 header_page_info[sw_page_index].blocks[0]);
+ 
+ 		*header_link = next_header_page.val;
+ #else
+@@ -1582,19 +1582,19 @@ static int swapwriter_write_header_clean
+ 		printlog(SUSPEND_IO, SUSPEND_HIGH,
+ 			"Writing header page %d/%d. "
+ 			"Dev is %x. Block is %lu. Blocksperpage is %d.\n",
+-			page_index, header_pages_allocated,
++			sw_page_index, header_pages_allocated,
+ 			BDEV_TO_DEVICE_ID(
+-				header_page_info[page_index-1].dev),
+-			header_page_info[page_index-1].blocks[0],
+-			header_page_info[page_index-1].blocks_used);
++				header_page_info[sw_page_index-1].dev),
++			header_page_info[sw_page_index-1].blocks[0],
++			header_page_info[sw_page_index-1].blocks_used);
+ 
+-		header_page_info[page_index-1].page =
++		header_page_info[sw_page_index-1].page =
+ 			virt_to_page(swapwriter_buffer);
+ 		do_suspend_io(WRITE,
+-				&header_page_info[page_index-1], 0);
++				&header_page_info[sw_page_index-1], 0);
+ 
+ 		swapwriter_buffer_posn = 0;
+-		page_index++;
++		sw_page_index++;
+ 	}
+ 
+ 	/* Adjust swap header */
+@@ -1640,7 +1640,7 @@ static int swapwriter_read_header_init(v
+ {
+ 	int i;
+ 
+-	page_index = 1;
++	sw_page_index = 1;
+ 
+ 	swapwriter_buffer = (char *) get_zeroed_page(GFP_ATOMIC);
+ 
+@@ -1714,7 +1714,7 @@ static int swapwriter_read_header_init(v
+ 		"Retrieving %d bytes from %x:%x to page %d, %p-%p.\n",
+ 		BDEV_TO_DEVICE_ID(header_block_device), headerblock,
+ 		sizeof(header_data),
+-		page_index,
++		sw_page_index,
+ 		swapwriter_buffer, swapwriter_buffer + sizeof(header_data) - 1);
+ 	memcpy(&header_data, swapwriter_buffer, sizeof(header_data));
+ 
+@@ -1789,7 +1789,7 @@ static int swapwriter_read_header_chunk(
+ 				"Retrieving %d bytes from page %d, "
+ 				"%p-%p into %p-%p.\n",
+ 				bytes_left,
+-				page_index,
++				sw_page_index,
+ 				source_start, source_start + bytes_left - 1,
+ 				dest_start, dest_start + bytes_left - 1);
+ 			memcpy(dest_start, source_start, bytes_left);
+@@ -1801,7 +1801,7 @@ static int swapwriter_read_header_chunk(
+ 		printnolog(SUSPEND_IO, SUSPEND_HIGH, 0,
+ 			"Retrieving %d bytes from page %d, %p-%p to %p-%p.\n",
+ 			source_capacity,
+-			page_index,
++			sw_page_index,
+ 			source_start, source_start + source_capacity - 1,
+ 			dest_start, dest_start + source_capacity - 1);
+ 		memcpy(dest_start, source_start, source_capacity);
+@@ -1814,11 +1814,11 @@ static int swapwriter_read_header_chunk(
+ 		 ((union p_diskpage) swapwriter_buffer).pointer->link.next.val,
+ 		 BDEV_TO_DEVICE_ID(dev), pos);
+ 
+-		page_index++;
++		sw_page_index++;
+ 
+ 		printnolog(SUSPEND_IO, SUSPEND_HIGH, 0,
+ 			"Reading header page %d. Dev is %x. Block is %lu.\n",
+-			page_index, BDEV_TO_DEVICE_ID(dev), pos);
++			sw_page_index, BDEV_TO_DEVICE_ID(dev), pos);
+ 
+ 		bdev_page_io(READ, dev, pos, virt_to_page(swapwriter_buffer));
+ 
+@@ -1904,7 +1904,7 @@ static int swapwriter_write_init(int str
+ 
+ 	swapwriter_buffer_posn = 0;
+ 
+-	page_index = 1;
++	sw_page_index = 1;
+ 	current_stream = stream_number;
+ 
+ 	reset_io_stats();
+@@ -1969,14 +1969,14 @@ static int swapwriter_write_chunk(char *
+ 	printlog(SUSPEND_IO, SUSPEND_HIGH,
+ 		"Writing page %d. Dev is %x. Block is %lu. "
+ 		"Blocksperpage is %d.\n",
+-		page_index,
++		sw_page_index,
+ 		submit_params.dev,
+ 		submit_params.blocks[0],
+ 		currentblocksperpage);
+ 
+ 	printnolog(SUSPEND_PAGESETS, SUSPEND_VERBOSE, 1,
+ 		"page:%d. bdev:%x. blocks (%d):",
+-		page_index,
++		sw_page_index,
+ 		BDEV_TO_DEVICE_ID(submit_params.dev),
+ 		submit_params.blocks_used);
+ 
+@@ -1991,7 +1991,7 @@ static int swapwriter_write_chunk(char *
+ 	do_suspend_io(WRITE, &submit_params, 0);
+ 
+ 	swapwriter_buffer_posn = 0;
+-	page_index++;
++	sw_page_index++;
+ 
+ 	return 0;
+ }
+@@ -2066,7 +2066,7 @@ static int swapwriter_read_init(int stre
+ 	currentblocksperpage = 1;
+ #endif
+ 
+-	page_index = 1;
++	sw_page_index = 1;
+ 
+ 	reset_io_stats();
+ 
+@@ -2139,14 +2139,14 @@ static int swapwriter_begin_read_chunk(s
+ 	printlog(SUSPEND_IO, SUSPEND_HIGH,
+ 		"Reading page %d. Dev is %x. Block is %lu. "
+ 		"Blocksperpage is %d. Page is %p. Readahead index is %d.",
+-		page_index,
++		sw_page_index,
+ 		submit_params.dev,
+ 		submit_params.blocks[0],
+ 		currentblocksperpage, page, readahead_index);
+ 
+ 	printnolog(SUSPEND_PAGESETS, SUSPEND_VERBOSE, 1,
+ 		"page:%d. bdev:%x. blocks (%d):",
+-		page_index,
++		sw_page_index,
+ 		BDEV_TO_DEVICE_ID(submit_params.dev),
+ 		submit_params.blocks_used);
+ 
+@@ -2164,7 +2164,7 @@ static int swapwriter_begin_read_chunk(s
+ 		"IO_info struct is at %p.\n", io_info);
+ 
+ 	swapwriter_buffer_posn = 0;
+-	page_index++;
++	sw_page_index++;
+ 
+ 	check_shift_keys(0, NULL);
+ 
+diff -puN kernel/power/pagedir.c~swsusp2-compile-fixes-xx kernel/power/pagedir.c
+--- linux-2.6.7-rc2-xx2/kernel/power/pagedir.c~swsusp2-compile-fixes-xx	2004-06-03 17:50:27.457692544 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/kernel/power/pagedir.c	2004-06-03 17:50:27.473690112 -0400
+@@ -295,13 +295,15 @@ void mark_pages_for_pageset2(void)
+ 	for_each_zone(zone) {
+ 		spin_lock(&zone->lru_lock);
+ 		INACTIVE_LIST_FOR_EACH(SetPagePageset2);
+-		ACTIVE_LIST_FOR_EACH(SetPagePageset2);
++		ACTIVE_MAPPED_LIST_FOR_EACH(SetPagePageset2);
++		ACTIVE_UNMAPPED_LIST_FOR_EACH(SetPagePageset2);
+ 		spin_unlock(&zone->lru_lock);
+ 	}
+ #else
+ 	spin_lock(&pagemap_lru_lock);
+ 	INACTIVE_LIST_FOR_EACH(SetPagePageset2);
+-	ACTIVE_LIST_FOR_EACH(SetPagePageset2);
++	ACTIVE_MAPPED_LIST_FOR_EACH(SetPagePageset2);
++	ACTIVE_UNMAPPED_LIST_FOR_EACH(SetPagePageset2);
+ 	spin_unlock(&pagemap_lru_lock);
+ #endif
+ 
+diff -puN include/linux/suspend-version-specific.h~swsusp2-compile-fixes-xx include/linux/suspend-version-specific.h
+--- linux-2.6.7-rc2-xx2/include/linux/suspend-version-specific.h~swsusp2-compile-fixes-xx	2004-06-03 17:50:27.459692240 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/include/linux/suspend-version-specific.h	2004-06-03 17:50:27.474689960 -0400
+@@ -100,11 +100,24 @@ do { \
+  } \
+ } while(0)
+ 
+-#define ACTIVE_LIST_FOR_EACH(procedure) \
++#define ACTIVE_MAPPED_LIST_FOR_EACH(procedure) \
+ do { \
+- if (zone->nr_active) { \
+-  struct list_head * entry = zone->active_list.prev; \
+-  while (entry != &zone->active_list) { \
++ if (zone->nr_active_mapped) { \
++  struct list_head * entry = zone->active_mapped_list.prev; \
++  while (entry != &zone->active_mapped_list) { \
++   struct page * page; \
++   page = list_entry(entry, struct page, lru); \
++   procedure(page); \
++   entry = entry->prev; \
++  } \
++ } \
++} while(0)
++
++#define ACTIVE_UNMAPPED_LIST_FOR_EACH(procedure) \
++do { \
++ if (zone->nr_active_unmapped) { \
++  struct list_head * entry = zone->active_unmapped_list.prev; \
++  while (entry != &zone->active_unmapped_list) { \
+    struct page * page; \
+    page = list_entry(entry, struct page, lru); \
+    procedure(page); \
+diff -puN kernel/power/memory_pool.c~swsusp2-compile-fixes-xx kernel/power/memory_pool.c
+--- linux-2.6.7-rc2-xx2/kernel/power/memory_pool.c~swsusp2-compile-fixes-xx	2004-06-03 17:50:27.461691936 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/kernel/power/memory_pool.c	2004-06-03 17:50:27.475689808 -0400
+@@ -243,7 +243,7 @@ check_and_return:
+ 			page_count(page));
+ 	if (PageLRU(page))
+ 		BUG();
+-	if (PageActive(page))
++	if (PageActiveMapped(page) || PageActiveUnmapped(page))
+ 		BUG();
+ 	if (suspend_pool_level[order] && !suspend_memory_pool[order]) {
+ 		printk("Original value was %p.\n", orig_value);
+diff -puN drivers/md/kcopyd.c~swsusp2-compile-fixes-xx drivers/md/kcopyd.c
+--- linux-2.6.7-rc2-xx2/drivers/md/kcopyd.c~swsusp2-compile-fixes-xx	2004-06-03 17:50:27.463691632 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/drivers/md/kcopyd.c	2004-06-03 17:50:27.476689656 -0400
+@@ -649,7 +649,7 @@ int __init kcopyd_init(void)
+ 	if (r)
+ 		return r;
+ 
+-	_kcopyd_wq = create_singlethread_workqueue("kcopyd");
++	_kcopyd_wq = create_singlethread_workqueue("kcopyd", 0);
+ 	if (!_kcopyd_wq) {
+ 		jobs_exit();
+ 		return -ENOMEM;
+diff -puN drivers/md/dm-raid1.c~swsusp2-compile-fixes-xx drivers/md/dm-raid1.c
+--- linux-2.6.7-rc2-xx2/drivers/md/dm-raid1.c~swsusp2-compile-fixes-xx	2004-06-03 17:50:34.014695728 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/drivers/md/dm-raid1.c	2004-06-03 17:50:47.275679752 -0400
+@@ -1243,7 +1243,7 @@ static int __init dm_mirror_init(void)
+ 	if (r)
+ 		return r;
+ 
+-	_kmirrord_wq = create_workqueue("kmirrord");
++	_kmirrord_wq = create_workqueue("kmirrord", 0);
+ 	if (!_kmirrord_wq) {
+ 		DMERR("couldn't start kmirrord");
+ 		dm_dirty_log_exit();
+diff -puN drivers/scsi/libata-core.c~swsusp2-compile-fixes-xx drivers/scsi/libata-core.c
+--- linux-2.6.7-rc2-xx2/drivers/scsi/libata-core.c~swsusp2-compile-fixes-xx	2004-06-03 17:57:56.489429344 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/drivers/scsi/libata-core.c	2004-06-03 17:58:07.300785768 -0400
+@@ -3438,7 +3438,7 @@ int pci_test_config_bits(struct pci_dev 
+ 
+ static int __init ata_init(void)
+ {
+-	ata_wq = create_workqueue("ata");
++	ata_wq = create_workqueue("ata", 0);
+ 	if (!ata_wq)
+ 		return -ENOMEM;
+ 
+diff -puN arch/i386/power/suspend2.c~swsusp2-compile-fixes-xx arch/i386/power/suspend2.c
+--- linux-2.6.7-rc2-xx2/arch/i386/power/suspend2.c~swsusp2-compile-fixes-xx	2004-06-03 18:12:00.705089056 -0400
++++ linux-2.6.7-rc2-xx2-xiphux/arch/i386/power/suspend2.c	2004-06-03 18:17:46.381538248 -0400
+@@ -290,8 +290,8 @@ extern void suspend_apic_reload_state(vo
+  */
+ 
+ extern irq_desc_t irq_desc[];
+-extern unsigned long irq_affinity[];
+-unsigned long saved_affinity[NR_IRQS];
++extern cpumask_t irq_affinity[];
++cpumask_t saved_affinity[NR_IRQS];
+ 
+ /*
+  * Routine to save the old irq affinities and change affinities of all irqs to
+@@ -300,13 +300,12 @@ unsigned long saved_affinity[NR_IRQS];
+ static void set_irq_affinity(void)
+ {
+ 	int i;
+-	int cpu = smp_processor_id();
+ 
+ 	memcpy(saved_affinity, irq_affinity, NR_IRQS * sizeof(unsigned long));
+ 	for (i = 0; i < NR_IRQS; i++) {
+ 		if (irq_desc[i].handler == NULL)
+ 			continue;
+-		irq_affinity[i] = 1UL << cpu;
++		irq_affinity[i] = cpumask_of_cpu(smp_processor_id());
+ 		if (irq_desc[i].handler->set_affinity != NULL)
+ 			irq_desc[i].handler->set_affinity(i, irq_affinity[i]);
+ 	}
+
+_

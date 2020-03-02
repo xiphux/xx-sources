@@ -1,0 +1,52 @@
+
+From: Sam Ravnborg <sam@ravnborg.org>
+
+allmodconfig and allyesconfig are currently failing because they select
+wanxl firmware rebuild, and that requires an m68k assembler toolchain.
+
+Add a new generic option to the "Generic Driver Options" menu.  The option
+is defaul equals y and prevents us from building firmware unless really
+needed.
+
+Firmware is usually provided in separate filer '_shipped', and there is no
+need to rebuild them unless strictly required.  First user is WanXL - which
+otherwise required a m68k tool-set to compile.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/base/Kconfig    |    9 +++++++++
+ 25-akpm/drivers/net/wan/Kconfig |    2 +-
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff -puN drivers/base/Kconfig~wanxl-firmware-build-fix drivers/base/Kconfig
+--- 25/drivers/base/Kconfig~wanxl-firmware-build-fix	2004-06-20 14:06:22.918566144 -0700
++++ 25-akpm/drivers/base/Kconfig	2004-06-20 14:06:22.923565384 -0700
+@@ -1,5 +1,14 @@
+ menu "Generic Driver Options"
+ 
++config PREVENT_FIRMWARE_BUILD
++	bool "Prevent firmware from being built"
++	default y
++	help
++	  Say yes to avoid building firmware. Firmware is usually shipped
++	  with the driver, and only when updating the firware a rebuild
++	  should be made.
++	  If unsure say Y here.
++
+ config FW_LOADER
+ 	tristate "Hotplug firmware loading support"
+ 	depends on HOTPLUG
+diff -puN drivers/net/wan/Kconfig~wanxl-firmware-build-fix drivers/net/wan/Kconfig
+--- 25/drivers/net/wan/Kconfig~wanxl-firmware-build-fix	2004-06-20 14:06:22.919565992 -0700
++++ 25-akpm/drivers/net/wan/Kconfig	2004-06-20 14:06:22.924565232 -0700
+@@ -248,7 +248,7 @@ config WANXL
+ 
+ config WANXL_BUILD_FIRMWARE
+ 	bool "rebuild wanXL firmware"
+-	depends on WANXL
++	depends on WANXL && !PREVENT_FIRMWARE_BUILD
+ 	help
+ 	  Allows you to rebuild firmware run by the QUICC processor.
+ 	  It requires as68k, ld68k and hexdump programs.
+_

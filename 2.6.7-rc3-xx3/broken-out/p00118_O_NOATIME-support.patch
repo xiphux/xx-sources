@@ -1,0 +1,277 @@
+---
+
+ linux-2.6.7-rc3-xx2-xiphux/fs/fcntl.c                  |    7 ++++++-
+ linux-2.6.7-rc3-xx2-xiphux/fs/namei.c                  |    5 +++++
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-alpha/fcntl.h   |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-arm/fcntl.h     |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-arm26/fcntl.h   |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-cris/fcntl.h    |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-h8300/fcntl.h   |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-i386/fcntl.h    |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-ia64/fcntl.h    |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-m68k/fcntl.h    |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-mips/fcntl.h    |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-parisc/fcntl.h  |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-ppc/fcntl.h     |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-ppc64/fcntl.h   |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-s390/fcntl.h    |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-sh/fcntl.h      |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-sparc/fcntl.h   |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-sparc64/fcntl.h |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-v850/fcntl.h    |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/asm-x86_64/fcntl.h  |    1 +
+ linux-2.6.7-rc3-xx2-xiphux/include/linux/fs.h          |    3 ++-
+ 21 files changed, 31 insertions(+), 2 deletions(-)
+
+diff -puN fs/fcntl.c~O_NOATIME-support fs/fcntl.c
+--- linux-2.6.7-rc3-xx2/fs/fcntl.c~O_NOATIME-support	2004-06-12 18:39:15.077284896 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/fs/fcntl.c	2004-06-12 18:39:15.141275168 -0400
+@@ -221,7 +221,7 @@ asmlinkage long sys_dup(unsigned int fil
+ 	return ret;
+ }
+ 
+-#define SETFL_MASK (O_APPEND | O_NONBLOCK | O_NDELAY | FASYNC | O_DIRECT)
++#define SETFL_MASK (O_APPEND | O_NONBLOCK | O_NDELAY | FASYNC | O_DIRECT | O_NOATIME)
+ 
+ static int setfl(int fd, struct file * filp, unsigned long arg)
+ {
+@@ -232,6 +232,11 @@ static int setfl(int fd, struct file * f
+ 	if (!(arg & O_APPEND) && IS_APPEND(inode))
+ 		return -EPERM;
+ 
++	/* O_NOATIME can only be set by the owner or superuser */
++	if ((arg & O_NOATIME) && !(filp->f_flags & O_NOATIME))
++		if (current->fsuid != inode->i_uid && !capable(CAP_FOWNER))
++			return -EPERM;
++
+ 	/* required for strict SunOS emulation */
+ 	if (O_NONBLOCK != O_NDELAY)
+ 	       if (arg & O_NDELAY)
+diff -puN fs/namei.c~O_NOATIME-support fs/namei.c
+--- linux-2.6.7-rc3-xx2/fs/namei.c~O_NOATIME-support	2004-06-12 18:39:15.079284592 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/fs/namei.c	2004-06-12 18:39:15.160272280 -0400
+@@ -1230,6 +1230,11 @@ int may_open(struct nameidata *nd, int a
+ 			return -EPERM;
+ 	}
+ 
++	/* O_NOATIME can only be set by the owner or superuser */
++	if (flag & O_NOATIME)
++		if (current->fsuid != inode->i_uid && !capable(CAP_FOWNER))
++			return -EPERM;
++
+ 	/*
+ 	 * Ensure there are no outstanding leases on the file.
+ 	 */
+diff -puN include/asm-alpha/fcntl.h~O_NOATIME-support include/asm-alpha/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-alpha/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.082284136 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-alpha/fcntl.h	2004-06-12 18:39:15.161272128 -0400
+@@ -21,6 +21,7 @@
+ #define O_NOFOLLOW	0200000 /* don't follow links */
+ #define O_LARGEFILE	0400000 /* will be set by the kernel on every open */
+ #define O_DIRECT	02000000 /* direct disk access - should check with OSF/1 */
++#define O_NOATIME	04000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/asm-arm/fcntl.h~O_NOATIME-support include/asm-arm/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-arm/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.085283680 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-arm/fcntl.h	2004-06-12 18:39:15.162271976 -0400
+@@ -20,6 +20,7 @@
+ #define O_NOFOLLOW	0100000	/* don't follow links */
+ #define O_DIRECT	0200000	/* direct disk access hint - currently ignored */
+ #define O_LARGEFILE	0400000
++#define O_NOATIME	01000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/asm-arm26/fcntl.h~O_NOATIME-support include/asm-arm26/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-arm26/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.087283376 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-arm26/fcntl.h	2004-06-12 18:39:15.164271672 -0400
+@@ -20,6 +20,7 @@
+ #define O_NOFOLLOW	0100000	/* don't follow links */
+ #define O_DIRECT	0200000	/* direct disk access hint - currently ignored */
+ #define O_LARGEFILE	0400000
++#define O_NOATIME	01000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/asm-cris/fcntl.h~O_NOATIME-support include/asm-cris/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-cris/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.090282920 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-cris/fcntl.h	2004-06-12 18:39:15.166271368 -0400
+@@ -22,6 +22,7 @@
+ #define O_LARGEFILE	0100000
+ #define O_DIRECTORY	0200000	/* must be a directory */
+ #define O_NOFOLLOW	0400000 /* don't follow links */
++#define O_NOATIME	01000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get f_flags */
+diff -puN include/asm-h8300/fcntl.h~O_NOATIME-support include/asm-h8300/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-h8300/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.094282312 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-h8300/fcntl.h	2004-06-12 18:39:15.166271368 -0400
+@@ -20,6 +20,7 @@
+ #define O_NOFOLLOW	0100000	/* don't follow links */
+ #define O_DIRECT	0200000	/* direct disk access hint - currently ignored */
+ #define O_LARGEFILE	0400000
++#define O_NOATIME	01000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/asm-i386/fcntl.h~O_NOATIME-support include/asm-i386/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-i386/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.096282008 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-i386/fcntl.h	2004-06-12 18:39:38.646701800 -0400
+@@ -20,6 +20,7 @@
+ #define O_LARGEFILE	0100000
+ #define O_DIRECTORY	0200000	/* must be a directory */
+ #define O_NOFOLLOW	0400000 /* don't follow links */
++#define O_NOATIME	01000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/asm-ia64/fcntl.h~O_NOATIME-support include/asm-ia64/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-ia64/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.099281552 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-ia64/fcntl.h	2004-06-12 18:40:00.918316000 -0400
+@@ -28,6 +28,7 @@
+ #define O_LARGEFILE	0100000
+ #define O_DIRECTORY	0200000	/* must be a directory */
+ #define O_NOFOLLOW	0400000 /* don't follow links */
++#define O_NOATIME	01000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/asm-m68k/fcntl.h~O_NOATIME-support include/asm-m68k/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-m68k/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.101281248 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-m68k/fcntl.h	2004-06-12 18:39:15.170270760 -0400
+@@ -20,6 +20,7 @@
+ #define O_NOFOLLOW	0100000	/* don't follow links */
+ #define O_DIRECT	0200000	/* direct disk access hint - currently ignored */
+ #define O_LARGEFILE	0400000
++#define O_NOATIME	01000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/asm-mips/fcntl.h~O_NOATIME-support include/asm-mips/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-mips/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.104280792 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-mips/fcntl.h	2004-06-12 18:39:15.170270760 -0400
+@@ -26,6 +26,7 @@
+ #define O_DIRECT	0x8000	/* direct disk access hint */
+ #define O_DIRECTORY	0x10000	/* must be a directory */
+ #define O_NOFOLLOW	0x20000	/* don't follow links */
++#define O_NOATIME	0x40000
+ 
+ #define O_NDELAY	O_NONBLOCK
+ 
+diff -puN include/asm-parisc/fcntl.h~O_NOATIME-support include/asm-parisc/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-parisc/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.106280488 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-parisc/fcntl.h	2004-06-12 18:39:15.171270608 -0400
+@@ -19,6 +19,7 @@
+ #define O_NOCTTY	00400000 /* not fcntl */
+ #define O_DSYNC		01000000 /* HPUX only */
+ #define O_RSYNC		02000000 /* HPUX only */
++#define O_NOATIME	04000000
+ 
+ #define FASYNC		00020000 /* fcntl, for BSD compatibility */
+ #define O_DIRECT	00040000 /* direct disk access hint - currently ignored */
+diff -puN include/asm-ppc/fcntl.h~O_NOATIME-support include/asm-ppc/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-ppc/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.110279880 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-ppc/fcntl.h	2004-06-12 18:40:25.084642160 -0400
+@@ -20,6 +20,7 @@
+ #define O_NOFOLLOW      0100000	/* don't follow links */
+ #define O_LARGEFILE     0200000
+ #define O_DIRECT	0400000	/* direct disk access hint */
++#define O_NOATIME	01000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/asm-ppc64/fcntl.h~O_NOATIME-support include/asm-ppc64/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-ppc64/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.114279272 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-ppc64/fcntl.h	2004-06-12 18:40:52.744437232 -0400
+@@ -27,6 +27,7 @@
+ #define O_NOFOLLOW      0100000	/* don't follow links */
+ #define O_LARGEFILE     0200000
+ #define O_DIRECT	0400000	/* direct disk access hint */
++#define O_NOATIME	01000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/asm-s390/fcntl.h~O_NOATIME-support include/asm-s390/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-s390/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.118278664 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-s390/fcntl.h	2004-06-12 18:41:22.547906416 -0400
+@@ -27,6 +27,7 @@
+ #define O_LARGEFILE	0100000
+ #define O_DIRECTORY	0200000	/* must be a directory */
+ #define O_NOFOLLOW	0400000 /* don't follow links */
++#define O_NOATIME	01000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/asm-sh/fcntl.h~O_NOATIME-support include/asm-sh/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-sh/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.121278208 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-sh/fcntl.h	2004-06-12 18:39:15.177269696 -0400
+@@ -20,6 +20,7 @@
+ #define O_LARGEFILE	0100000
+ #define O_DIRECTORY	0200000	/* must be a directory */
+ #define O_NOFOLLOW	0400000 /* don't follow links */
++#define O_NOATIME	01000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/asm-sparc/fcntl.h~O_NOATIME-support include/asm-sparc/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-sparc/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.124277752 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-sparc/fcntl.h	2004-06-12 18:39:15.179269392 -0400
+@@ -21,6 +21,7 @@
+ #define O_NOFOLLOW	0x20000	/* don't follow links */
+ #define O_LARGEFILE	0x40000
+ #define O_DIRECT        0x100000 /* direct disk access hint */
++#define O_NOATIME	0x200000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/asm-sparc64/fcntl.h~O_NOATIME-support include/asm-sparc64/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-sparc64/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.127277296 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-sparc64/fcntl.h	2004-06-12 18:39:15.182268936 -0400
+@@ -21,6 +21,7 @@
+ #define O_NOFOLLOW	0x20000	/* don't follow links */
+ #define O_LARGEFILE	0x40000
+ #define O_DIRECT        0x100000 /* direct disk access hint */
++#define O_NOATIME	0x200000
+ 
+ 
+ #define F_DUPFD		0	/* dup */
+diff -puN include/asm-v850/fcntl.h~O_NOATIME-support include/asm-v850/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-v850/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.128277144 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-v850/fcntl.h	2004-06-12 18:39:15.184268632 -0400
+@@ -20,6 +20,7 @@
+ #define O_NOFOLLOW     0100000	/* don't follow links */
+ #define O_DIRECT       0200000	/* direct disk access hint - currently ignored */
+ #define O_LARGEFILE    0400000
++#define O_NOATIME	01000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/asm-x86_64/fcntl.h~O_NOATIME-support include/asm-x86_64/fcntl.h
+--- linux-2.6.7-rc3-xx2/include/asm-x86_64/fcntl.h~O_NOATIME-support	2004-06-12 18:39:15.130276840 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/asm-x86_64/fcntl.h	2004-06-12 18:41:48.635940432 -0400
+@@ -20,6 +20,7 @@
+ #define O_LARGEFILE	0100000
+ #define O_DIRECTORY	0200000	/* must be a directory */
+ #define O_NOFOLLOW	0400000 /* don't follow links */
++#define O_NOATIME	01000000
+ 
+ #define F_DUPFD		0	/* dup */
+ #define F_GETFD		1	/* get close_on_exec */
+diff -puN include/linux/fs.h~O_NOATIME-support include/linux/fs.h
+--- linux-2.6.7-rc3-xx2/include/linux/fs.h~O_NOATIME-support	2004-06-12 18:39:15.132276536 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/include/linux/fs.h	2004-06-12 18:39:15.211264528 -0400
+@@ -1063,7 +1063,8 @@ static inline void touch_atime(struct vf
+ 
+ static inline void file_accessed(struct file *file)
+ {
+-	touch_atime(file->f_vfsmnt, file->f_dentry);
++	if (!(file->f_flags & O_NOATIME))
++		touch_atime(file->f_vfsmnt, file->f_dentry);
+ }
+ 
+ int sync_inode(struct inode *inode, struct writeback_control *wbc);
+
+_

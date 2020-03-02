@@ -1,0 +1,64 @@
+kick_process is common code; move it to scheduler.c
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+Index: linux-2.6.10-rc1-mm4/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc1-mm4.orig/kernel/sched.c	2004-11-10 09:20:21.420903102 +1100
++++ linux-2.6.10-rc1-mm4/kernel/sched.c	2004-11-10 09:20:48.262590839 +1100
+@@ -896,24 +896,6 @@ repeat:
+ 	task_rq_unlock(rq, &flags);
+ }
+ 
+-/***
+- * kick_process - kick a running thread to enter/exit the kernel
+- * @p: the to-be-kicked thread
+- *
+- * Cause a process which is running on another CPU to enter
+- * kernel-mode, without any delay. (to get signals handled.)
+- */
+-void kick_process(task_t *p)
+-{
+-	int cpu;
+-
+-	preempt_disable();
+-	cpu = task_cpu(p);
+-	if ((cpu != smp_processor_id()) && task_curr(p))
+-		smp_send_reschedule(cpu);
+-	preempt_enable();
+-}
+-
+ /*
+  * Return a low guess at the load of a migration-source cpu.
+  *
+Index: linux-2.6.10-rc1-mm4/kernel/scheduler.c
+===================================================================
+--- linux-2.6.10-rc1-mm4.orig/kernel/scheduler.c	2004-11-10 09:19:07.089844845 +1100
++++ linux-2.6.10-rc1-mm4/kernel/scheduler.c	2004-11-10 09:20:48.263590679 +1100
+@@ -43,6 +43,26 @@
+ DEFINE_PER_CPU(struct kernel_stat, kstat);
+ EXPORT_PER_CPU_SYMBOL(kstat);
+ 
++#ifdef CONFIG_SMP
++/***
++ * kick_process - kick a running thread to enter/exit the kernel
++ * @p: the to-be-kicked thread
++ *
++ * Cause a process which is running on another CPU to enter
++ * kernel-mode, without any delay. (to get signals handled.)
++ */
++void kick_process(task_t *p)
++{
++	int cpu;
++
++	preempt_disable();
++	cpu = task_cpu(p);
++	if ((cpu != smp_processor_id()) && task_curr(p))
++		smp_send_reschedule(cpu);
++	preempt_enable();
++}
++#endif
++
+ extern struct sched_drv ingo_sched_drv;
+ static const struct sched_drv *scheduler = &ingo_sched_drv;
+ 

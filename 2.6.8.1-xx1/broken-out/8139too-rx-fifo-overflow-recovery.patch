@@ -1,0 +1,100 @@
+
+From: Francois Romieu <romieu@fr.zoreil.com>
+
+This patch allows to update the interrupt status register after an Rx
+overflow or a Rx fifo error even when the Rx buffer contains no packet.  As
+a side effect it saves a few heavy (i.e.  flushed) pci ops per received
+packet when several packets are received at the same time.
+
+Signed-off-by: Francois Romieu <romieu@fr.zoreil.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/8139too.c |   29 +++++++++++++++--------------
+ 1 files changed, 15 insertions(+), 14 deletions(-)
+
+diff -puN drivers/net/8139too.c~8139too-rx-fifo-overflow-recovery drivers/net/8139too.c
+--- 25/drivers/net/8139too.c~8139too-rx-fifo-overflow-recovery	Thu Aug  5 15:50:29 2004
++++ 25-akpm/drivers/net/8139too.c	Thu Aug  5 15:50:29 2004
+@@ -1934,12 +1934,15 @@ static int rtl8139_rx(struct net_device 
+ 	int received = 0;
+ 	unsigned char *rx_ring = tp->rx_ring;
+ 	unsigned int cur_rx = tp->cur_rx;
++	u16 status;
+ 
+ 	DPRINTK ("%s: In rtl8139_rx(), current %4.4x BufAddr %4.4x,"
+ 		 " free to %4.4x, Cmd %2.2x.\n", dev->name, cur_rx,
+ 		 RTL_R16 (RxBufAddr),
+ 		 RTL_R16 (RxBufPtr), RTL_R8 (ChipCmd));
+ 
++	status = RTL_R16 (IntrStatus) & RxAckBits;
++
+ 	while (netif_running(dev) && received < budget 
+ 	       && (RTL_R8 (ChipCmd) & RxBufEmpty) == 0) {
+ 		u32 ring_offset = cur_rx % RX_BUF_LEN;
+@@ -1947,7 +1950,6 @@ static int rtl8139_rx(struct net_device 
+ 		unsigned int rx_size;
+ 		unsigned int pkt_size;
+ 		struct sk_buff *skb;
+-		u16 status;
+ 
+ 		rmb();
+ 
+@@ -1977,7 +1979,7 @@ static int rtl8139_rx(struct net_device 
+ 		 */
+ 		if (unlikely(rx_size == 0xfff0)) {
+ 			tp->xstats.early_rx++;
+-			goto done;
++			break;
+ 		}
+ 
+ 		/* If Rx err or invalid rx_size/rx_status received
+@@ -1989,7 +1991,8 @@ static int rtl8139_rx(struct net_device 
+ 			     (rx_size < 8) ||
+ 			     (!(rx_status & RxStatusOK)))) {
+ 			rtl8139_rx_err (rx_status, dev, tp, ioaddr);
+-			return -1;
++			received = -1;
++			goto out;
+ 		}
+ 
+ 		/* Malloc up new buffer, compatible with net-2e. */
+@@ -2024,21 +2027,18 @@ static int rtl8139_rx(struct net_device 
+ 
+ 		cur_rx = (cur_rx + rx_size + 4 + 3) & ~3;
+ 		RTL_W16 (RxBufPtr, (u16) (cur_rx - 16));
++	}
+ 
+-		/* Clear out errors and receive interrupts */
+-		status = RTL_R16 (IntrStatus) & RxAckBits;
+-		if (likely(status != 0)) {
+-			if (unlikely(status & (RxFIFOOver | RxOverflow))) {
+-				tp->stats.rx_errors++;
+-				if (status & RxFIFOOver)
+-					tp->stats.rx_fifo_errors++;
+-			}
+-			RTL_W16_F (IntrStatus, RxAckBits);
++	/* Clear out errors and receive interrupts */
++	if (likely(status != 0)) {
++		if (unlikely(status & (RxFIFOOver | RxOverflow))) {
++			tp->stats.rx_errors++;
++			if (status & RxFIFOOver)
++				tp->stats.rx_fifo_errors++;
+ 		}
++		RTL_W16_F (IntrStatus, RxAckBits);
+ 	}
+ 
+- done:
+-
+ #if RTL8139_DEBUG > 1
+ 	DPRINTK ("%s: Done rtl8139_rx(), current %4.4x BufAddr %4.4x,"
+ 		 " free to %4.4x, Cmd %2.2x.\n", dev->name, cur_rx,
+@@ -2047,6 +2047,7 @@ static int rtl8139_rx(struct net_device 
+ #endif
+ 
+ 	tp->cur_rx = cur_rx;
++out:
+ 	return received;
+ }
+ 
+_

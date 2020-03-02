@@ -1,0 +1,73 @@
+---
+
+ linux-2.6.6-xx2-xiphux/include/linux/suspend-debug.h |    2 +-
+ linux-2.6.6-xx2-xiphux/kernel/power/memory_pool.c    |    3 ++-
+ linux-2.6.6-xx2-xiphux/kernel/power/process.c        |    3 ++-
+ linux-2.6.6-xx2-xiphux/kernel/power/suspend2.c       |    6 +++---
+ 4 files changed, 8 insertions(+), 6 deletions(-)
+
+diff -puN include/linux/suspend-debug.h~31-software-suspend-core-2.0.0.74-incremental include/linux/suspend-debug.h
+--- linux-2.6.6-xx2/include/linux/suspend-debug.h~31-software-suspend-core-2.0.0.74-incremental	2004-05-28 04:30:59.460577400 -0400
++++ linux-2.6.6-xx2-xiphux/include/linux/suspend-debug.h	2004-05-28 04:30:59.471575728 -0400
+@@ -5,7 +5,7 @@
+ /* Solely for comparison with the version specific patch revision */
+ #define SWSUSP_CORE_REVISION 0x201
+ 
+-#define SWSUSP_CORE_VERSION "2.0.0.73"
++#define SWSUSP_CORE_VERSION "2.0.0.74"
+ #define name_suspend "Software Suspend " SWSUSP_CORE_VERSION ": "
+ 
+ /* Same length to ensure one overwrites the other */
+diff -puN kernel/power/memory_pool.c~31-software-suspend-core-2.0.0.74-incremental kernel/power/memory_pool.c
+--- linux-2.6.6-xx2/kernel/power/memory_pool.c~31-software-suspend-core-2.0.0.74-incremental	2004-05-28 04:30:59.462577096 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/memory_pool.c	2004-05-28 04:30:59.472575576 -0400
+@@ -281,9 +281,10 @@ void free_suspend_pool_pages(struct page
+ 			&& (suspend_pool_level[order] < suspend_pool_level_limit[order])) {
+ 		new_head = (unsigned long *) page_address(page);
+ 		for (i = 0; i < (1 << order); i++) {
+-			set_page_count(page + i, 1);
++			set_page_count(page + i, 0);
+ 			SetPageChecksumIgnore(page + i);
+ 		}
++		set_page_count(page, 1);
+ 		*new_head = (unsigned long) suspend_memory_pool[order];
+ 		suspend_memory_pool[order] = new_head;
+ 		suspend_pool_level[order]++;
+diff -puN kernel/power/process.c~31-software-suspend-core-2.0.0.74-incremental kernel/power/process.c
+--- linux-2.6.6-xx2/kernel/power/process.c~31-software-suspend-core-2.0.0.74-incremental	2004-05-28 04:30:59.465576640 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/process.c	2004-05-28 04:30:59.474575272 -0400
+@@ -210,7 +210,8 @@ void refrigerator(unsigned long flag)
+ void __suspend_activity_start(int flags, const char * function,
+ 		const char * file)
+ {
+-	if (unlikely((suspend_task) && (current->pid == suspend_task)))
++	if (unlikely(((suspend_task) && (current->pid == suspend_task)) ||
++		     (current->flags & PF_NOFREEZE)));
+ 		return;
+ 
+ 	if (unlikely(current->flags & PF_FREEZE))
+diff -puN kernel/power/suspend2.c~31-software-suspend-core-2.0.0.74-incremental kernel/power/suspend2.c
+--- linux-2.6.6-xx2/kernel/power/suspend2.c~31-software-suspend-core-2.0.0.74-incremental	2004-05-28 04:30:59.467576336 -0400
++++ linux-2.6.6-xx2-xiphux/kernel/power/suspend2.c	2004-05-28 04:30:59.476574968 -0400
+@@ -1721,6 +1721,9 @@ static int __init software_resume2(void)
+ 	int read_image_result = 0;
+ 	orig_loglevel = console_loglevel;
+ 
++	/* Suspend always runs on processor 0 */
++	ensure_on_processor_zero();
++
+ 	PRINTPREEMPTCOUNT("at start of software_resume2");
+ 
+ 	if (sizeof(swp_entry_t) != sizeof(long)) {
+@@ -1791,9 +1794,6 @@ static int __init software_resume2(void)
+ 
+ 	PRINTPREEMPTCOUNT("Prior to calling do_suspend2_lowlevel.");
+ 
+-	/* Suspend always runs on processor 0 */
+-	ensure_on_processor_zero();
+-
+ 	do_suspend2_lowlevel(1);
+ 	BUG();
+ 
+
+_

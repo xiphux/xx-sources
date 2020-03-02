@@ -1,0 +1,38 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/jbd/checkpoint.c |    9 ++++-----
+ 1 files changed, 4 insertions(+), 5 deletions(-)
+
+diff -puN fs/jbd/checkpoint.c~journal_clean_checkpoint_list-latency-fix-fix fs/jbd/checkpoint.c
+--- 25/fs/jbd/checkpoint.c~journal_clean_checkpoint_list-latency-fix-fix	2004-08-01 02:00:57.000000000 -0700
++++ 25-akpm/fs/jbd/checkpoint.c	2004-08-01 15:39:33.010046072 -0700
+@@ -497,21 +497,20 @@ int __journal_clean_checkpoint_list(jour
+ 		 * We don't test cond_resched() here because another CPU could
+ 		 * be waiting on j_list_lock() while holding a different lock.
+ 		 */
+-		if ((ret & 127) == 127) {
+-			spin_unlock(&journal->j_list_lock);
++		if (journal->j_checkpoint_transactions && (ret & 127) == 127) {
+ 			/*
+ 			 * We need to schedule away.  Rotate both this
+ 			 * transaction's buffer list and the checkpoint list to
+ 			 * try to avoid quadratic behaviour.
+ 			 */
++			transaction = journal->j_checkpoint_transactions;
+ 			jh = transaction->t_checkpoint_list;
+ 			if (jh)
+ 				transaction->t_checkpoint_list = jh->b_cpnext;
+ 
+-			transaction = journal->j_checkpoint_transactions;
+-			if (transaction)
+-				journal->j_checkpoint_transactions =
++			journal->j_checkpoint_transactions =
+ 					transaction->t_cpnext;
++			spin_unlock(&journal->j_list_lock);
+ 			return ret;
+ 		}
+ #endif
+_

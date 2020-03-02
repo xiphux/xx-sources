@@ -1,0 +1,59 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+It adds cond_resched_softirq() which can be used by _process context_
+softirqs-disabled codepaths to preempt if necessary.  The function will
+enable softirqs before scheduling.  (Later patches will use this
+primitive.)
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/sched.h |    3 +++
+ 25-akpm/kernel/sched.c        |   16 ++++++++++++++++
+ 2 files changed, 19 insertions(+)
+
+diff -puN include/linux/sched.h~sched-add-cond_resched_softirq include/linux/sched.h
+--- 25/include/linux/sched.h~sched-add-cond_resched_softirq	2004-10-05 02:00:49.519394720 -0700
++++ 25-akpm/include/linux/sched.h	2004-10-05 02:00:49.525393808 -0700
+@@ -1048,9 +1048,12 @@ static inline int need_resched(void)
+  * cond_resched() and cond_resched_lock(): latency reduction via
+  * explicit rescheduling in places that are safe. The return
+  * value indicates whether a reschedule was done in fact.
++ * cond_resched_lock() will drop the spinlock before scheduling,
++ * cond_resched_softirq() will enable bhs before scheduling.
+  */
+ extern int cond_resched(void);
+ extern int cond_resched_lock(spinlock_t * lock);
++extern int cond_resched_softirq(void);
+ 
+ /*
+  * Does a critical section need to be broken due to another
+diff -puN kernel/sched.c~sched-add-cond_resched_softirq kernel/sched.c
+--- 25/kernel/sched.c~sched-add-cond_resched_softirq	2004-10-05 02:00:49.521394416 -0700
++++ 25-akpm/kernel/sched.c	2004-10-05 02:00:49.528393352 -0700
+@@ -3449,6 +3449,22 @@ int cond_resched_lock(spinlock_t * lock)
+ 
+ EXPORT_SYMBOL(cond_resched_lock);
+ 
++int __sched cond_resched_softirq(void)
++{
++	BUG_ON(!in_softirq());
++
++	if (need_resched()) {
++		__local_bh_enable();
++		__cond_resched();
++		local_bh_disable();
++		return 1;
++	}
++	return 0;
++}
++
++EXPORT_SYMBOL(cond_resched_softirq);
++
++
+ /**
+  * yield - yield the current processor to other threads.
+  *
+_

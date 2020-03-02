@@ -1,0 +1,284 @@
+
+From: Trond Myklebust <trond.myklebust@fys.uio.no>
+
+NLM/lockd: set up a unique mapping between the fl_owner_t and a unique 32-bit
+"pid" on the client side.  We can't use the real pid of the process/thread
+'cos CLONE_FILES does not automatically imply CLONE_THREAD.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/lockd/clntlock.c         |    4 -
+ 25-akpm/fs/lockd/clntproc.c         |   85 ++++++++++++++++++++++++++++++++++--
+ 25-akpm/fs/lockd/host.c             |   18 ++++---
+ 25-akpm/include/linux/lockd/lockd.h |   17 ++++++-
+ 25-akpm/include/linux/nfs_fs_i.h    |    4 +
+ 5 files changed, 114 insertions(+), 14 deletions(-)
+
+diff -puN fs/lockd/clntlock.c~posix-locking-fl_owner_t-to-pid-mapping fs/lockd/clntlock.c
+--- 25/fs/lockd/clntlock.c~posix-locking-fl_owner_t-to-pid-mapping	2004-06-29 22:28:34.046525584 -0700
++++ 25-akpm/fs/lockd/clntlock.c	2004-06-29 22:28:34.055524216 -0700
+@@ -146,7 +146,7 @@ void nlmclnt_mark_reclaim(struct nlm_hos
+ 		inode = fl->fl_file->f_dentry->d_inode;
+ 		if (inode->i_sb->s_magic != NFS_SUPER_MAGIC)
+ 			continue;
+-		if (fl->fl_u.nfs_fl.host != host)
++		if (fl->fl_u.nfs_fl.owner->host != host)
+ 			continue;
+ 		if (!(fl->fl_u.nfs_fl.flags & NFS_LCK_GRANTED))
+ 			continue;
+@@ -215,7 +215,7 @@ restart:
+ 		inode = fl->fl_file->f_dentry->d_inode;
+ 		if (inode->i_sb->s_magic != NFS_SUPER_MAGIC)
+ 			continue;
+-		if (fl->fl_u.nfs_fl.host != host)
++		if (fl->fl_u.nfs_fl.owner->host != host)
+ 			continue;
+ 		if (!(fl->fl_u.nfs_fl.flags & NFS_LCK_RECLAIM))
+ 			continue;
+diff -puN fs/lockd/clntproc.c~posix-locking-fl_owner_t-to-pid-mapping fs/lockd/clntproc.c
+--- 25/fs/lockd/clntproc.c~posix-locking-fl_owner_t-to-pid-mapping	2004-06-29 22:28:34.047525432 -0700
++++ 25-akpm/fs/lockd/clntproc.c	2004-06-29 22:28:34.056524064 -0700
+@@ -42,6 +42,79 @@ static inline void nlmclnt_next_cookie(s
+ 	nlm_cookie++;
+ }
+ 
++static struct nlm_lockowner *nlm_get_lockowner(struct nlm_lockowner *lockowner)
++{
++	atomic_inc(&lockowner->count);
++	return lockowner;
++}
++
++static void nlm_put_lockowner(struct nlm_lockowner *lockowner)
++{
++	if (!atomic_dec_and_lock(&lockowner->count, &lockowner->host->h_lock))
++		return;
++	list_del(&lockowner->list);
++	spin_unlock(&lockowner->host->h_lock);
++	nlm_release_host(lockowner->host);
++	kfree(lockowner);
++}
++
++static inline int nlm_pidbusy(struct nlm_host *host, uint32_t pid)
++{
++	struct nlm_lockowner *lockowner;
++	list_for_each_entry(lockowner, &host->h_lockowners, list) {
++		if (lockowner->pid == pid)
++			return -EBUSY;
++	}
++	return 0;
++}
++
++static inline uint32_t __nlm_alloc_pid(struct nlm_host *host)
++{
++	uint32_t res;
++	do {
++		res = host->h_pidcount++;
++	} while (nlm_pidbusy(host, res) < 0);
++	return res;
++}
++
++static struct nlm_lockowner *__nlm_find_lockowner(struct nlm_host *host, fl_owner_t owner)
++{
++	struct nlm_lockowner *lockowner;
++	list_for_each_entry(lockowner, &host->h_lockowners, list) {
++		if (lockowner->owner != owner)
++			continue;
++		return nlm_get_lockowner(lockowner);
++	}
++	return NULL;
++}
++
++static struct nlm_lockowner *nlm_find_lockowner(struct nlm_host *host, fl_owner_t owner)
++{
++	struct nlm_lockowner *res, *new = NULL;
++
++	spin_lock(&host->h_lock);
++	res = __nlm_find_lockowner(host, owner);
++	if (res == NULL) {
++		spin_unlock(&host->h_lock);
++		new = (struct nlm_lockowner *)kmalloc(sizeof(*new), GFP_KERNEL);
++		spin_lock(&host->h_lock);
++		res = __nlm_find_lockowner(host, owner);
++		if (res == NULL && new != NULL) {
++			res = new;
++			atomic_set(&new->count, 1);
++			new->owner = owner;
++			new->pid = __nlm_alloc_pid(host);
++			new->host = nlm_get_host(host);
++			list_add(&new->list, &host->h_lockowners);
++			new = NULL;
++		}
++	}
++	spin_unlock(&host->h_lock);
++	if (new != NULL)
++		kfree(new);
++	return res;
++}
++
+ /*
+  * Initialize arguments for TEST/LOCK/UNLOCK/CANCEL calls
+  */
+@@ -415,15 +488,20 @@ nlmclnt_test(struct nlm_rqst *req, struc
+ 	return 0;
+ }
+ 
++static int nlmclnt_locks_same_owner(struct file_lock *fl1, struct file_lock *fl2)
++{
++	return fl1->fl_u.nfs_fl.owner == fl2->fl_u.nfs_fl.owner;
++}
++
+ static void nlmclnt_locks_copy_lock(struct file_lock *new, struct file_lock *fl)
+ {
+ 	memcpy(&new->fl_u.nfs_fl, &fl->fl_u.nfs_fl, sizeof(new->fl_u.nfs_fl));
+-	nlm_get_host(new->fl_u.nfs_fl.host);
++	nlm_get_lockowner(new->fl_u.nfs_fl.owner);
+ }
+ 
+ static void nlmclnt_locks_release_private(struct file_lock *fl)
+ {
+-	nlm_release_host(fl->fl_u.nfs_fl.host);
++	nlm_put_lockowner(fl->fl_u.nfs_fl.owner);
+ 	fl->fl_ops = NULL;
+ }
+ 
+@@ -433,6 +511,7 @@ static void nlmclnt_steal_locks(struct f
+ }
+ 
+ static struct file_lock_operations nlmclnt_lock_ops = {
++	.fl_compare_owner = nlmclnt_locks_same_owner,
+ 	.fl_copy_lock = nlmclnt_locks_copy_lock,
+ 	.fl_release_private = nlmclnt_locks_release_private,
+ 	.fl_steal_locks = nlmclnt_steal_locks,
+@@ -443,7 +522,7 @@ static void nlmclnt_locks_init_private(s
+ 	BUG_ON(fl->fl_ops != NULL);
+ 	fl->fl_u.nfs_fl.state = 0;
+ 	fl->fl_u.nfs_fl.flags = 0;
+-	fl->fl_u.nfs_fl.host = nlm_get_host(host);
++	fl->fl_u.nfs_fl.owner = nlm_find_lockowner(host, fl->fl_owner);
+ 	fl->fl_ops = &nlmclnt_lock_ops;
+ }
+ 
+diff -puN fs/lockd/host.c~posix-locking-fl_owner_t-to-pid-mapping fs/lockd/host.c
+--- 25/fs/lockd/host.c~posix-locking-fl_owner_t-to-pid-mapping	2004-06-29 22:28:34.048525280 -0700
++++ 25-akpm/fs/lockd/host.c	2004-06-29 22:28:34.057523912 -0700
+@@ -119,13 +119,15 @@ nlm_lookup_host(int server, struct socka
+ 	init_MUTEX(&host->h_sema);
+ 	host->h_nextrebind = jiffies + NLM_HOST_REBIND;
+ 	host->h_expires    = jiffies + NLM_HOST_EXPIRE;
+-	host->h_count      = 1;
++	atomic_set(&host->h_count, 1);
+ 	init_waitqueue_head(&host->h_gracewait);
+ 	host->h_state      = 0;			/* pseudo NSM state */
+ 	host->h_nsmstate   = 0;			/* real NSM state */
+ 	host->h_server	   = server;
+ 	host->h_next       = nlm_hosts[hash];
+ 	nlm_hosts[hash]    = host;
++	INIT_LIST_HEAD(&host->h_lockowners);
++	spin_lock_init(&host->h_lock);
+ 
+ 	if (++nrhosts > NLM_HOST_MAX)
+ 		next_gc = 0;
+@@ -235,7 +237,7 @@ struct nlm_host * nlm_get_host(struct nl
+ {
+ 	if (host) {
+ 		dprintk("lockd: get host %s\n", host->h_name);
+-		host->h_count ++;
++		atomic_inc(&host->h_count);
+ 		host->h_expires = jiffies + NLM_HOST_EXPIRE;
+ 	}
+ 	return host;
+@@ -246,9 +248,10 @@ struct nlm_host * nlm_get_host(struct nl
+  */
+ void nlm_release_host(struct nlm_host *host)
+ {
+-	if (host && host->h_count) {
++	if (host != NULL) {
+ 		dprintk("lockd: release host %s\n", host->h_name);
+-		host->h_count --;
++		atomic_dec(&host->h_count);
++		BUG_ON(atomic_read(&host->h_count) < 0);
+ 	}
+ }
+ 
+@@ -283,7 +286,7 @@ nlm_shutdown_hosts(void)
+ 		for (i = 0; i < NLM_HOST_NRHASH; i++) {
+ 			for (host = nlm_hosts[i]; host; host = host->h_next) {
+ 				dprintk("       %s (cnt %d use %d exp %ld)\n",
+-					host->h_name, host->h_count,
++					host->h_name, atomic_read(&host->h_count),
+ 					host->h_inuse, host->h_expires);
+ 			}
+ 		}
+@@ -314,10 +317,10 @@ nlm_gc_hosts(void)
+ 	for (i = 0; i < NLM_HOST_NRHASH; i++) {
+ 		q = &nlm_hosts[i];
+ 		while ((host = *q) != NULL) {
+-			if (host->h_count || host->h_inuse
++			if (atomic_read(&host->h_count) || host->h_inuse
+ 			 || time_before(jiffies, host->h_expires)) {
+ 				dprintk("nlm_gc_hosts skipping %s (cnt %d use %d exp %ld)\n",
+-					host->h_name, host->h_count,
++					host->h_name, atomic_read(&host->h_count),
+ 					host->h_inuse, host->h_expires);
+ 				q = &host->h_next;
+ 				continue;
+@@ -336,6 +339,7 @@ nlm_gc_hosts(void)
+ 					rpc_destroy_client(host->h_rpcclnt);
+ 				}
+ 			}
++			BUG_ON(!list_empty(&host->h_lockowners));
+ 			kfree(host);
+ 			nrhosts--;
+ 		}
+diff -puN include/linux/lockd/lockd.h~posix-locking-fl_owner_t-to-pid-mapping include/linux/lockd/lockd.h
+--- 25/include/linux/lockd/lockd.h~posix-locking-fl_owner_t-to-pid-mapping	2004-06-29 22:28:34.050524976 -0700
++++ 25-akpm/include/linux/lockd/lockd.h	2004-06-29 22:28:34.058523760 -0700
+@@ -52,10 +52,25 @@ struct nlm_host {
+ 	wait_queue_head_t	h_gracewait;	/* wait while reclaiming */
+ 	u32			h_state;	/* pseudo-state counter */
+ 	u32			h_nsmstate;	/* true remote NSM state */
+-	unsigned int		h_count;	/* reference count */
++	u32			h_pidcount;	/* Pseudopids */
++	atomic_t		h_count;	/* reference count */
+ 	struct semaphore	h_sema;		/* mutex for pmap binding */
+ 	unsigned long		h_nextrebind;	/* next portmap call */
+ 	unsigned long		h_expires;	/* eligible for GC */
++	struct list_head	h_lockowners;	/* Lockowners for the client */
++	spinlock_t		h_lock;
++};
++
++/*
++ * Map an fl_owner_t into a unique 32-bit "pid"
++ */
++struct nlm_lockowner {
++	struct list_head list;
++	atomic_t count;
++
++	struct nlm_host *host;
++	fl_owner_t owner;
++	uint32_t pid;
+ };
+ 
+ /*
+diff -puN include/linux/nfs_fs_i.h~posix-locking-fl_owner_t-to-pid-mapping include/linux/nfs_fs_i.h
+--- 25/include/linux/nfs_fs_i.h~posix-locking-fl_owner_t-to-pid-mapping	2004-06-29 22:28:34.052524672 -0700
++++ 25-akpm/include/linux/nfs_fs_i.h	2004-06-29 22:28:34.058523760 -0700
+@@ -5,13 +5,15 @@
+ #include <linux/list.h>
+ #include <linux/nfs.h>
+ 
++struct nlm_lockowner;
++
+ /*
+  * NFS lock info
+  */
+ struct nfs_lock_info {
+ 	u32		state;
+ 	u32		flags;
+-	struct nlm_host	*host;
++	struct nlm_lockowner *owner;
+ };
+ 
+ /*
+_

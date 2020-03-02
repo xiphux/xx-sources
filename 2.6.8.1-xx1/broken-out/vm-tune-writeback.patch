@@ -1,0 +1,36 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Slightly change the writeout watermark calculations so we keep background
+and synchronous writeout watermarks in the same ratios after adjusting them
+for the amout of mapped memory.  This ensures we should always attempt to
+start background writeout before synchronous writeout and preserves the
+admin's desired background-versus-forground ratios after we've
+auto-adjusted one of them.
+
+Signed-off-by: Nick Piggin <nickpiggin@cyberone.com.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/page-writeback.c |    8 +++++---
+ 1 files changed, 5 insertions(+), 3 deletions(-)
+
+diff -puN mm/page-writeback.c~vm-tune-writeback mm/page-writeback.c
+--- 25/mm/page-writeback.c~vm-tune-writeback	2004-08-06 00:56:17.931967688 -0700
++++ 25-akpm/mm/page-writeback.c	2004-08-06 00:56:17.936966928 -0700
+@@ -153,9 +153,11 @@ get_dirty_limits(struct writeback_state 
+ 	if (dirty_ratio < 5)
+ 		dirty_ratio = 5;
+ 
+-	background_ratio = dirty_background_ratio;
+-	if (background_ratio >= dirty_ratio)
+-		background_ratio = dirty_ratio / 2;
++	/*
++	 * Keep the ratio between dirty_ratio and background_ratio roughly
++	 * what the sysctls are after dirty_ratio has been scaled (above).
++	 */
++	background_ratio = dirty_background_ratio * dirty_ratio/vm_dirty_ratio;
+ 
+ 	background = (background_ratio * total_pages) / 100;
+ 	dirty = (dirty_ratio * total_pages) / 100;
+_

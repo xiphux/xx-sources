@@ -1,0 +1,32 @@
+
+From: Dave Hansen <haveblue@us.ibm.com>
+
+The recent initmem poison patch tries to page-align the address that it
+memsets.  I think this is unnecessary because __init_begin is page-aligned
+already in the linker script:
+
+  /* will be freed after init */
+  . = ALIGN(4096);              /* Init code and data */
+  __init_begin = .;
+  .init.text : {
+
+Signed-off-by: Dave Hansen <haveblue@us.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/mm/init.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN arch/i386/mm/init.c~dont-align-initmem-poisoning arch/i386/mm/init.c
+--- 25/arch/i386/mm/init.c~dont-align-initmem-poisoning	Thu Oct  7 14:13:56 2004
++++ 25-akpm/arch/i386/mm/init.c	Thu Oct  7 14:13:56 2004
+@@ -723,7 +723,7 @@ void free_initmem(void)
+ 	for (; addr < (unsigned long)(&__init_end); addr += PAGE_SIZE) {
+ 		ClearPageReserved(virt_to_page(addr));
+ 		set_page_count(virt_to_page(addr), 1);
+-		memset((void *)(addr & ~(PAGE_SIZE-1)), 0xcc, PAGE_SIZE);
++		memset((void *)addr, 0xcc, PAGE_SIZE);
+ 		free_page(addr);
+ 		totalram_pages++;
+ 	}
+_

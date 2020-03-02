@@ -1,0 +1,142 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/mtd/chips/chipreg.c      |    2 +-
+ 25-akpm/drivers/mtd/maps/cstm_mips_ixx.c |    2 +-
+ 25-akpm/drivers/mtd/maps/dilnetpc.c      |    2 +-
+ 25-akpm/drivers/mtd/maps/elan-104nc.c    |    2 +-
+ 25-akpm/drivers/mtd/maps/ipaq-flash.c    |    2 +-
+ 25-akpm/drivers/mtd/maps/octagon-5066.c  |    2 +-
+ 25-akpm/drivers/mtd/maps/sbc_gxx.c       |    2 +-
+ 25-akpm/drivers/mtd/maps/vmax301.c       |    2 +-
+ 25-akpm/drivers/mtd/mtdpart.c            |    2 +-
+ 25-akpm/fs/jffs2/compr.c                 |    2 +-
+ 10 files changed, 10 insertions(+), 10 deletions(-)
+
+diff -puN drivers/mtd/chips/chipreg.c~lock-initializer-cleanup-mtd drivers/mtd/chips/chipreg.c
+--- 25/drivers/mtd/chips/chipreg.c~lock-initializer-cleanup-mtd	Wed Jan 12 16:54:52 2005
++++ 25-akpm/drivers/mtd/chips/chipreg.c	Wed Jan 12 16:54:52 2005
+@@ -15,7 +15,7 @@
+ #include <linux/mtd/mtd.h>
+ #include <linux/mtd/compatmac.h>
+ 
+-static spinlock_t chip_drvs_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(chip_drvs_lock);
+ static LIST_HEAD(chip_drvs_list);
+ 
+ void register_mtd_chip_driver(struct mtd_chip_driver *drv)
+diff -puN drivers/mtd/maps/cstm_mips_ixx.c~lock-initializer-cleanup-mtd drivers/mtd/maps/cstm_mips_ixx.c
+--- 25/drivers/mtd/maps/cstm_mips_ixx.c~lock-initializer-cleanup-mtd	Wed Jan 12 16:54:52 2005
++++ 25-akpm/drivers/mtd/maps/cstm_mips_ixx.c	Wed Jan 12 16:54:52 2005
+@@ -58,7 +58,7 @@
+ #if defined(CONFIG_MIPS_ITE8172) || defined(CONFIG_MIPS_IVR)
+ void cstm_mips_ixx_set_vpp(struct map_info *map,int vpp)
+ {
+-	static spinlock_t vpp_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(vpp_lock);
+ 	static int vpp_count = 0;
+ 	unsigned long flags;
+ 
+diff -puN drivers/mtd/maps/dilnetpc.c~lock-initializer-cleanup-mtd drivers/mtd/maps/dilnetpc.c
+--- 25/drivers/mtd/maps/dilnetpc.c~lock-initializer-cleanup-mtd	Wed Jan 12 16:54:52 2005
++++ 25-akpm/drivers/mtd/maps/dilnetpc.c	Wed Jan 12 16:54:52 2005
+@@ -197,7 +197,7 @@ static void dnpc_unmap_flash(void)
+ ************************************************************
+ */
+ 
+-static spinlock_t dnpc_spin   = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(dnpc_spin);
+ static int        vpp_counter = 0;
+ /*
+ ** This is what has to be done for the DNP board ..
+diff -puN drivers/mtd/maps/elan-104nc.c~lock-initializer-cleanup-mtd drivers/mtd/maps/elan-104nc.c
+--- 25/drivers/mtd/maps/elan-104nc.c~lock-initializer-cleanup-mtd	Wed Jan 12 16:54:52 2005
++++ 25-akpm/drivers/mtd/maps/elan-104nc.c	Wed Jan 12 16:54:52 2005
+@@ -54,7 +54,7 @@ always fail.  So we don't do it.  I just
+ 
+ static volatile int page_in_window = -1; // Current page in window.
+ static void __iomem *iomapadr;
+-static spinlock_t elan_104nc_spin = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(elan_104nc_spin);
+ 
+ /* partition_info gives details on the logical partitions that the split the 
+  * single flash device into. If the size if zero we use up to the end of the
+diff -puN drivers/mtd/maps/ipaq-flash.c~lock-initializer-cleanup-mtd drivers/mtd/maps/ipaq-flash.c
+--- 25/drivers/mtd/maps/ipaq-flash.c~lock-initializer-cleanup-mtd	Wed Jan 12 16:54:52 2005
++++ 25-akpm/drivers/mtd/maps/ipaq-flash.c	Wed Jan 12 16:54:52 2005
+@@ -143,7 +143,7 @@ static struct mtd_partition h3xxx_partit
+ };
+ #endif
+ 
+-static spinlock_t ipaq_vpp_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(ipaq_vpp_lock);
+ 
+ static void h3xxx_set_vpp(struct map_info *map, int vpp)
+ {
+diff -puN drivers/mtd/maps/octagon-5066.c~lock-initializer-cleanup-mtd drivers/mtd/maps/octagon-5066.c
+--- 25/drivers/mtd/maps/octagon-5066.c~lock-initializer-cleanup-mtd	Wed Jan 12 16:54:52 2005
++++ 25-akpm/drivers/mtd/maps/octagon-5066.c	Wed Jan 12 16:54:52 2005
+@@ -41,7 +41,7 @@
+ 
+ static volatile char page_n_dev = 0;
+ static unsigned long iomapadr;
+-static spinlock_t oct5066_spin = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(oct5066_spin);
+ 
+ /*
+  * We use map_priv_1 to identify which device we are.
+diff -puN drivers/mtd/maps/sbc_gxx.c~lock-initializer-cleanup-mtd drivers/mtd/maps/sbc_gxx.c
+--- 25/drivers/mtd/maps/sbc_gxx.c~lock-initializer-cleanup-mtd	Wed Jan 12 16:54:52 2005
++++ 25-akpm/drivers/mtd/maps/sbc_gxx.c	Wed Jan 12 16:54:52 2005
+@@ -85,7 +85,7 @@ separate MTD devices.
+ 
+ static volatile int page_in_window = -1; // Current page in window.
+ static void __iomem *iomapadr;
+-static spinlock_t sbc_gxx_spin = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(sbc_gxx_spin);
+ 
+ /* partition_info gives details on the logical partitions that the split the 
+  * single flash device into. If the size if zero we use up to the end of the
+diff -puN drivers/mtd/maps/vmax301.c~lock-initializer-cleanup-mtd drivers/mtd/maps/vmax301.c
+--- 25/drivers/mtd/maps/vmax301.c~lock-initializer-cleanup-mtd	Wed Jan 12 16:54:52 2005
++++ 25-akpm/drivers/mtd/maps/vmax301.c	Wed Jan 12 16:54:52 2005
+@@ -38,7 +38,7 @@
+    the extra indirection from having one of the map->map_priv 
+    fields pointing to yet another private struct.
+ */
+-static spinlock_t vmax301_spin = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(vmax301_spin);
+ 
+ static void __vmax301_page(struct map_info *map, unsigned long page)
+ {
+diff -puN drivers/mtd/mtdpart.c~lock-initializer-cleanup-mtd drivers/mtd/mtdpart.c
+--- 25/drivers/mtd/mtdpart.c~lock-initializer-cleanup-mtd	Wed Jan 12 16:54:52 2005
++++ 25-akpm/drivers/mtd/mtdpart.c	Wed Jan 12 16:54:52 2005
+@@ -523,7 +523,7 @@ int add_mtd_partitions(struct mtd_info *
+ EXPORT_SYMBOL(add_mtd_partitions);
+ EXPORT_SYMBOL(del_mtd_partitions);
+ 
+-static spinlock_t part_parser_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(part_parser_lock);
+ static LIST_HEAD(part_parsers);
+ 
+ static struct mtd_part_parser *get_partition_parser(const char *name)
+diff -puN fs/jffs2/compr.c~lock-initializer-cleanup-mtd fs/jffs2/compr.c
+--- 25/fs/jffs2/compr.c~lock-initializer-cleanup-mtd	Wed Jan 12 16:54:52 2005
++++ 25-akpm/fs/jffs2/compr.c	Wed Jan 12 16:54:52 2005
+@@ -15,7 +15,7 @@
+ 
+ #include "compr.h"
+ 
+-static spinlock_t jffs2_compressor_list_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(jffs2_compressor_list_lock);
+ 
+ /* Available compressors are on this list */
+ static LIST_HEAD(jffs2_compressor_list);
+_

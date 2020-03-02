@@ -1,0 +1,389 @@
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-09-02 18:14:16.000000000 -0400
++++ xx-sources/kernel/sched.c	2004-09-02 19:43:34.149177744 -0400
+@@ -77,3 +77,71 @@
+ #else
+ #include "sched/default.h"
+ #endif
++
++
++#ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
++void __might_sleep(char *file, int line)
++{
++#if defined(in_atomic)
++	static unsigned long prev_jiffy;	/* ratelimiting */
++
++	if ((in_atomic() || irqs_disabled()) &&
++	    system_state == SYSTEM_RUNNING) {
++		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
++			return;
++		prev_jiffy = jiffies;
++		printk(KERN_ERR "Debug: sleeping function called from invalid"
++				" context at %s:%d\n", file, line);
++		printk("in_atomic():%d, irqs_disabled():%d\n",
++			in_atomic(), irqs_disabled());
++		dump_stack();
++	}
++#endif
++}
++EXPORT_SYMBOL(__might_sleep);
++#endif
++
++#if defined(CONFIG_SMP) && defined(CONFIG_PREEMPT)
++/*
++ * This could be a long-held lock.  If another CPU holds it for a long time,
++ * and that CPU is not asked to reschedule then *this* CPU will spin on the
++ * lock for a long time, even if *this* CPU is asked to reschedule.
++ *
++ * So what we do here, in the slow (contended) path is to spin on the lock by
++ * hand while permitting preemption.
++ *
++ * Called inside preempt_disable().
++ */
++void __sched __preempt_spin_lock(spinlock_t *lock)
++{
++	if (preempt_count() > 1) {
++		_raw_spin_lock(lock);
++		return;
++	}
++	do {
++		preempt_enable();
++		while (spin_is_locked(lock))
++			cpu_relax();
++		preempt_disable();
++	} while (!_raw_spin_trylock(lock));
++}
++
++EXPORT_SYMBOL(__preempt_spin_lock);
++
++void __sched __preempt_write_lock(rwlock_t *lock)
++{
++	if (preempt_count() > 1) {
++		_raw_write_lock(lock);
++		return;
++	}
++
++	do {
++		preempt_enable();
++		while (rwlock_is_locked(lock))
++			cpu_relax();
++		preempt_disable();
++	} while (!_raw_write_trylock(lock));
++}
++
++EXPORT_SYMBOL(__preempt_write_lock);
++#endif /* defined(CONFIG_SMP) && defined(CONFIG_PREEMPT) */
+Index: xx-sources/kernel/sched/default.h
+===================================================================
+--- xx-sources.orig/kernel/sched/default.h	2004-09-02 19:38:23.008478320 -0400
++++ xx-sources/kernel/sched/default.h	2004-09-02 19:42:17.540823984 -0400
+@@ -4668,71 +4668,3 @@
+ 	 */
+ 	init_idle(current, smp_processor_id());
+ }
+-
+-#ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
+-void __might_sleep(char *file, int line)
+-{
+-#if defined(in_atomic)
+-	static unsigned long prev_jiffy;	/* ratelimiting */
+-
+-	if ((in_atomic() || irqs_disabled()) &&
+-	    system_state == SYSTEM_RUNNING) {
+-		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
+-			return;
+-		prev_jiffy = jiffies;
+-		printk(KERN_ERR "Debug: sleeping function called from invalid"
+-				" context at %s:%d\n", file, line);
+-		printk("in_atomic():%d, irqs_disabled():%d\n",
+-			in_atomic(), irqs_disabled());
+-		dump_stack();
+-	}
+-#endif
+-}
+-EXPORT_SYMBOL(__might_sleep);
+-#endif
+-
+-
+-#if defined(CONFIG_SMP) && defined(CONFIG_PREEMPT)
+-/*
+- * This could be a long-held lock.  If another CPU holds it for a long time,
+- * and that CPU is not asked to reschedule then *this* CPU will spin on the
+- * lock for a long time, even if *this* CPU is asked to reschedule.
+- *
+- * So what we do here, in the slow (contended) path is to spin on the lock by
+- * hand while permitting preemption.
+- *
+- * Called inside preempt_disable().
+- */
+-void __sched __preempt_spin_lock(spinlock_t *lock)
+-{
+-	if (preempt_count() > 1) {
+-		_raw_spin_lock(lock);
+-		return;
+-	}
+-	do {
+-		preempt_enable();
+-		while (spin_is_locked(lock))
+-			cpu_relax();
+-		preempt_disable();
+-	} while (!_raw_spin_trylock(lock));
+-}
+-
+-EXPORT_SYMBOL(__preempt_spin_lock);
+-
+-void __sched __preempt_write_lock(rwlock_t *lock)
+-{
+-	if (preempt_count() > 1) {
+-		_raw_write_lock(lock);
+-		return;
+-	}
+-
+-	do {
+-		preempt_enable();
+-		while (rwlock_is_locked(lock))
+-			cpu_relax();
+-		preempt_disable();
+-	} while (!_raw_write_trylock(lock));
+-}
+-
+-EXPORT_SYMBOL(__preempt_write_lock);
+-#endif /* defined(CONFIG_SMP) && defined(CONFIG_PREEMPT) */
+Index: xx-sources/kernel/sched/nicksched.h
+===================================================================
+--- xx-sources.orig/kernel/sched/nicksched.h	2004-09-02 19:38:23.001479384 -0400
++++ xx-sources/kernel/sched/nicksched.h	2004-09-02 19:42:01.127319216 -0400
+@@ -4475,71 +4475,3 @@
+ 	 */
+ 	init_idle(current, smp_processor_id());
+ }
+-
+-#ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
+-void __might_sleep(char *file, int line)
+-{
+-#if defined(in_atomic)
+-	static unsigned long prev_jiffy;	/* ratelimiting */
+-
+-	if ((in_atomic() || irqs_disabled()) &&
+-	    system_state == SYSTEM_RUNNING) {
+-		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
+-			return;
+-		prev_jiffy = jiffies;
+-		printk(KERN_ERR "Debug: sleeping function called from invalid"
+-				" context at %s:%d\n", file, line);
+-		printk("in_atomic():%d, irqs_disabled():%d\n",
+-			in_atomic(), irqs_disabled());
+-		dump_stack();
+-	}
+-#endif
+-}
+-EXPORT_SYMBOL(__might_sleep);
+-#endif
+-
+-
+-#if defined(CONFIG_SMP) && defined(CONFIG_PREEMPT)
+-/*
+- * This could be a long-held lock.  If another CPU holds it for a long time,
+- * and that CPU is not asked to reschedule then *this* CPU will spin on the
+- * lock for a long time, even if *this* CPU is asked to reschedule.
+- *
+- * So what we do here, in the slow (contended) path is to spin on the lock by
+- * hand while permitting preemption.
+- *
+- * Called inside preempt_disable().
+- */
+-void __sched __preempt_spin_lock(spinlock_t *lock)
+-{
+-	if (preempt_count() > 1) {
+-		_raw_spin_lock(lock);
+-		return;
+-	}
+-	do {
+-		preempt_enable();
+-		while (spin_is_locked(lock))
+-			cpu_relax();
+-		preempt_disable();
+-	} while (!_raw_spin_trylock(lock));
+-}
+-
+-EXPORT_SYMBOL(__preempt_spin_lock);
+-
+-void __sched __preempt_write_lock(rwlock_t *lock)
+-{
+-	if (preempt_count() > 1) {
+-		_raw_write_lock(lock);
+-		return;
+-	}
+-
+-	do {
+-		preempt_enable();
+-		while (rwlock_is_locked(lock))
+-			cpu_relax();
+-		preempt_disable();
+-	} while (!_raw_write_trylock(lock));
+-}
+-
+-EXPORT_SYMBOL(__preempt_write_lock);
+-#endif /* defined(CONFIG_SMP) && defined(CONFIG_PREEMPT) */
+Index: xx-sources/kernel/sched/staircase.h
+===================================================================
+--- xx-sources.orig/kernel/sched/staircase.h	2004-09-02 19:38:22.999479688 -0400
++++ xx-sources/kernel/sched/staircase.h	2004-09-02 19:42:45.462579232 -0400
+@@ -4305,71 +4305,3 @@
+ 	 */
+ 	init_idle(current, smp_processor_id());
+ }
+-
+-#ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
+-void __might_sleep(char *file, int line)
+-{
+-#if defined(in_atomic)
+-	static unsigned long prev_jiffy;	/* ratelimiting */
+-
+-	if ((in_atomic() || irqs_disabled()) &&
+-	    system_state == SYSTEM_RUNNING) {
+-		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
+-			return;
+-		prev_jiffy = jiffies;
+-		printk(KERN_ERR "Debug: sleeping function called from invalid"
+-				" context at %s:%d\n", file, line);
+-		printk("in_atomic():%d, irqs_disabled():%d\n",
+-			in_atomic(), irqs_disabled());
+-		dump_stack();
+-	}
+-#endif
+-}
+-EXPORT_SYMBOL(__might_sleep);
+-#endif
+-
+-
+-#if defined(CONFIG_SMP) && defined(CONFIG_PREEMPT)
+-/*
+- * This could be a long-held lock.  If another CPU holds it for a long time,
+- * and that CPU is not asked to reschedule then *this* CPU will spin on the
+- * lock for a long time, even if *this* CPU is asked to reschedule.
+- *
+- * So what we do here, in the slow (contended) path is to spin on the lock by
+- * hand while permitting preemption.
+- *
+- * Called inside preempt_disable().
+- */
+-void __sched __preempt_spin_lock(spinlock_t *lock)
+-{
+-	if (preempt_count() > 1) {
+-		_raw_spin_lock(lock);
+-		return;
+-	}
+-	do {
+-		preempt_enable();
+-		while (spin_is_locked(lock))
+-			cpu_relax();
+-		preempt_disable();
+-	} while (!_raw_spin_trylock(lock));
+-}
+-
+-EXPORT_SYMBOL(__preempt_spin_lock);
+-
+-void __sched __preempt_write_lock(rwlock_t *lock)
+-{
+-	if (preempt_count() > 1) {
+-		_raw_write_lock(lock);
+-		return;
+-	}
+-
+-	do {
+-		preempt_enable();
+-		while (rwlock_is_locked(lock))
+-			cpu_relax();
+-		preempt_disable();
+-	} while (!_raw_write_trylock(lock));
+-}
+-
+-EXPORT_SYMBOL(__preempt_write_lock);
+-#endif /* defined(CONFIG_SMP) && defined(CONFIG_PREEMPT) */
+Index: xx-sources/kernel/sched/xsched.h
+===================================================================
+--- xx-sources.orig/kernel/sched/xsched.h	2004-09-02 19:38:23.006478624 -0400
++++ xx-sources/kernel/sched/xsched.h	2004-09-02 19:43:27.514186416 -0400
+@@ -4630,74 +4630,6 @@
+ 	init_idle(current, smp_processor_id());
+ }
+ 
+-#ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
+-void __might_sleep(char *file, int line)
+-{
+-#if defined(in_atomic)
+-	static unsigned long prev_jiffy;	/* ratelimiting */
+-
+-	if ((in_atomic() || irqs_disabled()) &&
+-	    system_state == SYSTEM_RUNNING) {
+-		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
+-			return;
+-		prev_jiffy = jiffies;
+-		printk(KERN_ERR "Debug: sleeping function called from invalid"
+-				" context at %s:%d\n", file, line);
+-		printk("in_atomic():%d, irqs_disabled():%d\n",
+-			in_atomic(), irqs_disabled());
+-		dump_stack();
+-	}
+-#endif
+-}
+-EXPORT_SYMBOL(__might_sleep);
+-#endif
+-
+-
+-#if defined(CONFIG_SMP) && defined(CONFIG_PREEMPT)
+-/*
+- * This could be a long-held lock.  If another CPU holds it for a long time,
+- * and that CPU is not asked to reschedule then *this* CPU will spin on the
+- * lock for a long time, even if *this* CPU is asked to reschedule.
+- *
+- * So what we do here, in the slow (contended) path is to spin on the lock by
+- * hand while permitting preemption.
+- *
+- * Called inside preempt_disable().
+- */
+-void __sched __preempt_spin_lock(spinlock_t *lock)
+-{
+-	if (preempt_count() > 1) {
+-		_raw_spin_lock(lock);
+-		return;
+-	}
+-	do {
+-		preempt_enable();
+-		while (spin_is_locked(lock))
+-			cpu_relax();
+-		preempt_disable();
+-	} while (!_raw_spin_trylock(lock));
+-}
+-
+-EXPORT_SYMBOL(__preempt_spin_lock);
+-
+-void __sched __preempt_write_lock(rwlock_t *lock)
+-{
+-	if (preempt_count() > 1) {
+-		_raw_write_lock(lock);
+-		return;
+-	}
+-
+-	do {
+-		preempt_enable();
+-		while (rwlock_is_locked(lock))
+-			cpu_relax();
+-		preempt_disable();
+-	} while (!_raw_write_trylock(lock));
+-}
+-
+-EXPORT_SYMBOL(__preempt_write_lock);
+-#endif /* defined(CONFIG_SMP) && defined(CONFIG_PREEMPT) */
+-
+ #if defined(CONFIG_SYSCTL)
+ enum
+ {
+@@ -4886,5 +4818,4 @@
+ 	},
+ 	{ .ctl_name = CPU_SCHED_END_OF_LIST }
+ };
+-
+ #endif

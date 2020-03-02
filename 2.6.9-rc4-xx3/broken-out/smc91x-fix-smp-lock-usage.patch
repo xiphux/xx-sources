@@ -1,0 +1,33 @@
+
+From: Nicolas Pitre <nico@cam.org>
+
+Well, there is no such thing as a spin_trylock_irq() in the kernel. 
+
+Signed-off-by: Nicolas Pitre <nico@cam.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/smc91x.c |   10 +++++++++-
+ 1 files changed, 9 insertions(+), 1 deletion(-)
+
+diff -puN drivers/net/smc91x.c~smc91x-fix-smp-lock-usage drivers/net/smc91x.c
+--- 25/drivers/net/smc91x.c~smc91x-fix-smp-lock-usage	Thu Sep 30 17:46:48 2004
++++ 25-akpm/drivers/net/smc91x.c	Thu Sep 30 17:46:48 2004
+@@ -563,7 +563,15 @@ done:
+  * any other concurrent access and C would always interrupt B. But life
+  * isn't that easy in a SMP world...
+  */
+-#define smc_special_trylock(lock)	spin_trylock_irq(lock)
++#define smc_special_trylock(lock)					\
++({									\
++	int __ret;							\
++	local_irq_disable();						\
++	__ret = spin_trylock(lock);					\
++	if (!__ret)							\
++		local_irq_enable();					\
++	__ret;								\
++})
+ #define smc_special_lock(lock)		spin_lock_irq(lock)
+ #define smc_special_unlock(lock)	spin_unlock_irq(lock)
+ #else
+_

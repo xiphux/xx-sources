@@ -1,0 +1,226 @@
+
+From: long <tlnguyen@snoqualmie.dp.intel.com>
+
+MSI support for x86_64 is currently disabled in the kernel 2.6.x.  Below is
+the patch, which provides a fix and reenable it.
+
+In addition, the patch provides a info message during kernel boot if
+configuring vector-base indexing.  
+DESC
+Fix and Reenable MSI Support on x86_64 fix
+EDESC
+From: "Nguyen, Tom L" <tom.l.nguyen@intel.com>
+
+The kernel 2.6.7-rc2-mm2 redefines FIRST_SYSTEM_VECTOR from 0xef to 0xee;
+as a result of this change, you saw the warnings because my patch was based
+on kernel 2.6.7.rc1.  Below patch will fix the warnings.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/io_apic.c   |    7 ++++++-
+ 25-akpm/arch/x86_64/kernel/i8259.c   |   24 ++++++++++++++++++++++++
+ 25-akpm/arch/x86_64/kernel/io_apic.c |   26 ++++++++++++++++++--------
+ 25-akpm/drivers/pci/Kconfig          |    2 +-
+ 25-akpm/include/asm-x86_64/hw_irq.h  |    1 +
+ 25-akpm/include/asm-x86_64/msi.h     |    7 +------
+ 6 files changed, 51 insertions(+), 16 deletions(-)
+
+diff -puN arch/i386/kernel/io_apic.c~fix-and-reenable-msi-support-on-x86_64 arch/i386/kernel/io_apic.c
+--- 25/arch/i386/kernel/io_apic.c~fix-and-reenable-msi-support-on-x86_64	Wed Jun 16 17:21:00 2004
++++ 25-akpm/arch/i386/kernel/io_apic.c	Wed Jun 16 17:21:00 2004
+@@ -1411,12 +1411,17 @@ void __init print_IO_APIC(void)
+ 		);
+ 	}
+ 	}
++	if (use_pci_vector())
++		printk(KERN_INFO "Using vector-based indexing\n");
+ 	printk(KERN_DEBUG "IRQ to pin mappings:\n");
+ 	for (i = 0; i < NR_IRQS; i++) {
+ 		struct irq_pin_list *entry = irq_2_pin + i;
+ 		if (entry->pin < 0)
+ 			continue;
+-		printk(KERN_DEBUG "IRQ%d ", i);
++ 		if (use_pci_vector() && !platform_legacy_irq(i))
++			printk(KERN_DEBUG "IRQ%d ", IO_APIC_VECTOR(i));
++		else
++			printk(KERN_DEBUG "IRQ%d ", i);
+ 		for (;;) {
+ 			printk("-> %d:%d", entry->apic, entry->pin);
+ 			if (!entry->next)
+diff -puN arch/x86_64/kernel/i8259.c~fix-and-reenable-msi-support-on-x86_64 arch/x86_64/kernel/i8259.c
+--- 25/arch/x86_64/kernel/i8259.c~fix-and-reenable-msi-support-on-x86_64	Wed Jun 16 17:21:00 2004
++++ 25-akpm/arch/x86_64/kernel/i8259.c	Wed Jun 16 17:21:06 2004
+@@ -48,6 +48,12 @@
+ 	BI(x,8) BI(x,9) BI(x,a) BI(x,b) \
+ 	BI(x,c) BI(x,d) BI(x,e) BI(x,f)
+ 
++#define BUILD_14_IRQS(x) \
++	BI(x,0) BI(x,1) BI(x,2) BI(x,3) \
++	BI(x,4) BI(x,5) BI(x,6) BI(x,7) \
++	BI(x,8) BI(x,9) BI(x,a) BI(x,b) \
++	BI(x,c) BI(x,d)
++
+ /*
+  * ISA PIC or low IO-APIC triggered (INTA-cycle or APIC) interrupts:
+  * (these are usually mapped to vectors 0x20-0x2f)
+@@ -69,9 +75,15 @@ BUILD_16_IRQS(0x0)
+ BUILD_16_IRQS(0x4) BUILD_16_IRQS(0x5) BUILD_16_IRQS(0x6) BUILD_16_IRQS(0x7)
+ BUILD_16_IRQS(0x8) BUILD_16_IRQS(0x9) BUILD_16_IRQS(0xa) BUILD_16_IRQS(0xb)
+ BUILD_16_IRQS(0xc) BUILD_16_IRQS(0xd)
++
++#ifdef CONFIG_PCI_USE_VECTOR
++	BUILD_14_IRQS(0xe)
++#endif
++
+ #endif
+ 
+ #undef BUILD_16_IRQS
++#undef BUILD_14_IRQS
+ #undef BI
+ 
+ 
+@@ -84,6 +96,12 @@ BUILD_16_IRQS(0xc) BUILD_16_IRQS(0xd)
+ 	IRQ(x,8), IRQ(x,9), IRQ(x,a), IRQ(x,b), \
+ 	IRQ(x,c), IRQ(x,d), IRQ(x,e), IRQ(x,f)
+ 
++#define IRQLIST_14(x) \
++	IRQ(x,0), IRQ(x,1), IRQ(x,2), IRQ(x,3), \
++	IRQ(x,4), IRQ(x,5), IRQ(x,6), IRQ(x,7), \
++	IRQ(x,8), IRQ(x,9), IRQ(x,a), IRQ(x,b), \
++	IRQ(x,c), IRQ(x,d)
++
+ void (*interrupt[NR_IRQS])(void) = {
+ 	IRQLIST_16(0x0),
+ 
+@@ -92,11 +110,17 @@ void (*interrupt[NR_IRQS])(void) = {
+ 	IRQLIST_16(0x4), IRQLIST_16(0x5), IRQLIST_16(0x6), IRQLIST_16(0x7),
+ 	IRQLIST_16(0x8), IRQLIST_16(0x9), IRQLIST_16(0xa), IRQLIST_16(0xb),
+ 	IRQLIST_16(0xc), IRQLIST_16(0xd)
++
++#ifdef CONFIG_PCI_USE_VECTOR
++	, IRQLIST_14(0xe)
++#endif
++
+ #endif
+ };
+ 
+ #undef IRQ
+ #undef IRQLIST_16
++#undef IRQLIST_14
+ 
+ /*
+  * This is the 'legacy' 8259A Programmable Interrupt Controller,
+diff -puN arch/x86_64/kernel/io_apic.c~fix-and-reenable-msi-support-on-x86_64 arch/x86_64/kernel/io_apic.c
+--- 25/arch/x86_64/kernel/io_apic.c~fix-and-reenable-msi-support-on-x86_64	Wed Jun 16 17:21:00 2004
++++ 25-akpm/arch/x86_64/kernel/io_apic.c	Wed Jun 16 17:21:00 2004
+@@ -67,8 +67,8 @@ static struct irq_pin_list {
+ 	short apic, pin, next;
+ } irq_2_pin[PIN_MAP_SIZE];
+ 
++int vector_irq[NR_VECTORS] = { [0 ... NR_VECTORS - 1] = -1};
+ #ifdef CONFIG_PCI_USE_VECTOR
+-int vector_irq[NR_IRQS] = { [0 ... NR_IRQS -1] = -1};
+ #define vector_to_irq(vector) 	\
+ 	(platform_legacy_irq(vector) ? vector : vector_irq[vector])
+ #else
+@@ -656,10 +656,14 @@ static inline int IO_APIC_irq_trigger(in
+ /* irq_vectors is indexed by the sum of all RTEs in all I/O APICs. */
+ u8 irq_vector[NR_IRQ_VECTORS] = { FIRST_DEVICE_VECTOR , 0 };
+ 
+-#ifndef CONFIG_PCI_USE_VECTOR
++#ifdef CONFIG_PCI_USE_VECTOR
++int assign_irq_vector(int irq)
++#else
+ int __init assign_irq_vector(int irq)
++#endif
+ {
+ 	static int current_vector = FIRST_DEVICE_VECTOR, offset = 0;
++
+ 	BUG_ON(irq >= NR_IRQ_VECTORS);
+ 	if (IO_APIC_VECTOR(irq) > 0)
+ 		return IO_APIC_VECTOR(irq);
+@@ -668,18 +672,19 @@ next:
+ 	if (current_vector == IA32_SYSCALL_VECTOR)
+ 		goto next;
+ 
+-	if (current_vector > FIRST_SYSTEM_VECTOR) {
++	if (current_vector >= FIRST_SYSTEM_VECTOR) {
+ 		offset++;
++		if (!(offset%8))
++			return -ENOSPC;
+ 		current_vector = FIRST_DEVICE_VECTOR + offset;
+ 	}
+ 
+-	if (current_vector == FIRST_SYSTEM_VECTOR)
+-		panic("ran out of interrupt sources!");
++	vector_irq[current_vector] = irq;
++	if (irq != AUTO_ASSIGN)
++		IO_APIC_VECTOR(irq) = current_vector;
+ 
+-	IO_APIC_VECTOR(irq) = current_vector;
+ 	return current_vector;
+ }
+-#endif
+ 
+ extern void (*interrupt[NR_IRQS])(void);
+ static struct hw_interrupt_type ioapic_level_type;
+@@ -925,12 +930,17 @@ void __init print_IO_APIC(void)
+ 		);
+ 	}
+ 	}
++	if (use_pci_vector())
++		printk(KERN_INFO "Using vector-based indexing\n");
+ 	printk(KERN_DEBUG "IRQ to pin mappings:\n");
+ 	for (i = 0; i < NR_IRQS; i++) {
+ 		struct irq_pin_list *entry = irq_2_pin + i;
+ 		if (entry->pin < 0)
+ 			continue;
+-		printk(KERN_DEBUG "IRQ%d ", i);
++ 		if (use_pci_vector() && !platform_legacy_irq(i))
++			printk(KERN_DEBUG "IRQ%d ", IO_APIC_VECTOR(i));
++		else
++			printk(KERN_DEBUG "IRQ%d ", i);
+ 		for (;;) {
+ 			printk("-> %d:%d", entry->apic, entry->pin);
+ 			if (!entry->next)
+diff -puN drivers/pci/Kconfig~fix-and-reenable-msi-support-on-x86_64 drivers/pci/Kconfig
+--- 25/drivers/pci/Kconfig~fix-and-reenable-msi-support-on-x86_64	Wed Jun 16 17:21:00 2004
++++ 25-akpm/drivers/pci/Kconfig	Wed Jun 16 17:21:00 2004
+@@ -3,7 +3,7 @@
+ #
+ config PCI_USE_VECTOR
+ 	bool "Vector-based interrupt indexing (MSI)"
+-	depends on (X86_LOCAL_APIC && X86_IO_APIC && !X86_64) || IA64
++	depends on (X86_LOCAL_APIC && X86_IO_APIC) || IA64
+ 	default n
+ 	help
+ 	   This replaces the current existing IRQ-based index interrupt scheme
+diff -puN include/asm-x86_64/hw_irq.h~fix-and-reenable-msi-support-on-x86_64 include/asm-x86_64/hw_irq.h
+--- 25/include/asm-x86_64/hw_irq.h~fix-and-reenable-msi-support-on-x86_64	Wed Jun 16 17:21:00 2004
++++ 25-akpm/include/asm-x86_64/hw_irq.h	Wed Jun 16 17:21:00 2004
+@@ -79,6 +79,7 @@ struct hw_interrupt_type;
+ #ifndef __ASSEMBLY__
+ extern u8 irq_vector[NR_IRQ_VECTORS];
+ #define IO_APIC_VECTOR(irq)	(irq_vector[irq])
++#define AUTO_ASSIGN		-1
+ 
+ /*
+  * Various low-level irq details needed by irq.c, process.c,
+diff -puN include/asm-x86_64/msi.h~fix-and-reenable-msi-support-on-x86_64 include/asm-x86_64/msi.h
+--- 25/include/asm-x86_64/msi.h~fix-and-reenable-msi-support-on-x86_64	Wed Jun 16 17:21:00 2004
++++ 25-akpm/include/asm-x86_64/msi.h	Wed Jun 16 17:21:00 2004
+@@ -11,11 +11,6 @@
+ #define LAST_DEVICE_VECTOR		232
+ #define MSI_DEST_MODE			MSI_LOGICAL_MODE
+ #define MSI_TARGET_CPU_SHIFT		12
+-
+-#ifdef CONFIG_SMP
+-#define MSI_TARGET_CPU		logical_smp_processor_id()
+-#else
+-#define MSI_TARGET_CPU		TARGET_CPUS
+-#endif
++#define MSI_TARGET_CPU			TARGET_CPUS
+ 
+ #endif /* ASM_MSI_H */
+_

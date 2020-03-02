@@ -1,0 +1,39 @@
+
+From: Matthew Dobson <colpatch@us.ibm.com>
+
+nodemask.h is more or less a "s/cpu/node/g" on cpumask.h.  That being the
+case, the bug Zwane found where first/next_cpu() returns values > NR_CPUS when
+NR_CPUS < 32, exists for first/next_node() which similarly returns values >
+MAX_NUMNODES when MAX_NUMNODES < 32.  As the thread demonstrated, most arch's
+version of find_next_bit() only look at whole unsigned longs, and thus if the
+mask you pass find_next_bit() is empty, it will return 32 (on 32 bit arches)
+even if you only wanted it to search the first 3 bits.  This change ensures
+that first/next_node() calls return the smaller of either the requested search
+length (MAX_NUMNODES in this case) or the first set bit it found.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/nodemask.h |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN include/linux/nodemask.h~some-random-nodemask-fix include/linux/nodemask.h
+--- 25/include/linux/nodemask.h~some-random-nodemask-fix	Mon Aug  2 16:30:38 2004
++++ 25-akpm/include/linux/nodemask.h	Mon Aug  2 16:30:38 2004
+@@ -216,13 +216,13 @@ static inline void __nodes_shift_left(no
+ #define first_node(src) __first_node(&(src), MAX_NUMNODES)
+ static inline int __first_node(const nodemask_t *srcp, int nbits)
+ {
+-	return find_first_bit(srcp->bits, nbits);
++	return min_t(int, nbits, find_first_bit(srcp->bits, nbits));
+ }
+ 
+ #define next_node(n, src) __next_node((n), &(src), MAX_NUMNODES)
+ static inline int __next_node(int n, const nodemask_t *srcp, int nbits)
+ {
+-	return find_next_bit(srcp->bits, nbits, n+1);
++	return min_t(int, nbits, find_next_bit(srcp->bits, nbits, n+1));
+ }
+ 
+ #define nodemask_of_node(node)						\
+_

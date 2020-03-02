@@ -1,0 +1,62 @@
+
+From: "Michael S. Tsirkin" <mst@mellanox.co.il>
+
+With new unlocked_ioctl and ioctl_compat, ioctls can now be as fast as
+read/write.  So lets use fget_light/fput_light there, to get some speedup
+in common case on SMP.
+
+Signed-off-by: Michael s. Tsirkin <mst@mellanox.co.il>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/compat.c |    5 +++--
+ 25-akpm/fs/ioctl.c  |    5 +++--
+ 2 files changed, 6 insertions(+), 4 deletions(-)
+
+diff -puN fs/compat.c~fget_light-fput_light-for-ioctls fs/compat.c
+--- 25/fs/compat.c~fget_light-fput_light-for-ioctls	2005-01-06 08:34:37.966242880 -0800
++++ 25-akpm/fs/compat.c	2005-01-06 08:34:37.973241816 -0800
+@@ -431,8 +431,9 @@ asmlinkage long compat_sys_ioctl(unsigne
+ 	struct file *filp;
+ 	int error = -EBADF;
+ 	struct ioctl_trans *t;
++	int fput_needed;
+ 
+-	filp = fget(fd);
++	filp = fget_light(fd, &fput_needed);
+ 	if (!filp)
+ 		goto out;
+ 
+@@ -478,7 +479,7 @@ asmlinkage long compat_sys_ioctl(unsigne
+  do_ioctl:
+ 	error = sys_ioctl(fd, cmd, arg);
+  out_fput:
+-	fput(filp);
++	fput_light(filp, fput_needed);
+  out:
+ 	return error;
+ }
+diff -puN fs/ioctl.c~fget_light-fput_light-for-ioctls fs/ioctl.c
+--- 25/fs/ioctl.c~fget_light-fput_light-for-ioctls	2005-01-06 08:34:37.967242728 -0800
++++ 25-akpm/fs/ioctl.c	2005-01-06 08:34:37.973241816 -0800
+@@ -83,8 +83,9 @@ asmlinkage long sys_ioctl(unsigned int f
+ 	struct file * filp;
+ 	unsigned int flag;
+ 	int on, error = -EBADF;
++	int fput_needed;
+ 
+-	filp = fget(fd);
++	filp = fget_light(fd, &fput_needed);
+ 	if (!filp)
+ 		goto out;
+ 
+@@ -157,7 +158,7 @@ asmlinkage long sys_ioctl(unsigned int f
+ 			break;
+ 	}
+  out_fput:
+-	fput(filp);
++	fput_light(filp, fput_needed);
+  out:
+ 	return error;
+ }
+_

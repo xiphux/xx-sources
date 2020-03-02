@@ -1,0 +1,170 @@
+
+From: Oleg Nesterov <oleg@tv-sign.ru>
+
+{set,clear}_child_tid initialized in copy_process() right after return from
+copy_thread().
+
+These vars are not used in cleanup path if copy_thread() fails.
+
+grep -r _child_tid arch/ shows only ia64/kernel/asm-offsets.c,
+so i blindly patched non i386 archs too.
+
+Signed-off-by: Oleg Nesterov <oleg@tv-sign.ru>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/cris/arch-v10/kernel/process.c |    2 --
+ 25-akpm/arch/i386/kernel/process.c          |    1 -
+ 25-akpm/arch/m32r/kernel/process.c          |    2 --
+ 25-akpm/arch/mips/kernel/process.c          |    1 -
+ 25-akpm/arch/ppc/kernel/process.c           |    2 --
+ 25-akpm/arch/ppc64/kernel/process.c         |    2 --
+ 25-akpm/arch/s390/kernel/process.c          |    1 -
+ 25-akpm/arch/sh/kernel/process.c            |    1 -
+ 25-akpm/arch/sh64/kernel/process.c          |    3 ---
+ 25-akpm/arch/sparc/kernel/process.c         |    2 --
+ 25-akpm/arch/sparc64/kernel/process.c       |    2 --
+ 25-akpm/arch/x86_64/kernel/process.c        |    1 -
+ 12 files changed, 20 deletions(-)
+
+diff -puN arch/cris/arch-v10/kernel/process.c~copy_thread-unneeded-child_tid-initialization arch/cris/arch-v10/kernel/process.c
+--- 25/arch/cris/arch-v10/kernel/process.c~copy_thread-unneeded-child_tid-initialization	2004-10-05 01:48:38.310555360 -0700
++++ 25-akpm/arch/cris/arch-v10/kernel/process.c	2004-10-05 01:48:38.328552624 -0700
+@@ -122,8 +122,6 @@ int copy_thread(int nr, unsigned long cl
+         
+ 	*childregs = *regs;  /* struct copy of pt_regs */
+         
+-        p->set_child_tid = p->clear_child_tid = NULL;
+-	
+         childregs->r10 = 0;  /* child returns 0 after a fork/clone */
+ 	
+ 	/* put the switch stack right below the pt_regs */
+diff -puN arch/i386/kernel/process.c~copy_thread-unneeded-child_tid-initialization arch/i386/kernel/process.c
+--- 25/arch/i386/kernel/process.c~copy_thread-unneeded-child_tid-initialization	2004-10-05 01:48:38.311555208 -0700
++++ 25-akpm/arch/i386/kernel/process.c	2004-10-05 01:48:38.329552472 -0700
+@@ -370,7 +370,6 @@ int copy_thread(int nr, unsigned long cl
+ 	*childregs = *regs;
+ 	childregs->eax = 0;
+ 	childregs->esp = esp;
+-	p->set_child_tid = p->clear_child_tid = NULL;
+ 
+ 	p->thread.esp = (unsigned long) childregs;
+ 	p->thread.esp0 = (unsigned long) (childregs+1);
+diff -puN arch/m32r/kernel/process.c~copy_thread-unneeded-child_tid-initialization arch/m32r/kernel/process.c
+--- 25/arch/m32r/kernel/process.c~copy_thread-unneeded-child_tid-initialization	2004-10-05 01:48:38.313554904 -0700
++++ 25-akpm/arch/m32r/kernel/process.c	2004-10-05 01:48:38.329552472 -0700
+@@ -247,8 +247,6 @@ int copy_thread(int nr, unsigned long cl
+ 	unsigned long sp = (unsigned long)tsk->thread_info + THREAD_SIZE;
+ 	extern void ret_from_fork(void);
+ 
+-	tsk->set_child_tid = tsk->clear_child_tid = NULL;
+-
+ 	/* Copy registers */
+ 	sp -= sizeof (struct pt_regs);
+ 	childregs = (struct pt_regs *)sp;
+diff -puN arch/mips/kernel/process.c~copy_thread-unneeded-child_tid-initialization arch/mips/kernel/process.c
+--- 25/arch/mips/kernel/process.c~copy_thread-unneeded-child_tid-initialization	2004-10-05 01:48:38.314554752 -0700
++++ 25-akpm/arch/mips/kernel/process.c	2004-10-05 01:48:38.330552320 -0700
+@@ -140,7 +140,6 @@ int copy_thread(int nr, unsigned long cl
+ 	p->thread.cp0_status = read_c0_status() & ~(ST0_CU2|ST0_CU1);
+ 	childregs->cp0_status &= ~(ST0_CU2|ST0_CU1);
+ 	clear_tsk_thread_flag(p, TIF_USEDFPU);
+-	p->set_child_tid = p->clear_child_tid = NULL;
+ 
+ 	return 0;
+ }
+diff -puN arch/ppc64/kernel/process.c~copy_thread-unneeded-child_tid-initialization arch/ppc64/kernel/process.c
+--- 25/arch/ppc64/kernel/process.c~copy_thread-unneeded-child_tid-initialization	2004-10-05 01:48:38.315554600 -0700
++++ 25-akpm/arch/ppc64/kernel/process.c	2004-10-05 01:48:38.331552168 -0700
+@@ -315,8 +315,6 @@ copy_thread(int nr, unsigned long clone_
+ 	extern void ret_from_fork(void);
+ 	unsigned long sp = (unsigned long)p->thread_info + THREAD_SIZE;
+ 
+-	p->set_child_tid = p->clear_child_tid = NULL;
+-
+ 	/* Copy registers */
+ 	sp -= sizeof(struct pt_regs);
+ 	childregs = (struct pt_regs *) sp;
+diff -puN arch/ppc/kernel/process.c~copy_thread-unneeded-child_tid-initialization arch/ppc/kernel/process.c
+--- 25/arch/ppc/kernel/process.c~copy_thread-unneeded-child_tid-initialization	2004-10-05 01:48:38.317554296 -0700
++++ 25-akpm/arch/ppc/kernel/process.c	2004-10-05 01:48:38.331552168 -0700
+@@ -426,8 +426,6 @@ copy_thread(int nr, unsigned long clone_
+ 	unsigned long sp = (unsigned long)p->thread_info + THREAD_SIZE;
+ 	unsigned long childframe;
+ 
+-	p->set_child_tid = p->clear_child_tid = NULL;
+-
+ 	CHECK_FULL_REGS(regs);
+ 	/* Copy registers */
+ 	sp -= sizeof(struct pt_regs);
+diff -puN arch/s390/kernel/process.c~copy_thread-unneeded-child_tid-initialization arch/s390/kernel/process.c
+--- 25/arch/s390/kernel/process.c~copy_thread-unneeded-child_tid-initialization	2004-10-05 01:48:38.318554144 -0700
++++ 25-akpm/arch/s390/kernel/process.c	2004-10-05 01:48:38.332552016 -0700
+@@ -238,7 +238,6 @@ int copy_thread(int nr, unsigned long cl
+         frame = ((struct fake_frame *)
+ 		 (THREAD_SIZE + (unsigned long) p->thread_info)) - 1;
+         p->thread.ksp = (unsigned long) frame;
+-	p->set_child_tid = p->clear_child_tid = NULL;
+ 	/* Store access registers to kernel stack of new process. */
+         frame->childregs = *regs;
+ 	frame->childregs.gprs[2] = 0;	/* child returns 0 on fork. */
+diff -puN arch/sh64/kernel/process.c~copy_thread-unneeded-child_tid-initialization arch/sh64/kernel/process.c
+--- 25/arch/sh64/kernel/process.c~copy_thread-unneeded-child_tid-initialization	2004-10-05 01:48:38.319553992 -0700
++++ 25-akpm/arch/sh64/kernel/process.c	2004-10-05 01:48:38.333551864 -0700
+@@ -765,9 +765,6 @@ int copy_thread(int nr, unsigned long cl
+ 	childregs->regs[9] = 0; /* Set return value for child */
+ 	childregs->sr |= SR_FD; /* Invalidate FPU flag */
+ 
+-	/* From sh */
+-	p->set_child_tid = p->clear_child_tid = NULL;
+-
+ 	p->thread.sp = (unsigned long) childregs;
+ 	p->thread.pc = (unsigned long) ret_from_fork;
+ 
+diff -puN arch/sh/kernel/process.c~copy_thread-unneeded-child_tid-initialization arch/sh/kernel/process.c
+--- 25/arch/sh/kernel/process.c~copy_thread-unneeded-child_tid-initialization	2004-10-05 01:48:38.321553688 -0700
++++ 25-akpm/arch/sh/kernel/process.c	2004-10-05 01:48:38.333551864 -0700
+@@ -306,7 +306,6 @@ int copy_thread(int nr, unsigned long cl
+ 		childregs->gbr = childregs->regs[0];
+ 	}
+ 	childregs->regs[0] = 0; /* Set return value for child */
+-	p->set_child_tid = p->clear_child_tid = NULL;
+ 
+ 	p->thread.sp = (unsigned long) childregs;
+ 	p->thread.pc = (unsigned long) ret_from_fork;
+diff -puN arch/sparc64/kernel/process.c~copy_thread-unneeded-child_tid-initialization arch/sparc64/kernel/process.c
+--- 25/arch/sparc64/kernel/process.c~copy_thread-unneeded-child_tid-initialization	2004-10-05 01:48:38.322553536 -0700
++++ 25-akpm/arch/sparc64/kernel/process.c	2004-10-05 01:48:38.334551712 -0700
+@@ -621,8 +621,6 @@ int copy_thread(int nr, unsigned long cl
+ 	p->thread.smp_lock_pc = 0;
+ #endif
+ 
+-	p->set_child_tid = p->clear_child_tid = NULL;
+-
+ 	/* Calculate offset to stack_frame & pt_regs */
+ 	child_trap_frame = ((char *)t) + (THREAD_SIZE - (TRACEREG_SZ+STACKFRAME_SZ));
+ 	memcpy(child_trap_frame, (((struct sparc_stackf *)regs)-1), (TRACEREG_SZ+STACKFRAME_SZ));
+diff -puN arch/sparc/kernel/process.c~copy_thread-unneeded-child_tid-initialization arch/sparc/kernel/process.c
+--- 25/arch/sparc/kernel/process.c~copy_thread-unneeded-child_tid-initialization	2004-10-05 01:48:38.324553232 -0700
++++ 25-akpm/arch/sparc/kernel/process.c	2004-10-05 01:48:38.335551560 -0700
+@@ -480,8 +480,6 @@ int copy_thread(int nr, unsigned long cl
+ #endif
+ 	}
+ 
+-	p->set_child_tid = p->clear_child_tid = NULL;
+-
+ 	/*
+ 	 *  p->thread_info         new_stack   childregs
+ 	 *  !                      !           !             {if(PSR_PS) }
+diff -puN arch/x86_64/kernel/process.c~copy_thread-unneeded-child_tid-initialization arch/x86_64/kernel/process.c
+--- 25/arch/x86_64/kernel/process.c~copy_thread-unneeded-child_tid-initialization	2004-10-05 01:48:38.325553080 -0700
++++ 25-akpm/arch/x86_64/kernel/process.c	2004-10-05 01:48:38.335551560 -0700
+@@ -361,7 +361,6 @@ int copy_thread(int nr, unsigned long cl
+ 	if (rsp == ~0UL) {
+ 		childregs->rsp = (unsigned long)childregs;
+ 	}
+-	p->set_child_tid = p->clear_child_tid = NULL;
+ 
+ 	p->thread.rsp = (unsigned long) childregs;
+ 	p->thread.rsp0 = (unsigned long) (childregs+1);
+_

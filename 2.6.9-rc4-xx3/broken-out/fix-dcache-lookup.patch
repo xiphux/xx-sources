@@ -1,0 +1,62 @@
+
+From: Dipankar Sarma <dipankar@in.ibm.com>
+
+__d_lookup() has leftover stuff from earlier code to protect it against
+rename.  The smp_rmb() there was needed for the sequence counter logic.
+
+Original dcache_rcu had :
+
++               move_count = dentry->d_move_count;
++               smp_rmb();
++
+                if (dentry->d_name.hash != hash)
+                        continue;
+                if (dentry->d_parent != parent)
+                        continue;
+
+This was to make sure that comparisons didn't happen before before the
+sequence counter was snapshotted.  This logic is now gone and memory
+barrier is not needed.  Removing this should also improve performance.
+
+The other change is the leftover smp_read_barrier_depends(), later
+converted to rcu_dereference().  Originally, the name comparison was not
+protected against d_move() and there could have been a mismatch of
+allocation size of the name string and dentry->d_name.len.  This was
+avoided by making the qstr update in dentry atomic using a d_qstr pointer. 
+Now, we do ->d_compare() or memcmp() with the d_lock held and it is safe
+against d_move().  So, there is no need to rcu_dereference() anything.  In
+fact, the current code is meaningless.
+
+Signed-off-by: Dipankar Sarma <dipankar@in.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/dcache.c |    8 +++++---
+ 1 files changed, 5 insertions(+), 3 deletions(-)
+
+diff -puN fs/dcache.c~fix-dcache-lookup fs/dcache.c
+--- 25/fs/dcache.c~fix-dcache-lookup	2004-09-26 17:20:55.284011232 -0700
++++ 25-akpm/fs/dcache.c	2004-09-26 17:20:55.289010472 -0700
+@@ -998,8 +998,6 @@ struct dentry * __d_lookup(struct dentry
+ 
+ 		dentry = hlist_entry(node, struct dentry, d_hash);
+ 
+-		smp_rmb();
+-
+ 		if (dentry->d_name.hash != hash)
+ 			continue;
+ 		if (dentry->d_parent != parent)
+@@ -1022,7 +1020,11 @@ struct dentry * __d_lookup(struct dentry
+ 		if (dentry->d_parent != parent)
+ 			goto next;
+ 
+-		qstr = rcu_dereference(&dentry->d_name);
++		/*
++		 * It is safe to compare names since d_move() cannot
++		 * change the qstr (protected by d_lock).
++		 */
++		qstr = &dentry->d_name;
+ 		if (parent->d_op && parent->d_op->d_compare) {
+ 			if (parent->d_op->d_compare(parent, qstr, name))
+ 				goto next;
+_

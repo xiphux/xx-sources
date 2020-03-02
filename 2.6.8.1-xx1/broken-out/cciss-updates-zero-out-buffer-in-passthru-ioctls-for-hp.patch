@@ -1,0 +1,35 @@
+
+From: Mike Miller <mike.miller@hp.com>
+
+This patch addresses a problem with our utilities.  We must zero out the
+buffer before copying their data into it to prevent bogus info when switching
+between SCSI & SATA or SAS drives.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/cciss.c |    4 ++++
+ 1 files changed, 4 insertions(+)
+
+diff -puN drivers/block/cciss.c~cciss-updates-zero-out-buffer-in-passthru-ioctls-for-hp drivers/block/cciss.c
+--- 25/drivers/block/cciss.c~cciss-updates-zero-out-buffer-in-passthru-ioctls-for-hp	Thu Aug  5 15:38:29 2004
++++ 25-akpm/drivers/block/cciss.c	Thu Aug  5 15:38:29 2004
+@@ -866,6 +866,8 @@ static int cciss_ioctl(struct inode *ino
+ 				kfree(buff);
+ 				return -EFAULT;
+ 			}
++		} else {
++			memset(buff, 0, iocommand.buf_size);
+ 		}
+ 		if ((c = cmd_alloc(host , 0)) == NULL)
+ 		{
+@@ -1012,6 +1014,8 @@ static int cciss_ioctl(struct inode *ino
+ 				copy_from_user(buff[sg_used], data_ptr, sz)) {
+ 					status = -ENOMEM;
+ 					goto cleanup1;			
++			} else {
++				memset(buff[sg_used], 0, sz);
+ 			}
+ 			left -= sz;
+ 			data_ptr += sz;
+_

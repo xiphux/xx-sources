@@ -1,0 +1,358 @@
+Index: xx-sources/include/linux/pkt_sched.h
+===================================================================
+--- xx-sources.orig/include/linux/pkt_sched.h	2004-08-31 06:26:24.000000000 -0400
++++ xx-sources/include/linux/pkt_sched.h	2004-08-31 07:05:46.212210232 -0400
+@@ -435,5 +435,12 @@
+ 	__u32	factor;		/* table scaling factor */
+ 	__s16	data[0];	/* distribution table values */
+ };
+-
++ 
++/* sch_ooo section */
++struct tc_ooo_qopt
++{
++	__u32	limit;
++	__u32	gap;
++	__u32	wait;
++};
+ #endif
+Index: xx-sources/net/sched/Kconfig
+===================================================================
+--- xx-sources.orig/net/sched/Kconfig	2004-08-14 06:56:01.000000000 -0400
++++ xx-sources/net/sched/Kconfig	2004-08-31 07:04:46.726253472 -0400
+@@ -217,6 +217,17 @@
+ 
+ 	  If unsure, say N.
+ 
++config NET_SCH_OOO
++	tristate "Out-of-order qdisc discipline"
++	depends on NET_SCHED
++	help
++	  Say Y if you want to simulate out-of-order packets by delaying
++	  some of them. This qdisc is useful if you develop
++	  protocols or network monitoring applications.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called sch_ooo.
++
+ config NET_SCH_INGRESS
+ 	tristate "Ingress Qdisc"
+ 	depends on NET_SCHED 
+Index: xx-sources/net/sched/Makefile
+===================================================================
+--- xx-sources.orig/net/sched/Makefile	2004-08-14 06:55:32.000000000 -0400
++++ xx-sources/net/sched/Makefile	2004-08-31 07:04:46.727253320 -0400
+@@ -24,6 +24,7 @@
+ obj-$(CONFIG_NET_SCH_PRIO)	+= sch_prio.o
+ obj-$(CONFIG_NET_SCH_ATM)	+= sch_atm.o
+ obj-$(CONFIG_NET_SCH_NETEM)	+= sch_netem.o
++obj-$(CONFIG_NET_SCH_OOO)	+= sch_ooo.o
+ obj-$(CONFIG_NET_CLS_U32)	+= cls_u32.o
+ obj-$(CONFIG_NET_CLS_ROUTE4)	+= cls_route.o
+ obj-$(CONFIG_NET_CLS_FW)	+= cls_fw.o
+Index: xx-sources/net/sched/sch_ooo.c
+===================================================================
+--- xx-sources.orig/net/sched/sch_ooo.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/net/sched/sch_ooo.c	2004-08-31 07:04:46.728253168 -0400
+@@ -0,0 +1,301 @@
++/*
++ * net/sched/sch_ooo.c	Out-of-order qdisc discipline routines.
++ *
++ *		This program is free software; you can redistribute it and/or
++ *		modify it under the terms of the GNU General Public License
++ *		as published by the Free Software Foundation; either version
++ *		2 of the License, or (at your option) any later version.
++ *
++ * Authors:	Catalin(ux aka Dino) BOIE, <catab at deuroconsult.ro>
++ */
++
++#include <linux/config.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/sched.h>
++#include <linux/smp_lock.h>
++#include <linux/capability.h>
++#include <linux/in.h>
++#include <linux/ip.h>
++#include <linux/udp.h>
++#include <linux/tcp.h>
++#include <linux/time.h>
++
++#include <linux/proc_fs.h>
++#include <asm/uaccess.h>
++
++#include <linux/string.h>
++#include <linux/netdevice.h>
++#include <net/pkt_sched.h>
++
++#define MODULE_NAME "sch_ooo v0.1"
++
++#if 0
++#define DPRINTK(format,args...)	printk(KERN_DEBUG MODULE_NAME ": " format, ##args)
++#else
++#define DPRINTK(format,args...)
++#endif
++
++
++/* global variables */
++
++/* qdisc internal data */
++struct ooo_sched_data {
++	__u32			limit;		/* in packets */
++	__u32			gap;		/* gap + 1 between ooo packets */
++	__u32			wait;		/* how much ms to wait before release a marked ooo */
++						/* 0 = disable */
++	/* private data */
++	__u32			counter;	/* keep track of frequncy */
++	struct sk_buff_head	qooo;
++	struct timer_list	timer;
++	__u32			tokens;
++};
++
++static void ooo_timer(unsigned long arg)
++{
++	struct Qdisc *sch = (struct Qdisc *)arg;
++	struct ooo_sched_data *q = (struct ooo_sched_data *)sch->data;
++
++	DPRINTK("timer: Add a token and sched dev!\n");
++
++	/* add a token */
++	q->tokens++;
++
++	sch->flags &= ~TCQ_F_THROTTLED;
++	netif_schedule(sch->dev);
++}
++
++static int ooo_init(struct Qdisc *sch, struct rtattr *opt)
++{
++	struct ooo_sched_data *q = (struct ooo_sched_data *)sch->data;
++
++	memset (q, 0, sizeof(struct ooo_sched_data));
++
++	sch->stats.lock = &sch->dev->queue_lock;
++
++	/* init timer */
++	init_timer(&q->timer);
++	q->timer.function = ooo_timer;
++	q->timer.data = (unsigned long) sch;
++
++	/* init ooo queue */
++	skb_queue_head_init(&q->qooo);
++
++	q->counter = 0;
++	q->tokens = 0;
++
++	if (!opt) {
++		q->limit = sch->dev->tx_queue_len;
++		q->gap = 0;
++		q->wait = 0;
++	} else {
++		struct tc_ooo_qopt *ctl = RTA_DATA(opt);
++
++		if (opt->rta_len < RTA_LENGTH(sizeof(*ctl)))
++			return -EINVAL;
++
++		q->limit = ctl->limit;
++		q->gap = ctl->gap;
++		q->wait = ctl->wait;
++	}
++
++	return 0;
++}
++
++static int ooo_enqueue(struct sk_buff *skb, struct Qdisc *sch)
++{
++	struct ooo_sched_data *q = (struct ooo_sched_data *)sch->data;
++
++	q->counter ++;
++
++	DPRINTK("enqueue: Q%X:%X gap=%d counter=%d wait=%d len=%d\n",
++		sch->handle >> 16, sch->handle & 0xffff,
++		q->gap, q->counter, q->wait, skb->len);
++
++	/* do we have room? */
++	if (sch->q.qlen < q->limit) {
++		__skb_queue_tail(&sch->q, skb); /* autoinc qlen */
++		sch->stats.bytes += skb->len;
++		sch->stats.packets++;
++
++		return NET_XMIT_SUCCESS;
++	}
++
++	sch->stats.drops++;
++	kfree_skb(skb);
++
++	return NET_XMIT_DROP;
++}
++
++static struct sk_buff *ooo_dequeue(struct Qdisc *sch)
++{
++	struct ooo_sched_data	*q = (struct ooo_sched_data *)sch->data;
++	struct sk_buff		*skb = NULL;
++	long			howmuch;
++
++	/* time to delay a packet? */
++	if ((q->gap > 0) && (q->counter >= q->gap)) {
++		struct sk_buff	*skb2;
++
++		DPRINTK("dequeue: move head packet from primary q to tail of ooo queue\n");
++
++		skb2 = __skb_dequeue(&sch->q); /* auto dec qlen */
++		if (!skb2) {
++			DPRINTK("dequeue called with queue empty!\n");
++			return NULL;
++			}
++		/* put back qlen */
++		sch->q.qlen++;
++
++		__skb_queue_tail(&q->qooo, skb2); /* auto inc qlen */
++
++		/* reset counter */
++		q->counter = 0;
++
++		/* add timer */
++		howmuch = jiffies + PSCHED_US2JIFFIE(q->wait * 1000);
++		DPRINTK("Add timer jiffies=%ld timer=%ld\n", jiffies, howmuch);
++		mod_timer(&q->timer, howmuch);
++	}
++
++	/* Try to dequeue from ooo queue if we have enough tokens */
++	if (q->tokens > 0) {
++		skb = __skb_dequeue(&q->qooo);
++		if (skb) {
++			q->tokens--;
++			sch->q.qlen--;
++			sch->flags &= ~TCQ_F_THROTTLED;
++		}
++
++		DPRINTK("dequeue: from qooo queue [%p]\n", skb);
++	}
++
++	if (!skb) {
++		skb = __skb_dequeue(&sch->q);
++		DPRINTK("dequeue: from main queue [%p]\n", skb);
++	}
++
++	return skb;
++}
++
++static int ooo_requeue(struct sk_buff *skb, struct Qdisc *sch)
++{
++
++	__skb_queue_head(&sch->q, skb);
++
++	return NET_XMIT_SUCCESS;
++}
++
++static unsigned int ooo_drop(struct Qdisc *sch)
++{
++	struct ooo_sched_data *q = (struct ooo_sched_data *)sch->data;
++	struct sk_buff *skb;
++
++	skb = __skb_dequeue_tail(&sch->q);
++	if (!skb)
++		skb = __skb_dequeue_tail (&q->qooo);
++
++	if (skb) {
++		unsigned int len = skb->len;
++
++		sch->stats.backlog -= len;
++		kfree_skb(skb);
++		sch->q.qlen --;
++		return len;
++	}
++
++	return 0;
++}
++
++static void ooo_reset(struct Qdisc *sch)
++{
++	struct ooo_sched_data *q = (struct ooo_sched_data *)sch->data;
++
++	del_timer(&q->timer);
++	skb_queue_purge(&q->qooo);
++	skb_queue_purge(&sch->q);
++	sch->flags &= ~TCQ_F_THROTTLED;
++}
++
++static void ooo_destroy(struct Qdisc *sch)
++{
++	struct ooo_sched_data *q = (struct ooo_sched_data *)sch->data;
++
++	del_timer(&q->timer);
++	skb_queue_purge(&q->qooo);
++	skb_queue_purge(&sch->q);
++}
++
++static int ooo_dump(struct Qdisc *sch, struct sk_buff *skb)
++{
++	struct ooo_sched_data *q = (struct ooo_sched_data *)sch->data;
++	struct tc_ooo_qopt opt;
++	unsigned char *b = skb->tail;
++
++	opt.limit = q->limit;
++	opt.gap = q->gap;
++	opt.wait = q->wait;
++	RTA_PUT(skb, TCA_OPTIONS, sizeof(opt), &opt);
++
++	return skb->len;
++
++	rtattr_failure:
++	skb_trim(skb, b - skb->data);
++	return -1;
++}
++
++static struct Qdisc_ops ooo_qdisc_ops = {
++	.next		= NULL,
++	.cl_ops		= NULL,
++	.id		= "ooo",
++	.priv_size	= sizeof(struct ooo_sched_data),
++	.enqueue	= ooo_enqueue,
++	.dequeue	= ooo_dequeue,
++	.requeue	= ooo_requeue,
++	.drop		= ooo_drop,
++	.init		= ooo_init,
++	.reset		= ooo_reset,
++	.destroy	= ooo_destroy,
++	.change		= ooo_init,
++	.dump		= ooo_dump,
++	.owner		= THIS_MODULE,
++};
++
++static int __init init_ooo(void)
++{
++	int ret;
++
++	printk(KERN_DEBUG "%s: (C)opyright Catalin(ux aka Dino) BOIE 2003-2004\n",
++	       MODULE_NAME);
++
++	ret = register_qdisc(&ooo_qdisc_ops);
++	if (ret != 0) {
++		printk(KERN_DEBUG "%s: cannot register qdisc ooo. Sorry!\n",
++		       MODULE_NAME);
++		return -ENOMEM;
++	}
++
++	return 0;
++}
++
++static void __exit exit_ooo(void)
++{
++	int ret;
++
++	printk(KERN_DEBUG "%s: Goodbye!\n", MODULE_NAME);
++
++	ret = unregister_qdisc(&ooo_qdisc_ops);
++	if (ret != 0) {
++		printk(KERN_DEBUG "%s: Cannot unregister qdisc ooo. Sorry!\n",
++		       MODULE_NAME);
++	}
++}
++
++module_init(init_ooo);
++module_exit(exit_ooo);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Catalin(ux) BOIE - <catab at umbrella dot ro>");
++MODULE_DESCRIPTION("sch_ooo - Produce ooo (out-of-order) packets");

@@ -1,0 +1,148 @@
+
+From: Zwane Mwaikambo <zwane@fsmlabs.com>
+
+Now that things got cleaned up a bit, there is no real reason why the pit
+initialisation code has to be in i8259.c. Move it to timer_pit.ca
+
+Signed-off-by: Zwane Mwaikambo <zwane@fsmlabs.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/i8259.c            |   44 +---------------------------
+ 25-akpm/arch/i386/kernel/timers/timer_pit.c |   44 ++++++++++++++++++++++++++++
+ 2 files changed, 46 insertions(+), 42 deletions(-)
+
+diff -puN arch/i386/kernel/i8259.c~move-pit-code-to-timer_pit arch/i386/kernel/i8259.c
+--- 25/arch/i386/kernel/i8259.c~move-pit-code-to-timer_pit	Tue Jul 27 14:05:06 2004
++++ 25-akpm/arch/i386/kernel/i8259.c	Tue Jul 27 14:05:06 2004
+@@ -4,7 +4,6 @@
+ #include <linux/sched.h>
+ #include <linux/ioport.h>
+ #include <linux/interrupt.h>
+-#include <linux/timex.h>
+ #include <linux/slab.h>
+ #include <linux/random.h>
+ #include <linux/smp_lock.h>
+@@ -12,6 +11,7 @@
+ #include <linux/kernel_stat.h>
+ #include <linux/sysdev.h>
+ 
++#include <asm/8253pit.h>
+ #include <asm/atomic.h>
+ #include <asm/system.h>
+ #include <asm/io.h>
+@@ -388,46 +388,6 @@ void __init init_ISA_irqs (void)
+ 	}
+ }
+ 
+-static void setup_timer(void)
+-{
+-	extern spinlock_t i8253_lock;
+-	unsigned long flags;
+-
+-	spin_lock_irqsave(&i8253_lock, flags);
+-	outb_p(0x34,PIT_MODE);		/* binary, mode 2, LSB/MSB, ch 0 */
+-	udelay(10);
+-	outb_p(LATCH & 0xff , PIT_CH0);	/* LSB */
+-	udelay(10);
+-	outb(LATCH >> 8 , PIT_CH0);	/* MSB */
+-	spin_unlock_irqrestore(&i8253_lock, flags);
+-}
+-
+-static int timer_resume(struct sys_device *dev)
+-{
+-	setup_timer();
+-	return 0;
+-}
+-
+-static struct sysdev_class timer_sysclass = {
+-	set_kset_name("timer"),
+-	.resume	= timer_resume,
+-};
+-
+-static struct sys_device device_timer = {
+-	.id	= 0,
+-	.cls	= &timer_sysclass,
+-};
+-
+-static int __init init_timer_sysfs(void)
+-{
+-	int error = sysdev_class_register(&timer_sysclass);
+-	if (!error)
+-		error = sysdev_register(&device_timer);
+-	return error;
+-}
+-
+-device_initcall(init_timer_sysfs);
+-
+ void __init init_IRQ(void)
+ {
+ 	int i;
+@@ -459,7 +419,7 @@ void __init init_IRQ(void)
+ 	 * Set the clock to HZ Hz, we already have a valid
+ 	 * vector now:
+ 	 */
+-	setup_timer();
++	setup_pit_timer();
+ 
+ 	/*
+ 	 * External FPU? Set up irq13 if so, for
+diff -puN arch/i386/kernel/timers/timer_pit.c~move-pit-code-to-timer_pit arch/i386/kernel/timers/timer_pit.c
+--- 25/arch/i386/kernel/timers/timer_pit.c~move-pit-code-to-timer_pit	Tue Jul 27 14:05:06 2004
++++ 25-akpm/arch/i386/kernel/timers/timer_pit.c	Tue Jul 27 14:05:06 2004
+@@ -7,6 +7,9 @@
+ #include <linux/module.h>
+ #include <linux/device.h>
+ #include <linux/irq.h>
++#include <linux/sysdev.h>
++#include <linux/timex.h>
++#include <asm/delay.h>
+ #include <asm/mpspec.h>
+ #include <asm/timer.h>
+ #include <asm/smp.h>
+@@ -156,3 +159,44 @@ struct timer_opts timer_pit = {
+ 	.monotonic_clock = monotonic_clock_pit,
+ 	.delay = delay_pit,
+ };
++
++void setup_pit_timer(void)
++{
++	extern spinlock_t i8253_lock;
++	unsigned long flags;
++
++	spin_lock_irqsave(&i8253_lock, flags);
++	outb_p(0x34,PIT_MODE);		/* binary, mode 2, LSB/MSB, ch 0 */
++	udelay(10);
++	outb_p(LATCH & 0xff , PIT_CH0);	/* LSB */
++	udelay(10);
++	outb(LATCH >> 8 , PIT_CH0);	/* MSB */
++	spin_unlock_irqrestore(&i8253_lock, flags);
++}
++
++static int timer_resume(struct sys_device *dev)
++{
++	setup_pit_timer();
++	return 0;
++}
++
++static struct sysdev_class timer_sysclass = {
++	set_kset_name("timer"),
++	.resume	= timer_resume,
++};
++
++static struct sys_device device_timer = {
++	.id	= 0,
++	.cls	= &timer_sysclass,
++};
++
++static int __init init_timer_sysfs(void)
++{
++	int error = sysdev_class_register(&timer_sysclass);
++	if (!error)
++		error = sysdev_register(&device_timer);
++	return error;
++}
++
++device_initcall(init_timer_sysfs);
++
+_

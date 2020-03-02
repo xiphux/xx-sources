@@ -1,0 +1,26 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/swapfile.c |    7 +++++++
+ 1 files changed, 7 insertions(+)
+
+diff -puN mm/swapfile.c~swapoff-activate-pages mm/swapfile.c
+--- 25/mm/swapfile.c~swapoff-activate-pages	2004-06-17 21:27:41.704568280 -0700
++++ 25-akpm/mm/swapfile.c	2004-06-17 21:28:35.417402688 -0700
+@@ -467,6 +467,13 @@ static unsigned long unuse_pmd(struct vm
+ 		if (unlikely(pte_same(*pte, swp_pte))) {
+ 			unuse_pte(vma, offset + address, pte, entry, page);
+ 			pte_unmap(pte);
++
++			/*
++			 * Move the page to the active list so it is not
++			 * immediately swapped out again after swapon.
++			 */
++			activate_page(page);
++
+ 			/* add 1 since address may be 0 */
+ 			return 1 + offset + address;
+ 		}
+_

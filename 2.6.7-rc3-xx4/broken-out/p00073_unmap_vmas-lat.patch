@@ -1,0 +1,34 @@
+---
+
+ linux-2.6.6-xx2-xiphux/mm/memory.c |   11 ++---------
+ 1 files changed, 2 insertions(+), 9 deletions(-)
+
+diff -puN mm/memory.c~unmap_vmas-lat mm/memory.c
+--- linux-2.6.6-xx2/mm/memory.c~unmap_vmas-lat	2004-05-28 05:43:37.111113824 -0400
++++ linux-2.6.6-xx2-xiphux/mm/memory.c	2004-05-28 05:44:25.728722824 -0400
+@@ -469,21 +469,14 @@ static void unmap_page_range(struct mmu_
+ 	tlb_end_vma(tlb, vma);
+ }
+ 
++#ifdef CONFIG_SMP
+ /* Dispose of an entire struct mmu_gather per rescheduling point */
+-#if defined(CONFIG_SMP) && defined(CONFIG_PREEMPT)
+ #define ZAP_BLOCK_SIZE	(FREE_PTE_NR * PAGE_SIZE)
+-#endif
+-
++#else
+ /* For UP, 256 pages at a time gives nice low latency */
+-#if !defined(CONFIG_SMP) && defined(CONFIG_PREEMPT)
+ #define ZAP_BLOCK_SIZE	(256 * PAGE_SIZE)
+ #endif
+ 
+-/* No preempt: go for improved straight-line efficiency */
+-#if !defined(CONFIG_PREEMPT)
+-#define ZAP_BLOCK_SIZE	(1024 * PAGE_SIZE)
+-#endif
+-
+ /**
+  * unmap_vmas - unmap a range of memory covered by a list of vma's
+  * @tlbp: address of the caller's struct mmu_gather
+
+_

@@ -1,0 +1,50 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+vma->vm_ops->page_mkwrite() is supposed to be able to sleep, but this
+function doesn't unmap the pte across the call and worse yet, reuses the
+pte across a drop and reacquisition of ->page_table_lock.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/memory.c |    5 ++++-
+ 1 files changed, 4 insertions(+), 1 deletion(-)
+
+diff -puN mm/memory.c~add-page-becoming-writable-notification-fix mm/memory.c
+--- 25/mm/memory.c~add-page-becoming-writable-notification-fix	2005-01-10 21:15:04.775727560 -0800
++++ 25-akpm/mm/memory.c	2005-01-10 21:15:04.780726800 -0800
+@@ -1269,6 +1269,7 @@ static inline void break_cow(struct vm_a
+ static inline int do_wp_page_mk_pte_writable(struct mm_struct *mm,
+ 					     struct vm_area_struct *vma,
+ 					     unsigned long address,
++					     pmd_t *pmd,
+ 					     pte_t *page_table,
+ 					     struct page *old_page,
+ 					     pte_t pte)
+@@ -1280,6 +1281,7 @@ static inline int do_wp_page_mk_pte_writ
+ 	if (vma->vm_ops && vma->vm_ops->page_mkwrite) {
+ 		/* Notify the page owner without the lock held so they can
+ 		 * sleep if they want to */
++		pte_unmap(page_table);
+ 		spin_unlock(&mm->page_table_lock);
+ 
+ 		if (vma->vm_ops->page_mkwrite(vma, old_page) < 0)
+@@ -1292,6 +1294,7 @@ static inline int do_wp_page_mk_pte_writ
+ 		 * return, as we can count on the MMU to tell us if they didn't
+ 		 * also make it writable
+ 		 */
++		page_table = pte_offset_map(pmd, address);
+ 		if (!pte_same(*page_table, pte))
+ 			goto minor_fault;
+ 	}
+@@ -1356,7 +1359,7 @@ static int do_wp_page(struct mm_struct *
+ 		unlock_page(old_page);
+ 		if (reuse) {
+ 			/* We can just make the PTE writable */
+-			return do_wp_page_mk_pte_writable(mm, vma, address,
++			return do_wp_page_mk_pte_writable(mm, vma, address, pmd,
+ 							  page_table, old_page,
+ 							  pte);
+ 		}
+_

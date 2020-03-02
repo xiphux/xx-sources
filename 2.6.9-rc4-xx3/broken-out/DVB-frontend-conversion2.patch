@@ -1,0 +1,3511 @@
+
+From: Michael Hunold <hunold@linuxtv.org>
+
+- [DVB] alps_tdlb7, alps_tdmb7, at76c651, cx24110, dst: convert from dvb-i2c
+  to kernel-i2c, MODULE_PARM() to module_param(), dvb_delay() to mdelay()
+
+- [DVB] alps_tdlb7: move from home-brewn firmware loading to firmware_class
+
+- [DVB] dst: use sysfs attributes for type and flags for per-card parameters
+
+Signed-off-by: Michael Hunold <hunold@linuxtv.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ /dev/null                                        |    0 
+ 25-akpm/drivers/media/dvb/frontends/alps_tdlb7.c |  420 +++++-----
+ 25-akpm/drivers/media/dvb/frontends/alps_tdmb7.c |  153 ++-
+ 25-akpm/drivers/media/dvb/frontends/at76c651.c   |  399 +++++-----
+ 25-akpm/drivers/media/dvb/frontends/cx24110.c    |  168 +++-
+ 25-akpm/drivers/media/dvb/frontends/dst.c        |  887 ++++++++++++-----------
+ 6 files changed, 1164 insertions(+), 863 deletions(-)
+
+diff -puN drivers/media/dvb/frontends/alps_tdlb7.c~DVB-frontend-conversion2 drivers/media/dvb/frontends/alps_tdlb7.c
+--- 25/drivers/media/dvb/frontends/alps_tdlb7.c~DVB-frontend-conversion2	2004-09-20 11:22:31.844809816 -0700
++++ 25-akpm/drivers/media/dvb/frontends/alps_tdlb7.c	2004-09-20 11:22:31.874805256 -0700
+@@ -19,34 +19,34 @@
+     Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ 
+ */
++/*
++ * This driver needs external firmware. Please use the command
++ * "<kerneldir>/Documentation/dvb/get_dvb_firmware alps_tdlb7" to
++ * download/extract it, and then copy it to /usr/lib/hotplug/firmware.
++ */
++#define SP887X_DEFAULT_FIRMWARE "dvb-fe-tdlb7-2.16.fw"
+ 
+-
+-/* 
+-    This driver needs a copy of the firmware file 'Sc_main.mc' from the Haupauge
+-    windows driver in the '/usr/lib/DVB/driver/frontends' directory.
+-    You can also pass the complete file name with the module parameter 'firmware_file'.
+-    
+-*/  
+-
+-#include <linux/module.h>
+ #include <linux/init.h>
+-#include <linux/vmalloc.h>
+-#include <linux/fs.h>
+-#include <linux/unistd.h>
++#include <linux/module.h>
++#include <linux/moduleparam.h>
++#include <linux/device.h>
++#include <linux/firmware.h>
+ #include <linux/delay.h>
+-#include <linux/syscalls.h>
+ 
+ #include "dvb_frontend.h"
+-#include "dvb_functions.h"
+ 
+-#ifndef CONFIG_ALPS_TDLB7_FIRMWARE_LOCATION
+-#define CONFIG_ALPS_TDLB7_FIRMWARE_LOCATION "/usr/lib/DVB/driver/frontends/Sc_main.mc"
+-#endif
++#define FRONTEND_NAME "dvbfe_alps_tdlb7"
+ 
+-static char * firmware_file = CONFIG_ALPS_TDLB7_FIRMWARE_LOCATION;
+-static int debug = 0;
++#define dprintk(args...) \
++	do { \
++		if (debug) printk(KERN_DEBUG FRONTEND_NAME ": " args); \
++	} while (0)
++
++static int debug;
++
++module_param(debug, int, 0644);
++MODULE_PARM_DESC(debug, "Turn on/off frontend debugging (default:off).");
+ 
+-#define dprintk	if (debug) printk
+ 
+ /* firmware size for sp8870 */
+ #define SP8870_FIRMWARE_SIZE 16382
+@@ -68,14 +68,18 @@ static struct dvb_frontend_info tdlb7_in
+ 				  FE_CAN_HIERARCHY_AUTO |  FE_CAN_RECOVER
+ };
+ 
++struct tdlb7_state {
++	struct i2c_adapter *i2c;
++	struct dvb_adapter *dvb;
++};
+ 
+-static int sp8870_writereg (struct dvb_i2c_bus *i2c, u16 reg, u16 data)
++static int sp8870_writereg (struct i2c_adapter *i2c, u16 reg, u16 data)
+ {
+         u8 buf [] = { reg >> 8, reg & 0xff, data >> 8, data & 0xff };
+ 	struct i2c_msg msg = { .addr = 0x71, .flags = 0, .buf = buf, .len = 4 };
+ 	int err;
+ 
+-        if ((err = i2c->xfer (i2c, &msg, 1)) != 1) {
++        if ((err = i2c_transfer (i2c, &msg, 1)) != 1) {
+ 		dprintk ("%s: writereg error (err == %i, reg == 0x%02x, data == 0x%02x)\n", __FUNCTION__, err, reg, data);
+ 		return -EREMOTEIO;
+ 	}
+@@ -83,8 +87,7 @@ static int sp8870_writereg (struct dvb_i
+         return 0;
+ }
+ 
+-
+-static u16 sp8870_readreg (struct dvb_i2c_bus *i2c, u16 reg)
++static u16 sp8870_readreg (struct i2c_adapter *i2c, u16 reg)
+ {
+ 	int ret;
+ 	u8 b0 [] = { reg >> 8 , reg & 0xff };
+@@ -92,7 +95,7 @@ static u16 sp8870_readreg (struct dvb_i2
+ 	struct i2c_msg msg [] = { { .addr = 0x71, .flags = 0, .buf = b0, .len = 2 },
+ 			   { .addr = 0x71, .flags = I2C_M_RD, .buf = b1, .len = 2 } };
+ 
+-	ret = i2c->xfer (i2c, msg, 2);
++	ret = i2c_transfer (i2c, msg, 2);
+ 
+ 	if (ret != 2) {
+ 		dprintk("%s: readreg error (ret == %i)\n", __FUNCTION__, ret);
+@@ -102,22 +105,26 @@ static u16 sp8870_readreg (struct dvb_i2
+ 	return (b1[0] << 8 | b1[1]);
+ }
+ 
+-
+-static int sp5659_write (struct dvb_i2c_bus *i2c, u8 data [4])
++static int sp5659_write (struct i2c_adapter *i2c, u8 data [4])
+ {
+         int ret;
+-        struct i2c_msg msg = { .addr = 0x60, .flags = 0, .buf = data, .len = 4 };
+ 
+-        ret = i2c->xfer (i2c, &msg, 1);
++        u8 buf_open [] = { 0x206 >> 8, 0x206 & 0xff, 0x001 >> 8, 0x001 & 0xff };
++        u8 buf_close [] = { 0x206 >> 8, 0x206 & 0xff, 0x000 >> 8, 0x000 & 0xff };
++
++        struct i2c_msg msg[3] = { {.addr = 0x71, .flags = 0, .buf = buf_open, .len = 4 },
++				  {.addr = 0x60, .flags = 0, .buf = data, .len = 4 },
++				  {.addr = 0x71, .flags = 0, .buf = buf_close, .len = 4 } };
++
++        ret = i2c_transfer (i2c, &msg[0], 3);
+ 
+-        if (ret != 1)
++        if (ret != 3)
+                 printk("%s: i/o error (ret == %i)\n", __FUNCTION__, ret);
+ 
+-        return (ret != 1) ? -1 : 0;
++        return (ret != 3) ? -EREMOTEIO : 0;
+ }
+ 
+-
+-static void sp5659_set_tv_freq (struct dvb_i2c_bus *i2c, u32 freq)
++static void sp5659_set_tv_freq (struct i2c_adapter *i2c, u32 freq)
+ {
+         u32 div = (freq + 36200000) / 166666;
+         u8 buf [4];
+@@ -125,7 +132,7 @@ static void sp5659_set_tv_freq (struct d
+ 
+ 	if (freq <= 782000000)
+ 		pwr = 1;
+-	else 
++	else
+ 		pwr = 2;
+ 
+ 	buf[0] = (div >> 8) & 0x7f;
+@@ -134,67 +141,25 @@ static void sp5659_set_tv_freq (struct d
+ 	buf[3] = pwr << 6;
+ 
+ 	/* open i2c gate for PLL message transmission... */
+-	sp8870_writereg(i2c, 0x206, 0x001);
+ 	sp5659_write (i2c, buf);
+-	sp8870_writereg(i2c, 0x206, 0x000);
+-}
+-
+-
+-static int sp8870_read_firmware_file (const char *fn, char **fp)
+-{
+-        int fd;
+-	loff_t filesize;
+-	char *dp;
+-
+-	fd = sys_open(fn, 0, 0);
+-	if (fd == -1) {
+-                printk("%s: unable to open '%s'.\n", __FUNCTION__, fn);
+-		return -EIO;
+-	}
+-
+-	filesize = sys_lseek(fd, 0L, 2);
+-	if (filesize <= 0 || filesize < SP8870_FIRMWARE_OFFSET + SP8870_FIRMWARE_SIZE) {
+-	        printk("%s: firmware filesize to small '%s'\n", __FUNCTION__, fn);
+-		sys_close(fd);
+-		return -EIO;
+-	}
+-
+-	*fp= dp = vmalloc(SP8870_FIRMWARE_SIZE);
+-	if (dp == NULL)	{
+-		printk("%s: out of memory loading '%s'.\n", __FUNCTION__, fn);
+-		sys_close(fd);
+-		return -EIO;
+-	}
+-
+-	sys_lseek(fd, SP8870_FIRMWARE_OFFSET, 0);
+-	if (sys_read(fd, dp, SP8870_FIRMWARE_SIZE) != SP8870_FIRMWARE_SIZE) {
+-		printk("%s: failed to read '%s'.\n",__FUNCTION__, fn);
+-		vfree(dp);
+-		sys_close(fd);
+-		return -EIO;
+-	}
+-
+-	sys_close(fd);
+-	*fp = dp;
+-
+-	return 0;
+ }
+ 
+-
+-static int sp8870_firmware_upload (struct dvb_i2c_bus *i2c)
++static int sp8870_firmware_upload (struct i2c_adapter *i2c, const struct firmware *fw)
+ {
+ 	struct i2c_msg msg;
+-	char *fw_buf = NULL;
++	char *fw_buf = fw->data;
+ 	int fw_pos;
+ 	u8 tx_buf[255];
+ 	int tx_len;
+ 	int err = 0;
+-	mm_segment_t fs = get_fs();
+ 
+ 	dprintk ("%s: ...\n", __FUNCTION__);
+ 
+-	// system controller stop 
+-	sp8870_writereg(i2c,0x0F00,0x0000);
++	if (fw->size < SP8870_FIRMWARE_SIZE + SP8870_FIRMWARE_OFFSET)
++		return -EINVAL;
++
++	// system controller stop
++	sp8870_writereg(i2c, 0x0F00, 0x0000);
+ 
+ 	// instruction RAM register hiword
+ 	sp8870_writereg(i2c, 0x8F08, ((SP8870_FIRMWARE_SIZE / 2) & 0xFFFF));
+@@ -202,44 +167,31 @@ static int sp8870_firmware_upload (struc
+ 	// instruction RAM MWR
+ 	sp8870_writereg(i2c, 0x8F0A, ((SP8870_FIRMWARE_SIZE / 2) >> 16));
+ 
+-	// reading firmware file to buffer
+-	set_fs(get_ds());
+-        err = sp8870_read_firmware_file(firmware_file, (char**) &fw_buf);
+-	set_fs(fs);
+-	if (err != 0) {
+-		printk("%s: reading firmware file failed!\n", __FUNCTION__);
+-		return err;
+-	}
+-
+ 	// do firmware upload
+-	fw_pos = 0;
+-	while (fw_pos < SP8870_FIRMWARE_SIZE){
+-		tx_len = (fw_pos <= SP8870_FIRMWARE_SIZE - 252) ? 252 : SP8870_FIRMWARE_SIZE - fw_pos;
++	fw_pos = SP8870_FIRMWARE_OFFSET;
++	while (fw_pos < SP8870_FIRMWARE_SIZE + SP8870_FIRMWARE_OFFSET){
++		tx_len = (fw_pos <= SP8870_FIRMWARE_SIZE + SP8870_FIRMWARE_OFFSET - 252) ? 252 : SP8870_FIRMWARE_SIZE + SP8870_FIRMWARE_OFFSET - fw_pos;
+ 		// write register 0xCF0A
+ 		tx_buf[0] = 0xCF;
+ 		tx_buf[1] = 0x0A;
+ 		memcpy(&tx_buf[2], fw_buf + fw_pos, tx_len);
+-		msg.addr=0x71;
+-		msg.flags=0;
++		msg.addr = 0x71;
++		msg.flags = 0;
+ 		msg.buf = tx_buf;
+ 		msg.len = tx_len + 2;
+-        	if ((err = i2c->xfer (i2c, &msg, 1)) != 1) {
++        	if ((err = i2c_transfer (i2c, &msg, 1)) != 1) {
+ 			printk("%s: firmware upload failed!\n", __FUNCTION__);
+ 			printk ("%s: i2c error (err == %i)\n", __FUNCTION__, err);
+-        		vfree(fw_buf);
+ 			return err;
+ 		}
+ 		fw_pos += tx_len;
+ 	}
+ 
+-	vfree(fw_buf);
+-
+ 	dprintk ("%s: done!\n", __FUNCTION__);
+ 	return 0;
+ };
+ 
+-
+-static void sp8870_microcontroller_stop (struct dvb_i2c_bus *i2c)
++static void sp8870_microcontroller_stop (struct i2c_adapter *i2c)
+ {
+ 	sp8870_writereg(i2c, 0x0F08, 0x000);
+ 	sp8870_writereg(i2c, 0x0F09, 0x000);
+@@ -248,8 +200,7 @@ static void sp8870_microcontroller_stop 
+ 	sp8870_writereg(i2c, 0x0F00, 0x000);
+ }
+ 
+-
+-static void sp8870_microcontroller_start (struct dvb_i2c_bus *i2c)
++static void sp8870_microcontroller_start (struct i2c_adapter *i2c)
+ {
+ 	sp8870_writereg(i2c, 0x0F08, 0x000);
+ 	sp8870_writereg(i2c, 0x0F09, 0x000);
+@@ -261,25 +212,24 @@ static void sp8870_microcontroller_start
+ 	sp8870_readreg(i2c, 0x0D01);
+ }
+ 
+-
+-static int sp8870_init (struct dvb_i2c_bus *i2c)
++static int sp8870_init (struct i2c_adapter *i2c)
+ {
+ 	dprintk ("%s\n", __FUNCTION__);
+ 
+ 	/* enable TS output and interface pins */
+ 	sp8870_writereg(i2c, 0xc18, 0x00d);
+ 
+-	// system controller stop 
++	// system controller stop
+ 	sp8870_microcontroller_stop(i2c);
+ 
+ 	// ADC mode
+-	sp8870_writereg(i2c,0x0301,0x0003);
++	sp8870_writereg(i2c, 0x0301, 0x0003);
+ 
+ 	// Reed Solomon parity bytes passed to output
+-	sp8870_writereg(i2c,0x0C13,0x0001);
++	sp8870_writereg(i2c, 0x0C13, 0x0001);
+ 
+ 	// MPEG clock is suppressed if no valid data
+-	sp8870_writereg(i2c,0x0C14,0x0001);
++	sp8870_writereg(i2c, 0x0C14, 0x0001);
+ 
+ 	/* bit 0x010: enable data valid signal */
+ 	sp8870_writereg(i2c, 0x0D00, 0x010);
+@@ -288,8 +238,7 @@ static int sp8870_init (struct dvb_i2c_b
+ 	return 0;
+ }
+ 
+-
+-static int sp8870_read_status (struct dvb_i2c_bus *i2c,  fe_status_t * fe_status)
++static int sp8870_read_status (struct i2c_adapter *i2c,  fe_status_t * fe_status)
+ {
+ 	int status;
+ 	int signal;
+@@ -314,8 +263,7 @@ static int sp8870_read_status (struct dv
+ 	return 0;
+ }
+ 
+-
+-static int sp8870_read_ber (struct dvb_i2c_bus *i2c, u32 * ber)
++static int sp8870_read_ber (struct i2c_adapter *i2c, u32 * ber)
+ {
+ 	int ret;
+ 	u32 tmp;
+@@ -340,11 +288,10 @@ static int sp8870_read_ber (struct dvb_i
+ 	*ber = tmp;
+ 
+ 	return 0;
+-	}
+-
++}
+ 
+-static int sp8870_read_signal_strength (struct dvb_i2c_bus *i2c,  u16 * signal)
+-	{
++static int sp8870_read_signal_strength (struct i2c_adapter *i2c,  u16 * signal)
++{
+ 	int ret;
+ 	u16 tmp;
+ 
+@@ -366,21 +313,19 @@ static int sp8870_read_signal_strength (
+ 		*signal = 0xFFFF - tmp;
+ 
+ 	return 0;
+-	}
+-
+-
+-static int sp8870_read_snr(struct dvb_i2c_bus *i2c, u32* snr)
+-	{
+-                *snr=0;  
+-		return -EOPNOTSUPP;
+-	}
++}
+ 
++static int sp8870_read_snr(struct i2c_adapter *i2c, u32* snr)
++{
++	*snr = 0;
++	return -EOPNOTSUPP;
++}
+ 
+-static int sp8870_read_uncorrected_blocks (struct dvb_i2c_bus *i2c, u32* ublocks)
+-	{
++static int sp8870_read_uncorrected_blocks (struct i2c_adapter *i2c, u32* ublocks)
++{
+ 		int ret;
+ 
+-		*ublocks=0;  
++		*ublocks = 0;
+ 
+ 		ret = sp8870_readreg(i2c, 0xC0C);
+ 		if (ret < 0)
+@@ -392,15 +337,13 @@ static int sp8870_read_uncorrected_block
+ 		*ublocks = ret;
+ 
+ 		return 0;
+-	}
+-
++}
+ 
+-static int sp8870_read_data_valid_signal(struct dvb_i2c_bus *i2c)
++static int sp8870_read_data_valid_signal(struct i2c_adapter *i2c)
+ {
+ 	return (sp8870_readreg(i2c, 0x0D02) > 0);
+ }
+ 
+-
+ static
+ int configure_reg0xc05 (struct dvb_frontend_parameters *p, u16 *reg0xc05)
+ {
+@@ -473,59 +416,57 @@ int configure_reg0xc05 (struct dvb_front
+ 	return 0;
+ }
+ 
+-
+-static int sp8870_set_frontend_parameters (struct dvb_i2c_bus *i2c,
++static int sp8870_set_frontend_parameters (struct i2c_adapter *i2c,
+ 				      struct dvb_frontend_parameters *p)
+-        {
++{
+ 	int  err;
+ 	u16 reg0xc05;
+ 
+ 	if ((err = configure_reg0xc05(p, &reg0xc05)))
+ 		return err;
+ 
+-		// system controller stop 
++	// system controller stop
+ 	sp8870_microcontroller_stop(i2c);
+ 
+ 	// set tuner parameters
+-		sp5659_set_tv_freq (i2c, p->frequency);
++	sp5659_set_tv_freq (i2c, p->frequency);
++
++	// sample rate correction bit [23..17]
++	sp8870_writereg(i2c, 0x0319, 0x000A);
++
++	// sample rate correction bit [16..0]
++	sp8870_writereg(i2c, 0x031A, 0x0AAB);
++
++	// integer carrier offset
++	sp8870_writereg(i2c, 0x0309, 0x0400);
++
++	// fractional carrier offset
++	sp8870_writereg(i2c, 0x030A, 0x0000);
+ 
+-		// sample rate correction bit [23..17]
+-		sp8870_writereg(i2c,0x0319,0x000A);
+-		
+-		// sample rate correction bit [16..0]
+-		sp8870_writereg(i2c,0x031A,0x0AAB);
+-
+-		// integer carrier offset 
+-		sp8870_writereg(i2c,0x0309,0x0400);
+-
+-		// fractional carrier offset
+-		sp8870_writereg(i2c,0x030A,0x0000);
+-
+-		// filter for 6/7/8 Mhz channel
+-		if (p->u.ofdm.bandwidth == BANDWIDTH_6_MHZ)
+-			sp8870_writereg(i2c,0x0311,0x0002);
+-		else if (p->u.ofdm.bandwidth == BANDWIDTH_7_MHZ)
+-			sp8870_writereg(i2c,0x0311,0x0001);
+-		else
+-			sp8870_writereg(i2c,0x0311,0x0000);
+-
+-		// scan order: 2k first = 0x0000, 8k first = 0x0001 
+-		if (p->u.ofdm.transmission_mode == TRANSMISSION_MODE_2K)
+-			sp8870_writereg(i2c,0x0338,0x0000);
+-		else
+-			sp8870_writereg(i2c,0x0338,0x0001);
++	// filter for 6/7/8 Mhz channel
++	if (p->u.ofdm.bandwidth == BANDWIDTH_6_MHZ)
++		sp8870_writereg(i2c, 0x0311, 0x0002);
++	else if (p->u.ofdm.bandwidth == BANDWIDTH_7_MHZ)
++		sp8870_writereg(i2c, 0x0311, 0x0001);
++	else
++		sp8870_writereg(i2c, 0x0311, 0x0000);
++
++	// scan order: 2k first = 0x0000, 8k first = 0x0001
++	if (p->u.ofdm.transmission_mode == TRANSMISSION_MODE_2K)
++		sp8870_writereg(i2c, 0x0338, 0x0000);
++	else
++		sp8870_writereg(i2c, 0x0338, 0x0001);
+ 
+ 	sp8870_writereg(i2c, 0xc05, reg0xc05);
+ 
+ 	// read status reg in order to clear pending irqs
+ 	sp8870_readreg(i2c, 0x200);
+ 
+-		// system controller start
++	// system controller start
+ 	sp8870_microcontroller_start(i2c);
+ 
+ 	return 0;
+-        }
+-
++}
+ 
+ // number of trials to recover from lockup
+ #define MAXTRIALS 5
+@@ -537,8 +478,8 @@ static int lockups = 0;
+ // only for debugging: counter for channel switches
+ static int switches = 0;
+ 
+-static int sp8870_set_frontend (struct dvb_i2c_bus *i2c, struct dvb_frontend_parameters *p)
+-	{
++static int sp8870_set_frontend (struct i2c_adapter *i2c, struct dvb_frontend_parameters *p)
++{
+ 	/*
+ 	    The firmware of the sp8870 sometimes locks up after setting frontend parameters.
+ 	    We try to detect this by checking the data valid signal.
+@@ -569,7 +510,7 @@ static int sp8870_set_frontend (struct d
+ 			udelay(10);
+ 		}
+ 		if (valid)
+-		break;
++			break;
+ 	}
+ 
+ 	if (!valid) {
+@@ -592,24 +533,22 @@ static int sp8870_set_frontend (struct d
+ 	return 0;
+ }
+ 
+-
+-static int sp8870_sleep(struct dvb_i2c_bus *i2c)
++static int sp8870_sleep(struct i2c_adapter *i2c)
+ {
+ 	// tristate TS output and disable interface pins
+ 	return sp8870_writereg(i2c, 0xC18, 0x000);
+ }
+ 
+-
+-static int sp8870_wake_up(struct dvb_i2c_bus *i2c)
++static int sp8870_wake_up(struct i2c_adapter *i2c)
+ {
+ 	// enable TS output and interface pins
+ 	return sp8870_writereg(i2c, 0xC18, 0x00D);
+ }
+ 
+-
+ static int tdlb7_ioctl (struct dvb_frontend *fe, unsigned int cmd, void *arg)
+ {
+-	struct dvb_i2c_bus *i2c = fe->i2c;
++	struct tdlb7_state *state = (struct tdlb7_state *) fe->data;
++	struct i2c_adapter *i2c = state->i2c;
+ 
+         switch (cmd) {
+         case FE_GET_INFO:
+@@ -664,61 +603,144 @@ static int tdlb7_ioctl (struct dvb_front
+         return 0;
+ }
+ 
++static struct i2c_client client_template;
+ 
+-static int tdlb7_attach (struct dvb_i2c_bus *i2c, void **data)
++static int attach_adapter(struct i2c_adapter *adapter)
+ {
+-        u8 b0 [] = { 0x02 , 0x00 };
++	struct i2c_client *client;
++	struct tdlb7_state *state;
++	const struct firmware *fw;
++	int ret;
++
++	u8 b0 [] = { 0x02 , 0x00 };
+         u8 b1 [] = { 0, 0 };
+         struct i2c_msg msg [] = { { .addr = 0x71, .flags = 0, .buf = b0, .len = 2 },
+                                   { .addr = 0x71, .flags = I2C_M_RD, .buf = b1, .len = 2 } };
+ 
+ 	dprintk ("%s\n", __FUNCTION__);
+ 
+-        if (i2c->xfer (i2c, msg, 2) != 2)
++	if (NULL == (client = kmalloc(sizeof(struct i2c_client), GFP_KERNEL))) {
++		return -ENOMEM;
++	}
++
++	if (NULL == (state = kmalloc(sizeof(struct tdlb7_state), GFP_KERNEL))) {
++		kfree(client);
++		return -ENOMEM;
++	}
++	state->i2c = adapter;
++
++        if (i2c_transfer (adapter, msg, 2) != 2) {
++		kfree(state);
++		kfree(client);
+                 return -ENODEV;
++	}
+ 
+-	sp8870_firmware_upload(i2c);
++	memcpy(client, &client_template, sizeof(struct i2c_client));
++	client->adapter = adapter;
++	i2c_set_clientdata(client, (void*)state);
++
++	ret = i2c_attach_client(client);
++	if (ret) {
++		kfree(client);
++		kfree(state);
++		return ret;
++	}
++
++	/* request the firmware, this will block until someone uploads it */
++	printk("tdlb7: waiting for firmware upload...\n");
++	ret = request_firmware(&fw, SP887X_DEFAULT_FIRMWARE, &client->dev);
++	if (ret) {
++		printk("tdlb7: no firmware upload (timeout or file not found?)\n");
++		goto out;
++	}
++
++	ret = sp8870_firmware_upload(adapter, fw);
++	if (ret) {
++		printk("tdlb7: writing firmware to device failed\n");
++		release_firmware(fw);
++		goto out;
++	}
++
++	ret = dvb_register_frontend(tdlb7_ioctl, state->dvb, state,
++					&tdlb7_info, THIS_MODULE);
++	if (ret) {
++		printk("tdlb7: registering frontend to dvb-core failed.\n");
++		release_firmware(fw);
++		goto out;
++	}
+ 
+-	return dvb_register_frontend (tdlb7_ioctl, i2c, NULL, &tdlb7_info);
++	return 0;
++out:
++	i2c_detach_client(client);
++	kfree(client);
++	kfree(state);
++	return ret;
+ }
+ 
+-
+-static void tdlb7_detach (struct dvb_i2c_bus *i2c, void *data)
++static int detach_client(struct i2c_client *client)
+ {
++	struct tdlb7_state *state = (struct tdlb7_state*)i2c_get_clientdata(client);
++
+ 	dprintk ("%s\n", __FUNCTION__);
+ 
+-	dvb_unregister_frontend (tdlb7_ioctl, i2c);
++	dvb_unregister_frontend (tdlb7_ioctl, state->dvb);
++	i2c_detach_client(client);
++	BUG_ON(state->dvb);
++	kfree(client);
++	kfree(state);
++	return 0;
+ }
+ 
+-
+-static int __init init_tdlb7 (void)
++static int command (struct i2c_client *client, unsigned int cmd, void *arg)
+ {
++	struct tdlb7_state *state = (struct tdlb7_state*)i2c_get_clientdata(client);
++
+ 	dprintk ("%s\n", __FUNCTION__);
+ 
+-	return dvb_register_i2c_device (THIS_MODULE, tdlb7_attach, tdlb7_detach);
++	switch (cmd) {
++	case FE_REGISTER:
++		state->dvb = (struct dvb_adapter*)arg;
++		break;
++	case FE_UNREGISTER:
++		state->dvb = NULL;
++		break;
++	default:
++		return -EOPNOTSUPP;
++	}
++	return 0;
+ }
+ 
++static struct i2c_driver driver = {
++	.owner 		= THIS_MODULE,
++	.name 		= FRONTEND_NAME,
++	.id 		= I2C_DRIVERID_DVBFE_ALPS_TDLB7,
++	.flags 		= I2C_DF_NOTIFY,
++	.attach_adapter = attach_adapter,
++	.detach_client 	= detach_client,
++	.command 	= command,
++};
+ 
+-static void __exit exit_tdlb7 (void)
+-{
+-	dprintk ("%s\n", __FUNCTION__);
++static struct i2c_client client_template = {
++	.name		= FRONTEND_NAME,
++	.flags 		= I2C_CLIENT_ALLOW_USE,
++	.driver  	= &driver,
++};
+ 
+-	dvb_unregister_i2c_device (tdlb7_attach);
++static int __init init_tdlb7(void)
++{
++	return i2c_add_driver(&driver);
+ }
+ 
++static void __exit exit_tdlb7(void)
++{
++	if (i2c_del_driver(&driver))
++		printk("tdlb7: driver deregistration failed\n");
++}
+ 
+ module_init(init_tdlb7);
+ module_exit(exit_tdlb7);
+ 
+-
+-MODULE_PARM(debug,"i");
+-MODULE_PARM_DESC(debug, "enable verbose debug messages");
+-
+-MODULE_PARM(firmware_file,"s");
+-MODULE_PARM_DESC(firmware_file, "where to find the firmware file");
+-
+ MODULE_DESCRIPTION("TDLB7 DVB-T Frontend");
+ MODULE_AUTHOR("Juergen Peitz");
+ MODULE_LICENSE("GPL");
+ 
+-
+diff -puN drivers/media/dvb/frontends/alps_tdmb7.c~DVB-frontend-conversion2 drivers/media/dvb/frontends/alps_tdmb7.c
+--- 25/drivers/media/dvb/frontends/alps_tdmb7.c~DVB-frontend-conversion2	2004-09-20 11:22:31.846809512 -0700
++++ 25-akpm/drivers/media/dvb/frontends/alps_tdmb7.c	2004-09-20 11:22:31.865806624 -0700
+@@ -23,15 +23,23 @@
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+ #include <linux/module.h>
++#include <linux/moduleparam.h>
+ #include <linux/string.h>
+ #include <linux/slab.h>
+ 
+ #include "dvb_frontend.h"
+-#include "dvb_functions.h"
+ 
++#define FRONTEND_NAME "dvbfe_alps_tdmb7"
+ 
+-static int debug = 0;
+-#define dprintk	if (debug) printk
++#define dprintk(args...) \
++	do { \
++		if (debug) printk(KERN_DEBUG FRONTEND_NAME ": " args); \
++	} while (0)
++
++static int debug;
++
++module_param(debug, int, 0644);
++MODULE_PARM_DESC(debug, "Turn on/off frontend debugging (default:off).");
+ 
+ 
+ static struct dvb_frontend_info tdmb7_info = {
+@@ -53,6 +61,10 @@ static struct dvb_frontend_info tdmb7_in
+               FE_CAN_RECOVER
+ };
+ 
++struct tdmb7_state {
++	struct i2c_adapter *i2c;
++	struct dvb_adapter *dvb;
++};
+ 
+ static u8 init_tab [] = {
+ 	0x04, 0x10,
+@@ -75,8 +87,7 @@ static u8 init_tab [] = {
+ 	0x47, 0x05,
+ };
+ 
+-
+-static int cx22700_writereg (struct dvb_i2c_bus *i2c, u8 reg, u8 data)
++static int cx22700_writereg (struct i2c_adapter *i2c, u8 reg, u8 data)
+ {
+ 	int ret;
+ 	u8 buf [] = { reg, data };
+@@ -84,7 +95,7 @@ static int cx22700_writereg (struct dvb_
+ 
+ 	dprintk ("%s\n", __FUNCTION__);
+ 
+-	ret = i2c->xfer (i2c, &msg, 1);
++	ret = i2c_transfer (i2c, &msg, 1);
+ 
+ 	if (ret != 1) 
+ 		printk("%s: writereg error (reg == 0x%02x, val == 0x%02x, ret == %i)\n",
+@@ -93,8 +104,7 @@ static int cx22700_writereg (struct dvb_
+ 	return (ret != 1) ? -1 : 0;
+ }
+ 
+-
+-static u8 cx22700_readreg (struct dvb_i2c_bus *i2c, u8 reg)
++static u8 cx22700_readreg (struct i2c_adapter *i2c, u8 reg)
+ {
+ 	int ret;
+ 	u8 b0 [] = { reg };
+@@ -104,7 +114,7 @@ static u8 cx22700_readreg (struct dvb_i2
+         
+ 	dprintk ("%s\n", __FUNCTION__);
+ 
+-	ret = i2c->xfer (i2c, msg, 2);
++	ret = i2c_transfer (i2c, msg, 2);
+         
+ 	if (ret != 2) 
+ 		printk("%s: readreg error (ret == %i)\n", __FUNCTION__, ret);
+@@ -112,14 +122,13 @@ static u8 cx22700_readreg (struct dvb_i2
+ 	return b1[0];
+ }
+ 
+-
+-static int pll_write (struct dvb_i2c_bus *i2c, u8 data [4])
++static int pll_write (struct i2c_adapter *i2c, u8 data [4])
+ {
+ 	struct i2c_msg msg = { .addr = 0x61, .flags = 0, .buf = data, .len = 4 };
+ 	int ret;
+ 
+ 	cx22700_writereg (i2c, 0x0a, 0x00);  /* open i2c bus switch */
+-	ret = i2c->xfer (i2c, &msg, 1);
++	ret = i2c_transfer (i2c, &msg, 1);
+ 	cx22700_writereg (i2c, 0x0a, 0x01);  /* close i2c bus switch */
+ 
+ 	if (ret != 1)
+@@ -133,7 +142,7 @@ static int pll_write (struct dvb_i2c_bus
+  *   set up the downconverter frequency divisor for a 
+  *   reference clock comparision frequency of 125 kHz.
+  */
+-static int pll_set_tv_freq (struct dvb_i2c_bus *i2c, u32 freq)
++static int pll_set_tv_freq (struct i2c_adapter *i2c, u32 freq)
+ {
+ 	u32 div = (freq + 36166667) / 166667;
+ #if 1 //ALPS_SETTINGS
+@@ -149,8 +158,7 @@ static int pll_set_tv_freq (struct dvb_i
+ 	return pll_write (i2c, buf);
+ }
+ 
+-
+-static int cx22700_init (struct dvb_i2c_bus *i2c)
++static int cx22700_init (struct i2c_adapter *i2c)
+ {
+ 	int i;
+ 
+@@ -159,7 +167,7 @@ static int cx22700_init (struct dvb_i2c_
+ 	cx22700_writereg (i2c, 0x00, 0x02);   /*  soft reset */
+ 	cx22700_writereg (i2c, 0x00, 0x00);
+ 
+-	dvb_delay(10);
++	msleep(10);
+ 	
+ 	for (i=0; i<sizeof(init_tab); i+=2)
+ 		cx22700_writereg (i2c, init_tab[i], init_tab[i+1]);
+@@ -169,8 +177,7 @@ static int cx22700_init (struct dvb_i2c_
+ 	return 0;
+ }
+ 
+-
+-static int cx22700_set_inversion (struct dvb_i2c_bus *i2c, int inversion)
++static int cx22700_set_inversion (struct i2c_adapter *i2c, int inversion)
+ {
+ 	u8 val;
+ 
+@@ -190,8 +197,7 @@ static int cx22700_set_inversion (struct
+ 	}
+ }
+ 
+-
+-static int cx22700_set_tps (struct dvb_i2c_bus *i2c, struct dvb_ofdm_parameters *p)
++static int cx22700_set_tps (struct i2c_adapter *i2c, struct dvb_ofdm_parameters *p)
+ {
+ 	static const u8 qam_tab [4] = { 0, 1, 0, 2 };
+ 	static const u8 fec_tab [6] = { 0, 1, 2, 0, 3, 4 };
+@@ -253,8 +259,7 @@ static int cx22700_set_tps (struct dvb_i
+ 	return 0;
+ }
+ 
+-
+-static int cx22700_get_tps (struct dvb_i2c_bus *i2c, struct dvb_ofdm_parameters *p)
++static int cx22700_get_tps (struct i2c_adapter *i2c, struct dvb_ofdm_parameters *p)
+ {
+ 	static const fe_modulation_t qam_tab [3] = { QPSK, QAM_16, QAM_64 };
+ 	static const fe_code_rate_t fec_tab [5] = { FEC_1_2, FEC_2_3, FEC_3_4,
+@@ -300,10 +305,10 @@ static int cx22700_get_tps (struct dvb_i
+ 	return 0;
+ }
+ 
+-
+ static int tdmb7_ioctl (struct dvb_frontend *fe, unsigned int cmd, void *arg)
+ {
+-	struct dvb_i2c_bus *i2c = fe->i2c;
++	struct tdmb7_state *state = fe->data;
++	struct i2c_adapter *i2c = state->i2c;
+ 
+ 	dprintk ("%s\n", __FUNCTION__);
+ 
+@@ -406,10 +411,14 @@ static int tdmb7_ioctl (struct dvb_front
+ 	return 0;
+ }
+ 
++static struct i2c_client client_template;
+ 
+-
+-static int tdmb7_attach (struct dvb_i2c_bus *i2c, void **data)
++static int attach_adapter (struct i2c_adapter *adapter)
+ {
++	struct tdmb7_state *state;
++	struct i2c_client *client;
++	int ret;
++
+         u8 b0 [] = { 0x7 };
+         u8 b1 [] = { 0 };
+         struct i2c_msg msg [] = { { .addr = 0x43, .flags = 0, .buf = b0, .len = 1 },
+@@ -417,41 +426,109 @@ static int tdmb7_attach (struct dvb_i2c_
+ 
+ 	dprintk ("%s\n", __FUNCTION__);
+ 
+-        if (i2c->xfer (i2c, msg, 2) != 2)
++	if (i2c_transfer(adapter, msg, 2) != 2)
+                 return -ENODEV;
+ 
+-	return dvb_register_frontend (tdmb7_ioctl, i2c, NULL, &tdmb7_info);
++	if (NULL == (state = kmalloc(sizeof(struct tdmb7_state), GFP_KERNEL)))
++		return -ENOMEM;
++
++	state->i2c = adapter;
++
++	if (NULL == (client = kmalloc(sizeof(struct i2c_client), GFP_KERNEL))) {
++		kfree(state);
++		return -ENOMEM;
+ }
+ 
++	memcpy(client, &client_template, sizeof(struct i2c_client));
++	client->adapter = adapter;
++	i2c_set_clientdata(client, state);
++
++	ret = i2c_attach_client(client);
++	if (ret) {
++		kfree(state);
++		kfree(client);
++		return ret;
++	}
++
++	BUG_ON(!state->dvb);
++
++	ret = dvb_register_frontend (tdmb7_ioctl, state->dvb, state,
++					 &tdmb7_info, THIS_MODULE);
++	if (ret) {
++		i2c_detach_client(client);
++		kfree(state);
++		kfree(client);
++		return ret;
++	}
++
++	return 0;
++}
+ 
+-static void tdmb7_detach (struct dvb_i2c_bus *i2c, void *data)
++static int detach_client (struct i2c_client *client)
+ {
++	struct tdmb7_state *state = i2c_get_clientdata(client);
++
+ 	dprintk ("%s\n", __FUNCTION__);
+ 
+-	dvb_unregister_frontend (tdmb7_ioctl, i2c);
++	dvb_unregister_frontend_new (tdmb7_ioctl, state->dvb);
++	i2c_detach_client(client);
++	BUG_ON(state->dvb);
++	kfree(client);
++	kfree(state);
++	return 0;
+ }
+ 
+-
+-static int __init init_tdmb7 (void)
++static int command (struct i2c_client *client,
++		    unsigned int cmd, void *arg)
+ {
++	struct tdmb7_state *state = i2c_get_clientdata(client);
++
+ 	dprintk ("%s\n", __FUNCTION__);
+ 
+-	return dvb_register_i2c_device (THIS_MODULE, tdmb7_attach, tdmb7_detach);
++	switch (cmd) {
++	case FE_REGISTER:
++		state->dvb = arg;
++		break;
++	case FE_UNREGISTER:
++		state->dvb = NULL;
++		break;
++	default:
++		return -EOPNOTSUPP;
++	}
++
++	return 0;
+ }
+ 
++static struct i2c_driver driver = {
++	.owner		= THIS_MODULE,
++	.name		= FRONTEND_NAME,
++	.id		= I2C_DRIVERID_DVBFE_ALPS_TDMB7,
++	.flags		= I2C_DF_NOTIFY,
++	.attach_adapter	= attach_adapter,
++	.detach_client	= detach_client,
++	.command	= command,
++};
++
++static struct i2c_client client_template = {
++	.name		= FRONTEND_NAME,
++	.flags		= I2C_CLIENT_ALLOW_USE,
++	.driver		= &driver,
++};
+ 
+-static void __exit exit_tdmb7 (void)
++static int __init init_tdmb7 (void)
+ {
+-	dprintk ("%s\n", __FUNCTION__);
++	return i2c_add_driver(&driver);
++}
+ 
+-	dvb_unregister_i2c_device (tdmb7_attach);
++static void __exit exit_tdmb7 (void)
++{
++	if (i2c_del_driver(&driver))
++		printk(KERN_ERR "alps_tdmb7: driver deregistration failed.\n");
+ }
+ 
+ module_init (init_tdmb7);
+ module_exit (exit_tdmb7);
+ 
+-MODULE_PARM(debug,"i");
+-MODULE_PARM_DESC(debug, "enable verbose debug messages");
+ MODULE_DESCRIPTION("TDMB7 DVB Frontend driver");
+ MODULE_AUTHOR("Holger Waechtler");
+ MODULE_LICENSE("GPL");
+diff -puN drivers/media/dvb/frontends/at76c651.c~DVB-frontend-conversion2 drivers/media/dvb/frontends/at76c651.c
+--- 25/drivers/media/dvb/frontends/at76c651.c~DVB-frontend-conversion2	2004-09-20 11:22:31.847809360 -0700
++++ 25-akpm/drivers/media/dvb/frontends/at76c651.c	2004-09-20 11:22:31.868806168 -0700
+@@ -1,10 +1,10 @@
+ /*
+  * at76c651.c
+  * 
+- * Atmel DVB-C Frontend Driver (at76c651/dat7021)
++ * Atmel DVB-C Frontend Driver (at76c651/tua6010xs)
+  *
+  * Copyright (C) 2001 fnbrd <fnbrd@gmx.de>
+- *             & 2002 Andreas Oberritter <obi@linuxtv.org>
++ *             & 2002-2004 Andreas Oberritter <obi@linuxtv.org>
+  *             & 2003 Wolfram Joost <dbox2@frokaschwei.de>
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -21,10 +21,17 @@
+  * along with this program; if not, write to the Free Software
+  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+  *
++ * AT76C651
++ * http://www.nalanda.nitc.ac.in/industry/datasheets/atmel/acrobat/doc1293.pdf
++ * http://www.atmel.com/atmel/acrobat/doc1320.pdf
++ *
++ * TUA6010XS
++ * http://www.infineon.com/cgi/ecrm.dll/ecrm/scripts/public_download.jsp?oid=19512
+  */
+ 
+ #include <linux/init.h>
+ #include <linux/module.h>
++#include <linux/moduleparam.h>
+ #include <linux/kernel.h>
+ #include <linux/string.h>
+ #include <linux/slab.h>
+@@ -34,29 +41,22 @@
+ #endif
+ 
+ #include "dvb_frontend.h"
+-#include "dvb_i2c.h"
+-#include "dvb_functions.h"
+ 
+-static int debug = 0;
+-static u8 at76c651_qam;
+-static u8 at76c651_revision;
++#define FRONTEND_NAME "dvbfe_at76c651"
+ 
+-#define dprintk	if (debug) printk
++#define dprintk(args...) \
++	do { \
++		if (debug) printk(KERN_DEBUG FRONTEND_NAME ": " args); \
++	} while (0)
+ 
+-/*
+- * DAT7021
+- * -------
+- * Input Frequency Range (RF): 48.25 MHz to 863.25 MHz
+- * Band Width: 8 MHz
+- * Level Input (Range for Digital Signals): -61 dBm to -41 dBm
+- * Output Frequency (IF): 36 MHz
+- *
+- * (see http://www.atmel.com/atmel/acrobat/doc1320.pdf)
+- */
++static int debug;
++
++module_param(debug, int, 0644);
++MODULE_PARM_DESC(debug, "Turn on/off frontend debugging (default:off).");
+ 
+-static struct dvb_frontend_info at76c651_info = {
+ 
+-	.name = "Atmel AT76C651(B) with DAT7021",
++static struct dvb_frontend_info at76c651_info = {
++	.name = "Atmel AT76C651B with TUA6010XS",
+ 	.type = FE_QAM,
+ 	.frequency_min = 48250000,
+ 	.frequency_max = 863250000,
+@@ -74,6 +74,13 @@ static struct dvb_frontend_info at76c651
+ 	    FE_CAN_MUTE_TS | FE_CAN_QAM_256 | FE_CAN_RECOVER
+ };
+ 
++struct at76c651_state {
++	u8 revision;
++	u8 qam;
++	struct i2c_adapter *i2c;
++	struct dvb_adapter *dvb;
++};
++
+ #if ! defined(__powerpc__)
+ static __inline__ int __ilog2(unsigned long x)
+ {
+@@ -89,60 +96,55 @@ static __inline__ int __ilog2(unsigned l
+ }
+ #endif
+ 
+-static int at76c651_writereg(struct dvb_i2c_bus *i2c, u8 reg, u8 data)
++static int at76c651_writereg(struct i2c_adapter *i2c, u8 reg, u8 data)
+ {
+-
+ 	int ret;
+ 	u8 buf[] = { reg, data };
+-	struct i2c_msg msg = { .addr = 0x1a >> 1, .flags = 0, .buf = buf, .len = 2 };
++	struct i2c_msg msg =
++		{ .addr = 0x1a >> 1, .flags = 0, .buf = buf, .len = 2 };
+ 
+-	ret = i2c->xfer(i2c, &msg, 1);
++	ret = i2c_transfer(i2c, &msg, 1);
+ 
+ 	if (ret != 1)
+ 		dprintk("%s: writereg error "
+ 			"(reg == 0x%02x, val == 0x%02x, ret == %i)\n",
+ 			__FUNCTION__, reg, data, ret);
+ 
+-	dvb_delay(10);
++	msleep(10);
+ 
+ 	return (ret != 1) ? -EREMOTEIO : 0;
+-
+ }
+ 
+-static u8 at76c651_readreg(struct dvb_i2c_bus *i2c, u8 reg)
++static u8 at76c651_readreg(struct i2c_adapter *i2c, u8 reg)
+ {
+-
+ 	int ret;
+-	u8 b0[] = { reg };
+-	u8 b1[] = { 0 };
+-	struct i2c_msg msg[] = { {.addr =  0x1a >> 1, .flags =  0, .buf =  b0, .len = 1},
+-			  {.addr =  0x1a >> 1, .flags =  I2C_M_RD, .buf =  b1, .len = 1} };
++	u8 val;
++	struct i2c_msg msg[] = {
++		{ .addr = 0x1a >> 1, .flags = 0, .buf = &reg, .len = 1 },
++		{ .addr = 0x1a >> 1, .flags = I2C_M_RD, .buf = &val, .len = 1 }
++	};
+ 
+-	ret = i2c->xfer(i2c, msg, 2);
++	ret = i2c_transfer(i2c, msg, 2);
+ 
+ 	if (ret != 2)
+ 		dprintk("%s: readreg error (ret == %i)\n", __FUNCTION__, ret);
+ 
+-	return b1[0];
+-
++	return val;
+ }
+ 
+-static int at76c651_reset(struct dvb_i2c_bus *i2c)
++static int at76c651_reset(struct i2c_adapter *i2c)
+ {
+-
+ 	return at76c651_writereg(i2c, 0x07, 0x01);
+-
+ }
+ 
+-static int at76c651_disable_interrupts(struct dvb_i2c_bus *i2c)
++static void at76c651_disable_interrupts(struct i2c_adapter *i2c)
+ {
+-
+-	return at76c651_writereg(i2c, 0x0b, 0x00);
+-
++	at76c651_writereg(i2c, 0x0b, 0x00);
+ }
+ 
+-static int at76c651_set_auto_config(struct dvb_i2c_bus *i2c)
++static int at76c651_set_auto_config(struct at76c651_state *state)
+ {
++	struct i2c_adapter *i2c = state->i2c;
+ 
+ 	/*
+ 	 * Autoconfig
+@@ -155,19 +157,19 @@ static int at76c651_set_auto_config(stru
+ 	 */
+ 
+ 	at76c651_writereg(i2c, 0x10, 0x06);
+-	at76c651_writereg(i2c, 0x11, ((at76c651_qam == 5) || (at76c651_qam == 7)) ? 0x12 : 0x10);
++	at76c651_writereg(i2c, 0x11, ((state->qam == 5) || (state->qam == 7)) ? 0x12 : 0x10);
+ 	at76c651_writereg(i2c, 0x15, 0x28);
+ 	at76c651_writereg(i2c, 0x20, 0x09);
+-	at76c651_writereg(i2c, 0x24, ((at76c651_qam == 5) || (at76c651_qam == 7)) ? 0xC0 : 0x90);
++	at76c651_writereg(i2c, 0x24, ((state->qam == 5) || (state->qam == 7)) ? 0xC0 : 0x90);
+ 	at76c651_writereg(i2c, 0x30, 0x90);
+-	if (at76c651_qam == 5)
++	if (state->qam == 5)
+ 		at76c651_writereg(i2c, 0x35, 0x2A);
+ 
+ 	/*
+ 	 * Initialize A/D-converter
+ 	 */
+ 
+-	if (at76c651_revision == 0x11) {
++	if (state->revision == 0x11) {
+ 		at76c651_writereg(i2c, 0x2E, 0x38);
+ 		at76c651_writereg(i2c, 0x2F, 0x13);
+ }
+@@ -181,137 +183,111 @@ static int at76c651_set_auto_config(stru
+ 	at76c651_reset(i2c);
+ 
+ 	return 0;
+-
+ }
+ 
+-static int at76c651_set_bbfreq(struct dvb_i2c_bus *i2c)
++static void at76c651_set_bbfreq(struct i2c_adapter *i2c)
+ {
+-
+ 	at76c651_writereg(i2c, 0x04, 0x3f);
+ 	at76c651_writereg(i2c, 0x05, 0xee);
+-
+-	return 0;
+-
+ }
+ 
+-static int at76c651_switch_tuner_i2c(struct dvb_i2c_bus *i2c, u8 enable)
++static int at76c651_pll_write(struct i2c_adapter *i2c, u8 *buf, size_t len)
+ {
+-
+-	if (enable)
+-		return at76c651_writereg(i2c, 0x0c, 0xc2 | 0x01);
+-	else
+-		return at76c651_writereg(i2c, 0x0c, 0xc2);
+-
+-}
+-
+-static int dat7021_write(struct dvb_i2c_bus *i2c, u32 tw)
+-{
+-
+ 	int ret;
+ 	struct i2c_msg msg =
+-	    { .addr = 0xc2 >> 1, .flags = 0, .buf = (u8 *) & tw, .len = sizeof (tw) };
++	    { .addr = 0xc2 >> 1, .flags = 0, .buf = buf, .len = len };
+ 
+-#ifdef __LITTLE_ENDIAN
+-	tw = __cpu_to_be32(tw);
+-#endif
+-
+-	at76c651_switch_tuner_i2c(i2c, 1);
+-
+-	ret = i2c->xfer(i2c, &msg, 1);
++	at76c651_writereg(i2c, 0x0c, 0xc3);
+ 
+-	at76c651_switch_tuner_i2c(i2c, 0);
++	ret = i2c_transfer(i2c, &msg, 1);
+ 
+-	if (ret != 4)
+-		return -EFAULT;
++	at76c651_writereg(i2c, 0x0c, 0xc2);
+ 
+-	at76c651_reset(i2c);
++	if (ret < 0)
++		return ret;
++	else if (ret != 1)
++		return -EREMOTEIO;
+ 
+ 	return 0;
+-
+ }
+ 
+-static int dat7021_set_tv_freq(struct dvb_i2c_bus *i2c, u32 freq)
++static int tua6010_setfreq(struct i2c_adapter *i2c, u32 freq)
+ {
++	u32 div;
++	u8 buf[4];
++	u8 vu, p2, p1, p0;
+ 
+-	u32 dw;
+-
+-	freq /= 1000;
+-
+-	if ((freq < 48250) || (freq > 863250))
++	if ((freq < 50000000) || (freq > 900000000))
+ 		return -EINVAL;
+ 
+-	/*
+-	 * formula: dw=0x17e28e06+(freq-346000UL)/8000UL*0x800000
+-	 *      or: dw=0x4E28E06+(freq-42000) / 125 * 0x20000
+-	 */
+-
+-	dw = (freq - 42000) * 4096;
+-	dw = dw / 125;
+-	dw = dw * 32;
++	div = (freq + 36125000) / 62500;
+ 
+-	if (freq > 394000)
+-		dw += 0x4E28E85;
++	if (freq > 400000000)
++		vu = 1, p2 = 1, p1 = 0, p0 = 1;
++	else if (freq > 140000000)
++		vu = 0, p2 = 1, p1 = 1, p0 = 0;
+ 	else
+-		dw += 0x4E28E06;
++		vu = 0, p2 = 0, p1 = 1, p0 = 1;
+ 
+-	return dat7021_write(i2c, dw);
++	buf[0] = (div >> 8) & 0x7f;
++	buf[1] = (div >> 0) & 0xff;
++	buf[2] = 0x8e;
++	buf[3] = (vu << 7) | (p2 << 2) | (p1 << 1) | p0;
+ 
++	return at76c651_pll_write(i2c, buf, 4);
+ }
+ 
+-static int at76c651_set_symbolrate(struct dvb_i2c_bus *i2c, u32 symbolrate)
++static int at76c651_set_symbol_rate(struct i2c_adapter *i2c, u32 symbol_rate)
+ {
+-
+ 	u8 exponent;
+ 	u32 mantissa;
+ 
+-	if (symbolrate > 9360000)
++	if (symbol_rate > 9360000)
+ 		return -EINVAL;
+ 
+ 	/*
+ 	 * FREF = 57800 kHz
+-	 * exponent = 10 + floor ( log2 ( symbolrate / FREF ) )
+-	 * mantissa = ( symbolrate / FREF) * ( 1 << ( 30 - exponent ) )
++	 * exponent = 10 + floor (log2(symbol_rate / FREF))
++	 * mantissa = (symbol_rate / FREF) * (1 << (30 - exponent))
+ 	 */
+ 
+-	exponent = __ilog2((symbolrate << 4) / 903125);
+-	mantissa = ((symbolrate / 3125) * (1 << (24 - exponent))) / 289;
++	exponent = __ilog2((symbol_rate << 4) / 903125);
++	mantissa = ((symbol_rate / 3125) * (1 << (24 - exponent))) / 289;
+ 
+ 	at76c651_writereg(i2c, 0x00, mantissa >> 13);
+ 	at76c651_writereg(i2c, 0x01, mantissa >> 5);
+ 	at76c651_writereg(i2c, 0x02, (mantissa << 3) | exponent);
+ 
+ 	return 0;
+-
+ }
+ 
+-static int at76c651_set_qam(struct dvb_i2c_bus *i2c, fe_modulation_t qam)
++static int at76c651_set_qam(struct at76c651_state *state, fe_modulation_t qam)
+ {
+-
+ 	switch (qam) {
+ 	case QPSK:
+-		at76c651_qam = 0x02;
++		state->qam = 0x02;
+ 		break;
+ 	case QAM_16:
+-		at76c651_qam = 0x04;
++		state->qam = 0x04;
+ 		break;
+ 	case QAM_32:
+-		at76c651_qam = 0x05;
++		state->qam = 0x05;
+ 		break;
+ 	case QAM_64:
+-		at76c651_qam = 0x06;
++		state->qam = 0x06;
+ 		break;
+ 	case QAM_128:
+-		at76c651_qam = 0x07;
++		state->qam = 0x07;
+ 		break;
+ 	case QAM_256:
+-		at76c651_qam = 0x08;
++		state->qam = 0x08;
+ 		break;
+ #if 0
+ 	case QAM_512:
+-		at76c651_qam = 0x09;
++		state->qam = 0x09;
+ 		break;
+ 	case QAM_1024:
+-		at76c651_qam = 0x0A;
++		state->qam = 0x0A;
+ 		break;
+ #endif
+ 	default:
+@@ -319,14 +295,12 @@ static int at76c651_set_qam(struct dvb_i
+ 
+ 	}
+ 
+-	return at76c651_writereg(i2c, 0x03, at76c651_qam);
+-
++	return at76c651_writereg(state->i2c, 0x03, state->qam);
+ }
+ 
+-static int at76c651_set_inversion(struct dvb_i2c_bus *i2c,
++static int at76c651_set_inversion(struct i2c_adapter *i2c,
+ 		       fe_spectral_inversion_t inversion)
+ {
+-
+ 	u8 feciqinv = at76c651_readreg(i2c, 0x60);
+ 
+ 	switch (inversion) {
+@@ -348,54 +322,57 @@ static int at76c651_set_inversion(struct
+ 	}
+ 
+ 	return at76c651_writereg(i2c, 0x60, feciqinv);
+-
+ }
+ 
+-static int at76c651_set_parameters(struct dvb_i2c_bus *i2c,
++static int at76c651_set_parameters(struct at76c651_state *state,
+ 			struct dvb_frontend_parameters *p)
+ {
++	struct i2c_adapter *i2c = state->i2c;
++	int ret;
+ 
+-	dat7021_set_tv_freq(i2c, p->frequency);
+-	at76c651_set_symbolrate(i2c, p->u.qam.symbol_rate);
+-	at76c651_set_inversion(i2c, p->inversion);
+-	at76c651_set_auto_config(i2c);
+-        at76c651_reset(i2c);
++	if ((ret = tua6010_setfreq(i2c, p->frequency)))
++		return ret;
+ 
+-	return 0;
++	if ((ret = at76c651_set_symbol_rate(i2c, p->u.qam.symbol_rate)))
++		return ret;
++
++	if ((ret = at76c651_set_inversion(i2c, p->inversion)))
++		return ret;
+ 
++	return at76c651_set_auto_config(state);
+ }
+ 
+-static int at76c651_set_defaults(struct dvb_i2c_bus *i2c)
++static int at76c651_set_defaults(struct at76c651_state *state)
+ {
++	struct i2c_adapter *i2c = state->i2c;
+ 
+-	at76c651_set_symbolrate(i2c, 6900000);
+-	at76c651_set_qam(i2c, QAM_64);
++	at76c651_set_symbol_rate(i2c, 6900000);
++	at76c651_set_qam(state, QAM_64);
+ 	at76c651_set_bbfreq(i2c);
+-	at76c651_set_auto_config(i2c);
++	at76c651_set_auto_config(state);
+ 
+ 	return 0;
+-
+ }
+ 
+ static int at76c651_ioctl(struct dvb_frontend *fe, unsigned int cmd, void *arg)
+ {
++	struct at76c651_state *state = fe->data;
++	struct i2c_adapter *i2c = state->i2c;
+ 
+ 	switch (cmd) {
+-
+ 	case FE_GET_INFO:
+ 		memcpy(arg, &at76c651_info, sizeof (struct dvb_frontend_info));
+ 		break;
+ 
+ 	case FE_READ_STATUS:
+ 		{
+-
+-			fe_status_t *status = (fe_status_t *) arg;
++		fe_status_t *status = arg;
+ 			u8 sync;
+ 
+ 			/*
+ 			 * Bits: FEC, CAR, EQU, TIM, AGC2, AGC1, ADC, PLL (PLL=0) 
+ 			 */
+-			sync = at76c651_readreg(fe->i2c, 0x80);
++		sync = at76c651_readreg(i2c, 0x80);
+ 
+ 			*status = 0;
+ 
+@@ -420,37 +397,33 @@ static int at76c651_ioctl(struct dvb_fro
+ 
+ 	case FE_READ_BER:
+ 		{
+-			u32 *ber = (u32 *) arg;
+-
+-			*ber = (at76c651_readreg(fe->i2c, 0x81) & 0x0F) << 16;
+-			*ber |= at76c651_readreg(fe->i2c, 0x82) << 8;
+-			*ber |= at76c651_readreg(fe->i2c, 0x83);
++		u32 *ber = arg;
++		*ber = (at76c651_readreg(i2c, 0x81) & 0x0F) << 16;
++		*ber |= at76c651_readreg(i2c, 0x82) << 8;
++		*ber |= at76c651_readreg(i2c, 0x83);
+ 			*ber *= 10;
+-
+ 			break;
+ 		}
+ 
+ 	case FE_READ_SIGNAL_STRENGTH:
+ 		{
+-			u8 gain = ~at76c651_readreg(fe->i2c, 0x91);
+-
++		u8 gain = ~at76c651_readreg(i2c, 0x91);
+ 			*(u16 *) arg = (gain << 8) | gain;
+ 			break;
+ 		}
+ 
+ 	case FE_READ_SNR:
+-		*(u16 *) arg =
+-		    0xFFFF -
+-		    ((at76c651_readreg(fe->i2c, 0x8F) << 8) |
+-		     at76c651_readreg(fe->i2c, 0x90));
++		*(u16 *)arg = 0xFFFF -
++		    ((at76c651_readreg(i2c, 0x8F) << 8) |
++		     at76c651_readreg(i2c, 0x90));
+ 		break;
+ 
+ 	case FE_READ_UNCORRECTED_BLOCKS:
+-		*(u32 *) arg = at76c651_readreg(fe->i2c, 0x82);
++		*(u32 *)arg = at76c651_readreg(i2c, 0x82);
+ 		break;
+ 
+ 	case FE_SET_FRONTEND:
+-		return at76c651_set_parameters(fe->i2c, arg);
++		return at76c651_set_parameters(state, arg);
+ 
+ 	case FE_GET_FRONTEND:
+ 		break;
+@@ -459,15 +432,15 @@ static int at76c651_ioctl(struct dvb_fro
+ 		break;
+ 
+ 	case FE_INIT:
+-		return at76c651_set_defaults(fe->i2c);
++		return at76c651_set_defaults(state);
+ 
+ 	case FE_GET_TUNE_SETTINGS:
+ 	{
+-	        struct dvb_frontend_tune_settings* fesettings = (struct dvb_frontend_tune_settings*) arg;
++	        struct dvb_frontend_tune_settings *fesettings = arg;
+ 	        fesettings->min_delay_ms = 50;
+ 	        fesettings->step_size = 0;
+ 	        fesettings->max_drift = 0;
+-	        return 0;
++		break;
+ 	}	    
+ 
+ 	default:
+@@ -475,61 +448,129 @@ static int at76c651_ioctl(struct dvb_fro
+ 	}
+ 
+ 	return 0;
+-
+ }
+ 
+-static int at76c651_attach(struct dvb_i2c_bus *i2c, void **data)
+-{
+-	if ( (at76c651_readreg(i2c, 0x0E) != 0x65) ||
+-	     ( ( (at76c651_revision = at76c651_readreg(i2c, 0x0F)) & 0xFE) != 0x10) )
++static struct i2c_client client_template;
++
++static int attach_adapter(struct i2c_adapter *adapter)
+ {
+-		dprintk("no AT76C651(B) found\n");
++	struct at76c651_state *state;
++	struct i2c_client *client;
++	int ret;
++
++	if (at76c651_readreg(adapter, 0x0E) != 0x65)
++		return -ENODEV;
++
++	if (!(state = kmalloc(sizeof(struct at76c651_state), GFP_KERNEL)))
++		return -ENOMEM;
++
++	state->i2c = adapter;
++	state->revision = at76c651_readreg(adapter, 0x0F) & 0xFE;
++
++	switch (state->revision) {
++	case 0x10:
++		at76c651_info.name[14] = 'A';
++		break;
++	case 0x11:
++		at76c651_info.name[14] = 'B';
++		break;
++	default:
++		kfree(state);
+ 		return -ENODEV;
+ 	}
+ 
+-	if (at76c651_revision == 0x10)
+-	{
+-		dprintk("AT76C651A found\n");
+-		strcpy(at76c651_info.name,"Atmel AT76C651A with DAT7021");
++	if (!(client = kmalloc(sizeof(struct i2c_client), GFP_KERNEL))) {
++		kfree(state);
++		return -ENOMEM;
++	}
++
++	memcpy(client, &client_template, sizeof(struct i2c_client));
++	client->adapter = adapter;
++	client->addr = 0x1a >> 1;
++	i2c_set_clientdata(client, state);
++
++	ret = i2c_attach_client(client);
++	if (ret) {
++		kfree(state);
++		kfree(client);
++		return ret;
++	}
++
++	BUG_ON(!state->dvb);
++
++	ret = dvb_register_frontend(at76c651_ioctl, state->dvb, state,
++					&at76c651_info, THIS_MODULE);
++	if (ret) {
++		i2c_detach_client(client);
++		kfree(client);
++		kfree(state);
++		return ret;
+ 		}
+-	else
+-	{
+-		strcpy(at76c651_info.name,"Atmel AT76C651B with DAT7021");
+-		dprintk("AT76C651B found\n");
++
++	return 0;
+ 	}
+ 
+-	at76c651_set_defaults(i2c);
++static int detach_client(struct i2c_client *client)
++{
++	struct at76c651_state *state = i2c_get_clientdata(client);
+ 
+-	return dvb_register_frontend(at76c651_ioctl, i2c, NULL, &at76c651_info);
++	dvb_unregister_frontend_new(at76c651_ioctl, state->dvb);
++	i2c_detach_client(client);
++	BUG_ON(state->dvb);
++	kfree(client);
++	kfree(state);
+ 
++	return 0;
+ }
+ 
+-static void at76c651_detach(struct dvb_i2c_bus *i2c, void *data)
++static int command(struct i2c_client *client, unsigned int cmd, void *arg)
+ {
++	struct at76c651_state *state = i2c_get_clientdata(client);
+ 
+-	dvb_unregister_frontend(at76c651_ioctl, i2c);
++	switch (cmd) {
++	case FE_REGISTER:
++		state->dvb = arg;
++		break;
++	case FE_UNREGISTER:
++		state->dvb = NULL;
++		break;
++	default:
++		return -EOPNOTSUPP;
++	}
+ 
++	return 0;
+ }
+ 
+-static int __init at76c651_init(void)
+-{
++static struct i2c_driver driver = {
++	.owner		= THIS_MODULE,
++	.name		= FRONTEND_NAME,
++	.id		= I2C_DRIVERID_DVBFE_AT76C651,
++	.flags		= I2C_DF_NOTIFY,
++	.attach_adapter	= attach_adapter,
++	.detach_client	= detach_client,
++	.command	= command,
++};
+ 
+-	return dvb_register_i2c_device(THIS_MODULE, at76c651_attach,
+-				       at76c651_detach);
++static struct i2c_client client_template = {
++	.name		= FRONTEND_NAME,
++	.flags		= I2C_CLIENT_ALLOW_USE,
++	.driver		= &driver,
++};
+ 
++static int __init at76c651_init(void)
++{
++	return i2c_add_driver(&driver);
+ }
+ 
+ static void __exit at76c651_exit(void)
+ {
+-
+-	dvb_unregister_i2c_device(at76c651_attach);
+-
++	if (i2c_del_driver(&driver))
++		printk(KERN_ERR "at76c651: driver deregistration failed.\n");
+ }
+ 
+ module_init(at76c651_init);
+ module_exit(at76c651_exit);
+ 
+-MODULE_DESCRIPTION("at76c651/dat7021 dvb-c frontend driver");
++MODULE_DESCRIPTION("at76c651/tua6010xs dvb-c frontend driver");
+ MODULE_AUTHOR("Andreas Oberritter <obi@linuxtv.org>");
+ MODULE_LICENSE("GPL");
+-MODULE_PARM(debug, "i");
+diff -puN drivers/media/dvb/frontends/cx24110.c~DVB-frontend-conversion2 drivers/media/dvb/frontends/cx24110.c
+--- 25/drivers/media/dvb/frontends/cx24110.c~DVB-frontend-conversion2	2004-09-20 11:22:31.849809056 -0700
++++ 25-akpm/drivers/media/dvb/frontends/cx24110.c	2004-09-20 11:22:31.870805864 -0700
+@@ -35,13 +35,22 @@
+ #include <linux/slab.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
++#include <linux/moduleparam.h>
+ #include <linux/init.h>
+ 
+ #include "dvb_frontend.h"
+-#include "dvb_functions.h"
+ 
+-static int debug = 0;
+-#define dprintk	if (debug) printk
++#define FRONTEND_NAME "dvbfe_cx24110"
++
++#define dprintk(args...) \
++	do { \
++		if (debug) printk(KERN_DEBUG FRONTEND_NAME ": " args); \
++	} while (0)
++
++static int debug;
++
++module_param(debug, int, 0644);
++MODULE_PARM_DESC(debug, "Turn on/off frontend debugging (default:off).");
+ 
+ 
+ static struct dvb_frontend_info cx24110_info = {
+@@ -63,6 +72,10 @@ static struct dvb_frontend_info cx24110_
+ };
+ /* fixme: are these values correct? especially ..._tolerance and caps */
+ 
++struct cx24110_state {
++	struct i2c_adapter *i2c;
++	struct dvb_adapter *dvb;
++};
+ 
+ static struct {u8 reg; u8 data;} cx24110_regdata[]=
+                       /* Comments beginning with @ denote this value should
+@@ -127,7 +140,7 @@ static struct {u8 reg; u8 data;} cx24110
+ 	};
+ 
+ 
+-static int cx24110_writereg (struct dvb_i2c_bus *i2c, int reg, int data)
++static int cx24110_writereg (struct i2c_adapter *i2c, int reg, int data)
+ {
+         u8 buf [] = { reg, data };
+ 	struct i2c_msg msg = { .addr = 0x55, .flags = 0, .buf = buf, .len = 2 };
+@@ -135,8 +148,9 @@ static int cx24110_writereg (struct dvb_
+    cx24110 might show up at any address */
+ 	int err;
+ 
+-        if ((err = i2c->xfer (i2c, &msg, 1)) != 1) {
+-		dprintk ("%s: writereg error (err == %i, reg == 0x%02x, data == 0x%02x)\n", __FUNCTION__, err, reg, data);
++        if ((err = i2c_transfer(i2c, &msg, 1)) != 1) {
++		dprintk ("%s: writereg error (err == %i, reg == 0x%02x,"
++			 " data == 0x%02x)\n", __FUNCTION__, err, reg, data);
+ 		return -EREMOTEIO;
+ 	}
+ 
+@@ -144,7 +158,7 @@ static int cx24110_writereg (struct dvb_
+ }
+ 
+ 
+-static u8 cx24110_readreg (struct dvb_i2c_bus *i2c, u8 reg)
++static u8 cx24110_readreg (struct i2c_adapter *i2c, u8 reg)
+ {
+ 	int ret;
+ 	u8 b0 [] = { reg };
+@@ -152,7 +166,7 @@ static u8 cx24110_readreg (struct dvb_i2
+ 	struct i2c_msg msg [] = { { .addr = 0x55, .flags = 0, .buf = b0, .len = 1 },
+ 			   { .addr = 0x55, .flags = I2C_M_RD, .buf = b1, .len = 1 } };
+ /* fixme (medium): address might be different from 0x55 */
+-	ret = i2c->xfer (i2c, msg, 2);
++	ret = i2c_transfer(i2c, msg, 2);
+ 
+ 	if (ret != 2)
+ 		dprintk("%s: readreg error (ret == %i)\n", __FUNCTION__, ret);
+@@ -161,7 +175,7 @@ static u8 cx24110_readreg (struct dvb_i2
+ }
+ 
+ 
+-static int cx24108_write (struct dvb_i2c_bus *i2c, u32 data)
++static int cx24108_write (struct i2c_adapter *i2c, u32 data)
+ {
+ /* tuner data is 21 bits long, must be left-aligned in data */
+ /* tuner cx24108 is written through a dedicated 3wire interface on the demod chip */
+@@ -195,7 +209,7 @@ dprintk("cx24110 debug: cx24108_write(%8
+ }
+ 
+ 
+-static int cx24108_set_tv_freq (struct dvb_i2c_bus *i2c, u32 freq)
++static int cx24108_set_tv_freq (struct i2c_adapter *i2c, u32 freq)
+ {
+ /* fixme (low): error handling */
+         int i, a, n, pump;
+@@ -247,7 +261,7 @@ static int cx24108_set_tv_freq (struct d
+         cx24108_write(i2c,pll);
+         cx24110_writereg(i2c,0x56,0x7f);
+ 
+-	dvb_delay(10); /* wait a moment for the tuner pll to lock */
++	msleep(10); /* wait a moment for the tuner pll to lock */
+ 
+ 	/* tuner pll lock can be monitored on GPIO pin 4 of cx24110 */
+         while (!(cx24110_readreg(i2c,0x66)&0x20)&&i<1000)
+@@ -259,7 +273,7 @@ static int cx24108_set_tv_freq (struct d
+ }
+ 
+ 
+-static int cx24110_init (struct dvb_i2c_bus *i2c)
++static int cx24110_initfe(struct i2c_adapter *i2c)
+ {
+ /* fixme (low): error handling */
+         int i;
+@@ -274,7 +288,7 @@ static int cx24110_init (struct dvb_i2c_
+ }
+ 
+ 
+-static int cx24110_set_inversion (struct dvb_i2c_bus *i2c, fe_spectral_inversion_t inversion)
++static int cx24110_set_inversion (struct i2c_adapter *i2c, fe_spectral_inversion_t inversion)
+ {
+ /* fixme (low): error handling */
+ 
+@@ -309,7 +323,7 @@ static int cx24110_set_inversion (struct
+ }
+ 
+ 
+-static int cx24110_set_fec (struct dvb_i2c_bus *i2c, fe_code_rate_t fec)
++static int cx24110_set_fec (struct i2c_adapter *i2c, fe_code_rate_t fec)
+ {
+ /* fixme (low): error handling */
+ 
+@@ -355,7 +369,7 @@ static int cx24110_set_fec (struct dvb_i
+ }
+ 
+ 
+-static fe_code_rate_t cx24110_get_fec (struct dvb_i2c_bus *i2c)
++static fe_code_rate_t cx24110_get_fec (struct i2c_adapter *i2c)
+ {
+ 	int i;
+ 
+@@ -372,7 +386,7 @@ static fe_code_rate_t cx24110_get_fec (s
+ }
+ 
+ 
+-static int cx24110_set_symbolrate (struct dvb_i2c_bus *i2c, u32 srate)
++static int cx24110_set_symbolrate (struct i2c_adapter *i2c, u32 srate)
+ {
+ /* fixme (low): add error handling */
+         u32 ratio;
+@@ -454,7 +468,7 @@ dprintk("cx24110 debug: entering %s(%d)\
+ }
+ 
+ 
+-static int cx24110_set_voltage (struct dvb_i2c_bus *i2c, fe_sec_voltage_t voltage)
++static int cx24110_set_voltage (struct i2c_adapter *i2c, fe_sec_voltage_t voltage)
+ {
+ 	switch (voltage) {
+ 	case SEC_VOLTAGE_13:
+@@ -466,16 +480,17 @@ static int cx24110_set_voltage (struct d
+ 	};
+ }
+ 
+-static void sendDiSEqCMessage(struct dvb_i2c_bus *i2c, struct dvb_diseqc_master_cmd *pCmd)
++static void cx24110_send_diseqc_msg(struct i2c_adapter *i2c,
++				    struct dvb_diseqc_master_cmd *cmd)
+ {
+ 	int i, rv;
+ 
+-	for (i = 0; i < pCmd->msg_len; i++)
+-		cx24110_writereg(i2c, 0x79 + i, pCmd->msg[i]);
++	for (i = 0; i < cmd->msg_len; i++)
++		cx24110_writereg(i2c, 0x79 + i, cmd->msg[i]);
+ 
+ 	rv = cx24110_readreg(i2c, 0x76);
+ 
+-	cx24110_writereg(i2c, 0x76, ((rv & 0x90) | 0x40) | ((pCmd->msg_len-3) & 3));
++	cx24110_writereg(i2c, 0x76, ((rv & 0x90) | 0x40) | ((cmd->msg_len-3) & 3));
+ 	for (i=500; i-- > 0 && !(cx24110_readreg(i2c,0x76)&0x40);)
+ 		; /* wait for LNB ready */
+ }
+@@ -483,7 +498,8 @@ static void sendDiSEqCMessage(struct dvb
+ 
+ static int cx24110_ioctl (struct dvb_frontend *fe, unsigned int cmd, void *arg)
+ {
+-	struct dvb_i2c_bus *i2c = fe->i2c;
++	struct cx24110_state *state = fe->data;
++	struct i2c_adapter *i2c = state->i2c;
+ 	static int lastber=0, lastbyer=0,lastbler=0, lastesn0=0, sum_bler=0;
+ 
+         switch (cmd) {
+@@ -618,7 +634,7 @@ static int cx24110_ioctl (struct dvb_fro
+ /* cannot do this from the FE end. How to communicate this to the place where it can be done? */
+ 		break;
+         case FE_INIT:
+-		return cx24110_init (i2c);
++		return cx24110_initfe(i2c);
+ 
+ 	case FE_SET_TONE:
+ 		return cx24110_writereg(i2c,0x76,(cx24110_readreg(i2c,0x76)&~0x10)|((((fe_sec_tone_mode_t) arg)==SEC_TONE_ON)?0x10:0));
+@@ -626,7 +642,8 @@ static int cx24110_ioctl (struct dvb_fro
+ 		return cx24110_set_voltage (i2c, (fe_sec_voltage_t) arg);
+ 
+ 	case FE_DISEQC_SEND_MASTER_CMD:
+-		sendDiSEqCMessage(i2c, (struct dvb_diseqc_master_cmd*) arg);
++		// FIXME Status?
++		cx24110_send_diseqc_msg(i2c, (struct dvb_diseqc_master_cmd*) arg);
+ 		return 0;
+ 
+ 	default:
+@@ -636,43 +653,118 @@ static int cx24110_ioctl (struct dvb_fro
+         return 0;
+ }
+ 
++static struct i2c_client client_template;
+ 
+-static int cx24110_attach (struct dvb_i2c_bus *i2c, void **data)
++static int attach_adapter (struct i2c_adapter *adapter)
+ {
++	struct cx24110_state *state;
++	struct i2c_client *client;
++	int ret = 0;
+ 	u8 sig;
+ 
+-	sig=cx24110_readreg (i2c, 0x00);
++	dprintk("Trying to attach to adapter 0x%x:%s.\n",
++		adapter->id, adapter->name);
++
++	sig = cx24110_readreg (adapter, 0x00);
+ 	if ( sig != 0x5a && sig != 0x69 )
+ 		return -ENODEV;
+ 
+-	return dvb_register_frontend (cx24110_ioctl, i2c, NULL, &cx24110_info);
++	if ( !(state = kmalloc(sizeof(struct cx24110_state), GFP_KERNEL)) )
++		return -ENOMEM;
++
++	memset(state, 0, sizeof(struct cx24110_state));
++	state->i2c = adapter;
++
++	if ( !(client = kmalloc(sizeof(struct i2c_client), GFP_KERNEL)) ) {
++		kfree(state);
++		return -ENOMEM;
+ }
+ 
++	memcpy(client, &client_template, sizeof(struct i2c_client));
++	client->adapter = adapter;
++	client->addr = 0x55;
++	i2c_set_clientdata(client, state);
+ 
+-static void cx24110_detach (struct dvb_i2c_bus *i2c, void *data)
+-{
+-	dvb_unregister_frontend (cx24110_ioctl, i2c);
++	if ((ret = i2c_attach_client(client))) {
++		kfree(client);
++		kfree(state);
++		return ret;
+ }
+ 
++	BUG_ON(!state->dvb);
+ 
+-static int __init init_cx24110 (void)
+-{
+-	return dvb_register_i2c_device (THIS_MODULE, cx24110_attach, cx24110_detach);
++	if ((ret = dvb_register_frontend(cx24110_ioctl, state->dvb, state,
++					     &cx24110_info, THIS_MODULE))) {
++		i2c_detach_client(client);
++		kfree(client);
++		kfree(state);
++		return ret;
++}
++
++	return 0;
+ }
+ 
++static int detach_client (struct i2c_client *client)
++{
++	struct cx24110_state *state = i2c_get_clientdata(client);
++
++	dvb_unregister_frontend_new(cx24110_ioctl, state->dvb);
++	i2c_detach_client(client);
++	BUG_ON(state->dvb);
++	kfree(client);
++	kfree(state);
++	return 0;
++}
+ 
+-static void __exit exit_cx24110 (void)
++static int command(struct i2c_client *client, unsigned int cmd, void *arg)
+ {
+-	dvb_unregister_i2c_device (cx24110_attach);
++	struct cx24110_state *state = i2c_get_clientdata(client);
++
++	switch(cmd) {
++	case FE_REGISTER:
++		state->dvb = arg;
++		break;
++	case FE_UNREGISTER:
++		state->dvb = NULL;
++		break;
++	default:
++		return -EOPNOTSUPP;
++	}
++
++	return 0;
+ }
+ 
++static struct i2c_driver driver = {
++	.owner		= THIS_MODULE,
++	.name		= FRONTEND_NAME,
++	.id		= I2C_DRIVERID_DVBFE_CX24110,
++	.flags		= I2C_DF_NOTIFY,
++	.attach_adapter	= attach_adapter,
++	.detach_client	= detach_client,
++	.command	= command,
++};
++
++static struct i2c_client client_template = {
++	.name		= FRONTEND_NAME,
++	.flags		= I2C_CLIENT_ALLOW_USE,
++	.driver		= &driver,
++};
++
++static int __init cx24110_init(void)
++{
++	return i2c_add_driver(&driver);
++}
+ 
+-module_init(init_cx24110);
+-module_exit(exit_cx24110);
++static void __exit cx24110_exit(void)
++{
++	if (i2c_del_driver(&driver))
++		printk(KERN_ERR "cx24110: driver deregistration failed.\n");
++}
+ 
++module_init(cx24110_init);
++module_exit(cx24110_exit);
+ 
+ MODULE_DESCRIPTION("DVB Frontend driver module for the Conexant cx24108/cx24110 chipset");
+ MODULE_AUTHOR("Peter Hettkamp");
+ MODULE_LICENSE("GPL");
+-MODULE_PARM(debug,"i");
+ 
+diff -puN drivers/media/dvb/frontends/dst.c~DVB-frontend-conversion2 drivers/media/dvb/frontends/dst.c
+--- 25/drivers/media/dvb/frontends/dst.c~DVB-frontend-conversion2	2004-09-20 11:22:31.859807536 -0700
++++ 25-akpm/drivers/media/dvb/frontends/dst.c	2004-09-20 11:22:31.881804192 -0700
+@@ -3,8 +3,6 @@
+ 
+     Copyright (C) 2003 Jamie Honan
+ 
+-
+-
+     This program is free software; you can redistribute it and/or modify
+     it under the terms of the GNU General Public License as published by
+     the Free Software Foundation; either version 2 of the License, or
+@@ -20,7 +18,7 @@
+     along with this program; if not, write to the Free Software
+     Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ 
+-*/    
++*/
+ 
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+@@ -32,32 +30,19 @@
+ #include <asm/div64.h>
+ 
+ #include "dvb_frontend.h"
+-#include "dvb_functions.h"
+ #include "dst-bt878.h"
+ 
+-unsigned int dst_debug = 0;
+ unsigned int dst_verbose = 0;
+-
+ MODULE_PARM(dst_verbose, "i");
+-MODULE_PARM_DESC(dst_verbose,
+-		 "verbose startup messages, default is 1 (yes)");
++MODULE_PARM_DESC(dst_verbose, "verbose startup messages, default is 1 (yes)");
++unsigned int dst_debug = 0;
+ MODULE_PARM(dst_debug, "i");
+ MODULE_PARM_DESC(dst_debug, "debug messages, default is 0 (no)");
+ 
+-#define DST_MAX_CARDS	6
+-unsigned int dst_cur_no = 0;
+-
+-unsigned int dst_type[DST_MAX_CARDS] = { [0 ... (DST_MAX_CARDS-1)] = (-1U)};
+-unsigned int dst_type_flags[DST_MAX_CARDS] = { [0 ... (DST_MAX_CARDS-1)] = (-1U)};
+-MODULE_PARM(dst_type, "1-" __stringify(DST_MAX_CARDS) "i");
+-MODULE_PARM_DESC(dst_type,
+-		"Type of DST card, 0 Satellite, 1 terrestial TV, 2 Cable, default driver determined");
+-MODULE_PARM(dst_type_flags, "1-" __stringify(DST_MAX_CARDS) "i");
+-MODULE_PARM_DESC(dst_type_flags,
+-		"Type flags of DST card, bitfield 1=10 byte tuner, 2=TS is 204, 4=symdiv");
+-
+ #define dprintk	if (dst_debug) printk
+ 
++#define DST_I2C_ADDR 0x55
++
+ #define DST_TYPE_IS_SAT		0
+ #define DST_TYPE_IS_TERR	1
+ #define DST_TYPE_IS_CABLE	2
+@@ -71,67 +56,65 @@ MODULE_PARM_DESC(dst_type_flags,
+ #define HAS_POWER	4
+ 
+ struct dst_data {
+-	u8	tx_tuna[10];
+-	u8	rx_tuna[10];
+-	u8	rxbuffer[10];
+-	u8	diseq_flags;
+-	u8	dst_type;
+-	u32	type_flags;
+-	u32 frequency;     /* intermediate frequency in kHz for QPSK */
+-        fe_spectral_inversion_t inversion;
+-        u32   symbol_rate;  /* symbol rate in Symbols per second */
+-	fe_code_rate_t  fec;
++	u8 tx_tuna[10];
++	u8 rx_tuna[10];
++	u8 rxbuffer[10];
++	u8 diseq_flags;
++	u8 dst_type;
++	u32 type_flags;
++	u32 frequency;		/* intermediate frequency in kHz for QPSK */
++	fe_spectral_inversion_t inversion;
++	u32 symbol_rate;	/* symbol rate in Symbols per second */
++	fe_code_rate_t fec;
+ 	fe_sec_voltage_t voltage;
+ 	fe_sec_tone_mode_t tone;
+ 	u32 decode_freq;
+-	u8  decode_lock;
++	u8 decode_lock;
+ 	u16 decode_strength;
+ 	u16 decode_snr;
+ 	unsigned long cur_jiff;
+-	u8  k22;
++	u8 k22;
+ 	fe_bandwidth_t bandwidth;
++
+ 	struct bt878 *bt;
+-	struct dvb_i2c_bus *i2c;
+-} ;
++	struct i2c_adapter *i2c;
++	struct dvb_adapter *dvb;
++};
+ 
+ static struct dvb_frontend_info dst_info_sat = {
+-	.name 			= "DST SAT",
+-	.type 			= FE_QPSK,
+-	.frequency_min 		= 950000,
+-	.frequency_max 		= 2150000,
+-	.frequency_stepsize 	= 1000,           /* kHz for QPSK frontends */
+-	.frequency_tolerance 	= 29500,
+-	.symbol_rate_min	= 1000000,
+-	.symbol_rate_max	= 45000000,
++	.name = "DST SAT",
++	.type = FE_QPSK,
++	.frequency_min = 950000,
++	.frequency_max = 2150000,
++	.frequency_stepsize = 1000,	/* kHz for QPSK frontends */
++	.frequency_tolerance = 29500,
++	.symbol_rate_min = 1000000,
++	.symbol_rate_max = 45000000,
+ /*     . symbol_rate_tolerance	= 	???,*/
+-	.notifier_delay		= 50,                /* 1/20 s */
+-	.caps = FE_CAN_FEC_AUTO |
+-		FE_CAN_QPSK
++	.notifier_delay = 50,	/* 1/20 s */
++	.caps = FE_CAN_FEC_AUTO | FE_CAN_QPSK
+ };
+ 
+ static struct dvb_frontend_info dst_info_cable = {
+-	.name 			= "DST CABLE",
+-	.type 			= FE_QAM,
+-        .frequency_stepsize 	= 62500,
+-	.frequency_min 		= 51000000,
+-	.frequency_max 		= 858000000,
+-	.symbol_rate_min	= 1000000,
+-	.symbol_rate_max	= 45000000,
++	.name = "DST CABLE",
++	.type = FE_QAM,
++	.frequency_stepsize = 62500,
++	.frequency_min = 51000000,
++	.frequency_max = 858000000,
++	.symbol_rate_min = 1000000,
++	.symbol_rate_max = 45000000,
+ /*     . symbol_rate_tolerance	= 	???,*/
+-	.notifier_delay		= 50,                /* 1/20 s */
+-	.caps = FE_CAN_FEC_AUTO |
+-		FE_CAN_QAM_AUTO
++	.notifier_delay = 50,	/* 1/20 s */
++	.caps = FE_CAN_FEC_AUTO | FE_CAN_QAM_AUTO
+ };
+ 
+-static struct dvb_frontend_info dst_info_tv = {
+-	.name 			= "DST TERR",
+-	.type 			= FE_OFDM,
+-	.frequency_min 		= 137000000,
+-	.frequency_max 		= 858000000,
+-	.frequency_stepsize 	= 166667,
+-	.caps = FE_CAN_FEC_AUTO |
+-	    FE_CAN_QAM_AUTO |
+-	    FE_CAN_TRANSMISSION_MODE_AUTO | FE_CAN_GUARD_INTERVAL_AUTO
++static struct dvb_frontend_info dst_info_terr = {
++	.name = "DST TERR",
++	.type = FE_OFDM,
++	.frequency_min = 137000000,
++	.frequency_max = 858000000,
++	.frequency_stepsize = 166667,
++	.caps = FE_CAN_FEC_AUTO | FE_CAN_QAM_AUTO | FE_CAN_TRANSMISSION_MODE_AUTO | FE_CAN_GUARD_INTERVAL_AUTO
+ };
+ 
+ static void dst_packsize(struct dst_data *dst, int psize)
+@@ -150,158 +133,151 @@ static int dst_gpio_outb(struct dst_data
+ 
+ 	enb.enb.mask = mask;
+ 	enb.enb.enable = enbb;
+-        if ((err = bt878_device_control(dst->bt, DST_IG_ENABLE, &enb)) < 0) {
+-		dprintk ("%s: dst_gpio_enb error (err == %i, mask == 0x%02x, enb == 0x%02x)\n", __FUNCTION__, err, mask, enbb);
++	if ((err = bt878_device_control(dst->bt, DST_IG_ENABLE, &enb)) < 0) {
++		dprintk("%s: dst_gpio_enb error (err == %i, mask == 0x%02x, enb == 0x%02x)\n", __FUNCTION__, err, mask, enbb);
+ 		return -EREMOTEIO;
+ 	}
+ 
+-	/* because complete disabling means no output, no need to do
+-	 * output packet */
++	/* because complete disabling means no output, no need to do output packet */
+ 	if (enbb == 0)
+ 		return 0;
+ 
+ 	bits.outp.mask = enbb;
+ 	bits.outp.highvals = outhigh;
+ 
+-        if ((err = bt878_device_control(dst->bt, DST_IG_WRITE, &bits)) < 0) {
+-		dprintk ("%s: dst_gpio_outb error (err == %i, enbb == 0x%02x, outhigh == 0x%02x)\n", __FUNCTION__, err, enbb, outhigh);
++	if ((err = bt878_device_control(dst->bt, DST_IG_WRITE, &bits)) < 0) {
++		dprintk("%s: dst_gpio_outb error (err == %i, enbb == 0x%02x, outhigh == 0x%02x)\n", __FUNCTION__, err, enbb, outhigh);
+ 		return -EREMOTEIO;
+ 	}
+-        return 0;
++	return 0;
+ }
+ 
+-static int dst_gpio_inb(struct dst_data *dst, u8 *result)
++static int dst_gpio_inb(struct dst_data *dst, u8 * result)
+ {
+ 	union dst_gpio_packet rd_packet;
+ 	int err;
+ 
+ 	*result = 0;
+ 
+-        if ((err = bt878_device_control(dst->bt, DST_IG_READ, &rd_packet)) < 0) {
+-		dprintk ("%s: dst_gpio_inb error (err == %i)\n", __FUNCTION__, err);
++	if ((err = bt878_device_control(dst->bt, DST_IG_READ, &rd_packet)) < 0) {
++		dprintk("%s: dst_gpio_inb error (err == %i)\n", __FUNCTION__, err);
+ 		return -EREMOTEIO;
+ 	}
+-	*result = (u8)rd_packet.rd.value;
+-        return 0;
++	*result = (u8) rd_packet.rd.value;
++	return 0;
+ }
+ 
+ #define DST_I2C_ENABLE	1
+ #define DST_8820  	2
+ 
+-static int
+-dst_reset8820(struct dst_data *dst)
++static int dst_reset8820(struct dst_data *dst)
+ {
+-int retval;
++	int retval;
+ 	/* pull 8820 gpio pin low, wait, high, wait, then low */
+ 	// dprintk ("%s: reset 8820\n", __FUNCTION__);
+ 	retval = dst_gpio_outb(dst, DST_8820, DST_8820, 0);
+ 	if (retval < 0)
+ 		return retval;
+-	dvb_delay(10);
++	msleep(10);
+ 	retval = dst_gpio_outb(dst, DST_8820, DST_8820, DST_8820);
+ 	if (retval < 0)
+ 		return retval;
+ 	/* wait for more feedback on what works here *
+-	dvb_delay(10);
+-	retval = dst_gpio_outb(dst, DST_8820, DST_8820, 0);
+-	if (retval < 0)
+-		return retval;
+-	*/
++	   msleep(10);
++	   retval = dst_gpio_outb(dst, DST_8820, DST_8820, 0);
++	   if (retval < 0)
++	   return retval;
++	 */
+ 	return 0;
+ }
+ 
+-static int
+-dst_i2c_enable(struct dst_data *dst)
++static int dst_i2c_enable(struct dst_data *dst)
+ {
+-int retval;
++	int retval;
+ 	/* pull I2C enable gpio pin low, wait */
+ 	// dprintk ("%s: i2c enable\n", __FUNCTION__);
+ 	retval = dst_gpio_outb(dst, ~0, DST_I2C_ENABLE, 0);
+ 	if (retval < 0)
+ 		return retval;
+ 	// dprintk ("%s: i2c enable delay\n", __FUNCTION__);
+-	dvb_delay(33);
++	msleep(33);
+ 	return 0;
+ }
+ 
+-static int
+-dst_i2c_disable(struct dst_data *dst)
++static int dst_i2c_disable(struct dst_data *dst)
+ {
+-int retval;
++	int retval;
+ 	/* release I2C enable gpio pin, wait */
+ 	// dprintk ("%s: i2c disable\n", __FUNCTION__);
+ 	retval = dst_gpio_outb(dst, ~0, 0, 0);
+ 	if (retval < 0)
+ 		return retval;
+ 	// dprintk ("%s: i2c disable delay\n", __FUNCTION__);
+-	dvb_delay(33);
++	msleep(33);
+ 	return 0;
+ }
+ 
+-static int
+-dst_wait_dst_ready(struct dst_data *dst)
++static int dst_wait_dst_ready(struct dst_data *dst)
+ {
+-u8 reply;
+-int retval;
+-int i;
++	u8 reply;
++	int retval;
++	int i;
+ 	for (i = 0; i < 200; i++) {
+ 		retval = dst_gpio_inb(dst, &reply);
+ 		if (retval < 0)
+ 			return retval;
+ 		if ((reply & DST_I2C_ENABLE) == 0) {
+-			dprintk ("%s: dst wait ready after %d\n", __FUNCTION__, i);
++			dprintk("%s: dst wait ready after %d\n", __FUNCTION__, i);
+ 			return 1;
+ 		}
+-		dvb_delay(5);
++		msleep(5);
+ 	}
+-	dprintk ("%s: dst wait NOT ready after %d\n", __FUNCTION__, i);
++	dprintk("%s: dst wait NOT ready after %d\n", __FUNCTION__, i);
+ 	return 0;
+ }
+ 
+-#define DST_I2C_ADDR 0x55
+-
+-static int write_dst (struct dst_data *dst, u8 *data, u8 len)
++static int write_dst(struct dst_data *dst, u8 * data, u8 len)
+ {
+ 	struct i2c_msg msg = {
+-		.addr = DST_I2C_ADDR, .flags = 0, .buf = data, .len = len };
++		.addr = DST_I2C_ADDR,.flags = 0,.buf = data,.len = len
++	};
+ 	int err;
+ 	int cnt;
+ 
+ 	if (dst_debug && dst_verbose) {
+ 		u8 i;
+-		dprintk("%s writing",__FUNCTION__);
+-		for (i = 0 ; i < len ; i++) {
++		dprintk("%s writing", __FUNCTION__);
++		for (i = 0; i < len; i++) {
+ 			dprintk(" 0x%02x", data[i]);
+ 		}
+ 		dprintk("\n");
+ 	}
+-	dvb_delay(30);
++	msleep(30);
+ 	for (cnt = 0; cnt < 4; cnt++) {
+-		if ((err = dst->i2c->xfer (dst->i2c, &msg, 1)) < 0) {
+-			dprintk ("%s: write_dst error (err == %i, len == 0x%02x, b0 == 0x%02x)\n", __FUNCTION__, err, len, data[0]);
++		if ((err = i2c_transfer(dst->i2c, &msg, 1)) < 0) {
++			dprintk("%s: write_dst error (err == %i, len == 0x%02x, b0 == 0x%02x)\n", __FUNCTION__, err, len, data[0]);
+ 			dst_i2c_disable(dst);
+-			dvb_delay(500);
++			msleep(500);
+ 			dst_i2c_enable(dst);
+-			dvb_delay(500);
++			msleep(500);
+ 			continue;
+ 		} else
+ 			break;
+ 	}
+ 	if (cnt >= 4)
+ 		return -EREMOTEIO;
+-        return 0;
++	return 0;
+ }
+ 
+-static int read_dst (struct dst_data *dst, u8 *ret, u8 len)
++static int read_dst(struct dst_data *dst, u8 * ret, u8 len)
+ {
+-	struct i2c_msg msg = 
+-		{ .addr = DST_I2C_ADDR, .flags = I2C_M_RD, .buf = ret, .len = len };
++	struct i2c_msg msg = {.addr = DST_I2C_ADDR,.flags = I2C_M_RD,.buf = ret,.len = len };
+ 	int err;
+ 	int cnt;
+ 
+ 	for (cnt = 0; cnt < 4; cnt++) {
+-		if ((err = dst->i2c->xfer (dst->i2c, &msg, 1)) < 0) {
+-			dprintk ("%s: read_dst error (err == %i, len == 0x%02x, b0 == 0x%02x)\n", __FUNCTION__, err, len, ret[0]);
++		if ((err = i2c_transfer(dst->i2c, &msg, 1)) < 0) {
++			dprintk("%s: read_dst error (err == %i, len == 0x%02x, b0 == 0x%02x)\n", __FUNCTION__, err, len, ret[0]);
+ 			dst_i2c_disable(dst);
+ 			dst_i2c_enable(dst);
+ 			continue;
+@@ -333,7 +309,7 @@ static int dst_set_freq(struct dst_data 
+ 			return -EINVAL;
+ 		val = &dst->tx_tuna[0];
+ 		val[2] = (freq >> 8) & 0x7f;
+-		val[3] = (u8)freq;
++		val[3] = (u8) freq;
+ 		val[4] = 1;
+ 		val[8] &= ~4;
+ 		if (freq < 1531)
+@@ -345,7 +321,7 @@ static int dst_set_freq(struct dst_data 
+ 		val = &dst->tx_tuna[0];
+ 		val[2] = (freq >> 16) & 0xff;
+ 		val[3] = (freq >> 8) & 0xff;
+-		val[4] = (u8)freq;
++		val[4] = (u8) freq;
+ 		val[5] = 0;
+ 		switch (dst->bandwidth) {
+ 		case BANDWIDTH_6_MHZ:
+@@ -370,7 +346,7 @@ static int dst_set_freq(struct dst_data 
+ 		val = &dst->tx_tuna[0];
+ 		val[2] = (freq >> 16) & 0xff;
+ 		val[3] = (freq >> 8) & 0xff;
+-		val[4] = (u8)freq;
++		val[4] = (u8) freq;
+ 	} else
+ 		return -EINVAL;
+ 	return 0;
+@@ -386,7 +362,7 @@ static int dst_set_bandwidth(struct dst_
+ 		return 0;
+ 
+ 	val = &dst->tx_tuna[0];
+-        switch (bandwidth) {
++	switch (bandwidth) {
+ 	case BANDWIDTH_6_MHZ:
+ 		val[6] = 6;
+ 		break;
+@@ -405,7 +381,7 @@ static int dst_set_bandwidth(struct dst_
+ 	return 0;
+ }
+ 
+-static int dst_set_inversion (struct dst_data *dst, fe_spectral_inversion_t inversion)
++static int dst_set_inversion(struct dst_data *dst, fe_spectral_inversion_t inversion)
+ {
+ 	u8 *val;
+ 
+@@ -428,18 +404,18 @@ static int dst_set_inversion (struct dst
+ }
+ 
+ 
+-static int dst_set_fec (struct dst_data *dst, fe_code_rate_t fec)
++static int dst_set_fec(struct dst_data *dst, fe_code_rate_t fec)
+ {
+ 	dst->fec = fec;
+ 	return 0;
+ }
+ 
+-static fe_code_rate_t dst_get_fec (struct dst_data *dst)
++static fe_code_rate_t dst_get_fec(struct dst_data *dst)
+ {
+ 	return dst->fec;
+ }
+ 
+-static int dst_set_symbolrate (struct dst_data *dst, u32 srate)
++static int dst_set_symbolrate(struct dst_data *dst, u32 srate)
+ {
+ 	u8 *val;
+ 	u32 symcalc;
+@@ -450,7 +426,6 @@ static int dst_set_symbolrate (struct ds
+ 	if (dst->dst_type == DST_TYPE_IS_TERR) {
+ 		return 0;
+ 	}
+-
+ 	// dprintk("%s: set srate %u\n", __FUNCTION__, srate);
+ 	srate /= 1000;
+ 	val = &dst->tx_tuna[0];
+@@ -459,15 +434,15 @@ static int dst_set_symbolrate (struct ds
+ 		sval = srate;
+ 		sval <<= 20;
+ 		do_div(sval, 88000);
+-	        symcalc = (u32)sval;
++		symcalc = (u32) sval;
+ 		// dprintk("%s: set symcalc %u\n", __FUNCTION__, symcalc);
+-		val[5] = (u8)(symcalc >> 12);
+-		val[6] = (u8)(symcalc >> 4);
+-		val[7] = (u8)(symcalc << 4);
++		val[5] = (u8) (symcalc >> 12);
++		val[6] = (u8) (symcalc >> 4);
++		val[7] = (u8) (symcalc << 4);
+ 	} else {
+-		val[5] = (u8)(srate >> 16) & 0x7f;
+-		val[6] = (u8)(srate >> 8);
+-		val[7] = (u8)srate;
++		val[5] = (u8) (srate >> 16) & 0x7f;
++		val[6] = (u8) (srate >> 8);
++		val[7] = (u8) srate;
+ 	}
+ 	val[8] &= ~0x20;
+ 	if (srate > 8000)
+@@ -476,10 +451,10 @@ static int dst_set_symbolrate (struct ds
+ }
+ 
+ 
+-static u8 dst_check_sum(u8 *buf, u32 len)
++static u8 dst_check_sum(u8 * buf, u32 len)
+ {
+ 	u32 i;
+-	u8  val = 0;
++	u8 val = 0;
+ 	if (!len)
+ 		return 0;
+ 	for (i = 0; i < len; i++) {
+@@ -489,23 +464,25 @@ static u8 dst_check_sum(u8 *buf, u32 len
+ }
+ 
+ typedef struct dst_types {
+-	char	*mstr;
+-	int	offs;
+-	u8	dst_type;
+-	u32	type_flags;
++	char *mstr;
++	int offs;
++	u8 dst_type;
++	u32 type_flags;
+ } DST_TYPES;
+ 
+ struct dst_types dst_tlist[] = {
+-	{ "DST-020", 0,  DST_TYPE_IS_SAT,    DST_TYPE_HAS_SYMDIV },
+-	{ "DST-030", 0,  DST_TYPE_IS_SAT,    DST_TYPE_HAS_TS204|DST_TYPE_HAS_NEWTUNE },
+-	{ "DST-03T", 0,  DST_TYPE_IS_SAT,    DST_TYPE_HAS_SYMDIV|DST_TYPE_HAS_TS204},
+-	{ "DST-MOT", 0,  DST_TYPE_IS_SAT,    DST_TYPE_HAS_SYMDIV },
+-	{ "DST-CI",  1,  DST_TYPE_IS_SAT,    DST_TYPE_HAS_TS204|DST_TYPE_HAS_NEWTUNE },
+-	{ "DSTMCI",  1,  DST_TYPE_IS_SAT,    DST_TYPE_HAS_NEWTUNE },
+-	{ "DSTFCI",  1,  DST_TYPE_IS_SAT,    DST_TYPE_HAS_NEWTUNE },
+-	{ "DCTNEW",  1,  DST_TYPE_IS_CABLE,  DST_TYPE_HAS_NEWTUNE },
+-	{ "DCT_CI",  1,  DST_TYPE_IS_CABLE,  DST_TYPE_HAS_NEWTUNE|DST_TYPE_HAS_TS204 },
+-	{ "DTTDIG" , 1,  DST_TYPE_IS_TERR,   0} };
++	{"DST-020", 0, DST_TYPE_IS_SAT, DST_TYPE_HAS_SYMDIV},
++	{"DST-030", 0, DST_TYPE_IS_SAT, DST_TYPE_HAS_TS204 | DST_TYPE_HAS_NEWTUNE},
++	{"DST-03T", 0, DST_TYPE_IS_SAT, DST_TYPE_HAS_SYMDIV | DST_TYPE_HAS_TS204},
++	{"DST-MOT", 0, DST_TYPE_IS_SAT, DST_TYPE_HAS_SYMDIV},
++	{"DST-CI",  1, DST_TYPE_IS_SAT, DST_TYPE_HAS_TS204 | DST_TYPE_HAS_NEWTUNE},
++	{"DSTMCI",  1, DST_TYPE_IS_SAT, DST_TYPE_HAS_NEWTUNE},
++	{"DSTFCI",  1, DST_TYPE_IS_SAT, DST_TYPE_HAS_NEWTUNE},
++	{"DCTNEW",  1, DST_TYPE_IS_CABLE, DST_TYPE_HAS_NEWTUNE},
++	{"DCT_CI",  1, DST_TYPE_IS_CABLE, DST_TYPE_HAS_NEWTUNE | DST_TYPE_HAS_TS204},
++	{"DTTDIG",  1, DST_TYPE_IS_TERR, 0}
++};
++
+ /* DCTNEW and DCT-CI are guesses */
+ 
+ static void dst_type_flags_print(u32 type_flags)
+@@ -524,25 +501,24 @@ static int dst_type_print(u8 type)
+ {
+ 	char *otype;
+ 	switch (type) {
+-		case DST_TYPE_IS_SAT:
+-			otype = "satellite";
+-			break;
+-		case DST_TYPE_IS_TERR:
+-			otype = "terrestial TV";
+-			break;
+-		case DST_TYPE_IS_CABLE:
+-			otype = "terrestial TV";
+-			break;
+-		default:
+-			printk("%s: invalid dst type %d\n",
+-				__FUNCTION__, type);
+-			return -EINVAL;
++	case DST_TYPE_IS_SAT:
++		otype = "satellite";
++		break;
++	case DST_TYPE_IS_TERR:
++		otype = "terrestial TV";
++		break;
++	case DST_TYPE_IS_CABLE:
++		otype = "terrestial TV";
++		break;
++	default:
++		printk("%s: invalid dst type %d\n", __FUNCTION__, type);
++		return -EINVAL;
+ 	}
+ 	printk("DST type : %s\n", otype);
+ 	return 0;
+ }
+ 
+-static int dst_check_ci (struct dst_data *dst)
++static int dst_check_ci(struct dst_data *dst)
+ {
+ 	u8 txbuf[8];
+ 	u8 rxbuf[8];
+@@ -554,18 +530,18 @@ static int dst_check_ci (struct dst_data
+ 
+ 	memset(txbuf, 0, sizeof(txbuf));
+ 	txbuf[1] = 6;
+-	txbuf[7] = dst_check_sum (txbuf, 7);
+- 
++	txbuf[7] = dst_check_sum(txbuf, 7);
++
+ 	dst_i2c_enable(dst);
+ 	dst_reset8820(dst);
+-	retval = write_dst (dst, txbuf, 8);
++	retval = write_dst(dst, txbuf, 8);
+ 	if (retval < 0) {
+ 		dst_i2c_disable(dst);
+ 		dprintk("%s: write not successful, maybe no card?\n", __FUNCTION__);
+ 		return retval;
+ 	}
+-	dvb_delay(3);
+-	retval = read_dst (dst, rxbuf, 1);
++	msleep(3);
++	retval = read_dst(dst, rxbuf, 1);
+ 	dst_i2c_disable(dst);
+ 	if (retval < 0) {
+ 		dprintk("%s: read not successful, maybe no card?\n", __FUNCTION__);
+@@ -578,21 +554,19 @@ static int dst_check_ci (struct dst_data
+ 	if (!dst_wait_dst_ready(dst))
+ 		return 0;
+ 	// dst_i2c_enable(i2c); Dimitri
+-	retval = read_dst (dst, rxbuf, 8);
++	retval = read_dst(dst, rxbuf, 8);
+ 	dst_i2c_disable(dst);
+ 	if (retval < 0) {
+ 		dprintk("%s: read not successful\n", __FUNCTION__);
+ 		return retval;
+ 	}
+-	if (rxbuf[7] != dst_check_sum (rxbuf, 7)) {
++	if (rxbuf[7] != dst_check_sum(rxbuf, 7)) {
+ 		dprintk("%s: checksum failure\n", __FUNCTION__);
+ 		return retval;
+ 	}
+ 	rxbuf[7] = '\0';
+ 	for (i = 0, dsp = &dst_tlist[0]; i < sizeof(dst_tlist) / sizeof(dst_tlist[0]); i++, dsp++) {
+-		if (!strncmp(&rxbuf[dsp->offs],
+-				dsp->mstr,
+-				strlen(dsp->mstr))) {
++		if (!strncmp(&rxbuf[dsp->offs], dsp->mstr, strlen(dsp->mstr))) {
+ 			use_type_flags = dsp->type_flags;
+ 			use_dst_type = dsp->dst_type;
+ 			printk("%s: recognize %s\n", __FUNCTION__, dsp->mstr);
+@@ -605,28 +579,10 @@ static int dst_check_ci (struct dst_data
+ 		use_dst_type = DST_TYPE_IS_SAT;
+ 		use_type_flags = DST_TYPE_HAS_SYMDIV;
+ 	}
+-	switch (dst_type[dst_cur_no]) {
+-		case (-1U):
+-			/* not used */
+-			break;
+-		case DST_TYPE_IS_SAT:
+-		case DST_TYPE_IS_TERR:
+-		case DST_TYPE_IS_CABLE:
+-			use_dst_type = (u8)(dst_type[dst_cur_no]);
+-			break;
+-		default:
+-			printk("%s: invalid user override dst type %d, not used\n",
+-				__FUNCTION__, dst_type[dst_cur_no]);
+-			break;
+-	}
+ 	dst_type_print(use_dst_type);
+-	if (dst_type_flags[dst_cur_no] != (-1U)) {
+-		printk("%s: user override dst type flags 0x%x\n",
+-				__FUNCTION__, dst_type_flags[dst_cur_no]);
+-		use_type_flags = dst_type_flags[dst_cur_no];
+-	}
++
+ 	dst->type_flags = use_type_flags;
+-	dst->dst_type= use_dst_type;
++	dst->dst_type = use_dst_type;
+ 	dst_type_flags_print(dst->type_flags);
+ 
+ 	if (dst->type_flags & DST_TYPE_HAS_TS204) {
+@@ -635,21 +591,21 @@ static int dst_check_ci (struct dst_data
+ 	return 0;
+ }
+ 
+-static int dst_command (struct dst_data *dst, u8 *data, u8 len)
++static int dst_command(struct dst_data *dst, u8 * data, u8 len)
+ {
+ 	int retval;
+ 	u8 reply;
+ 
+ 	dst_i2c_enable(dst);
+ 	dst_reset8820(dst);
+-	retval = write_dst (dst, data, len);
++	retval = write_dst(dst, data, len);
+ 	if (retval < 0) {
+ 		dst_i2c_disable(dst);
+ 		dprintk("%s: write not successful\n", __FUNCTION__);
+ 		return retval;
+ 	}
+-	dvb_delay(33);
+-	retval = read_dst (dst, &reply, 1);
++	msleep(33);
++	retval = read_dst(dst, &reply, 1);
+ 	dst_i2c_disable(dst);
+ 	if (retval < 0) {
+ 		dprintk("%s: read verify  not successful\n", __FUNCTION__);
+@@ -664,13 +620,13 @@ static int dst_command (struct dst_data 
+ 	if (!dst_wait_dst_ready(dst))
+ 		return 0;
+ 	// dst_i2c_enable(i2c); Per dimitri
+-	retval = read_dst (dst, dst->rxbuffer, 8);
++	retval = read_dst(dst, dst->rxbuffer, 8);
+ 	dst_i2c_disable(dst);
+ 	if (retval < 0) {
+ 		dprintk("%s: read not successful\n", __FUNCTION__);
+ 		return 0;
+ 	}
+-	if (dst->rxbuffer[7] != dst_check_sum (dst->rxbuffer, 7)) {
++	if (dst->rxbuffer[7] != dst_check_sum(dst->rxbuffer, 7)) {
+ 		dprintk("%s: checksum failure\n", __FUNCTION__);
+ 		return 0;
+ 	}
+@@ -680,7 +636,7 @@ static int dst_command (struct dst_data 
+ static int dst_get_signal(struct dst_data *dst)
+ {
+ 	int retval;
+-	u8 get_signal[] = {0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfb};
++	u8 get_signal[] = { 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfb };
+ 
+ 	if ((dst->diseq_flags & ATTEMPT_TUNE) == 0) {
+ 		dst->decode_lock = dst->decode_strength = dst->decode_snr = 0;
+@@ -690,20 +646,16 @@ static int dst_get_signal(struct dst_dat
+ 		dst->decode_lock = dst->decode_strength = dst->decode_snr = 0;
+ 		return 0;
+ 	}
+-	if (time_after_eq(jiffies, dst->cur_jiff + (HZ/5))) {
+-		retval =  dst_command(dst, get_signal, 8);
++	if (time_after_eq(jiffies, dst->cur_jiff + (HZ / 5))) {
++		retval = dst_command(dst, get_signal, 8);
+ 		if (retval < 0)
+ 			return retval;
+ 		if (dst->dst_type == DST_TYPE_IS_SAT) {
+-			dst->decode_lock = ((dst->rxbuffer[6] & 0x10) == 0) ?
+-					1 : 0;
++			dst->decode_lock = ((dst->rxbuffer[6] & 0x10) == 0) ? 1 : 0;
+ 			dst->decode_strength = dst->rxbuffer[5] << 8;
+-			dst->decode_snr = dst->rxbuffer[2] << 8 |
+-				dst->rxbuffer[3];
+-		} else if ((dst->dst_type == DST_TYPE_IS_TERR) ||
+-				(dst->dst_type == DST_TYPE_IS_CABLE)) {
+-			dst->decode_lock = (dst->rxbuffer[1]) ?
+-					1 : 0;
++			dst->decode_snr = dst->rxbuffer[2] << 8 | dst->rxbuffer[3];
++		} else if ((dst->dst_type == DST_TYPE_IS_TERR) || (dst->dst_type == DST_TYPE_IS_CABLE)) {
++			dst->decode_lock = (dst->rxbuffer[1]) ? 1 : 0;
+ 			dst->decode_strength = dst->rxbuffer[4] << 8;
+ 			dst->decode_snr = dst->rxbuffer[3] << 8;
+ 		}
+@@ -726,9 +678,9 @@ static int dst_get_signal(struct dst_dat
+  * Diseqc 4    0x00, 0x08, 0x04, 0xe0, 0x10, 0x38, 0xfc, 0xe0 
+  */
+ 
+-static int dst_set_diseqc (struct dst_data *dst, u8 *cmd, u8 len)
++static int dst_set_diseqc(struct dst_data *dst, u8 * cmd, u8 len)
+ {
+-	u8 paket[8] =  {0x00, 0x08, 0x04, 0xe0, 0x10, 0x38, 0xf0, 0xec };
++	u8 paket[8] = { 0x00, 0x08, 0x04, 0xe0, 0x10, 0x38, 0xf0, 0xec };
+ 
+ 	if (dst->dst_type == DST_TYPE_IS_TERR)
+ 		return 0;
+@@ -736,19 +688,19 @@ static int dst_set_diseqc (struct dst_da
+ 	if (len == 0 || len > 4)
+ 		return -EINVAL;
+ 	memcpy(&paket[3], cmd, len);
+-	paket[7] = dst_check_sum (&paket[0], 7);
++	paket[7] = dst_check_sum(&paket[0], 7);
+ 	dst_command(dst, paket, 8);
+ 	return 0;
+ }
+ 
+-static int dst_tone_power_cmd (struct dst_data *dst)
++static int dst_tone_power_cmd(struct dst_data *dst)
+ {
+-	u8 paket[8] =  {0x00, 0x09, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00};
++	u8 paket[8] = { 0x00, 0x09, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00 };
+ 
+ 	if (dst->dst_type == DST_TYPE_IS_TERR)
+ 		return 0;
+ 
+-	if (dst->voltage == SEC_VOLTAGE_OFF) 
++	if (dst->voltage == SEC_VOLTAGE_OFF)
+ 		paket[4] = 0;
+ 	else
+ 		paket[4] = 1;
+@@ -756,12 +708,12 @@ static int dst_tone_power_cmd (struct ds
+ 		paket[2] = dst->k22;
+ 	else
+ 		paket[2] = 0;
+-	paket[7] = dst_check_sum (&paket[0], 7);
++	paket[7] = dst_check_sum(&paket[0], 7);
+ 	dst_command(dst, paket, 8);
+ 	return 0;
+ }
+ 
+-static int dst_set_voltage (struct dst_data *dst, fe_sec_voltage_t voltage)
++static int dst_set_voltage(struct dst_data *dst, fe_sec_voltage_t voltage)
+ {
+ 	u8 *val;
+ 	int need_cmd;
+@@ -788,7 +740,7 @@ static int dst_set_voltage (struct dst_d
+ 		break;
+ 	case SEC_VOLTAGE_OFF:
+ 		need_cmd = 1;
+-		dst->diseq_flags &= ~(HAS_POWER|HAS_LOCK|ATTEMPT_TUNE);
++		dst->diseq_flags &= ~(HAS_POWER | HAS_LOCK | ATTEMPT_TUNE);
+ 		break;
+ 	default:
+ 		return -EINVAL;
+@@ -800,7 +752,7 @@ static int dst_set_voltage (struct dst_d
+ }
+ 
+ 
+-static int dst_set_tone (struct dst_data *dst, fe_sec_tone_mode_t tone)
++static int dst_set_tone(struct dst_data *dst, fe_sec_tone_mode_t tone)
+ {
+ 	u8 *val;
+ 
+@@ -826,9 +778,9 @@ static int dst_set_tone (struct dst_data
+ 	return 0;
+ }
+ 
+-static int dst_get_tuna (struct dst_data *dst)
++static int dst_get_tuna(struct dst_data *dst)
+ {
+-int retval;
++	int retval;
+ 	if ((dst->diseq_flags & ATTEMPT_TUNE) == 0)
+ 		return 0;
+ 	dst->diseq_flags &= ~(HAS_LOCK);
+@@ -836,43 +788,43 @@ int retval;
+ 		return 0;
+ 	if (dst->type_flags & DST_TYPE_HAS_NEWTUNE) {
+ 		/* how to get variable length reply ???? */
+-		retval = read_dst (dst, dst->rx_tuna, 10);
++		retval = read_dst(dst, dst->rx_tuna, 10);
+ 	} else {
+-		retval = read_dst (dst, &dst->rx_tuna[2], 8);
++		retval = read_dst(dst, &dst->rx_tuna[2], 8);
+ 	}
+ 	if (retval < 0) {
+ 		dprintk("%s: read not successful\n", __FUNCTION__);
+ 		return 0;
+ 	}
+ 	if (dst->type_flags & DST_TYPE_HAS_NEWTUNE) {
+-		if (dst->rx_tuna[9] != dst_check_sum (&dst->rx_tuna[0], 9)) {
++		if (dst->rx_tuna[9] != dst_check_sum(&dst->rx_tuna[0], 9)) {
+ 			dprintk("%s: checksum failure?\n", __FUNCTION__);
+ 			return 0;
+ 		}
+ 	} else {
+-		if (dst->rx_tuna[9] != dst_check_sum (&dst->rx_tuna[2], 7)) {
++		if (dst->rx_tuna[9] != dst_check_sum(&dst->rx_tuna[2], 7)) {
+ 			dprintk("%s: checksum failure?\n", __FUNCTION__);
+ 			return 0;
+ 		}
+ 	}
+ 	if (dst->rx_tuna[2] == 0 && dst->rx_tuna[3] == 0)
+ 		return 0;
+-	dst->decode_freq = ((dst->rx_tuna[2] & 0x7f) << 8) +  dst->rx_tuna[3];
++	dst->decode_freq = ((dst->rx_tuna[2] & 0x7f) << 8) + dst->rx_tuna[3];
+ 
+ 	dst->decode_lock = 1;
+ 	/*
+-	dst->decode_n1 = (dst->rx_tuna[4] << 8) +  
+-			(dst->rx_tuna[5]);
++	   dst->decode_n1 = (dst->rx_tuna[4] << 8) +
++	   (dst->rx_tuna[5]);
+ 
+-	dst->decode_n2 = (dst->rx_tuna[8] << 8) +  
+-			(dst->rx_tuna[7]);
+-	*/
++	   dst->decode_n2 = (dst->rx_tuna[8] << 8) +
++	   (dst->rx_tuna[7]);
++	 */
+ 	dst->diseq_flags |= HAS_LOCK;
+ 	/* dst->cur_jiff = jiffies; */
+ 	return 1;
+ }
+ 
+-static int dst_write_tuna (struct dst_data *dst)
++static int dst_write_tuna(struct dst_data *dst)
+ {
+ 	int retval;
+ 	u8 reply;
+@@ -882,25 +834,25 @@ static int dst_write_tuna (struct dst_da
+ 	dst->decode_lock = dst->decode_strength = dst->decode_snr = 0;
+ 	if (dst->dst_type == DST_TYPE_IS_SAT) {
+ 		if (!(dst->diseq_flags & HAS_POWER))
+-			dst_set_voltage (dst, SEC_VOLTAGE_13);
++			dst_set_voltage(dst, SEC_VOLTAGE_13);
+ 	}
+-	dst->diseq_flags &= ~(HAS_LOCK|ATTEMPT_TUNE);
++	dst->diseq_flags &= ~(HAS_LOCK | ATTEMPT_TUNE);
+ 	dst_i2c_enable(dst);
+ 	if (dst->type_flags & DST_TYPE_HAS_NEWTUNE) {
+ 		dst_reset8820(dst);
+-		dst->tx_tuna[9] = dst_check_sum (&dst->tx_tuna[0], 9);
+-		retval = write_dst (dst, &dst->tx_tuna[0], 10);
++		dst->tx_tuna[9] = dst_check_sum(&dst->tx_tuna[0], 9);
++		retval = write_dst(dst, &dst->tx_tuna[0], 10);
+ 	} else {
+-		dst->tx_tuna[9] = dst_check_sum (&dst->tx_tuna[2], 7);
+-		retval = write_dst (dst, &dst->tx_tuna[2], 8);
++		dst->tx_tuna[9] = dst_check_sum(&dst->tx_tuna[2], 7);
++		retval = write_dst(dst, &dst->tx_tuna[2], 8);
+ 	}
+ 	if (retval < 0) {
+ 		dst_i2c_disable(dst);
+ 		dprintk("%s: write not successful\n", __FUNCTION__);
+ 		return retval;
+ 	}
+-	dvb_delay(3);
+-	retval = read_dst (dst, &reply, 1);
++	msleep(3);
++	retval = read_dst(dst, &reply, 1);
+ 	dst_i2c_disable(dst);
+ 	if (retval < 0) {
+ 		dprintk("%s: read verify  not successful\n", __FUNCTION__);
+@@ -914,14 +866,14 @@ static int dst_write_tuna (struct dst_da
+ 	return dst_get_tuna(dst);
+ }
+ 
+-static void dst_init (struct dst_data *dst)
++static void dst_init(struct dst_data *dst)
+ {
+-static u8 ini_satci_tuna[] = {  9, 0, 3, 0xb6, 1, 0,    0x73, 0x21, 0, 0 };
+-static u8 ini_satfta_tuna[] = { 0, 0, 3, 0xb6, 1, 0x55, 0xbd, 0x50, 0, 0 };
+-static u8 ini_tvfta_tuna[] = { 0, 0,  3, 0xb6, 1, 7,    0x0,   0x0, 0, 0 };
+-static u8 ini_tvci_tuna[] = { 9, 0,  3, 0xb6, 1, 7,    0x0,   0x0, 0, 0 };
+-static u8 ini_cabfta_tuna[] = { 0, 0,  3, 0xb6, 1, 7,    0x0,   0x0, 0, 0 };
+-static u8 ini_cabci_tuna[] = { 9, 0,  3, 0xb6, 1, 7,    0x0,   0x0, 0, 0 };
++	static u8 ini_satci_tuna[] = { 9, 0, 3, 0xb6, 1, 0, 0x73, 0x21, 0, 0 };
++	static u8 ini_satfta_tuna[] = { 0, 0, 3, 0xb6, 1, 0x55, 0xbd, 0x50, 0, 0 };
++	static u8 ini_tvfta_tuna[] = { 0, 0, 3, 0xb6, 1, 7, 0x0, 0x0, 0, 0 };
++	static u8 ini_tvci_tuna[] = { 9, 0, 3, 0xb6, 1, 7, 0x0, 0x0, 0, 0 };
++	static u8 ini_cabfta_tuna[] = { 0, 0, 3, 0xb6, 1, 7, 0x0, 0x0, 0, 0 };
++	static u8 ini_cabci_tuna[] = { 9, 0, 3, 0xb6, 1, 7, 0x0, 0x0, 0, 0 };
+ 	dst->inversion = INVERSION_ON;
+ 	dst->voltage = SEC_VOLTAGE_13;
+ 	dst->tone = SEC_TONE_OFF;
+@@ -933,19 +885,13 @@ static u8 ini_cabci_tuna[] = { 9, 0,  3,
+ 	dst->cur_jiff = jiffies;
+ 	if (dst->dst_type == DST_TYPE_IS_SAT) {
+ 		dst->frequency = 950000;
+-		memcpy(dst->tx_tuna, ((dst->type_flags &  DST_TYPE_HAS_NEWTUNE )? 
+-					ini_satci_tuna : ini_satfta_tuna),
+-				sizeof(ini_satfta_tuna));
++		memcpy(dst->tx_tuna, ((dst->type_flags & DST_TYPE_HAS_NEWTUNE) ? ini_satci_tuna : ini_satfta_tuna), sizeof(ini_satfta_tuna));
+ 	} else if (dst->dst_type == DST_TYPE_IS_TERR) {
+ 		dst->frequency = 137000000;
+-		memcpy(dst->tx_tuna, ((dst->type_flags &  DST_TYPE_HAS_NEWTUNE )? 
+-					ini_tvci_tuna : ini_tvfta_tuna),
+-				sizeof(ini_tvfta_tuna));
++		memcpy(dst->tx_tuna, ((dst->type_flags & DST_TYPE_HAS_NEWTUNE) ? ini_tvci_tuna : ini_tvfta_tuna), sizeof(ini_tvfta_tuna));
+ 	} else if (dst->dst_type == DST_TYPE_IS_CABLE) {
+ 		dst->frequency = 51000000;
+-		memcpy(dst->tx_tuna, ((dst->type_flags &  DST_TYPE_HAS_NEWTUNE )? 
+-					ini_cabci_tuna : ini_cabfta_tuna),
+-				sizeof(ini_cabfta_tuna));
++		memcpy(dst->tx_tuna, ((dst->type_flags & DST_TYPE_HAS_NEWTUNE) ? ini_cabci_tuna : ini_cabfta_tuna), sizeof(ini_cabfta_tuna));
+ 	}
+ }
+ 
+@@ -953,230 +899,354 @@ struct lkup {
+ 	unsigned int cmd;
+ 	char *desc;
+ } looker[] = {
+-	{FE_GET_INFO,                "FE_GET_INFO:"},
+-	{FE_READ_STATUS,             "FE_READ_STATUS:" },
+-	{FE_READ_BER,                "FE_READ_BER:" },
+-	{FE_READ_SIGNAL_STRENGTH,    "FE_READ_SIGNAL_STRENGTH:" },
+-	{FE_READ_SNR,                "FE_READ_SNR:" },
+-	{FE_READ_UNCORRECTED_BLOCKS, "FE_READ_UNCORRECTED_BLOCKS:" },
+-	{FE_SET_FRONTEND,            "FE_SET_FRONTEND:" },
+-	{FE_GET_FRONTEND,            "FE_GET_FRONTEND:" },
+-	{FE_SLEEP,                   "FE_SLEEP:" },
+-	{FE_INIT,                    "FE_INIT:" },
+-	{FE_SET_TONE,                "FE_SET_TONE:" },
+-	{FE_SET_VOLTAGE,             "FE_SET_VOLTAGE:" },
+-	};
++	{
++	FE_GET_INFO, "FE_GET_INFO:"}, {
++	FE_READ_STATUS, "FE_READ_STATUS:"}, {
++	FE_READ_BER, "FE_READ_BER:"}, {
++	FE_READ_SIGNAL_STRENGTH, "FE_READ_SIGNAL_STRENGTH:"}, {
++	FE_READ_SNR, "FE_READ_SNR:"}, {
++	FE_READ_UNCORRECTED_BLOCKS, "FE_READ_UNCORRECTED_BLOCKS:"}, {
++	FE_SET_FRONTEND, "FE_SET_FRONTEND:"}, {
++	FE_GET_FRONTEND, "FE_GET_FRONTEND:"}, {
++	FE_SLEEP, "FE_SLEEP:"}, {
++	FE_INIT, "FE_INIT:"}, {
++	FE_SET_TONE, "FE_SET_TONE:"}, {
++FE_SET_VOLTAGE, "FE_SET_VOLTAGE:"},};
+ 
+-static int dst_ioctl (struct dvb_frontend *fe, unsigned int cmd, void *arg)
++static int dst_ioctl(struct dvb_frontend *fe, unsigned int cmd, void *arg)
+ {
+ 	struct dst_data *dst = fe->data;
+ 	int retval;
+ 	/*
+-	char  *cc;
+-                
+-	cc = "FE_UNSUPP:";
+-	for(retval = 0; retval < sizeof(looker) / sizeof(looker[0]); retval++) {
+-		if (looker[retval].cmd == cmd) {
+-			cc = looker[retval].desc;
+-			break;
+-		}
+-	}
+-	dprintk("%s cmd %s (0x%x)\n",__FUNCTION__, cc, cmd);
+-	*/
++	   char  *cc;
++
++	   cc = "FE_UNSUPP:";
++	   for(retval = 0; retval < sizeof(looker) / sizeof(looker[0]); retval++) {
++	   if (looker[retval].cmd == cmd) {
++	   cc = looker[retval].desc;
++	   break;
++	   }
++	   }
++	   dprintk("%s cmd %s (0x%x)\n",__FUNCTION__, cc, cmd);
++	 */
+ 	// printk("%s: dst %8.8x bt %8.8x i2c %8.8x\n", __FUNCTION__, dst, dst->bt, dst->i2c);
+ 	/* should be set by attach, but just in case */
+-	dst->i2c = fe->i2c;
+-        switch (cmd) {
+-        case FE_GET_INFO: 
+-	{
+-	     struct dvb_frontend_info *info;
+-		info = &dst_info_sat;
+-		if (dst->dst_type == DST_TYPE_IS_TERR)
+-			info = &dst_info_tv;
+-		else if (dst->dst_type == DST_TYPE_IS_CABLE)
+-			info = &dst_info_cable;
+-		memcpy (arg, info, sizeof(struct dvb_frontend_info));
+-		break;
+-	}
+-        case FE_READ_STATUS:
+-	{
+-		fe_status_t *status = arg;
+ 
+-		*status = 0;
+-		if (dst->diseq_flags & HAS_LOCK) {
+-			dst_get_signal(dst);
+-			if (dst->decode_lock)
+-				*status |= FE_HAS_LOCK 
+-					| FE_HAS_SIGNAL 
+-					| FE_HAS_CARRIER
+-					| FE_HAS_SYNC
+-					| FE_HAS_VITERBI;
++	switch (cmd) {
++	case FE_GET_INFO:
++		{
++			struct dvb_frontend_info *info;
++			info = &dst_info_sat;
++			if (dst->dst_type == DST_TYPE_IS_TERR)
++				info = &dst_info_terr;
++			else if (dst->dst_type == DST_TYPE_IS_CABLE)
++				info = &dst_info_cable;
++			memcpy(arg, info, sizeof(struct dvb_frontend_info));
++			break;
++		}
++	case FE_READ_STATUS:
++		{
++			fe_status_t *status = arg;
++
++			*status = 0;
++			if (dst->diseq_flags & HAS_LOCK) {
++				dst_get_signal(dst);
++				if (dst->decode_lock)
++					*status |= FE_HAS_LOCK | FE_HAS_SIGNAL | FE_HAS_CARRIER | FE_HAS_SYNC | FE_HAS_VITERBI;
++			}
++			break;
+ 		}
+-		break;
+-	}
+ 
+-        case FE_READ_BER:
+-	{
+-		/* guess */
+-		// *(u32*) arg = dst->decode_n1;
+-		*(u32*) arg = 0;
+-		return -EOPNOTSUPP; 
+-	}
++	case FE_READ_BER:
++		{
++			/* guess */
++			// *(u32*) arg = dst->decode_n1;
++			*(u32 *) arg = 0;
++			return -EOPNOTSUPP;
++		}
+ 
+-        case FE_READ_SIGNAL_STRENGTH:
+-	{
+-		dst_get_signal(dst);
+-		*((u16*) arg) = dst->decode_strength;
+-		break;
+-	}
++	case FE_READ_SIGNAL_STRENGTH:
++		{
++			dst_get_signal(dst);
++			*((u16 *) arg) = dst->decode_strength;
++			break;
++		}
+ 
+-        case FE_READ_SNR:
+-	{
+-		dst_get_signal(dst);
+-		*((u16*) arg) = dst->decode_snr;
+-		break;
+-	}
++	case FE_READ_SNR:
++		{
++			dst_get_signal(dst);
++			*((u16 *) arg) = dst->decode_snr;
++			break;
++		}
+ 
+-	case FE_READ_UNCORRECTED_BLOCKS: 
+-	{
+-		*((u32*) arg) = 0;    /* the stv0299 can't measure BER and */
+-		return -EOPNOTSUPP;   /* errors at the same time.... */
+-	}
++	case FE_READ_UNCORRECTED_BLOCKS:
++		{
++			*((u32 *) arg) = 0;	/* the stv0299 can't measure BER and */
++			return -EOPNOTSUPP;	/* errors at the same time.... */
++		}
+ 
+-        case FE_SET_FRONTEND:
+-        {
+-		struct dvb_frontend_parameters *p = arg;
++	case FE_SET_FRONTEND:
++		{
++			struct dvb_frontend_parameters *p = arg;
++
++			dst_set_freq(dst, p->frequency);
++			dst_set_inversion(dst, p->inversion);
++			if (dst->dst_type == DST_TYPE_IS_SAT) {
++				dst_set_fec(dst, p->u.qpsk.fec_inner);
++				dst_set_symbolrate(dst, p->u.qpsk.symbol_rate);
++			} else if (dst->dst_type == DST_TYPE_IS_TERR) {
++				dst_set_bandwidth(dst, p->u.ofdm.bandwidth);
++			} else if (dst->dst_type == DST_TYPE_IS_CABLE) {
++				dst_set_fec(dst, p->u.qam.fec_inner);
++				dst_set_symbolrate(dst, p->u.qam.symbol_rate);
++			}
++			dst_write_tuna(dst);
+ 
+-		dst_set_freq (dst, p->frequency);
+-		dst_set_inversion (dst, p->inversion);
+-		if (dst->dst_type == DST_TYPE_IS_SAT) {
+-			dst_set_fec (dst, p->u.qpsk.fec_inner);
+-			dst_set_symbolrate (dst, p->u.qpsk.symbol_rate);
+-		} else if (dst->dst_type == DST_TYPE_IS_TERR) {
+-			dst_set_bandwidth(dst, p->u.ofdm.bandwidth);
+-		} else if (dst->dst_type == DST_TYPE_IS_CABLE) {
+-			dst_set_fec (dst, p->u.qam.fec_inner);
+-			dst_set_symbolrate (dst, p->u.qam.symbol_rate);
++			break;
+ 		}
+-		dst_write_tuna (dst);
+-
+-                break;
+-        }
+ 
+ 	case FE_GET_FRONTEND:
+-	{
+-		struct dvb_frontend_parameters *p = arg;
++		{
++			struct dvb_frontend_parameters *p = arg;
+ 
+ 
+-		p->frequency = dst->decode_freq;
+-		p->inversion = dst->inversion;
+-		if (dst->dst_type == DST_TYPE_IS_SAT) {
+-			p->u.qpsk.symbol_rate = dst->symbol_rate;
+-			p->u.qpsk.fec_inner = dst_get_fec (dst);
+-		} else if (dst->dst_type == DST_TYPE_IS_TERR) {
+-			p->u.ofdm.bandwidth = dst->bandwidth;
+-		} else if (dst->dst_type == DST_TYPE_IS_CABLE) {
+-			p->u.qam.symbol_rate = dst->symbol_rate;
+-			p->u.qam.fec_inner = dst_get_fec (dst);
+-			p->u.qam.modulation = QAM_AUTO;
++			p->frequency = dst->decode_freq;
++			p->inversion = dst->inversion;
++			if (dst->dst_type == DST_TYPE_IS_SAT) {
++				p->u.qpsk.symbol_rate = dst->symbol_rate;
++				p->u.qpsk.fec_inner = dst_get_fec(dst);
++			} else if (dst->dst_type == DST_TYPE_IS_TERR) {
++				p->u.ofdm.bandwidth = dst->bandwidth;
++			} else if (dst->dst_type == DST_TYPE_IS_CABLE) {
++				p->u.qam.symbol_rate = dst->symbol_rate;
++				p->u.qam.fec_inner = dst_get_fec(dst);
++				p->u.qam.modulation = QAM_AUTO;
++			}
++			break;
+ 		}
+-		break;
+-	}
+ 
+-        case FE_SLEEP:
++	case FE_SLEEP:
+ 		return 0;
+ 
+-        case FE_INIT:
++	case FE_INIT:
+ 		dst_init(dst);
+ 		break;
+ 
+ 	case FE_DISEQC_SEND_MASTER_CMD:
+-	{
+-		struct dvb_diseqc_master_cmd *cmd = (struct dvb_diseqc_master_cmd *)arg;
+-		retval = dst_set_diseqc (dst, cmd->msg, cmd->msg_len);
+-		if (retval < 0)
+-			return retval;
+-		break;
+-	}
++		{
++			struct dvb_diseqc_master_cmd *cmd = (struct dvb_diseqc_master_cmd *) arg;
++			retval = dst_set_diseqc(dst, cmd->msg, cmd->msg_len);
++			if (retval < 0)
++				return retval;
++			break;
++		}
+ 	case FE_SET_TONE:
+-		retval = dst_set_tone (dst, (fe_sec_tone_mode_t) arg);
++		retval = dst_set_tone(dst, (fe_sec_tone_mode_t) arg);
+ 		if (retval < 0)
+ 			return retval;
+ 		break;
+ 	case FE_SET_VOLTAGE:
+-		retval = dst_set_voltage (dst, (fe_sec_voltage_t) arg);
++		retval = dst_set_voltage(dst, (fe_sec_voltage_t) arg);
+ 		if (retval < 0)
+ 			return retval;
+ 		break;
+ 	default:
+ 		return -EOPNOTSUPP;
+-        };
+-        
+-        return 0;
+-} 
++	};
++
++	return 0;
++}
++
++static ssize_t attr_read_type(struct device *dev, char *buf)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct dst_data *dst = (struct dst_data *) i2c_get_clientdata(client);
++	return sprintf(buf, "0x%02x\n", dst->dst_type);
++}
++
++static ssize_t attr_write_type(struct device *dev, const char *buf, size_t count)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct dst_data *dst = (struct dst_data *) i2c_get_clientdata(client);
++	unsigned long type;
++	type = simple_strtoul(buf, NULL, 0);
++	dst->dst_type = type & 0xff;
++	return strlen(buf) + 1;
++}
++
++/* dst_type, "Type of DST card, 0 Satellite, 1 terrestial, 2 Cable, default driver determined"); */
++static struct device_attribute dev_attr_client_type = {
++	.attr = {.name = "type",.mode = S_IRUGO | S_IWUGO,.owner = THIS_MODULE},
++	.show = &attr_read_type,
++	.store = &attr_write_type,
++};
++
++static ssize_t attr_read_flags(struct device *dev, char *buf)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct dst_data *dst = (struct dst_data *) i2c_get_clientdata(client);
++	return sprintf(buf, "0x%02x\n", dst->type_flags);
++}
+ 
++static ssize_t attr_write_flags(struct device *dev, const char *buf, size_t count)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct dst_data *dst = (struct dst_data *) i2c_get_clientdata(client);
++	unsigned long flags;
++	flags = simple_strtoul(buf, NULL, 0);
++	dst->type_flags = flags & 0xffffffff;
++	return strlen(buf) + 1;
++}
++
++/* dst_type_flags, "Type flags of DST card, bitfield 1=10 byte tuner, 2=TS is 204, 4=symdiv"); */
++static struct device_attribute dev_attr_client_flags = {
++	.attr = {.name = "flags",.mode = S_IRUGO | S_IWUGO,.owner = THIS_MODULE},
++	.show = &attr_read_flags,
++	.store = &attr_write_flags,
++};
++
++static struct i2c_client client_template;
+ 
+-static int dst_attach (struct dvb_i2c_bus *i2c, void **data)
++static int attach_adapter(struct i2c_adapter *adapter)
+ {
++	struct i2c_client *client;
+ 	struct dst_data *dst;
+ 	struct bt878 *bt;
+ 	struct dvb_frontend_info *info;
++	int ret;
+ 
+-	dprintk("%s: check ci\n", __FUNCTION__);
+-	if (dst_cur_no >= DST_MAX_CARDS) {
+-		dprintk("%s: can't have more than %d cards\n", __FUNCTION__, DST_MAX_CARDS);
+-		return -ENODEV;
+-	}
+-	bt = bt878_find_by_dvb_adap(i2c->adapter);
++	bt = bt878_find_by_i2c_adap(adapter);
+ 	if (!bt)
+ 		return -ENODEV;
++
+ 	dst = kmalloc(sizeof(struct dst_data), GFP_KERNEL);
+ 	if (dst == NULL) {
+ 		printk(KERN_INFO "%s: Out of memory.\n", __FUNCTION__);
+ 		return -ENOMEM;
+ 	}
++
+ 	memset(dst, 0, sizeof(*dst));
+-	*data = dst;
+ 	dst->bt = bt;
+-	dst->i2c = i2c;
++	dst->i2c = adapter;
+ 	if (dst_check_ci(dst) < 0) {
+ 		kfree(dst);
+ 		return -ENODEV;
+ 	}
++	dst_init(dst);
+ 
+-	dst_init (dst);
+-	dprintk("%s: register dst %p bt %p i2c %p\n", __FUNCTION__, 
+-			dst, dst->bt, dst->i2c);
++	dprintk("%s: register dst %8.8x bt %8.8x i2c %8.8x\n", __FUNCTION__, (u32) dst, (u32) (dst->bt), (u32) (dst->i2c));
+ 
+-	info = &dst_info_sat;
+-	if (dst->dst_type == DST_TYPE_IS_TERR)
+-		info = &dst_info_tv;
+-	else if (dst->dst_type == DST_TYPE_IS_CABLE)
++	switch (dst->dst_type) {
++	case DST_TYPE_IS_TERR:
++		info = &dst_info_terr;
++		break;
++	case DST_TYPE_IS_CABLE:
+ 		info = &dst_info_cable;
++		break;
++	case DST_TYPE_IS_SAT:
++		info = &dst_info_sat;
++		break;
++	default:
++		printk("dst: unknown frontend type. please report to the LinuxTV.org DVB mailinglist.\n");
++		kfree(dst);
++		return -ENODEV;
++	}
++
++	if (NULL == (client = kmalloc(sizeof(struct i2c_client), GFP_KERNEL))) {
++		kfree(dst);
++		return -ENOMEM;
++	}
++
++	memcpy(client, &client_template, sizeof(struct i2c_client));
++	client->adapter = adapter;
++	client->addr = DST_I2C_ADDR;
++
++	i2c_set_clientdata(client, (void *) dst);
++
++	ret = i2c_attach_client(client);
++	if (ret) {
++		kfree(client);
++		kfree(dst);
++		return -EFAULT;
++	}
++
++	BUG_ON(!dst->dvb);
++
++	device_create_file(&client->dev, &dev_attr_client_type);
++	device_create_file(&client->dev, &dev_attr_client_flags);
++
++	ret = dvb_register_frontend(dst_ioctl, dst->dvb, dst, info, THIS_MODULE);
++	if (ret) {
++		i2c_detach_client(client);
++		kfree(client);
++		kfree(dst);
++		return -EFAULT;
++	}
+ 
+-	dvb_register_frontend (dst_ioctl, i2c, dst, info);
+-	dst_cur_no++;
+ 	return 0;
+ }
+ 
+-static void dst_detach (struct dvb_i2c_bus *i2c, void *data)
++static int detach_client(struct i2c_client *client)
+ {
+-	dvb_unregister_frontend (dst_ioctl, i2c);
+-	dprintk("%s: unregister dst %p\n", __FUNCTION__, data);
+-	if (data)
+-		kfree(data);
++	struct dst_data *state = (struct dst_data *) i2c_get_clientdata(client);
++
++	dvb_unregister_frontend(dst_ioctl, state->dvb);
++
++	device_remove_file(&client->dev, &dev_attr_client_type);
++	device_remove_file(&client->dev, &dev_attr_client_flags);
++
++	i2c_detach_client(client);
++	BUG_ON(state->dvb);
++
++	kfree(client);
++	kfree(state);
++
++	return 0;
+ }
+ 
+-static int __init init_dst (void)
++static int command(struct i2c_client *client, unsigned int cmd, void *arg)
+ {
+-	return dvb_register_i2c_device (THIS_MODULE, dst_attach, dst_detach);
++	struct dst_data *state = (struct dst_data *) i2c_get_clientdata(client);
++
++	switch (cmd) {
++	case FE_REGISTER:
++		state->dvb = (struct dvb_adapter *) arg;
++		break;
++	case FE_UNREGISTER:
++		state->dvb = NULL;
++		break;
++	default:
++		return -EOPNOTSUPP;
++	}
++	return 0;
+ }
+ 
+-static void __exit exit_dst (void)
++static struct i2c_driver driver = {
++	.owner = THIS_MODULE,
++	.name = "dst",
++	.id = I2C_DRIVERID_DVBFE_DST,
++	.flags = I2C_DF_NOTIFY,
++	.attach_adapter = attach_adapter,
++	.detach_client = detach_client,
++	.command = command,
++};
++
++static struct i2c_client client_template = {
++	I2C_DEVNAME("dst"),
++	.flags = I2C_CLIENT_ALLOW_USE,
++	.driver = &driver,
++};
++
++static int __init init_dst(void)
+ {
+-	dvb_unregister_i2c_device (dst_attach);
++	return i2c_add_driver(&driver);
+ }
+ 
++static void __exit exit_dst(void)
++{
++	if (i2c_del_driver(&driver))
++		printk("dst: driver deregistration failed\n");
++}
+ 
+ module_init(init_dst);
+ module_exit(exit_dst);
+@@ -1184,4 +1254,3 @@ module_exit(exit_dst);
+ MODULE_DESCRIPTION("DST DVB-S Frontend");
+ MODULE_AUTHOR("Jamie Honan");
+ MODULE_LICENSE("GPL");
+-
+diff -L home/michael/devel/debug/dvb-kernel/linux/drivers/media/dvb/frontends/alps_tdlb7.c -puN /dev/null /dev/null
+diff -L home/michael/devel/debug/dvb-kernel/linux/drivers/media/dvb/frontends/dst.c -puN /dev/null /dev/null
+_

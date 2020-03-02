@@ -1,0 +1,486 @@
+bk://bk.phunnypharm.org/ieee1394-2.6
+bcollins@debian.org|ChangeSet|20040712164609|12775 bcollins
+
+# This is a BitKeeper generated diff -Nru style patch.
+#
+# ChangeSet
+#   2004/07/08 10:22:42-04:00 bcollins@debian.org 
+#   Use wmb() to make sure things get flushed before setting the wakup bit.
+#   
+#   Signed-off-by: Ben Collins <bcollins@debian.org>
+#   Submitted-by: Keith Bengston <Keith.Bengston@csiro.au>
+# 
+# drivers/ieee1394/ohci1394.c
+#   2004/07/08 10:21:33-04:00 bcollins@debian.org +4 -0
+#   Use wmb() to make sure things get flushed before setting the wakup bit.
+#   Signed-off-by: Ben Collins <bcollins@debian.org>
+#   Submitted-by: Keith Bengston <Keith.Bengston@csiro.au>
+# 
+# ChangeSet
+#   2004/07/08 10:17:02-04:00 bcollins@debian.org 
+#   Revision number merge.
+#   
+#   Signed-off-by: Ben Collins <bcollins@debian.org>
+# 
+# drivers/ieee1394/sbp2.c
+#   2004/07/08 10:15:45-04:00 bcollins@debian.org +1 -1
+#   Revision number merge
+# 
+# drivers/ieee1394/ohci1394.c
+#   2004/07/08 10:15:44-04:00 bcollins@debian.org +1 -1
+#   Revision number merge
+# 
+# drivers/ieee1394/eth1394.c
+#   2004/07/08 10:15:44-04:00 bcollins@debian.org +2 -2
+#   Revision number merge
+# 
+# ChangeSet
+#   2004/07/08 10:14:17-04:00 bcollins@debian.org 
+#   Fix buffer overflow in csr1212.c.
+#   
+#   Signed-off-by: Ben Collins <bcollins@debian.org>
+#   Signed-off-by: Steve Kinneberg <kberg@linux13294.org>
+# 
+# drivers/ieee1394/csr1212.c
+#   2004/07/08 10:12:33-04:00 bcollins@debian.org +5 -2
+#   Fix buffer overflow in csr1212.c.
+#   Signed-off-by: Steve Kinneberg <kberg@linux13294.org>
+# 
+# ChangeSet
+#   2004/07/08 10:10:59-04:00 bcollins@debian.org 
+#   Fix bug where 4 times Extended ROM Leaf size would be read when parsing in csr1212.
+#   
+#   Signed-off-by: Ben Collins <bcollins@debian.org>
+#   Signed-off-by: Steve Kinneberg <kberg@linux1394.org>
+# 
+# drivers/ieee1394/csr1212.c
+#   2004/07/08 10:08:46-04:00 bcollins@debian.org +7 -5
+#   Fix bug where 4 times Extended ROM Leaf size would be read when parsing in csr1212.  Added NULL check for csr1212_rom_cache_malloc return value.
+#   #
+# 
+# ChangeSet
+#   2004/07/08 10:05:58-04:00 bcollins@debian.org 
+#   Fix bugs generating and parsing ConfigROMs with Extended ROM entries.
+#   
+#   Signed-off-by: Ben Collins <bcollins@debian.org>
+#   Signed-off-by: Steve Kinneberg <kberg@linux1394.org>
+# 
+# drivers/ieee1394/csr1212.c
+#   2004/07/08 10:04:42-04:00 bcollins@debian.org +75 -44
+#   Fix bugs generating and parsing ConfigROMs with Extended ROM entries.
+#   Signed-off-by: Steve Kinneberg <kberg@linux1394.org>
+# 
+# ChangeSet
+#   2004/06/21 09:28:34-04:00 bcollins@debian.org 
+#   ieee1394: Fix PCILynx bus resets.
+#   
+#   Signed-off-by: Jody McIntyre <linux1394@modernduck.com>
+#   Signed-off-by: Ben Collins <bcollins@debian.org>
+# 
+# drivers/ieee1394/pcilynx.c
+#   2004/06/21 09:27:00-04:00 bcollins@debian.org +2 -2
+#   Fix PCILynx bus resets.
+#   
+#   Signed-off-by: Jody McIntyre <linux1394@modernduck.com>
+#   Signed-off-by: Ben Collins <bcollins@debian.org>
+# 
+diff -Nru a/drivers/ieee1394/csr1212.c b/drivers/ieee1394/csr1212.c
+--- a/drivers/ieee1394/csr1212.c	2004-07-25 23:22:35 -07:00
++++ b/drivers/ieee1394/csr1212.c	2004-07-25 23:22:35 -07:00
+@@ -87,7 +87,8 @@
+ 
+ static inline void free_keyval(struct csr1212_keyval *kv)
+ {
+-	if (kv->key.type == CSR1212_KV_TYPE_LEAF)
++	if ((kv->key.type == CSR1212_KV_TYPE_LEAF) &&
++	    (kv->key.id != CSR1212_KV_ID_EXTENDED_ROM))
+ 		CSR1212_FREE(kv->value.leaf.data);
+ 
+ 	CSR1212_FREE(kv);
+@@ -155,7 +156,7 @@
+ {
+ 	struct csr1212_keyval *kv;
+ 
+-	for (kv = kv_list; kv != NULL; kv = kv->next) {
++	for (kv = kv_list->next; kv && (kv != kv_list); kv = kv->next) {
+ 		if (kv->offset == offset)
+ 			return kv;
+ 	}
+@@ -181,9 +182,9 @@
+ 		return NULL;
+ 	}
+ 
+-        /* The keyval key id is not used for the root node, but a valid key id
+-         * that can be used for a directory needs to be passed to
+-         * csr1212_new_directory(). */
++	/* The keyval key id is not used for the root node, but a valid key id
++	 * that can be used for a directory needs to be passed to
++	 * csr1212_new_directory(). */
+ 	csr->root_kv = csr1212_new_directory(CSR1212_KV_ID_VENDOR);
+ 	if (!csr->root_kv) {
+ 		CSR1212_FREE(csr->cache_head);
+@@ -709,7 +710,7 @@
+ 					tail->next = k->value.directory.dentries_head;
+ 					k->value.directory.dentries_head->prev = tail;
+ 					tail = k->value.directory.dentries_tail;
+-                                }
++				}
+ 			}
+ 			free_keyval(k);
+ 			k = a;
+@@ -796,7 +797,8 @@
+ 		return CSR1212_ENOMEM;
+ 	}
+ 	cache->ext_rom->offset = csr_addr - CSR1212_REGISTER_SPACE_BASE;
+-	cache->ext_rom->value.leaf.len = 0;
++	cache->ext_rom->value.leaf.len = -1;
++	cache->ext_rom->value.leaf.data = cache->data;
+ 
+ 	/* Add cache to tail of cache list */
+ 	cache->prev = csr->cache_tail;
+@@ -864,20 +866,20 @@
+ 			default:
+ 			case CSR1212_KV_TYPE_IMMEDIATE:
+ 			case CSR1212_KV_TYPE_CSR_OFFSET:
+-				continue;
++				break;
+ 			case CSR1212_KV_TYPE_LEAF:
+ 			case CSR1212_KV_TYPE_DIRECTORY:
+ 				/* Remove from list */
+-				if (dkv->prev)
++				if (dkv->prev && (dkv->prev->next == dkv))
+ 					dkv->prev->next = dkv->next;
+-				if (dkv->next)
++				if (dkv->next && (dkv->next->prev == dkv))
+ 					dkv->next->prev = dkv->prev;
+-				if (dkv == *layout_tail)
+-					*layout_tail = dkv->prev;
++				//if (dkv == *layout_tail)
++				//	*layout_tail = dkv->prev;
+ 
+ 				/* Special case: Extended ROM leafs */
+ 				if (dkv->key.id == CSR1212_KV_ID_EXTENDED_ROM) {
+-					dkv->value.leaf.len = 0; /* initialize to zero */
++					dkv->value.leaf.len = -1;
+ 					/* Don't add Extended ROM leafs in the layout list,
+ 					 * they are handled differently. */
+ 					break;
+@@ -919,8 +921,8 @@
+ }
+ 
+ struct csr1212_keyval *csr1212_generate_positions(struct csr1212_csr_rom_cache *cache,
+-                                                  struct csr1212_keyval *start_kv,
+-                                                  int start_pos)
++						  struct csr1212_keyval *start_kv,
++						  int start_pos)
+ {
+ 	struct csr1212_keyval *kv = start_kv;
+ 	struct csr1212_keyval *okv = start_kv;
+@@ -930,7 +932,10 @@
+ 	cache->layout_head = kv;
+ 
+ 	while(kv && pos < cache->size) {
+-		kv->offset = cache->offset + pos;
++		/* Special case: Extended ROM leafs */
++		if (kv->key.id != CSR1212_KV_ID_EXTENDED_ROM) {
++			kv->offset = cache->offset + pos;
++		}
+ 
+ 		switch(kv->key.type) {
+ 		case CSR1212_KV_TYPE_LEAF:
+@@ -1090,6 +1095,9 @@
+ 	bi->crc_length = bi->length;
+ 	bi->crc = csr1212_crc16(bi->data, bi->crc_length);
+ 
++	csr->root_kv->next = NULL;
++	csr->root_kv->prev = NULL;
++
+ 	agg_size = csr1212_generate_layout_order(csr->root_kv);
+ 
+ 	init_offset = csr->bus_info_len;
+@@ -1158,6 +1166,17 @@
+ 
+ 		/* Copy the data into the cache buffer */
+ 		csr1212_fill_cache(cache);
++
++		if (cache != csr->cache_head) {
++			/* Set the length and CRC of the extended ROM. */
++			struct csr1212_keyval_img *kvi =
++				(struct csr1212_keyval_img*)cache->data;
++
++			kvi->length = CSR1212_CPU_TO_BE16(bytes_to_quads(cache->len) - 1);
++			kvi->crc = csr1212_crc16(kvi->data,
++						 bytes_to_quads(cache->len) - 1);
++
++		}
+ 	}
+ 
+ 	return CSR1212_SUCCESS;
+@@ -1174,11 +1193,6 @@
+ 			       &cache->data[bytes_to_quads(offset - cache->offset)],
+ 			       len);
+ 			return CSR1212_SUCCESS;
+-		} else if (((offset < cache->offset) &&
+-			    ((offset + len) >= cache->offset)) ||
+-			   ((offset >= cache->offset) &&
+-			    ((offset + len) > (cache->offset + cache->size)))) {
+-			return CSR1212_EINVAL;
+ 		}
+ 	}
+ 	return CSR1212_ENOENT;
+@@ -1227,8 +1241,8 @@
+ 		return CSR1212_EINVAL;
+ 
+ #if 0
+-        /* Apparently there are too many differnt wrong implementations of the
+-         * CRC algorithm that verifying them is moot. */
++	/* Apparently there are too many differnt wrong implementations of the
++	 * CRC algorithm that verifying them is moot. */
+ 	if ((csr1212_crc16(bi->data, bi->crc_length) != bi->crc) &&
+ 	    (csr1212_msft_crc16(bi->data, bi->crc_length) != bi->crc))
+ 		return CSR1212_EINVAL;
+@@ -1249,10 +1263,9 @@
+ 	return CSR1212_SUCCESS;
+ }
+ 
+-static inline int csr1212_parse_dir_entry(struct csr1212_keyval *dir,
+-					  csr1212_quad_t ki,
+-					  u_int32_t kv_pos,
+-					  struct csr1212_csr_rom_cache *cache)
++static int csr1212_parse_dir_entry(struct csr1212_keyval *dir,
++				   csr1212_quad_t ki,
++				   u_int32_t kv_pos)
+ {
+ 	int ret = CSR1212_SUCCESS;
+ 	struct csr1212_keyval *k = NULL;
+@@ -1291,7 +1304,7 @@
+ 			goto fail;
+ 		}
+ 
+-		k = csr1212_find_keyval_offset(cache->layout_head, offset);
++		k = csr1212_find_keyval_offset(dir, offset);
+ 
+ 		if (k)
+ 			break;		/* Found it. */
+@@ -1309,11 +1322,10 @@
+ 		k->valid = 0;	/* Contents not read yet so it's not valid. */
+ 		k->offset = offset;
+ 
+-		k->prev = cache->layout_tail;
+-		k->next = NULL;
+-		if (cache->layout_tail)
+-			cache->layout_tail->next = k;
+-		cache->layout_tail = k;
++		k->prev = dir;
++		k->next = dir->next;
++		dir->next->prev = k;
++		dir->next = k;
+ 	}
+ 	ret = csr1212_attach_keyval_to_directory(dir, k);
+ 
+@@ -1325,6 +1337,7 @@
+ 	return ret;
+ }
+ 
++
+ int csr1212_parse_keyval(struct csr1212_keyval *kv,
+ 			 struct csr1212_csr_rom_cache *cache)
+ {
+@@ -1338,8 +1351,8 @@
+ 	kvi_len = CSR1212_BE16_TO_CPU(kvi->length);
+ 
+ #if 0
+-        /* Apparently there are too many differnt wrong implementations of the
+-         * CRC algorithm that verifying them is moot. */
++	/* Apparently there are too many differnt wrong implementations of the
++	 * CRC algorithm that verifying them is moot. */
+ 	if ((csr1212_crc16(kvi->data, kvi_len) != kvi->crc) &&
+ 	    (csr1212_msft_crc16(kvi->data, kvi_len) != kvi->crc)) {
+ 		ret = CSR1212_EINVAL;
+@@ -1353,22 +1366,19 @@
+ 			csr1212_quad_t ki = kvi->data[i];
+ 
+ 			/* Some devices put null entries in their unit
+-			 * directories.  If we come across such and entry,
++			 * directories.  If we come across such an entry,
+ 			 * then skip it. */
+ 			if (ki == 0x0)
+ 				continue;
+ 			ret = csr1212_parse_dir_entry(kv, ki,
+ 						      (kv->offset +
+-						       quads_to_bytes(i + 1)),
+-						      cache);
++						       quads_to_bytes(i + 1)));
+ 		}
+ 		kv->value.directory.len = kvi_len;
+ 		break;
+ 
+ 	case CSR1212_KV_TYPE_LEAF:
+-		if (kv->key.id == CSR1212_KV_ID_EXTENDED_ROM) {
+-			kv->value.leaf.data = cache->data;
+-		} else {
++		if (kv->key.id != CSR1212_KV_ID_EXTENDED_ROM) {
+ 			kv->value.leaf.data = CSR1212_MALLOC(quads_to_bytes(kvi_len));
+ 			if (!kv->value.leaf.data)
+ 			{
+@@ -1399,7 +1409,6 @@
+ 	u_int32_t *cache_ptr;
+ 	u_int16_t kv_len = 0;
+ 
+-
+ 	if (!csr || !kv)
+ 		return CSR1212_EINVAL;
+ 
+@@ -1413,7 +1422,7 @@
+ 
+ 	if (!cache) {
+ 		csr1212_quad_t q;
+-		struct csr1212_csr_rom_cache *nc;
++		u_int32_t cache_size;
+ 
+ 		/* Only create a new cache for Extended ROM leaves. */
+ 		if (kv->key.id != CSR1212_KV_ID_EXTENDED_ROM)
+@@ -1425,12 +1434,20 @@
+ 			return CSR1212_EIO;
+ 		}
+ 
+-		kv->value.leaf.len = quads_to_bytes(CSR1212_BE32_TO_CPU(q)>>16);
++		kv->value.leaf.len = CSR1212_BE32_TO_CPU(q) >> 16;
++
++		cache_size = (quads_to_bytes(kv->value.leaf.len + 1) +
++			      (csr->max_rom - 1)) & ~(csr->max_rom - 1);
+ 
+-		nc = csr1212_rom_cache_malloc(kv->offset, kv->value.leaf.len);
+-		cache->next = nc;
+-		nc->prev = cache;
+-		csr->cache_tail = nc;
++		cache = csr1212_rom_cache_malloc(kv->offset, cache_size);
++		if (!cache)
++			return CSR1212_ENOMEM;
++
++		kv->value.leaf.data = &cache->data[1];
++		csr->cache_tail->next = cache;
++		cache->prev = csr->cache_tail;
++		cache->next = NULL;
++		csr->cache_tail = cache;
+ 		cache->filled_head =
+ 			CSR1212_MALLOC(sizeof(struct csr1212_cache_region));
+ 		if (!cache->filled_head) {
+@@ -1443,6 +1460,10 @@
+ 		cache->filled_head->next = NULL;
+ 		cache->filled_head->prev = NULL;
+ 		cache->data[0] = q;
++
++		/* Don't read the entire extended ROM now.  Pieces of it will
++		 * be read when entries inside it are read. */
++		return csr1212_parse_keyval(kv, cache);
+ 	}
+ 
+ 	cache_index = kv->offset - cache->offset;
+@@ -1548,6 +1569,7 @@
+ int csr1212_parse_csr(struct csr1212_csr *csr)
+ {
+ 	static const int mr_map[] = { 4, 64, 1024, 0 };
++	struct csr1212_dentry *dentry;
+ 	int ret;
+ 
+ 	if (!csr || !csr->ops->bus_read)
+@@ -1570,7 +1592,21 @@
+ 		csr->bus_info_len;
+ 
+ 	csr->root_kv->valid = 0;
++	csr->root_kv->next = csr->root_kv;
++	csr->root_kv->prev = csr->root_kv;
+ 	csr1212_get_keyval(csr, csr->root_kv);
++
++	/* Scan through the Root directory finding all extended ROM regions
++	 * and make cache regions for them */
++	for (dentry = csr->root_kv->value.directory.dentries_head;
++	     dentry; dentry = dentry->next) {
++		if (dentry->kv->key.id == CSR1212_KV_ID_EXTENDED_ROM) {
++			csr1212_get_keyval(csr, dentry->kv);
++
++			if (ret != CSR1212_SUCCESS)
++				return ret;
++		}
++	}
+ 
+ 	return CSR1212_SUCCESS;
+ }
+diff -Nru a/drivers/ieee1394/eth1394.c b/drivers/ieee1394/eth1394.c
+--- a/drivers/ieee1394/eth1394.c	2004-07-25 23:22:35 -07:00
++++ b/drivers/ieee1394/eth1394.c	2004-07-25 23:22:35 -07:00
+@@ -89,7 +89,7 @@
+ #define TRACE() printk(KERN_ERR "%s:%s[%d] ---- TRACE\n", driver_name, __FUNCTION__, __LINE__)
+ 
+ static char version[] __devinitdata =
+-	"$Rev: 1224 $ Ben Collins <bcollins@debian.org>";
++	"$Rev: 1231 $ Ben Collins <bcollins@debian.org>";
+ 
+ struct fragment_info {
+ 	struct list_head list;
+@@ -1796,7 +1796,7 @@
+ 		case ETHTOOL_GDRVINFO: {
+ 			struct ethtool_drvinfo info = { ETHTOOL_GDRVINFO };
+ 			strcpy (info.driver, driver_name);
+-			strcpy (info.version, "$Rev: 1224 $");
++			strcpy (info.version, "$Rev: 1231 $");
+ 			/* FIXME XXX provide sane businfo */
+ 			strcpy (info.bus_info, "ieee1394");
+ 			if (copy_to_user (useraddr, &info, sizeof (info)))
+diff -Nru a/drivers/ieee1394/ohci1394.c b/drivers/ieee1394/ohci1394.c
+--- a/drivers/ieee1394/ohci1394.c	2004-07-25 23:22:35 -07:00
++++ b/drivers/ieee1394/ohci1394.c	2004-07-25 23:22:35 -07:00
+@@ -162,7 +162,7 @@
+ printk(level "%s: fw-host%d: " fmt "\n" , OHCI1394_DRIVER_NAME, ohci->host->id , ## args)
+ 
+ static char version[] __devinitdata =
+-	"$Rev: 1223 $ Ben Collins <bcollins@debian.org>";
++	"$Rev: 1226 $ Ben Collins <bcollins@debian.org>";
+ 
+ /* Module Parameters */
+ static int phys_dma = 1;
+@@ -2545,6 +2545,10 @@
+ 	idx = (idx + d->num_desc - 1 ) % d->num_desc;
+ 	d->prg_cpu[idx]->branchAddress |= le32_to_cpu(0x00000001);
+ 
++	/* To avoid a race, ensure 1394 interface hardware sees the inserted
++	 * context program descriptors before it sees the wakeup bit set. */
++	wmb();
++
+ 	/* wake up the dma context if necessary */
+ 	if (!(reg_read(ohci, d->ctrlSet) & 0x400)) {
+ 		PRINT(KERN_INFO,
+diff -Nru a/drivers/ieee1394/pcilynx.c b/drivers/ieee1394/pcilynx.c
+--- a/drivers/ieee1394/pcilynx.c	2004-07-25 23:22:35 -07:00
++++ b/drivers/ieee1394/pcilynx.c	2004-07-25 23:22:35 -07:00
+@@ -500,7 +500,7 @@
+         pcl.async_error_next = PCL_NEXT_INVALID;
+         pcl.pcl_status = 0;
+         pcl.buffer[0].control = packet->speed_code << 14 | packet->header_size;
+-#ifdef __BIG_ENDIAN
++#ifndef __BIG_ENDIAN
+         pcl.buffer[0].control |= PCL_BIGENDIAN;
+ #endif
+         pcl.buffer[0].pointer = d->header_dma;
+@@ -1697,7 +1697,7 @@
+         pcl.async_error_next = PCL_NEXT_INVALID;
+ 
+         pcl.buffer[0].control = PCL_CMD_RCV | 16;
+-#ifdef __BIG_ENDIAN
++#ifndef __BIG_ENDIAN
+ 	pcl.buffer[0].control |= PCL_BIGENDIAN;
+ #endif
+ 	pcl.buffer[1].control = PCL_LAST_BUFF | 4080;
+diff -Nru a/drivers/ieee1394/sbp2.c b/drivers/ieee1394/sbp2.c
+--- a/drivers/ieee1394/sbp2.c	2004-07-25 23:22:35 -07:00
++++ b/drivers/ieee1394/sbp2.c	2004-07-25 23:22:35 -07:00
+@@ -78,7 +78,7 @@
+ #include "sbp2.h"
+ 
+ static char version[] __devinitdata =
+-	"$Rev: 1219 $ Ben Collins <bcollins@debian.org>";
++	"$Rev: 1231 $ Ben Collins <bcollins@debian.org>";
+ 
+ /*
+  * Module load parameter definitions

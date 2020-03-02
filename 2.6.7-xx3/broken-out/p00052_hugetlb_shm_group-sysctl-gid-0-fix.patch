@@ -1,0 +1,27 @@
+
+
+
+---
+
+ 25-akpm/fs/hugetlbfs/inode.c |    7 +++++--
+ 1 files changed, 5 insertions(+), 2 deletions(-)
+
+diff -puN fs/hugetlbfs/inode.c~hugetlb_shm_group-sysctl-gid-0-fix fs/hugetlbfs/inode.c
+--- 25/fs/hugetlbfs/inode.c~hugetlb_shm_group-sysctl-gid-0-fix	Mon May 10 14:57:31 2004
++++ 25-akpm/fs/hugetlbfs/inode.c	Mon May 10 14:58:59 2004
+@@ -722,8 +722,11 @@ static unsigned long hugetlbfs_counter(v
+ 
+ static int can_do_hugetlb_shm(void)
+ {
+-	return likely(capable(CAP_IPC_LOCK) ||
+-			in_group_p(sysctl_hugetlb_shm_group));
++	if (capable(CAP_IPC_LOCK))
++		return 1;
++	if (sysctl_hugetlb_shm_group == 0)
++		return 0;
++	return in_group_p(sysctl_hugetlb_shm_group);
+ }
+ 
+ struct file *hugetlb_zero_setup(size_t size)
+
+_

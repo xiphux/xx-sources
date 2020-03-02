@@ -1,0 +1,51 @@
+
+From: Roland McGrath <roland@redhat.com>
+
+When kill is used to force a core dump, __group_complete_signal uses the
+group_stop_count machinery to stop other threads from doing anything more
+before the signal-taking thread starts the coredump synchronization.  This
+intentionally results in group_stop_count always still being > 0 when the
+signal-taking thread gets into do_coredump.  However, that has the
+unintended effect that signal_pending can return true when called from the
+filesystem code while writing the core dump file.  For NFS mounts using the
+"intr" option, this results in NFS operations bailing out before they even
+try, so core files never get successfully dumped on such a filesystem when
+the crash was induced by an asynchronous process-wide signal.
+
+This patch fixes the problem by clearing group_stop_count after the
+coredump synchronization is complete.
+
+The locking I threw in is not directly related, but always should have been
+there and may avoid some potential races with kill.
+
+Signed-off-by: Roland McGrath <roland@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/exec.c |    9 +++++++++
+ 1 files changed, 9 insertions(+)
+
+diff -puN fs/exec.c~clear-false-pending-signal-indication-in-core-dump fs/exec.c
+--- 25/fs/exec.c~clear-false-pending-signal-indication-in-core-dump	2005-01-13 19:22:38.427938848 -0800
++++ 25-akpm/fs/exec.c	2005-01-13 19:22:38.431938240 -0800
+@@ -1442,10 +1442,19 @@ int do_coredump(long signr, int exit_cod
+ 	}
+ 	mm->dumpable = 0;
+ 	init_completion(&mm->core_done);
++	spin_lock_irq(&current->sighand->siglock);
+ 	current->signal->flags = SIGNAL_GROUP_EXIT;
+ 	current->signal->group_exit_code = exit_code;
++	spin_unlock_irq(&current->sighand->siglock);
+ 	coredump_wait(mm);
+ 
++	/*
++	 * Clear any false indication of pending signals that might
++	 * be seen by the filesystem code called to write the core file.
++	 */
++	current->signal->group_stop_count = 0;
++	clear_thread_flag(TIF_SIGPENDING);
++
+ 	if (current->signal->rlim[RLIMIT_CORE].rlim_cur < binfmt->min_coredump)
+ 		goto fail_unlock;
+ 
+_

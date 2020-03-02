@@ -1,0 +1,28 @@
+
+From: Matt Mackall <mpm@selenic.com>
+
+If netpoll attempts to use a device without polling support, it will oops
+when shutting down.  This adds a check that we've actually attached to a
+device.
+
+Signed-off-by: Matt Mackall <mpm@selenic.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/net/core/netpoll.c |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletion(-)
+
+diff -puN net/core/netpoll.c~fix-netpoll-cleanup-on-abort-without-dev net/core/netpoll.c
+--- 25/net/core/netpoll.c~fix-netpoll-cleanup-on-abort-without-dev	2004-08-04 12:25:17.712958696 -0700
++++ 25-akpm/net/core/netpoll.c	2004-08-04 12:25:17.715958240 -0700
+@@ -614,7 +614,8 @@ void netpoll_cleanup(struct netpoll *np)
+ 		spin_lock_irqsave(&rx_list_lock, flags);
+ 		list_del(&np->rx_list);
+ #ifdef CONFIG_NETPOLL_RX
+-		np->dev->netpoll_rx = 0;
++		if (np->dev)
++			np->dev->netpoll_rx = 0;
+ #endif
+ 		spin_unlock_irqrestore(&rx_list_lock, flags);
+ 	}
+_

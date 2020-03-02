@@ -1,0 +1,45 @@
+
+From: Paolo 'Blaisorblade' Giarrusso <blaisorblade_spam@yahoo.it>
+
+Add some comments about the "uml-sysemu-fixes" patch of 2.6.10-mm1 (merged in
+2.6.11-rc1).
+
+Signed-off-by: Paolo 'Blaisorblade' Giarrusso <blaisorblade_spam@yahoo.it>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/um/kernel/tt/tracer.c |   14 ++++++++++++++
+ 1 files changed, 14 insertions(+)
+
+diff -puN arch/um/kernel/tt/tracer.c~uml-commentary-addition-to-recent-sysemu-fix arch/um/kernel/tt/tracer.c
+--- 25/arch/um/kernel/tt/tracer.c~uml-commentary-addition-to-recent-sysemu-fix	Thu Jan 13 15:27:06 2005
++++ 25-akpm/arch/um/kernel/tt/tracer.c	Thu Jan 13 15:27:06 2005
+@@ -313,6 +313,15 @@ int tracer(int (*init_proc)(void *), voi
+ 				sig = 0;
+ 				op = do_proc_op(task, proc_id);
+ 				switch(op){
++				/*
++				 * This is called when entering user mode; after
++				 * this, we start intercepting syscalls.
++				 *
++				 * In fact, a process is started in kernel mode,
++				 * so with is_tracing() == 0 (and that is reset
++				 * when executing syscalls, since UML kernel has
++				 * the right to do syscalls);
++				 */
+ 				case OP_TRACE_ON:
+ 					arch_leave_kernel(task, pid);
+ 					tracing = 1;
+@@ -347,6 +356,11 @@ int tracer(int (*init_proc)(void *), voi
+ 					continue;
+ 				}
+ 				tracing = 0;
++				/* local_using_sysemu has been already set
++				 * below, since if we are here, is_tracing() on
++				 * the traced task was 1, i.e. the process had
++				 * already run through one iteration of the
++				 * loop which executed a OP_TRACE_ON request.*/
+ 				do_syscall(task, pid, local_using_sysemu);
+ 				sig = SIGUSR2;
+ 				break;
+_

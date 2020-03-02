@@ -1,0 +1,194 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc/kernel/dma-mapping.c     |    2 +-
+ 25-akpm/arch/ppc/kernel/perfmon.c         |    2 +-
+ 25-akpm/arch/ppc/kernel/smp.c             |    2 +-
+ 25-akpm/arch/ppc/kernel/time.c            |    2 +-
+ 25-akpm/arch/ppc/kernel/traps.c           |    2 +-
+ 25-akpm/arch/ppc/platforms/chrp_smp.c     |    2 +-
+ 25-akpm/arch/ppc/platforms/pmac_feature.c |    2 +-
+ 25-akpm/arch/ppc/platforms/pmac_nvram.c   |    2 +-
+ 25-akpm/arch/ppc/platforms/pmac_pic.c     |    2 +-
+ 25-akpm/arch/ppc/platforms/sbc82xx.c      |    2 +-
+ 25-akpm/arch/ppc/syslib/i8259.c           |    2 +-
+ 25-akpm/arch/ppc/syslib/open_pic.c        |    2 +-
+ 25-akpm/arch/ppc/syslib/open_pic2.c       |    2 +-
+ 25-akpm/arch/ppc/syslib/prom.c            |    2 +-
+ 14 files changed, 14 insertions(+), 14 deletions(-)
+
+diff -puN arch/ppc/kernel/dma-mapping.c~lock-initializer-cleanup-ppc arch/ppc/kernel/dma-mapping.c
+--- 25/arch/ppc/kernel/dma-mapping.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.654209256 -0800
++++ 25-akpm/arch/ppc/kernel/dma-mapping.c	2005-01-13 23:01:19.676205912 -0800
+@@ -71,7 +71,7 @@ int map_page(unsigned long va, phys_addr
+  * This is the page table (2MB) covering uncached, DMA consistent allocations
+  */
+ static pte_t *consistent_pte;
+-static spinlock_t consistent_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(consistent_lock);
+ 
+ /*
+  * VM region handling support.
+diff -puN arch/ppc/kernel/perfmon.c~lock-initializer-cleanup-ppc arch/ppc/kernel/perfmon.c
+--- 25/arch/ppc/kernel/perfmon.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.655209104 -0800
++++ 25-akpm/arch/ppc/kernel/perfmon.c	2005-01-13 23:01:19.676205912 -0800
+@@ -34,7 +34,7 @@
+ #include <asm/xmon.h>
+ 
+ /* A lock to regulate grabbing the interrupt */
+-spinlock_t perfmon_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(perfmon_lock);
+ 
+ #ifdef CONFIG_FSL_BOOKE
+ static void dummy_perf(struct pt_regs *regs)
+diff -puN arch/ppc/kernel/smp.c~lock-initializer-cleanup-ppc arch/ppc/kernel/smp.c
+--- 25/arch/ppc/kernel/smp.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.657208800 -0800
++++ 25-akpm/arch/ppc/kernel/smp.c	2005-01-13 23:01:19.677205760 -0800
+@@ -175,7 +175,7 @@ void smp_send_stop(void)
+  * static memory requirements. It also looks cleaner.
+  * Stolen from the i386 version.
+  */
+-static spinlock_t call_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(call_lock);
+ 
+ static struct call_data_struct {
+ 	void (*func) (void *info);
+diff -puN arch/ppc/kernel/time.c~lock-initializer-cleanup-ppc arch/ppc/kernel/time.c
+--- 25/arch/ppc/kernel/time.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.659208496 -0800
++++ 25-akpm/arch/ppc/kernel/time.c	2005-01-13 23:01:19.678205608 -0800
+@@ -92,7 +92,7 @@ extern unsigned long wall_jiffies;
+ 
+ static long time_offset;
+ 
+-spinlock_t rtc_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(rtc_lock);
+ 
+ EXPORT_SYMBOL(rtc_lock);
+ 
+diff -puN arch/ppc/kernel/traps.c~lock-initializer-cleanup-ppc arch/ppc/kernel/traps.c
+--- 25/arch/ppc/kernel/traps.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.660208344 -0800
++++ 25-akpm/arch/ppc/kernel/traps.c	2005-01-13 23:01:19.678205608 -0800
+@@ -73,7 +73,7 @@ void (*debugger_fault_handler)(struct pt
+  * Trap & Exception support
+  */
+ 
+-spinlock_t die_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(die_lock);
+ 
+ void die(const char * str, struct pt_regs * fp, long err)
+ {
+diff -puN arch/ppc/platforms/chrp_smp.c~lock-initializer-cleanup-ppc arch/ppc/platforms/chrp_smp.c
+--- 25/arch/ppc/platforms/chrp_smp.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.662208040 -0800
++++ 25-akpm/arch/ppc/platforms/chrp_smp.c	2005-01-13 23:01:19.679205456 -0800
+@@ -57,7 +57,7 @@ smp_chrp_setup_cpu(int cpu_nr)
+ 		do_openpic_setup_cpu();
+ }
+ 
+-static spinlock_t timebase_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(timebase_lock);
+ static unsigned int timebase_upper = 0, timebase_lower = 0;
+ 
+ void __devinit
+diff -puN arch/ppc/platforms/pmac_feature.c~lock-initializer-cleanup-ppc arch/ppc/platforms/pmac_feature.c
+--- 25/arch/ppc/platforms/pmac_feature.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.663207888 -0800
++++ 25-akpm/arch/ppc/platforms/pmac_feature.c	2005-01-13 23:01:19.681205152 -0800
+@@ -63,7 +63,7 @@ extern struct pci_dev *k2_skiplist[2];
+  * We use a single global lock to protect accesses. Each driver has
+  * to take care of its own locking
+  */
+-static spinlock_t feature_lock  __pmacdata = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(feature_lock  __pmacdata);
+ 
+ #define LOCK(flags)	spin_lock_irqsave(&feature_lock, flags);
+ #define UNLOCK(flags)	spin_unlock_irqrestore(&feature_lock, flags);
+diff -puN arch/ppc/platforms/pmac_nvram.c~lock-initializer-cleanup-ppc arch/ppc/platforms/pmac_nvram.c
+--- 25/arch/ppc/platforms/pmac_nvram.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.665207584 -0800
++++ 25-akpm/arch/ppc/platforms/pmac_nvram.c	2005-01-13 23:01:19.682205000 -0800
+@@ -80,7 +80,7 @@ static volatile unsigned char *nvram_dat
+ static int nvram_mult, is_core_99;
+ static int core99_bank = 0;
+ static int nvram_partitions[3];
+-static spinlock_t nv_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(nv_lock);
+ 
+ extern int pmac_newworld;
+ extern int system_running;
+diff -puN arch/ppc/platforms/pmac_pic.c~lock-initializer-cleanup-ppc arch/ppc/platforms/pmac_pic.c
+--- 25/arch/ppc/platforms/pmac_pic.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.666207432 -0800
++++ 25-akpm/arch/ppc/platforms/pmac_pic.c	2005-01-13 23:01:19.682205000 -0800
+@@ -68,7 +68,7 @@ static int max_irqs __pmacdata;
+ static int max_real_irqs __pmacdata;
+ static u32 level_mask[4] __pmacdata;
+ 
+-static spinlock_t pmac_pic_lock __pmacdata = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(pmac_pic_lock __pmacdata);
+ 
+ 
+ #define GATWICK_IRQ_POOL_SIZE        10
+diff -puN arch/ppc/platforms/sbc82xx.c~lock-initializer-cleanup-ppc arch/ppc/platforms/sbc82xx.c
+--- 25/arch/ppc/platforms/sbc82xx.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.667207280 -0800
++++ 25-akpm/arch/ppc/platforms/sbc82xx.c	2005-01-13 23:01:19.683204848 -0800
+@@ -68,7 +68,7 @@ static void sbc82xx_time_init(void)
+ 
+ static volatile char *sbc82xx_i8259_map;
+ static char sbc82xx_i8259_mask = 0xff;
+-static spinlock_t sbc82xx_i8259_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(sbc82xx_i8259_lock);
+ 
+ static void sbc82xx_i8259_mask_and_ack_irq(unsigned int irq_nr)
+ {
+diff -puN arch/ppc/syslib/i8259.c~lock-initializer-cleanup-ppc arch/ppc/syslib/i8259.c
+--- 25/arch/ppc/syslib/i8259.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.669206976 -0800
++++ 25-akpm/arch/ppc/syslib/i8259.c	2005-01-13 23:01:19.683204848 -0800
+@@ -10,7 +10,7 @@ unsigned char cached_8259[2] = { 0xff, 0
+ #define cached_A1 (cached_8259[0])
+ #define cached_21 (cached_8259[1])
+ 
+-static spinlock_t i8259_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(i8259_lock);
+ 
+ int i8259_pic_irq_offset;
+ 
+diff -puN arch/ppc/syslib/open_pic2.c~lock-initializer-cleanup-ppc arch/ppc/syslib/open_pic2.c
+--- 25/arch/ppc/syslib/open_pic2.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.670206824 -0800
++++ 25-akpm/arch/ppc/syslib/open_pic2.c	2005-01-13 23:01:19.684204696 -0800
+@@ -386,7 +386,7 @@ static void openpic2_set_spurious(u_int 
+ 			   vec);
+ }
+ 
+-static spinlock_t openpic2_setup_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(openpic2_setup_lock);
+ 
+ /*
+  *  Initialize a timer interrupt (and disable it)
+diff -puN arch/ppc/syslib/open_pic.c~lock-initializer-cleanup-ppc arch/ppc/syslib/open_pic.c
+--- 25/arch/ppc/syslib/open_pic.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.671206672 -0800
++++ 25-akpm/arch/ppc/syslib/open_pic.c	2005-01-13 23:01:19.685204544 -0800
+@@ -531,7 +531,7 @@ void openpic_reset_processor_phys(u_int 
+ }
+ 
+ #if defined(CONFIG_SMP) || defined(CONFIG_PM)
+-static spinlock_t openpic_setup_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(openpic_setup_lock);
+ #endif
+ 
+ #ifdef CONFIG_SMP
+diff -puN arch/ppc/syslib/prom.c~lock-initializer-cleanup-ppc arch/ppc/syslib/prom.c
+--- 25/arch/ppc/syslib/prom.c~lock-initializer-cleanup-ppc	2005-01-13 23:01:19.673206368 -0800
++++ 25-akpm/arch/ppc/syslib/prom.c	2005-01-13 23:01:19.686204392 -0800
+@@ -1397,7 +1397,7 @@ print_properties(struct device_node *np)
+ }
+ #endif
+ 
+-static spinlock_t rtas_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(rtas_lock);
+ 
+ /* this can be called after setup -- Cort */
+ int __openfirmware
+_

@@ -1,0 +1,70 @@
+Other stuff that can be public -> scheduler.c
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+
+Index: linux-2.6.10-rc1-mm4/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc1-mm4.orig/kernel/sched.c	2004-11-10 09:21:05.897757660 +1100
++++ linux-2.6.10-rc1-mm4/kernel/sched.c	2004-11-10 09:21:07.754459371 +1100
+@@ -3256,15 +3256,6 @@ static void __devinit ingo_init_idle(tas
+ #endif
+ }
+ 
+-/*
+- * In a system that switches off the HZ timer nohz_cpu_mask
+- * indicates which cpus entered this state. This is used
+- * in the rcu update to wait only for active cpus. For system
+- * which do not switch off the HZ timer nohz_cpu_mask should
+- * always be CPU_MASK_NONE.
+- */
+-cpumask_t nohz_cpu_mask = CPU_MASK_NONE;
+-
+ #ifdef CONFIG_SMP
+ /*
+  * This is how migration works:
+@@ -4090,15 +4081,6 @@ static void __init ingo_sched_init_smp(v
+ }
+ #endif /* CONFIG_SMP */
+ 
+-int in_sched_functions(unsigned long addr)
+-{
+-	/* Linker adds these: start and end of __sched functions */
+-	extern char __sched_text_start[], __sched_text_end[];
+-	return in_lock_functions(addr) ||
+-		(addr >= (unsigned long)__sched_text_start
+-		&& addr < (unsigned long)__sched_text_end);
+-}
+-
+ static void __init ingo_sched_init(void)
+ {
+ 	runqueue_t *rq;
+Index: linux-2.6.10-rc1-mm4/kernel/scheduler.c
+===================================================================
+--- linux-2.6.10-rc1-mm4.orig/kernel/scheduler.c	2004-11-10 09:21:05.899757339 +1100
++++ linux-2.6.10-rc1-mm4/kernel/scheduler.c	2004-11-10 09:21:07.755459211 +1100
+@@ -733,6 +733,24 @@ void show_state(void)
+ 	read_unlock(&tasklist_lock);
+ }
+ 
++/*
++ * In a system that switches off the HZ timer nohz_cpu_mask
++ * indicates which cpus entered this state. This is used
++ * in the rcu update to wait only for active cpus. For system
++ * which do not switch off the HZ timer nohz_cpu_mask should
++ * always be CPU_MASK_NONE.
++ */
++cpumask_t nohz_cpu_mask = CPU_MASK_NONE;
++
++int in_sched_functions(unsigned long addr)
++{
++	/* Linker adds these: start and end of __sched functions */
++	extern char __sched_text_start[], __sched_text_end[];
++	return in_lock_functions(addr) ||
++		(addr >= (unsigned long)__sched_text_start
++		&& addr < (unsigned long)__sched_text_end);
++}
++
+ extern struct sched_drv ingo_sched_drv;
+ static const struct sched_drv *scheduler = &ingo_sched_drv;
+ 

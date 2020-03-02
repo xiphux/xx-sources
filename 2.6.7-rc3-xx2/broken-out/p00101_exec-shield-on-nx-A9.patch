@@ -1,0 +1,1988 @@
+---
+
+ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/asm-offsets.c       |    1 
+ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/entry.S             |    8 
+ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/process.c           |  304 ++++++++++
+ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/signal.c            |    7 
+ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/sysenter.c          |   50 +
+ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/traps.c             |   44 +
+ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/vsyscall-sysenter.S |    6 
+ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/vsyscall.lds        |   11 
+ linux-2.6.7-rc2-xx3-xiphux/arch/i386/mm/init.c                  |   10 
+ linux-2.6.7-rc2-xx3-xiphux/arch/ia64/ia32/binfmt_elf32.c        |    2 
+ linux-2.6.7-rc2-xx3-xiphux/arch/ia64/kernel/perfmon.c           |    2 
+ linux-2.6.7-rc2-xx3-xiphux/arch/sparc/kernel/sys_sparc.c        |    2 
+ linux-2.6.7-rc2-xx3-xiphux/arch/sparc64/kernel/sys_sparc.c      |    8 
+ linux-2.6.7-rc2-xx3-xiphux/arch/sparc64/kernel/sys_sparc32.c    |    2 
+ linux-2.6.7-rc2-xx3-xiphux/arch/x86_64/ia32/ia32_binfmt.c       |    2 
+ linux-2.6.7-rc2-xx3-xiphux/drivers/char/drm/ffb_drv.c           |    8 
+ linux-2.6.7-rc2-xx3-xiphux/fs/binfmt_aout.c                     |    3 
+ linux-2.6.7-rc2-xx3-xiphux/fs/binfmt_elf.c                      |  154 +++--
+ linux-2.6.7-rc2-xx3-xiphux/fs/exec.c                            |   20 
+ linux-2.6.7-rc2-xx3-xiphux/fs/proc/array.c                      |    5 
+ linux-2.6.7-rc2-xx3-xiphux/fs/proc/base.c                       |    4 
+ linux-2.6.7-rc2-xx3-xiphux/fs/proc/task_mmu.c                   |   15 
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/desc.h              |   14 
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/elf.h               |   45 -
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/mmu.h               |    6 
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/page.h              |    6 
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/pgalloc.h           |    3 
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/processor.h         |   13 
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/thread_info.h       |    1 
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-ia64/pgalloc.h           |    4 
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-ppc/pgalloc.h            |    5 
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-ppc64/pgalloc.h          |    5 
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-s390/pgalloc.h           |    4 
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-sparc/pgalloc.h          |    4 
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-sparc64/pgalloc.h        |    4 
+ linux-2.6.7-rc2-xx3-xiphux/include/asm-x86_64/pgalloc.h         |    5 
+ linux-2.6.7-rc2-xx3-xiphux/include/linux/mm.h                   |    2 
+ linux-2.6.7-rc2-xx3-xiphux/include/linux/resource.h             |    5 
+ linux-2.6.7-rc2-xx3-xiphux/include/linux/sched.h                |    6 
+ linux-2.6.7-rc2-xx3-xiphux/kernel/fork.c                        |    3 
+ linux-2.6.7-rc2-xx3-xiphux/kernel/signal.c                      |   35 +
+ linux-2.6.7-rc2-xx3-xiphux/kernel/sysctl.c                      |   57 +
+ linux-2.6.7-rc2-xx3-xiphux/mm/fremap.c                          |    6 
+ linux-2.6.7-rc2-xx3-xiphux/mm/mmap.c                            |   46 +
+ linux-2.6.7-rc2-xx3-xiphux/mm/mprotect.c                        |    7 
+ linux-2.6.7-rc2-xx3-xiphux/mm/mremap.c                          |    3 
+ 46 files changed, 845 insertions(+), 112 deletions(-)
+
+diff -puN arch/i386/kernel/asm-offsets.c~exec-shield-on-nx-A9 arch/i386/kernel/asm-offsets.c
+--- linux-2.6.7-rc2-xx3/arch/i386/kernel/asm-offsets.c~exec-shield-on-nx-A9	2004-06-07 04:37:35.937967584 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/asm-offsets.c	2004-06-07 04:37:36.596867416 -0400
+@@ -52,6 +52,7 @@ void foo(void)
+ 	OFFSET(TI_preempt_count, thread_info, preempt_count);
+ 	OFFSET(TI_addr_limit, thread_info, addr_limit);
+ 	OFFSET(TI_restart_block, thread_info, restart_block);
++	OFFSET(TI_sysenter_return, thread_info, sysenter_return);
+ 	BLANK();
+ 
+ 	OFFSET(EXEC_DOMAIN_handler, exec_domain, handler);
+diff -puN arch/i386/kernel/entry.S~exec-shield-on-nx-A9 arch/i386/kernel/entry.S
+--- linux-2.6.7-rc2-xx3/arch/i386/kernel/entry.S~exec-shield-on-nx-A9	2004-06-07 04:37:35.940967128 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/entry.S	2004-06-07 04:37:36.594867720 -0400
+@@ -266,8 +266,12 @@ sysenter_past_esp:
+ 	pushl %ebp
+ 	pushfl
+ 	pushl $(__USER_CS)
+-	pushl $SYSENTER_RETURN
+-
++	/*
++	 * Push current_thread_info()->sysenter_return to the stack.
++	 * A tiny bit of offset fixup is necessary - 4*4 means the 4 words
++	 * pushed above, and the word being pushed now:
++	 */
++	pushl (TI_sysenter_return-THREAD_SIZE+4*4)(%esp)
+ /*
+  * Load the potential sixth argument from user stack.
+  * Careful about security.
+diff -puN arch/i386/kernel/process.c~exec-shield-on-nx-A9 arch/i386/kernel/process.c
+--- linux-2.6.7-rc2-xx3/arch/i386/kernel/process.c~exec-shield-on-nx-A9	2004-06-07 04:37:35.944966520 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/process.c	2004-06-07 04:38:10.628693792 -0400
+@@ -38,6 +38,8 @@
+ #include <linux/kallsyms.h>
+ #include <linux/ptrace.h>
+ #include <linux/suspend.h>
++#include <linux/mman.h>
++#include <linux/random.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
+@@ -522,6 +524,8 @@ struct task_struct fastcall * __switch_t
+ 	perfctr_suspend_thread(prev);
+ 
+ 	__unlazy_fpu(prev_p);
++	if (next_p->mm)
++		load_user_cs_desc(cpu, next_p->mm);
+ 
+ 	/*
+ 	 * Reload esp0, LDT and the page table pointer:
+@@ -812,3 +816,303 @@ asmlinkage int sys_get_thread_area(struc
+ 	return 0;
+ }
+ 
++/*
++ * Get a random word:
++ */
++static inline unsigned int get_random_int(void)
++{
++	unsigned int val = 0;
++
++	if (!exec_shield_randomize)
++		return 0;
++
++#ifdef CONFIG_X86_HAS_TSC
++	rdtscl(val);
++#endif
++	val += current->pid + jiffies + (int)&val;
++
++	/*
++	 * Use IP's RNG. It suits our purpose perfectly: it re-keys itself
++	 * every second, from the entropy pool (and thus creates a limited
++	 * drain on it), and uses halfMD4Transform within the second. We
++	 * also spice it with the TSC (if available), jiffies, PID and the
++	 * stack address:
++	 */
++	return secure_ip_id(val);
++}
++
++unsigned long arch_align_stack(unsigned long sp)
++{
++	if (current->flags & PF_RELOCEXEC)
++		sp -= ((get_random_int() % 65536) << 4);
++	return sp & ~0xf;
++}
++
++#if SHLIB_BASE >= 0x01000000
++# error SHLIB_BASE must be under 16MB!
++#endif
++
++static unsigned long
++arch_get_unmapped_nonexecutable_area(struct mm_struct *mm, unsigned long addr, unsigned long len)
++{
++	struct vm_area_struct *vma, *prev_vma;
++	unsigned long stack_limit;
++	int first_time = 1;
++
++	if (!mm->mmap_top) {
++		printk("hm, %s:%d, !mmap_top.\n", current->comm, current->pid);
++		mm->mmap_top = mmap_top();
++	}
++	stack_limit = mm->mmap_top;
++
++	/* requested length too big for entire address space */
++	if (len > TASK_SIZE)
++		return -ENOMEM;
++
++	/* dont allow allocations above current stack limit */
++	if (mm->non_executable_cache > stack_limit)
++		mm->non_executable_cache = stack_limit;
++
++	/* requesting a specific address */
++        if (addr) {
++                addr = PAGE_ALIGN(addr);
++                vma = find_vma(mm, addr);
++		if (TASK_SIZE - len >= addr &&
++		    (!vma || addr + len <= vma->vm_start))
++			return addr;
++        }
++
++	/* make sure it can fit in the remaining address space */
++	if (mm->non_executable_cache < len)
++		return -ENOMEM;
++
++	/* either no address requested or cant fit in requested address hole */
++try_again:
++        addr = (mm->non_executable_cache - len)&PAGE_MASK;
++	do {
++       	 	if (!(vma = find_vma_prev(mm, addr, &prev_vma)))
++                        return -ENOMEM;
++
++		/* new region fits between prev_vma->vm_end and vma->vm_start, use it */
++		if (addr+len <= vma->vm_start && (!prev_vma || (addr >= prev_vma->vm_end))) {
++			/* remember the address as a hint for next time */
++			mm->non_executable_cache = addr;
++			return addr;
++
++		/* pull non_executable_cache down to the first hole */
++		} else if (mm->non_executable_cache == vma->vm_end)
++				mm->non_executable_cache = vma->vm_start;
++
++		/* try just below the current vma->vm_start */
++		addr = vma->vm_start-len;
++        } while (len <= vma->vm_start);
++	/* if hint left us with no space for the requested mapping try again */
++	if (first_time) {
++		first_time = 0;
++		mm->non_executable_cache = stack_limit;
++		goto try_again;
++	}
++	return -ENOMEM;
++}
++
++static unsigned long randomize_range(unsigned long start, unsigned long end, unsigned long len)
++{
++	unsigned long range = end - len - start;
++	if (end <= start + len)
++		return 0;
++	return PAGE_ALIGN(get_random_int() % range + start);
++}
++
++static inline unsigned long
++stock_arch_get_unmapped_area(struct file *filp, unsigned long addr,
++		unsigned long len, unsigned long pgoff, unsigned long flags)
++{
++	struct mm_struct *mm = current->mm;
++	struct vm_area_struct *vma;
++	unsigned long start_addr;
++
++	if (len > TASK_SIZE)
++		return -ENOMEM;
++
++	if (addr) {
++		addr = PAGE_ALIGN(addr);
++		vma = find_vma(mm, addr);
++		if (TASK_SIZE - len >= addr &&
++		    (!vma || addr + len <= vma->vm_start))
++			return addr;
++	}
++	start_addr = addr = mm->free_area_cache;
++
++full_search:
++	for (vma = find_vma(mm, addr); ; vma = vma->vm_next) {
++		/* At this point:  (!vma || addr < vma->vm_end). */
++		if (TASK_SIZE - len < addr) {
++			/*
++			 * Start a new search - just in case we missed
++			 * some holes.
++			 */
++			if (start_addr != TASK_UNMAPPED_BASE) {
++				start_addr = addr = TASK_UNMAPPED_BASE;
++				goto full_search;
++			}
++			return -ENOMEM;
++		}
++		if (!vma || addr + len <= vma->vm_start) {
++			/*
++			 * Remember the place where we stopped the search:
++			 */
++			mm->free_area_cache = addr + len;
++			return addr;
++		}
++		addr = vma->vm_end;
++	}
++}
++
++unsigned long arch_get_unmapped_area(struct file *filp, unsigned long addr0,
++		unsigned long len0, unsigned long pgoff, unsigned long flags,
++		unsigned long prot)
++{
++	unsigned long addr = addr0, len = len0;
++	struct mm_struct *mm = current->mm;
++	struct vm_area_struct *vma;
++	int ascii_shield = 0;
++	unsigned long tmp;
++
++	/*
++	 * Fall back to the old layout:
++	 */
++	if (!(current->flags & PF_RELOCEXEC))
++	       return stock_arch_get_unmapped_area(filp, addr0, len0, pgoff, flags);
++	if (len > TASK_SIZE)
++		return -ENOMEM;
++
++	if (!addr && (prot & PROT_EXEC) && !(flags & MAP_FIXED))
++		addr = randomize_range(SHLIB_BASE, 0x01000000, len);
++
++	if (addr) {
++		addr = PAGE_ALIGN(addr);
++		vma = find_vma(mm, addr);
++		if (TASK_SIZE - len >= addr &&
++		    (!vma || addr + len <= vma->vm_start)) {
++			return addr;
++		}
++	}
++
++	if (prot & PROT_EXEC) {
++		ascii_shield = 1;
++		addr = SHLIB_BASE;
++	} else {
++		/* this can fail if the stack was unlimited */
++		if ((tmp = arch_get_unmapped_nonexecutable_area(mm, addr, len)) != -ENOMEM)
++			return tmp;
++search_upper:
++		addr = PAGE_ALIGN(arch_align_stack(TASK_UNMAPPED_BASE));
++	}
++
++	for (vma = find_vma(mm, addr); ; vma = vma->vm_next) {
++		/* At this point:  (!vma || addr < vma->vm_end). */
++		if (TASK_SIZE - len < addr) {
++			return -ENOMEM;
++		}
++		if (!vma || addr + len <= vma->vm_start) {
++			/*
++			 * Must not let a PROT_EXEC mapping get into the
++			 * brk area:
++			 */
++			if (ascii_shield && (addr + len > mm->brk)) {
++				ascii_shield = 0;
++				goto search_upper;
++			}
++			/*
++			 * Up until the brk area we randomize addresses
++			 * as much as possible:
++			 */
++			if (ascii_shield && (addr >= 0x01000000)) {
++				tmp = randomize_range(0x01000000, mm->brk, len);
++				vma = find_vma(mm, tmp);
++				if (TASK_SIZE - len >= tmp &&
++				    (!vma || tmp + len <= vma->vm_start))
++					return tmp;
++			}
++			/*
++			 * Ok, randomization didnt work out - return
++			 * the result of the linear search:
++			 */
++			return addr;
++		}
++		addr = vma->vm_end;
++	}
++}
++
++void arch_add_exec_range(struct mm_struct *mm, unsigned long limit)
++{
++	if (limit > mm->context.exec_limit) {
++		mm->context.exec_limit = limit;
++		set_user_cs(&mm->context.user_cs, limit);
++		if (mm == current->mm)
++			load_user_cs_desc(smp_processor_id(), mm);
++	}
++}
++
++void arch_remove_exec_range(struct mm_struct *mm, unsigned long old_end)
++{
++	struct vm_area_struct *vma;
++	unsigned long limit = 0;
++
++	if (old_end == mm->context.exec_limit) {
++		for (vma = mm->mmap; vma; vma = vma->vm_next)
++			if ((vma->vm_flags & VM_EXEC) && (vma->vm_end > limit))
++				limit = vma->vm_end;
++
++		mm->context.exec_limit = limit;
++		set_user_cs(&mm->context.user_cs, limit);
++		if (mm == current->mm)
++			load_user_cs_desc(smp_processor_id(), mm);
++	}
++}
++
++void arch_flush_exec_range(struct mm_struct *mm)
++{
++	mm->context.exec_limit = 0;
++	set_user_cs(&mm->context.user_cs, 0);
++}
++
++/*
++ * Generate random brk address between 128MB and 196MB. (if the layout
++ * allows it.)
++ */
++void randomize_brk(unsigned long old_brk)
++{
++	unsigned long new_brk, range_start, range_end;
++
++	range_start = 0x08000000;
++	if (current->mm->brk >= range_start)
++		range_start = current->mm->brk;
++	range_end = range_start + 0x02000000;
++	new_brk = randomize_range(range_start, range_end, 0);
++	if (new_brk)
++		current->mm->brk = new_brk;
++}
++
++/*
++ * Top of mmap area (just below the process stack).
++ * leave an at least ~128 MB hole. Randomize it.
++ */
++#define MIN_GAP (128*1024*1024)
++#define MAX_GAP (TASK_SIZE/6*5)
++
++unsigned long mmap_top(void)
++{
++	unsigned long gap = 0;
++
++	gap = current->rlim[RLIMIT_STACK].rlim_cur;
++	if (gap < MIN_GAP)
++		gap = MIN_GAP;
++	else if (gap > MAX_GAP)
++		gap = MAX_GAP;
++
++	gap = arch_align_stack(gap) & PAGE_MASK;
++
++	return TASK_SIZE - gap;
++}
++
+diff -puN arch/i386/kernel/signal.c~exec-shield-on-nx-A9 arch/i386/kernel/signal.c
+--- linux-2.6.7-rc2-xx3/arch/i386/kernel/signal.c~exec-shield-on-nx-A9	2004-06-07 04:37:35.947966064 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/signal.c	2004-06-07 04:37:36.618864072 -0400
+@@ -336,7 +336,7 @@ get_sigframe(struct k_sigaction *ka, str
+ 
+ /* These symbols are defined with the addresses in the vsyscall page.
+    See vsyscall-sigreturn.S.  */
+-extern void __kernel_sigreturn, __kernel_rt_sigreturn;
++extern char __kernel_sigreturn, __kernel_rt_sigreturn, SYSENTER_RETURN;
+ 
+ static void setup_frame(int sig, struct k_sigaction *ka,
+ 			sigset_t *set, struct pt_regs * regs)
+@@ -370,7 +370,7 @@ static void setup_frame(int sig, struct 
+ 	if (err)
+ 		goto give_sigsegv;
+ 
+-	restorer = &__kernel_sigreturn;
++	restorer = current->mm->context.vdso + (long)&__kernel_sigreturn;
+ 	if (ka->sa.sa_flags & SA_RESTORER)
+ 		restorer = ka->sa.sa_restorer;
+ 
+@@ -453,9 +453,10 @@ static void setup_rt_frame(int sig, stru
+ 		goto give_sigsegv;
+ 
+ 	/* Set up to return from userspace.  */
+-	restorer = &__kernel_rt_sigreturn;
++	restorer = current->mm->context.vdso + (long)&__kernel_rt_sigreturn;
+ 	if (ka->sa.sa_flags & SA_RESTORER)
+ 		restorer = ka->sa.sa_restorer;
++
+ 	err |= __put_user(restorer, &frame->pretcode);
+ 	 
+ 	/*
+diff -puN arch/i386/kernel/sysenter.c~exec-shield-on-nx-A9 arch/i386/kernel/sysenter.c
+--- linux-2.6.7-rc2-xx3/arch/i386/kernel/sysenter.c~exec-shield-on-nx-A9	2004-06-07 04:37:35.950965608 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/sysenter.c	2004-06-07 04:37:36.633861792 -0400
+@@ -13,6 +13,7 @@
+ #include <linux/gfp.h>
+ #include <linux/string.h>
+ #include <linux/elf.h>
++#include <linux/mman.h>
+ 
+ #include <asm/cpufeature.h>
+ #include <asm/msr.h>
+@@ -41,11 +42,14 @@ void enable_sep_cpu(void *info)
+ extern const char vsyscall_int80_start, vsyscall_int80_end;
+ extern const char vsyscall_sysenter_start, vsyscall_sysenter_end;
+ 
++struct page *sysenter_page;
++
+ static int __init sysenter_setup(void)
+ {
+ 	unsigned long page = get_zeroed_page(GFP_ATOMIC);
+ 
+-	__set_fixmap(FIX_VSYSCALL, __pa(page), PAGE_READONLY_EXEC);
++	__set_fixmap(FIX_VSYSCALL, __pa(page), PAGE_KERNEL_RO);
++	sysenter_page = virt_to_page(page);
+ 
+ 	if (!boot_cpu_has(X86_FEATURE_SEP)) {
+ 		memcpy((void *) page,
+@@ -59,7 +63,51 @@ static int __init sysenter_setup(void)
+ 	       &vsyscall_sysenter_end - &vsyscall_sysenter_start);
+ 
+ 	on_each_cpu(enable_sep_cpu, NULL, 1, 1);
++
+ 	return 0;
+ }
+ 
+ __initcall(sysenter_setup);
++
++extern void SYSENTER_RETURN_OFFSET;
++
++unsigned int vdso_enabled = 1;
++
++void map_vsyscall(void)
++{
++	struct thread_info *ti = current_thread_info();
++	struct vm_area_struct *vma;
++	unsigned long addr;
++
++	if (unlikely(!vdso_enabled)) {
++		current->mm->context.vdso = NULL;
++		return;
++	}
++
++	/*
++	 * Map the vDSO (it will be randomized):
++	 */
++	down_write(&current->mm->mmap_sem);
++	addr = do_mmap(NULL, 0, 4096, PROT_READ | PROT_EXEC, MAP_PRIVATE, 0);
++	current->mm->context.vdso = (void *)addr;
++	ti->sysenter_return = (void *)addr + (long)&SYSENTER_RETURN_OFFSET;
++	if (addr != -1) {
++		vma = find_vma(current->mm, addr);
++		if (vma) {
++			pgprot_val(vma->vm_page_prot) &= ~_PAGE_RW;
++			get_page(sysenter_page);
++			install_page(current->mm, vma, addr,
++					sysenter_page, vma->vm_page_prot);
++
++		}
++	}
++	up_write(&current->mm->mmap_sem);
++}
++
++static int __init vdso_setup(char *str)
++{
++        vdso_enabled = simple_strtoul(str, NULL, 0);
++        return 1;
++}
++__setup("vdso=", vdso_setup);
++
+diff -puN arch/i386/kernel/traps.c~exec-shield-on-nx-A9 arch/i386/kernel/traps.c
+--- linux-2.6.7-rc2-xx3/arch/i386/kernel/traps.c~exec-shield-on-nx-A9	2004-06-07 04:37:35.953965152 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/traps.c	2004-06-07 04:37:36.631862096 -0400
+@@ -501,6 +501,10 @@ DO_ERROR(11, SIGBUS,  "segment not prese
+ DO_ERROR(12, SIGBUS,  "stack segment", stack_segment)
+ DO_ERROR_INFO(17, SIGBUS, "alignment check", alignment_check, BUS_ADRALN, get_cr2())
+ 
++/*
++ * the original non-exec stack patch was written by
++ * Solar Designer <solar at openwall.com>. Thanks!
++ */
+ asmlinkage void do_general_protection(struct pt_regs * regs, long error_code)
+ {
+ 	if (regs->eflags & X86_EFLAGS_IF)
+@@ -512,6 +516,46 @@ asmlinkage void do_general_protection(st
+ 	if (!(regs->xcs & 3))
+ 		goto gp_in_kernel;
+ 
++	/*
++	 * lazy-check for CS validity on exec-shield binaries:
++	 */
++	if (current->mm) {
++		int cpu = smp_processor_id();
++		struct desc_struct *desc1, *desc2;
++		struct vm_area_struct *vma;
++		unsigned long limit = 0;
++
++		spin_lock(&current->mm->page_table_lock);
++		for (vma = current->mm->mmap; vma; vma = vma->vm_next)
++			if ((vma->vm_flags & VM_EXEC) && (vma->vm_end > limit))
++				limit = vma->vm_end;
++		spin_unlock(&current->mm->page_table_lock);
++
++		current->mm->context.exec_limit = limit;
++		set_user_cs(&current->mm->context.user_cs, limit);
++
++		desc1 = &current->mm->context.user_cs;
++		desc2 = cpu_gdt_table[cpu] + GDT_ENTRY_DEFAULT_USER_CS;
++
++		/*
++		 * The CS was not in sync - reload it and retry the
++		 * instruction. If the instruction still faults then
++		 * we wont hit this branch next time around.
++		 */
++		if (desc1->a != desc2->a || desc1->b != desc2->b) {
++			if (print_fatal_signals >= 2) {
++				printk("#GPF fixup (%ld[seg:%lx]) at %08lx, CPU#%d.\n", error_code, error_code/8, regs->eip, smp_processor_id());
++				printk(" exec_limit: %08lx, user_cs: %08lx/%08lx, CPU_cs: %08lx/%08lx.\n", current->mm->context.exec_limit, desc1->a, desc1->b, desc2->a, desc2->b);
++			}
++			load_user_cs_desc(cpu, current->mm);
++			return;
++		}
++	}
++	if (print_fatal_signals) {
++		printk("#GPF(%ld[seg:%lx]) at %08lx, CPU#%d.\n", error_code, error_code/8, regs->eip, smp_processor_id());
++		printk(" exec_limit: %08lx, user_cs: %08lx/%08lx.\n", current->mm->context.exec_limit, current->mm->context.user_cs.a, current->mm->context.user_cs.b);
++	}
++
+ 	current->thread.error_code = error_code;
+ 	current->thread.trap_no = 13;
+ 	force_sig(SIGSEGV, current);
+diff -puN arch/i386/kernel/vsyscall-sysenter.S~exec-shield-on-nx-A9 arch/i386/kernel/vsyscall-sysenter.S
+--- linux-2.6.7-rc2-xx3/arch/i386/kernel/vsyscall-sysenter.S~exec-shield-on-nx-A9	2004-06-07 04:37:36.019955120 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/vsyscall-sysenter.S	2004-06-07 04:37:36.636861336 -0400
+@@ -24,11 +24,11 @@ __kernel_vsyscall:
+ 	/* 7: align return point with nop's to make disassembly easier */
+ 	.space 7,0x90
+ 
+-	/* 14: System call restart point is here! (SYSENTER_RETURN - 2) */
++	/* 14: System call restart point is here! (SYSENTER_RETURN_OFFSET-2) */
+ 	jmp .Lenter_kernel
+ 	/* 16: System call normal return point is here! */
+-	.globl SYSENTER_RETURN	/* Symbol used by entry.S.  */
+-SYSENTER_RETURN:
++	.globl SYSENTER_RETURN_OFFSET	/* Symbol used by sysenter.c  */
++SYSENTER_RETURN_OFFSET:
+ 	pop %ebp
+ .Lpop_ebp:
+ 	pop %edx
+diff -puN arch/i386/kernel/vsyscall.lds~exec-shield-on-nx-A9 arch/i386/kernel/vsyscall.lds
+--- linux-2.6.7-rc2-xx3/arch/i386/kernel/vsyscall.lds~exec-shield-on-nx-A9	2004-06-07 04:37:36.027953904 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/i386/kernel/vsyscall.lds	2004-06-07 04:37:36.635861488 -0400
+@@ -1,15 +1,12 @@
+ /*
+  * Linker script for vsyscall DSO.  The vsyscall page is an ELF shared
+- * object prelinked to its virtual address, and with only one read-only
+- * segment (that fits in one page).  This script controls its layout.
++ * object with only one read-only segment (that fits in one page).
++ * This script controls its layout.
+  */
+ 
+-/* This must match <asm/fixmap.h>.  */
+-VSYSCALL_BASE = 0xffffe000;
+-
+ SECTIONS
+ {
+-  . = VSYSCALL_BASE + SIZEOF_HEADERS;
++  . = SIZEOF_HEADERS;
+ 
+   .hash           : { *(.hash) }		:text
+   .dynsym         : { *(.dynsym) }
+@@ -22,7 +19,7 @@ SECTIONS
+      For the layouts to match, we need to skip more than enough
+      space for the dynamic symbol table et al.  If this amount
+      is insufficient, ld -shared will barf.  Just increase it here.  */
+-  . = VSYSCALL_BASE + 0x400;
++  . = 0x400;
+ 
+   .text           : { *(.text) }		:text =0x90909090
+ 
+diff -puN arch/i386/mm/init.c~exec-shield-on-nx-A9 arch/i386/mm/init.c
+--- linux-2.6.7-rc2-xx3/arch/i386/mm/init.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.030953448 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/i386/mm/init.c	2004-06-07 04:37:36.640860728 -0400
+@@ -443,6 +443,7 @@ extern void zone_sizes_init(void);
+ 
+ static int disable_nx __initdata = 0;
+ u64 __supported_pte_mask = ~_PAGE_NX;
++int use_nx = 0;
+ 
+ /*
+  * noexec = on|off
+@@ -450,7 +451,7 @@ u64 __supported_pte_mask = ~_PAGE_NX;
+  * Control non executable mappings.
+  *
+  * on      Enable
+- * off     Disable
++ * off     Disable (disables exec-shield too)
+  */
+ static int __init noexec_setup(char *str)
+ {
+@@ -460,6 +461,7 @@ static int __init noexec_setup(char *str
+ 	} else if (!strncmp(str,"off",3)) {
+ 		disable_nx = 1;
+ 		__supported_pte_mask &= ~_PAGE_NX;
++		exec_shield = 0;
+ 	}
+ 	return 1;
+ }
+@@ -467,7 +469,6 @@ static int __init noexec_setup(char *str
+ __setup("noexec=", noexec_setup);
+ 
+ #ifdef CONFIG_X86_PAE
+-static int use_nx = 0;
+ 
+ static void __init set_nx(void)
+ {
+@@ -499,8 +500,11 @@ void __init paging_init(void)
+ 	set_nx();
+ 	if (use_nx)
+ 		printk("NX (Execute Disable) protection: active\n");
+-	else
++	else {
+ 		printk("NX (Execute Disable) protection: not present!\n");
++		if (exec_shield)
++			printk("Using x86 segment limits to approximate NX protection\n");
++	}
+ #endif
+ 
+ 	pagetable_init();
+diff -puN arch/ia64/ia32/binfmt_elf32.c~exec-shield-on-nx-A9 arch/ia64/ia32/binfmt_elf32.c
+--- linux-2.6.7-rc2-xx3/arch/ia64/ia32/binfmt_elf32.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.061948736 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/ia64/ia32/binfmt_elf32.c	2004-06-07 04:37:36.696852216 -0400
+@@ -211,7 +211,7 @@ elf32_set_personality (void)
+ }
+ 
+ static unsigned long
+-elf32_map (struct file *filep, unsigned long addr, struct elf_phdr *eppnt, int prot, int type)
++elf32_map (struct file *filep, unsigned long addr, struct elf_phdr *eppnt, int prot, int type, unsigned long unused)
+ {
+ 	unsigned long pgoff = (eppnt->p_vaddr) & ~IA32_PAGE_MASK;
+ 
+diff -puN arch/ia64/kernel/perfmon.c~exec-shield-on-nx-A9 arch/ia64/kernel/perfmon.c
+--- linux-2.6.7-rc2-xx3/arch/ia64/kernel/perfmon.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.067947824 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/ia64/kernel/perfmon.c	2004-06-07 04:37:36.692852824 -0400
+@@ -599,7 +599,7 @@ pfm_do_munmap(struct mm_struct *mm, unsi
+ static inline unsigned long 
+ pfm_get_unmapped_area(struct file *file, unsigned long addr, unsigned long len, unsigned long pgoff, unsigned long flags, unsigned long exec)
+ {
+-	return get_unmapped_area(file, addr, len, pgoff, flags);
++	return get_unmapped_area(file, addr, len, pgoff, flags, 0);
+ }
+ 
+ 
+diff -puN arch/sparc/kernel/sys_sparc.c~exec-shield-on-nx-A9 arch/sparc/kernel/sys_sparc.c
+--- linux-2.6.7-rc2-xx3/arch/sparc/kernel/sys_sparc.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.073946912 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/sparc/kernel/sys_sparc.c	2004-06-07 04:37:36.644860120 -0400
+@@ -332,7 +332,7 @@ asmlinkage unsigned long sparc_mremap(un
+ 
+ 		new_addr = get_unmapped_area(file, addr, new_len,
+ 				     vma ? vma->vm_pgoff : 0,
+-				     map_flags);
++				     map_flags, vma->vm_flags & VM_EXEC);
+ 		ret = new_addr;
+ 		if (new_addr & ~PAGE_MASK)
+ 			goto out_sem;
+diff -puN arch/sparc64/kernel/sys_sparc.c~exec-shield-on-nx-A9 arch/sparc64/kernel/sys_sparc.c
+--- linux-2.6.7-rc2-xx3/arch/sparc64/kernel/sys_sparc.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.077946304 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/sparc64/kernel/sys_sparc.c	2004-06-07 04:37:36.585869088 -0400
+@@ -127,7 +127,7 @@ unsigned long get_fb_unmapped_area(struc
+ 
+ 	if (flags & MAP_FIXED) {
+ 		/* Ok, don't mess with it. */
+-		return get_unmapped_area(NULL, addr, len, pgoff, flags);
++		return get_unmapped_area(NULL, addr, len, pgoff, flags, 0);
+ 	}
+ 	flags &= ~MAP_SHARED;
+ 
+@@ -140,7 +140,7 @@ unsigned long get_fb_unmapped_area(struc
+ 		align_goal = (64UL * 1024);
+ 
+ 	do {
+-		addr = get_unmapped_area(NULL, orig_addr, len + (align_goal - PAGE_SIZE), pgoff, flags);
++		addr = get_unmapped_area(NULL, orig_addr, len + (align_goal - PAGE_SIZE), pgoff, flags, 0);
+ 		if (!(addr & ~PAGE_MASK)) {
+ 			addr = (addr + (align_goal - 1UL)) & ~(align_goal - 1UL);
+ 			break;
+@@ -158,7 +158,7 @@ unsigned long get_fb_unmapped_area(struc
+ 	 * be obtained.
+ 	 */
+ 	if (addr & ~PAGE_MASK)
+-		addr = get_unmapped_area(NULL, orig_addr, len, pgoff, flags);
++		addr = get_unmapped_area(NULL, orig_addr, len, pgoff, flags, 0);
+ 
+ 	return addr;
+ }
+@@ -394,7 +394,7 @@ asmlinkage unsigned long sys64_mremap(un
+ 		/* MREMAP_FIXED checked above. */
+ 		new_addr = get_unmapped_area(file, addr, new_len,
+ 				    vma ? vma->vm_pgoff : 0,
+-				    map_flags);
++				    map_flags, vma->vm_flags & VM_EXEC);
+ 		ret = new_addr;
+ 		if (new_addr & ~PAGE_MASK)
+ 			goto out_sem;
+diff -puN arch/sparc64/kernel/sys_sparc32.c~exec-shield-on-nx-A9 arch/sparc64/kernel/sys_sparc32.c
+--- linux-2.6.7-rc2-xx3/arch/sparc64/kernel/sys_sparc32.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.080945848 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/sparc64/kernel/sys_sparc32.c	2004-06-07 04:37:36.579870000 -0400
+@@ -1731,7 +1731,7 @@ asmlinkage unsigned long sys32_mremap(un
+ 		/* MREMAP_FIXED checked above. */
+ 		new_addr = get_unmapped_area(file, addr, new_len,
+ 				    vma ? vma->vm_pgoff : 0,
+-				    map_flags);
++				    map_flags, vma->vm_flags & VM_EXEC);
+ 		ret = new_addr;
+ 		if (new_addr & ~PAGE_MASK)
+ 			goto out_sem;
+diff -puN arch/x86_64/ia32/ia32_binfmt.c~exec-shield-on-nx-A9 arch/x86_64/ia32/ia32_binfmt.c
+--- linux-2.6.7-rc2-xx3/arch/x86_64/ia32/ia32_binfmt.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.084945240 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/arch/x86_64/ia32/ia32_binfmt.c	2004-06-07 04:37:36.700851608 -0400
+@@ -382,7 +382,7 @@ int setup_arg_pages(struct linux_binprm 
+ }
+ 
+ static unsigned long
+-elf32_map (struct file *filep, unsigned long addr, struct elf_phdr *eppnt, int prot, int type)
++elf32_map (struct file *filep, unsigned long addr, struct elf_phdr *eppnt, int prot, int type, unsigned long unused)
+ {
+ 	unsigned long map_addr;
+ 	struct task_struct *me = current; 
+diff -puN drivers/char/drm/ffb_drv.c~exec-shield-on-nx-A9 drivers/char/drm/ffb_drv.c
+--- linux-2.6.7-rc2-xx3/drivers/char/drm/ffb_drv.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.096943416 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/drivers/char/drm/ffb_drv.c	2004-06-07 04:37:36.562872584 -0400
+@@ -285,19 +285,19 @@ static unsigned long ffb_get_unmapped_ar
+ 	unsigned long addr = -ENOMEM;
+ 
+ 	if (!map)
+-		return get_unmapped_area(NULL, hint, len, pgoff, flags);
++		return get_unmapped_area(NULL, hint, len, pgoff, flags, 0);
+ 
+ 	if (map->type == _DRM_FRAME_BUFFER ||
+ 	    map->type == _DRM_REGISTERS) {
+ #ifdef HAVE_ARCH_FB_UNMAPPED_AREA
+ 		addr = get_fb_unmapped_area(filp, hint, len, pgoff, flags);
+ #else
+-		addr = get_unmapped_area(NULL, hint, len, pgoff, flags);
++		addr = get_unmapped_area(NULL, hint, len, pgoff, flags, 0);
+ #endif
+ 	} else if (map->type == _DRM_SHM && SHMLBA > PAGE_SIZE) {
+ 		unsigned long slack = SHMLBA - PAGE_SIZE;
+ 
+-		addr = get_unmapped_area(NULL, hint, len + slack, pgoff, flags);
++		addr = get_unmapped_area(NULL, hint, len + slack, pgoff, flags, 0);
+ 		if (!(addr & ~PAGE_MASK)) {
+ 			unsigned long kvirt = (unsigned long) map->handle;
+ 
+@@ -313,7 +313,7 @@ static unsigned long ffb_get_unmapped_ar
+ 			}
+ 		}
+ 	} else {
+-		addr = get_unmapped_area(NULL, hint, len, pgoff, flags);
++		addr = get_unmapped_area(NULL, hint, len, pgoff, flags, 0);
+ 	}
+ 
+ 	return addr;
+diff -puN fs/binfmt_aout.c~exec-shield-on-nx-A9 fs/binfmt_aout.c
+--- linux-2.6.7-rc2-xx3/fs/binfmt_aout.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.099942960 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/fs/binfmt_aout.c	2004-06-07 04:37:36.833831392 -0400
+@@ -307,7 +307,8 @@ static int load_aout_binary(struct linux
+ 	current->mm->brk = ex.a_bss +
+ 		(current->mm->start_brk = N_BSSADDR(ex));
+ 	current->mm->free_area_cache = TASK_UNMAPPED_BASE;
+-
++	/* unlimited stack is larger than TASK_SIZE */
++	current->mm->non_executable_cache = current->mm->mmap_top;
+ 	current->mm->rss = 0;
+ 	current->mm->mmap = NULL;
+ 	compute_creds(bprm);
+diff -puN fs/binfmt_elf.c~exec-shield-on-nx-A9 fs/binfmt_elf.c
+--- linux-2.6.7-rc2-xx3/fs/binfmt_elf.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.103942352 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/fs/binfmt_elf.c	2004-06-07 04:37:36.853828352 -0400
+@@ -45,7 +45,7 @@
+ 
+ static int load_elf_binary(struct linux_binprm * bprm, struct pt_regs * regs);
+ static int load_elf_library(struct file*);
+-static unsigned long elf_map (struct file *, unsigned long, struct elf_phdr *, int, int);
++static unsigned long elf_map (struct file *, unsigned long, struct elf_phdr *, int, int, unsigned long);
+ extern int dump_fpu (struct pt_regs *, elf_fpregset_t *);
+ 
+ #ifndef elf_addr_t
+@@ -155,20 +155,8 @@ create_elf_tables(struct linux_binprm *b
+ 	if (k_platform) {
+ 		size_t len = strlen(k_platform) + 1;
+ 
+-#ifdef CONFIG_X86_HT
+-		/*
+-		 * In some cases (e.g. Hyper-Threading), we want to avoid L1
+-		 * evictions by the processes running on the same package. One
+-		 * thing we can do is to shuffle the initial stack for them.
+-		 *
+-		 * The conditionals here are unneeded, but kept in to make the
+-		 * code behaviour the same as pre change unless we have
+-		 * hyperthreaded processors. This should be cleaned up
+-		 * before 2.6
+-		 */
+-	 
+-		if (smp_num_siblings > 1)
+-			STACK_ALLOC(p, ((current->pid % 64) << 7));
++#ifdef __HAVE_ARCH_ALIGN_STACK
++		p = (unsigned long)arch_align_stack((unsigned long)p);
+ #endif
+ 		u_platform = (elf_addr_t __user *)STACK_ALLOC(p, len);
+ 		__copy_to_user(u_platform, k_platform, len);
+@@ -272,20 +260,59 @@ create_elf_tables(struct linux_binprm *b
+ #ifndef elf_map
+ 
+ static unsigned long elf_map(struct file *filep, unsigned long addr,
+-			struct elf_phdr *eppnt, int prot, int type)
++			     struct elf_phdr *eppnt, int prot, int type,
++			     unsigned long total_size)
+ {
+ 	unsigned long map_addr;
++	unsigned long size = eppnt->p_filesz + ELF_PAGEOFFSET(eppnt->p_vaddr);
++	unsigned long off = eppnt->p_offset - ELF_PAGEOFFSET(eppnt->p_vaddr);
++
++	addr = ELF_PAGESTART(addr);
++	size = ELF_PAGEALIGN(size);
+ 
+ 	down_write(&current->mm->mmap_sem);
+-	map_addr = do_mmap(filep, ELF_PAGESTART(addr),
+-			   eppnt->p_filesz + ELF_PAGEOFFSET(eppnt->p_vaddr), prot, type,
+-			   eppnt->p_offset - ELF_PAGEOFFSET(eppnt->p_vaddr));
++
++	/*
++	 * total_size is the size of the ELF (interpreter) image.
++	 * The _first_ mmap needs to know the full size, otherwise
++	 * randomization might put this image into an overlapping
++	 * position with the ELF binary image. (since size < total_size)
++	 * So we first map the 'big' image - and unmap the remainder at
++	 * the end. (which unmap is needed for ELF images with holes.)
++	 */
++	if (total_size) {
++		total_size = ELF_PAGEALIGN(total_size);
++		map_addr = do_mmap(filep, addr, total_size, prot, type, off);
++		if (!BAD_ADDR(map_addr))
++			do_munmap(current->mm, map_addr+size, total_size-size);
++	} else
++		map_addr = do_mmap(filep, addr, size, prot, type, off);
++
+ 	up_write(&current->mm->mmap_sem);
+-	return(map_addr);
++
++	return map_addr;
+ }
+ 
+ #endif /* !elf_map */
+ 
++static inline unsigned long total_mapping_size(struct elf_phdr *cmds, int nr)
++{
++	int i, first_idx = -1, last_idx = -1;
++
++	for (i = 0; i < nr; i++)
++		if (cmds[i].p_type == PT_LOAD) {
++			last_idx = i;
++			if (first_idx == -1)
++				first_idx = i;
++		}
++
++	if (first_idx == -1)
++		return 0;
++
++	return cmds[last_idx].p_vaddr + cmds[last_idx].p_memsz -
++				ELF_PAGESTART(cmds[first_idx].p_vaddr);
++}
++
+ /* This is much more generalized than the library routine read function,
+    so we keep this separate.  Technically the library read function
+    is only provided so that we can read a.out libraries that have
+@@ -293,7 +320,8 @@ static unsigned long elf_map(struct file
+ 
+ static unsigned long load_elf_interp(struct elfhdr * interp_elf_ex,
+ 				     struct file * interpreter,
+-				     unsigned long *interp_load_addr)
++				     unsigned long *interp_load_addr,
++				     unsigned long no_base)
+ {
+ 	struct elf_phdr *elf_phdata;
+ 	struct elf_phdr *eppnt;
+@@ -301,6 +329,7 @@ static unsigned long load_elf_interp(str
+ 	int load_addr_set = 0;
+ 	unsigned long last_bss = 0, elf_bss = 0;
+ 	unsigned long error = ~0UL;
++	unsigned long total_size;
+ 	int retval, i, size;
+ 
+ 	/* First of all, some simple consistency checks */
+@@ -335,6 +364,10 @@ static unsigned long load_elf_interp(str
+ 	if (retval < 0)
+ 		goto out_close;
+ 
++	total_size = total_mapping_size(elf_phdata, interp_elf_ex->e_phnum);
++	if (!total_size)
++		goto out_close;
++
+ 	eppnt = elf_phdata;
+ 	for (i=0; i<interp_elf_ex->e_phnum; i++, eppnt++) {
+ 	  if (eppnt->p_type == PT_LOAD) {
+@@ -349,8 +382,11 @@ static unsigned long load_elf_interp(str
+ 	    vaddr = eppnt->p_vaddr;
+ 	    if (interp_elf_ex->e_type == ET_EXEC || load_addr_set)
+ 	    	elf_type |= MAP_FIXED;
++	    else if (no_base && interp_elf_ex->e_type == ET_DYN)
++		load_addr = -vaddr;
+ 
+-	    map_addr = elf_map(interpreter, load_addr + vaddr, eppnt, elf_prot, elf_type);
++	    map_addr = elf_map(interpreter, load_addr + vaddr, eppnt, elf_prot, elf_type, total_size);
++	    total_size = 0;
+ 	    error = map_addr;
+ 	    if (BAD_ADDR(map_addr))
+ 	    	goto out_close;
+@@ -489,7 +525,7 @@ static int load_elf_binary(struct linux_
+   	struct exec interp_ex;
+ 	char passed_fileno[6];
+ 	struct files_struct *files;
+-	int executable_stack = EXSTACK_DEFAULT;
++	int executable_stack, relocexec, old_relocexec = current->flags & PF_RELOCEXEC;
+ 	
+ 	/* Get the exec-header */
+ 	elf_ex = *((struct elfhdr *) bprm->buf);
+@@ -615,14 +651,35 @@ static int load_elf_binary(struct linux_
+ 	}
+ 
+ 	elf_ppnt = elf_phdata;
++	executable_stack = EXSTACK_DEFAULT;
++
+ 	for (i = 0; i < elf_ex.e_phnum; i++, elf_ppnt++)
+ 		if (elf_ppnt->p_type == PT_GNU_STACK) {
+ 			if (elf_ppnt->p_flags & PF_X)
+ 				executable_stack = EXSTACK_ENABLE_X;
+ 			else
+ 				executable_stack = EXSTACK_DISABLE_X;
++			break;
+ 		}
+ 
++	relocexec = 0;
++
++	if (current->personality == PER_LINUX)
++	switch (exec_shield) {
++	case 1:
++		if (executable_stack != EXSTACK_DEFAULT) {
++			current->flags |= PF_RELOCEXEC;
++			relocexec = PF_RELOCEXEC;
++		}
++		break;
++
++	case 2:
++		executable_stack = EXSTACK_DISABLE_X;
++		current->flags |= PF_RELOCEXEC;
++		relocexec = PF_RELOCEXEC;
++		break;
++	}
++
+ 	/* Some simple consistency checks for the interpreter */
+ 	if (elf_interpreter) {
+ 		interpreter_type = INTERPRETER_ELF | INTERPRETER_AOUT;
+@@ -675,6 +732,16 @@ static int load_elf_binary(struct linux_
+ 	retval = flush_old_exec(bprm);
+ 	if (retval)
+ 		goto out_free_dentry;
++	current->flags |= relocexec;
++
++#ifdef __i386__
++	/*
++	 * Turn off the CS limit completely if exec-shield disabled or
++	 * NX active:
++	 */
++	if (!exec_shield || use_nx)
++		arch_add_exec_range(current->mm, -1);
++#endif
+ 
+ 	/* Discard our unneeded old files struct */
+ 	if (files) {
+@@ -688,6 +755,9 @@ static int load_elf_binary(struct linux_
+ 	current->mm->end_data = 0;
+ 	current->mm->end_code = 0;
+ 	current->mm->mmap = NULL;
++#ifdef __HAVE_ARCH_MMAP_TOP
++	current->mm->mmap_top = mmap_top();
++#endif
+ 	current->flags &= ~PF_FORKNOEXEC;
+ 
+ 	/* Do this immediately, since STACK_TOP as used in setup_arg_pages
+@@ -698,6 +768,7 @@ static int load_elf_binary(struct linux_
+ 	   change some of these later */
+ 	current->mm->rss = 0;
+ 	current->mm->free_area_cache = TASK_UNMAPPED_BASE;
++	current->mm->non_executable_cache = current->mm->mmap_top;
+ 	retval = setup_arg_pages(bprm, executable_stack);
+ 	if (retval < 0) {
+ 		send_sig(SIGKILL, current, 0);
+@@ -706,10 +777,10 @@ static int load_elf_binary(struct linux_
+ 	
+ 	current->mm->start_stack = bprm->p;
+ 
++
+ 	/* Now we do a little grungy work by mmaping the ELF image into
+-	   the correct location in memory.  At this point, we assume that
+-	   the image should be loaded at fixed address, not at a variable
+-	   address. */
++	   the correct location in memory.
++	 */
+ 
+ 	for(i = 0, elf_ppnt = elf_phdata; i < elf_ex.e_phnum; i++, elf_ppnt++) {
+ 		int elf_prot = 0, elf_flags;
+@@ -746,16 +817,16 @@ static int load_elf_binary(struct linux_
+ 		elf_flags = MAP_PRIVATE|MAP_DENYWRITE|MAP_EXECUTABLE;
+ 
+ 		vaddr = elf_ppnt->p_vaddr;
+-		if (elf_ex.e_type == ET_EXEC || load_addr_set) {
++		if (elf_ex.e_type == ET_EXEC || load_addr_set)
+ 			elf_flags |= MAP_FIXED;
+-		} else if (elf_ex.e_type == ET_DYN) {
+-			/* Try and get dynamic programs out of the way of the default mmap
+-			   base, as well as whatever program they might try to exec.  This
+-			   is because the brk will follow the loader, and is not movable.  */
++		else if (elf_ex.e_type == ET_DYN)
++#ifdef __i386__
++			load_bias = 0;
++#else
+ 			load_bias = ELF_PAGESTART(ELF_ET_DYN_BASE - vaddr);
+-		}
++#endif
+ 
+-		error = elf_map(bprm->file, load_bias + vaddr, elf_ppnt, elf_prot, elf_flags);
++		error = elf_map(bprm->file, load_bias + vaddr, elf_ppnt, elf_prot, elf_flags, 0);
+ 		if (BAD_ADDR(error))
+ 			continue;
+ 
+@@ -826,7 +897,8 @@ static int load_elf_binary(struct linux_
+ 		else
+ 			elf_entry = load_elf_interp(&interp_elf_ex,
+ 						    interpreter,
+-						    &interp_load_addr);
++						    &interp_load_addr,
++						    load_bias);
+ 		if (BAD_ADDR(elf_entry)) {
+ 			printk(KERN_ERR "Unable to load interpreter\n");
+ 			send_sig(SIGSEGV, current, 0);
+@@ -849,6 +921,14 @@ static int load_elf_binary(struct linux_
+ 
+ 	set_binfmt(&elf_format);
+ 
++	/*
++	 * Map the vsyscall trampoline. This address is then passed via
++	 * AT_SYSINFO.
++	 */
++#ifdef __HAVE_ARCH_VSYSCALL
++	map_vsyscall();
++#endif
++
+ 	compute_creds(bprm);
+ 	current->flags &= ~PF_FORKNOEXEC;
+ 	create_elf_tables(bprm, &elf_ex, (interpreter_type == INTERPRETER_AOUT),
+@@ -862,6 +942,10 @@ static int load_elf_binary(struct linux_
+ 	current->mm->end_data = end_data;
+ 	current->mm->start_stack = bprm->p;
+ 
++#ifdef __HAVE_ARCH_RANDOMIZE_BRK
++	if (current->flags & PF_RELOCEXEC)
++		randomize_brk(elf_brk);
++#endif
+ 	if (current->personality & MMAP_PAGE_ZERO) {
+ 		/* Why this, you ask???  Well SVr4 maps page 0 as read-only,
+ 		   and some applications "depend" upon this behavior.
+@@ -915,6 +999,8 @@ out_free_fh:
+ 	}
+ out_free_ph:
+ 	kfree(elf_phdata);
++	current->flags &= ~PF_RELOCEXEC;
++	current->flags |= old_relocexec;
+ 	goto out;
+ }
+ 
+diff -puN fs/exec.c~exec-shield-on-nx-A9 fs/exec.c
+--- linux-2.6.7-rc2-xx3/fs/exec.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.106941896 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/fs/exec.c	2004-06-07 04:37:36.843829872 -0400
+@@ -395,7 +395,12 @@ int setup_arg_pages(struct linux_binprm 
+ 	while (i < MAX_ARG_PAGES)
+ 		bprm->page[i++] = NULL;
+ #else
++#ifdef __HAVE_ARCH_ALIGN_STACK
++	stack_base = arch_align_stack(STACK_TOP - MAX_ARG_PAGES*PAGE_SIZE);
++	stack_base = PAGE_ALIGN(stack_base);
++#else
+ 	stack_base = STACK_TOP - MAX_ARG_PAGES * PAGE_SIZE;
++#endif
+ 	mm->arg_start = bprm->p + stack_base;
+ 	arg_size = STACK_TOP - (PAGE_MASK & (unsigned long) mm->arg_start);
+ #endif
+@@ -841,6 +846,7 @@ int flush_old_exec(struct linux_binprm *
+ 	}
+ 	current->comm[i] = '\0';
+ 
++	current->flags &= ~PF_RELOCEXEC;
+ 	flush_thread();
+ 
+ 	if (bprm->e_uid != current->euid || bprm->e_gid != current->egid || 
+@@ -892,8 +898,13 @@ int prepare_binprm(struct linux_binprm *
+ 
+ 	if(!(bprm->file->f_vfsmnt->mnt_flags & MNT_NOSUID)) {
+ 		/* Set-uid? */
+-		if (mode & S_ISUID)
++		if (mode & S_ISUID) {
+ 			bprm->e_uid = inode->i_uid;
++#ifdef __i386__
++			/* reset personality */
++			current->personality = PER_LINUX;
++#endif
++		}
+ 
+ 		/* Set-gid? */
+ 		/*
+@@ -901,8 +912,13 @@ int prepare_binprm(struct linux_binprm *
+ 		 * is a candidate for mandatory locking, not a setgid
+ 		 * executable.
+ 		 */
+-		if ((mode & (S_ISGID | S_IXGRP)) == (S_ISGID | S_IXGRP))
++		if ((mode & (S_ISGID | S_IXGRP)) == (S_ISGID | S_IXGRP)) {
+ 			bprm->e_gid = inode->i_gid;
++#ifdef __i386__
++			/* reset personality */
++			current->personality = PER_LINUX;
++#endif
++		}
+ 	}
+ 
+ 	/* fill in binprm security blob */
+diff -puN fs/proc/array.c~exec-shield-on-nx-A9 fs/proc/array.c
+--- linux-2.6.7-rc2-xx3/fs/proc/array.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.109941440 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/fs/proc/array.c	2004-06-07 04:37:36.813834432 -0400
+@@ -346,7 +346,10 @@ int proc_pid_stat(struct task_struct *ta
+ 		up_read(&mm->mmap_sem);
+ 	}
+ 
+-	wchan = get_wchan(task);
++	wchan = 0;
++	if (current->uid == task->uid || current->euid == task->uid ||
++							capable(CAP_SYS_NICE))
++		wchan = get_wchan(task);
+ 
+ 	sigemptyset(&sigign);
+ 	sigemptyset(&sigcatch);
+diff -puN fs/proc/base.c~exec-shield-on-nx-A9 fs/proc/base.c
+--- linux-2.6.7-rc2-xx3/fs/proc/base.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.113940832 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/fs/proc/base.c	2004-06-07 04:37:36.826832456 -0400
+@@ -129,7 +129,7 @@ static struct pid_entry tgid_base_stuff[
+ 	E(PROC_TGID_CMDLINE,   "cmdline", S_IFREG|S_IRUGO),
+ 	E(PROC_TGID_STAT,      "stat",    S_IFREG|S_IRUGO),
+ 	E(PROC_TGID_STATM,     "statm",   S_IFREG|S_IRUGO),
+-	E(PROC_TGID_MAPS,      "maps",    S_IFREG|S_IRUGO),
++	E(PROC_TGID_MAPS,      "maps",    S_IFREG|S_IRUSR),
+ 	E(PROC_TGID_MEM,       "mem",     S_IFREG|S_IRUSR|S_IWUSR),
+ 	E(PROC_TGID_CWD,       "cwd",     S_IFLNK|S_IRWXUGO),
+ 	E(PROC_TGID_ROOT,      "root",    S_IFLNK|S_IRWXUGO),
+@@ -161,7 +161,7 @@ static struct pid_entry tid_base_stuff[]
+ 	E(PROC_TID_CMDLINE,    "cmdline", S_IFREG|S_IRUGO),
+ 	E(PROC_TID_STAT,       "stat",    S_IFREG|S_IRUGO),
+ 	E(PROC_TID_STATM,      "statm",   S_IFREG|S_IRUGO),
+-	E(PROC_TID_MAPS,       "maps",    S_IFREG|S_IRUGO),
++	E(PROC_TID_MAPS,       "maps",    S_IFREG|S_IRUSR),
+ 	E(PROC_TID_MEM,        "mem",     S_IFREG|S_IRUSR|S_IWUSR),
+ 	E(PROC_TID_CWD,        "cwd",     S_IFLNK|S_IRWXUGO),
+ 	E(PROC_TID_ROOT,       "root",    S_IFLNK|S_IRWXUGO),
+diff -puN fs/proc/task_mmu.c~exec-shield-on-nx-A9 fs/proc/task_mmu.c
+--- linux-2.6.7-rc2-xx3/fs/proc/task_mmu.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.155934448 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/fs/proc/task_mmu.c	2004-06-07 04:37:36.829832000 -0400
+@@ -34,12 +34,23 @@ char *task_mem(struct mm_struct *mm, cha
+ 		"VmData:\t%8lu kB\n"
+ 		"VmStk:\t%8lu kB\n"
+ 		"VmExe:\t%8lu kB\n"
+-		"VmLib:\t%8lu kB\n",
++		"VmLib:\t%8lu kB\n"
++		"StaBrk:\t%08lx kB\n"
++		"Brk:\t%08lx kB\n"
++		"StaStk:\t%08lx kB\n"
++#if __i386__
++		"ExecLim:\t%08lx\n"
++#endif
++		,
+ 		mm->total_vm << (PAGE_SHIFT-10),
+ 		mm->locked_vm << (PAGE_SHIFT-10),
+ 		mm->rss << (PAGE_SHIFT-10),
+ 		data - stack, stack,
+-		exec - lib, lib);
++		exec - lib, lib, mm->start_brk, mm->brk, mm->start_stack
++#if __i386__
++		, mm->context.exec_limit
++#endif
++		);
+ 	up_read(&mm->mmap_sem);
+ 	return buffer;
+ }
+diff -puN include/asm-i386/desc.h~exec-shield-on-nx-A9 include/asm-i386/desc.h
+--- linux-2.6.7-rc2-xx3/include/asm-i386/desc.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.162933384 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/desc.h	2004-06-07 04:37:36.791837776 -0400
+@@ -131,6 +131,20 @@ static inline void load_LDT(mm_context_t
+ extern int modify_ldt(struct mm_struct * mm, int func, void __user *ptr,
+ 		      unsigned long bytecount);
+ 
++static inline void set_user_cs(struct desc_struct *desc, unsigned long limit)
++{
++	limit = (limit - 1) / PAGE_SIZE;
++	desc->a = limit & 0xffff;
++	desc->b = (limit & 0xf0000) | 0x00c0fb00;
++}
++
++#define load_user_cs_desc(cpu, mm) \
++    	cpu_gdt_table[(cpu)][GDT_ENTRY_DEFAULT_USER_CS] = (mm)->context.user_cs
++
++extern void arch_add_exec_range(struct mm_struct *mm, unsigned long limit);
++extern void arch_remove_exec_range(struct mm_struct *mm, unsigned long limit);
++extern void arch_flush_exec_range(struct mm_struct *mm);
++
+ #endif /* !__ASSEMBLY__ */
+ 
+ #endif
+diff -puN include/asm-i386/elf.h~exec-shield-on-nx-A9 include/asm-i386/elf.h
+--- linux-2.6.7-rc2-xx3/include/asm-i386/elf.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.165932928 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/elf.h	2004-06-07 04:37:36.792837624 -0400
+@@ -9,6 +9,7 @@
+ #include <asm/user.h>
+ #include <asm/processor.h>
+ #include <asm/system.h>		/* for savesegment */
++#include <asm/desc.h>
+ 
+ #include <linux/utsname.h>
+ 
+@@ -117,7 +118,8 @@ typedef struct user_fxsr_struct elf_fpxr
+ #define AT_SYSINFO_EHDR		33
+ 
+ #ifdef __KERNEL__
+-#define SET_PERSONALITY(ex, ibcs2) set_personality((ibcs2)?PER_SVR4:PER_LINUX)
++/* child inherits the personality of the parent */
++#define SET_PERSONALITY(ex, ibcs2) do { } while (0)
+ 
+ extern int dump_task_regs (struct task_struct *, elf_gregset_t *);
+ extern int dump_task_fpu (struct task_struct *, elf_fpregset_t *);
+@@ -127,15 +129,22 @@ extern int dump_task_extended_fpu (struc
+ #define ELF_CORE_COPY_FPREGS(tsk, elf_fpregs) dump_task_fpu(tsk, elf_fpregs)
+ #define ELF_CORE_COPY_XFPREGS(tsk, elf_xfpregs) dump_task_extended_fpu(tsk, elf_xfpregs)
+ 
+-#define VSYSCALL_BASE	(__fix_to_virt(FIX_VSYSCALL))
+-#define VSYSCALL_EHDR	((const struct elfhdr *) VSYSCALL_BASE)
+-#define VSYSCALL_ENTRY	((unsigned long) &__kernel_vsyscall)
+ extern void __kernel_vsyscall;
++#define VSYSCALL_BASE	((unsigned long)current->mm->context.vdso)
++#define VSYSCALL_EHDR	((const struct elfhdr *) VSYSCALL_BASE)
++#define VSYSCALL_OFFSET	((unsigned long) &__kernel_vsyscall)
++#define VSYSCALL_ENTRY	(VSYSCALL_BASE + VSYSCALL_OFFSET)
+ 
+-#define ARCH_DLINFO						\
+-do {								\
+-		NEW_AUX_ENT(AT_SYSINFO,	VSYSCALL_ENTRY);	\
+-		NEW_AUX_ENT(AT_SYSINFO_EHDR, VSYSCALL_BASE);	\
++/* kernel-internal fixmap address: */
++#define __VSYSCALL_BASE	(__fix_to_virt(FIX_VSYSCALL))
++#define __VSYSCALL_EHDR	((const struct elfhdr *) __VSYSCALL_BASE)
++
++#define ARCH_DLINFO							\
++do {									\
++	if (VSYSCALL_BASE) {						\
++		NEW_AUX_ENT(AT_SYSINFO,	VSYSCALL_ENTRY);		\
++		NEW_AUX_ENT(AT_SYSINFO_EHDR, VSYSCALL_BASE);		\
++	}								\
+ } while (0)
+ 
+ /*
+@@ -146,15 +155,15 @@ do {								\
+  * Dumping its extra ELF program headers includes all the other information
+  * a debugger needs to easily find how the vsyscall DSO was being used.
+  */
+-#define ELF_CORE_EXTRA_PHDRS		(VSYSCALL_EHDR->e_phnum)
++#define ELF_CORE_EXTRA_PHDRS		(__VSYSCALL_EHDR->e_phnum)
+ #define ELF_CORE_WRITE_EXTRA_PHDRS					      \
+ do {									      \
+ 	const struct elf_phdr *const vsyscall_phdrs =			      \
+-		(const struct elf_phdr *) (VSYSCALL_BASE		      \
+-					   + VSYSCALL_EHDR->e_phoff);	      \
++		(const struct elf_phdr *) (__VSYSCALL_BASE		      \
++					   + __VSYSCALL_EHDR->e_phoff);	      \
+ 	int i;								      \
+ 	Elf32_Off ofs = 0;						      \
+-	for (i = 0; i < VSYSCALL_EHDR->e_phnum; ++i) {			      \
++	for (i = 0; i < __VSYSCALL_EHDR->e_phnum; ++i) {		      \
+ 		struct elf_phdr phdr = vsyscall_phdrs[i];		      \
+ 		if (phdr.p_type == PT_LOAD) {				      \
+ 			BUG_ON(ofs != 0);				      \
+@@ -172,10 +181,10 @@ do {									      \
+ #define ELF_CORE_WRITE_EXTRA_DATA					      \
+ do {									      \
+ 	const struct elf_phdr *const vsyscall_phdrs =			      \
+-		(const struct elf_phdr *) (VSYSCALL_BASE		      \
+-					   + VSYSCALL_EHDR->e_phoff);	      \
++		(const struct elf_phdr *) (__VSYSCALL_BASE		      \
++					   + __VSYSCALL_EHDR->e_phoff);	      \
+ 	int i;								      \
+-	for (i = 0; i < VSYSCALL_EHDR->e_phnum; ++i) {			      \
++	for (i = 0; i < __VSYSCALL_EHDR->e_phnum; ++i) {		      \
+ 		if (vsyscall_phdrs[i].p_type == PT_LOAD)		      \
+ 			DUMP_WRITE((void *) vsyscall_phdrs[i].p_vaddr,	      \
+ 				   PAGE_ALIGN(vsyscall_phdrs[i].p_memsz));    \
+@@ -184,4 +193,10 @@ do {									      \
+ 
+ #endif
+ 
++#define __HAVE_ARCH_RANDOMIZE_BRK
++extern void randomize_brk(unsigned long old_brk);
++
++#define __HAVE_ARCH_VSYSCALL
++extern void map_vsyscall(void);
++
+ #endif
+diff -puN include/asm-i386/mmu.h~exec-shield-on-nx-A9 include/asm-i386/mmu.h
+--- linux-2.6.7-rc2-xx3/include/asm-i386/mmu.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.168932472 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/mmu.h	2004-06-07 04:37:36.793837472 -0400
+@@ -7,11 +7,17 @@
+  * we put the segment information here.
+  *
+  * cpu_vm_mask is used to optimize ldt flushing.
++ *
++ * exec_limit is used to track the range PROT_EXEC
++ * mappings span.
+  */
+ typedef struct { 
+ 	int size;
+ 	struct semaphore sem;
+ 	void *ldt;
++	struct desc_struct user_cs;
++	unsigned long exec_limit;
++	void *vdso;
+ } mm_context_t;
+ 
+ #endif
+diff -puN include/asm-i386/page.h~exec-shield-on-nx-A9 include/asm-i386/page.h
+--- linux-2.6.7-rc2-xx3/include/asm-i386/page.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.180930648 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/page.h	2004-06-07 04:37:36.794837320 -0400
+@@ -139,8 +139,10 @@ static __inline__ int get_order(unsigned
+ 
+ #define virt_addr_valid(kaddr)	pfn_valid(__pa(kaddr) >> PAGE_SHIFT)
+ 
+-#define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | VM_EXEC | \
+-				 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
++#define VM_DATA_DEFAULT_FLAGS \
++		(VM_READ | VM_WRITE | \
++			((current->flags & PF_RELOCEXEC) ? 0 : VM_EXEC) | \
++				VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
+ #endif /* __KERNEL__ */
+ 
+diff -puN include/asm-i386/pgalloc.h~exec-shield-on-nx-A9 include/asm-i386/pgalloc.h
+--- linux-2.6.7-rc2-xx3/include/asm-i386/pgalloc.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.203927152 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/pgalloc.h	2004-06-07 04:37:36.795837168 -0400
+@@ -4,6 +4,7 @@
+ #include <linux/config.h>
+ #include <asm/processor.h>
+ #include <asm/fixmap.h>
++#include <asm/desc.h>
+ #include <linux/threads.h>
+ #include <linux/mm.h>		/* for struct page */
+ 
+@@ -52,4 +53,6 @@ static inline void pte_free(struct page 
+ 
+ #define check_pgt_cache()	do { } while (0)
+ 
++#define HAVE_ARCH_UNMAPPED_AREA 1
++
+ #endif /* _I386_PGALLOC_H */
+diff -puN include/asm-i386/processor.h~exec-shield-on-nx-A9 include/asm-i386/processor.h
+--- linux-2.6.7-rc2-xx3/include/asm-i386/processor.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.210926088 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/processor.h	2004-06-07 04:37:36.805835648 -0400
+@@ -294,7 +294,15 @@ extern unsigned int mca_pentium_flag;
+ /* This decides where the kernel will search for a free chunk of vm
+  * space during mmap's.
+  */
+-#define TASK_UNMAPPED_BASE	(PAGE_ALIGN(TASK_SIZE / 3))
++#define TASK_UNMAPPED_BASE	PAGE_ALIGN(TASK_SIZE/3)
++
++#define SHLIB_BASE		0x00111000
++
++#define __HAVE_ARCH_ALIGN_STACK
++extern unsigned long arch_align_stack(unsigned long sp);
++
++#define __HAVE_ARCH_MMAP_TOP
++extern unsigned long mmap_top(void);
+ 
+ /*
+  * Size of io_bitmap, covering ports 0 to 0x3ff.
+@@ -458,6 +466,8 @@ static inline void load_esp0(struct tss_
+ 	}
+ }
+ 
++extern int use_nx;
++
+ #define start_thread(regs, new_eip, new_esp) do {		\
+ 	__asm__("movl %0,%%fs ; movl %0,%%gs": :"r" (0));	\
+ 	set_fs(USER_DS);					\
+@@ -467,6 +477,7 @@ static inline void load_esp0(struct tss_
+ 	regs->xcs = __USER_CS;					\
+ 	regs->eip = new_eip;					\
+ 	regs->esp = new_esp;					\
++	load_user_cs_desc(smp_processor_id(), current->mm);	\
+ } while (0)
+ 
+ /* Forward declaration, a strange C thing */
+diff -puN include/asm-i386/thread_info.h~exec-shield-on-nx-A9 include/asm-i386/thread_info.h
+--- linux-2.6.7-rc2-xx3/include/asm-i386/thread_info.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.254919400 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-i386/thread_info.h	2004-06-07 04:37:36.808835192 -0400
+@@ -37,6 +37,7 @@ struct thread_info {
+ 					 	   0-0xBFFFFFFF for user-thead
+ 						   0-0xFFFFFFFF for kernel-thread
+ 						*/
++	void			*sysenter_return;
+ 	struct restart_block    restart_block;
+ 
+ 	unsigned long           previous_esp;   /* ESP of the previous stack in case
+diff -puN include/asm-ia64/pgalloc.h~exec-shield-on-nx-A9 include/asm-ia64/pgalloc.h
+--- linux-2.6.7-rc2-xx3/include/asm-ia64/pgalloc.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.261918336 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-ia64/pgalloc.h	2004-06-07 04:37:36.766841576 -0400
+@@ -23,6 +23,10 @@
+ #include <asm/mmu_context.h>
+ #include <asm/processor.h>
+ 
++#define arch_add_exec_range(mm, limit)		do { ; } while (0)
++#define arch_flush_exec_range(mm)		do { ; } while (0)
++#define arch_remove_exec_range(mm, limit)	do { ; } while (0)
++
+ /*
+  * Very stupidly, we used to get new pgd's and pmd's, init their contents
+  * to point to the NULL versions of the next level page table, later on
+diff -puN include/asm-ppc/pgalloc.h~exec-shield-on-nx-A9 include/asm-ppc/pgalloc.h
+--- linux-2.6.7-rc2-xx3/include/asm-ppc/pgalloc.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.264917880 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-ppc/pgalloc.h	2004-06-07 04:37:36.767841424 -0400
+@@ -40,5 +40,10 @@ extern void pte_free(struct page *pte);
+ 
+ #define check_pgt_cache()	do { } while (0)
+ 
++#define arch_add_exec_range(mm, limit)         do { ; } while (0)
++#define arch_flush_exec_range(mm)              do { ; } while (0)
++#define arch_remove_exec_range(mm, limit)      do { ; } while (0)
++
++
+ #endif /* _PPC_PGALLOC_H */
+ #endif /* __KERNEL__ */
+diff -puN include/asm-ppc64/pgalloc.h~exec-shield-on-nx-A9 include/asm-ppc64/pgalloc.h
+--- linux-2.6.7-rc2-xx3/include/asm-ppc64/pgalloc.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.266917576 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-ppc64/pgalloc.h	2004-06-07 04:37:36.765841728 -0400
+@@ -10,6 +10,11 @@
+ 
+ extern kmem_cache_t *zero_cache;
+ 
++/* Dummy functions since we don't support execshield on ppc */
++#define arch_add_exec_range(mm, limit) do { ; } while (0)
++#define arch_flush_exec_range(mm)      do { ; } while (0)
++#define arch_remove_exec_range(mm, limit) do { ; } while (0)
++
+ /*
+  * This program is free software; you can redistribute it and/or
+  * modify it under the terms of the GNU General Public License
+diff -puN include/asm-s390/pgalloc.h~exec-shield-on-nx-A9 include/asm-s390/pgalloc.h
+--- linux-2.6.7-rc2-xx3/include/asm-s390/pgalloc.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.269917120 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-s390/pgalloc.h	2004-06-07 04:37:36.789838080 -0400
+@@ -19,6 +19,10 @@
+ #include <linux/gfp.h>
+ #include <linux/mm.h>
+ 
++#define arch_add_exec_range(mm, limit) do { ; } while (0)
++#define arch_flush_exec_range(mm)      do { ; } while (0)
++#define arch_remove_exec_range(mm, limit) do { ; } while (0)
++
+ #define check_pgt_cache()	do {} while (0)
+ 
+ extern void diag10(unsigned long addr);
+diff -puN include/asm-sparc/pgalloc.h~exec-shield-on-nx-A9 include/asm-sparc/pgalloc.h
+--- linux-2.6.7-rc2-xx3/include/asm-sparc/pgalloc.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.272916664 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-sparc/pgalloc.h	2004-06-07 04:37:36.788838232 -0400
+@@ -66,4 +66,8 @@ BTFIXUPDEF_CALL(void, pte_free, struct p
+ #define pte_free(pte)		BTFIXUP_CALL(pte_free)(pte)
+ #define __pte_free_tlb(tlb, pte)	pte_free(pte)
+ 
++#define arch_add_exec_range(mm, limit)		do { ; } while (0)
++#define arch_flush_exec_range(mm)		do { ; } while (0)
++#define arch_remove_exec_range(mm, limit)	do { ; } while (0)
++
+ #endif /* _SPARC_PGALLOC_H */
+diff -puN include/asm-sparc64/pgalloc.h~exec-shield-on-nx-A9 include/asm-sparc64/pgalloc.h
+--- linux-2.6.7-rc2-xx3/include/asm-sparc64/pgalloc.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.274916360 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-sparc64/pgalloc.h	2004-06-07 04:37:36.809835040 -0400
+@@ -236,4 +236,8 @@ static __inline__ void free_pte_slow(pte
+ #define pgd_free(pgd)		free_pgd_fast(pgd)
+ #define pgd_alloc(mm)		get_pgd_fast()
+ 
++#define arch_add_exec_range(mm, limit)		do { ; } while (0)
++#define arch_flush_exec_range(mm)		do { ; } while (0)
++#define arch_remove_exec_range(mm, limit)	do { ; } while (0)
++
+ #endif /* _SPARC64_PGALLOC_H */
+diff -puN include/asm-x86_64/pgalloc.h~exec-shield-on-nx-A9 include/asm-x86_64/pgalloc.h
+--- linux-2.6.7-rc2-xx3/include/asm-x86_64/pgalloc.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.278915752 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/asm-x86_64/pgalloc.h	2004-06-07 04:37:36.701851456 -0400
+@@ -7,6 +7,11 @@
+ #include <linux/threads.h>
+ #include <linux/mm.h>
+ 
++#define arch_add_exec_range(mm, limit) do { ; } while (0)
++#define arch_flush_exec_range(mm)      do { ; } while (0)
++#define arch_remove_exec_range(mm, limit) do { ; } while (0)
++
++
+ #define pmd_populate_kernel(mm, pmd, pte) \
+ 		set_pmd(pmd, __pmd(_PAGE_TABLE | __pa(pte)))
+ #define pgd_populate(mm, pgd, pmd) \
+diff -puN include/linux/mm.h~exec-shield-on-nx-A9 include/linux/mm.h
+--- linux-2.6.7-rc2-xx3/include/linux/mm.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.280915448 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/linux/mm.h	2004-06-07 04:37:36.718848872 -0400
+@@ -636,7 +636,7 @@ extern struct vm_area_struct *copy_vma(s
+ 	unsigned long addr, unsigned long len, pgoff_t pgoff);
+ extern void exit_mmap(struct mm_struct *);
+ 
+-extern unsigned long get_unmapped_area(struct file *, unsigned long, unsigned long, unsigned long, unsigned long);
++extern unsigned long get_unmapped_area(struct file *, unsigned long, unsigned long, unsigned long, unsigned long, unsigned long);
+ 
+ extern unsigned long __do_mmap_pgoff(struct mm_struct *mm, struct file *file,
+ 				   unsigned long addr, unsigned long len,
+diff -puN include/linux/resource.h~exec-shield-on-nx-A9 include/linux/resource.h
+--- linux-2.6.7-rc2-xx3/include/linux/resource.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.329908000 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/linux/resource.h	2004-06-07 04:37:36.719848720 -0400
+@@ -52,8 +52,11 @@ struct rlimit {
+ /*
+  * Limit the stack by to some sane default: root can always
+  * increase this limit if needed..  8MB seems reasonable.
++ *
++ * (2MB more to cover randomization effects.)
+  */
+-#define _STK_LIM	(8*1024*1024)
++#define _STK_LIM	(10*1024*1024)
++#define EXEC_STACK_BIAS	(2*1024*1024)
+ 
+ /*
+  * Due to binary compatibility, the actual resource numbers
+diff -puN include/linux/sched.h~exec-shield-on-nx-A9 include/linux/sched.h
+--- linux-2.6.7-rc2-xx3/include/linux/sched.h~exec-shield-on-nx-A9	2004-06-07 04:37:36.332907544 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/linux/sched.h	2004-06-07 04:39:12.158339864 -0400
+@@ -31,6 +31,9 @@
+ #include <linux/percpu.h>
+ 
+ struct exec_domain;
++extern int exec_shield;
++extern int exec_shield_randomize;
++extern int print_fatal_signals;
+ 
+ /*
+  * cloning flags:
+@@ -216,6 +219,8 @@ struct mm_struct {
+ 	struct rb_root mm_rb;
+ 	struct vm_area_struct * mmap_cache;	/* last find_vma result */
+ 	unsigned long free_area_cache;		/* first hole */
++	unsigned long non_executable_cache;	/* last hole top */
++	unsigned long mmap_top;			/* top of mmap area */
+ 	pgd_t * pgd;
+ 	atomic_t mm_users;			/* How many users with user space? */
+ 	atomic_t mm_count;			/* How many references to "struct mm_struct" (users count as 1) */
+@@ -705,6 +710,7 @@ do { if (atomic_dec_and_test(&(tsk)->usa
+ #define PF_SYNCTHREAD	0x00800000	/* this thread can start activity during the
+ 					   early part of freezing processes */
+ #define PF_FRIDGE_WAIT	0x01000000	/* this thread is currently doing I/O */
++#define PF_RELOCEXEC	0x02000000	/* relocate shared libraries */
+ 
+ #ifdef CONFIG_EBS
+ /*
+diff -puN kernel/fork.c~exec-shield-on-nx-A9 kernel/fork.c
+--- linux-2.6.7-rc2-xx3/kernel/fork.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.401897056 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/kernel/fork.c	2004-06-07 04:37:36.863826832 -0400
+@@ -427,6 +427,9 @@ static struct mm_struct * mm_init(struct
+ 
+ 	if (likely(!mm_alloc_pgd(mm))) {
+ 		mm->def_flags = 0;
++#ifdef __HAVE_ARCH_MMAP_TOP
++		mm->mmap_top = mmap_top();
++#endif
+ 		return mm;
+ 	}
+ 	free_mm(mm);
+diff -puN kernel/signal.c~exec-shield-on-nx-A9 kernel/signal.c
+--- linux-2.6.7-rc2-xx3/kernel/signal.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.442890824 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/kernel/signal.c	2004-06-07 04:37:36.894822120 -0400
+@@ -1550,6 +1550,34 @@ do_notify_parent_cldstop(struct task_str
+ 	spin_unlock_irqrestore(&sighand->siglock, flags);
+ }
+ 
++int print_fatal_signals = 0;
++
++static void print_fatal_signal(struct pt_regs *regs, int signr)
++{
++	int i;
++	unsigned char insn;
++	printk("%s/%d: potentially unexpected fatal signal %d.\n",
++		current->comm, current->pid, signr);
++
++#ifdef __i386__
++	printk("code at %08lx: ", regs->eip);
++	for (i = 0; i < 16; i++) {
++		__get_user(insn, (unsigned char *)(regs->eip + i));
++		printk("%02x ", insn);
++	}
++#endif
++	printk("\n");
++	show_regs(regs);
++}
++
++static int __init setup_print_fatal_signals(char *str)
++{
++	get_option (&str, &print_fatal_signals);
++
++	return 1;
++}
++
++__setup("print-fatal-signals=", setup_print_fatal_signals);
+ 
+ #ifndef HAVE_ARCH_GET_SIGNAL_TO_DELIVER
+ 
+@@ -1741,6 +1769,11 @@ relock:
+ 		if (!signr)
+ 			break; /* will return 0 */
+ 
++		if ((signr == SIGSEGV) && print_fatal_signals) {
++			spin_unlock_irq(&current->sighand->siglock);
++			print_fatal_signal(regs, signr);
++			spin_lock_irq(&current->sighand->siglock);
++		}
+ 		if ((current->ptrace & PT_PTRACED) && signr != SIGKILL) {
+ 			ptrace_signal_deliver(regs, cookie);
+ 
+@@ -1845,6 +1878,8 @@ relock:
+ 		 * Anything else is fatal, maybe with a core dump.
+ 		 */
+ 		current->flags |= PF_SIGNALED;
++		if (print_fatal_signals)
++			print_fatal_signal(regs, signr);
+ 		if (sig_kernel_coredump(signr) &&
+ 		    do_coredump((long)signr, signr, regs)) {
+ 			/*
+diff -puN kernel/sysctl.c~exec-shield-on-nx-A9 kernel/sysctl.c
+--- linux-2.6.7-rc2-xx3/kernel/sysctl.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.447890064 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/kernel/sysctl.c	2004-06-07 04:40:36.464523376 -0400
+@@ -66,6 +66,29 @@ extern int min_free_kbytes;
+ extern int printk_ratelimit_jiffies;
+ extern int printk_ratelimit_burst;
+ 
++extern unsigned int vdso_enabled;
++
++int exec_shield = 1;
++int exec_shield_randomize = 1;
++
++static int __init setup_exec_shield(char *str)
++{
++        get_option (&str, &exec_shield);
++
++        return 1;
++}
++
++__setup("exec-shield=", setup_exec_shield);
++
++static int __init setup_exec_shield_randomize(char *str)
++{
++        get_option (&str, &exec_shield_randomize);
++
++        return 1;
++}
++
++__setup("exec-shield-randomize=", setup_exec_shield_randomize);
++
+ /* this is needed for the proc_dointvec_minmax for [fs_]overflow UID and GID */
+ static int maxolduid = 65535;
+ static int minolduid;
+@@ -269,6 +292,40 @@ static ctl_table kern_table[] = {
+ 		.proc_handler	= &proc_dointvec,
+ 	},
+ 	{
++		.ctl_name	= KERN_PANIC,
++		.procname	= "exec-shield",
++		.data		= &exec_shield,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
++		.ctl_name	= KERN_PANIC,
++		.procname	= "exec-shield-randomize",
++		.data		= &exec_shield_randomize,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
++		.ctl_name	= KERN_PANIC,
++		.procname	= "print-fatal-signals",
++		.data		= &print_fatal_signals,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++#if __i386__
++	{
++		.ctl_name	= KERN_PANIC,
++		.procname	= "vdso",
++		.data		= &vdso_enabled,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++#endif
++	{
+ 		.ctl_name	= KERN_CORE_USES_PID,
+ 		.procname	= "core_uses_pid",
+ 		.data		= &core_uses_pid,
+diff -puN mm/fremap.c~exec-shield-on-nx-A9 mm/fremap.c
+--- linux-2.6.7-rc2-xx3/mm/fremap.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.474885960 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/mm/fremap.c	2004-06-07 04:37:36.933816192 -0400
+@@ -61,12 +61,6 @@ int install_page(struct mm_struct *mm, s
+ 	pmd_t *pmd;
+ 	pte_t pte_val;
+ 
+-	/*
+-	 * We use page_add_file_rmap below: if install_page is
+-	 * ever extended to anonymous pages, this will warn us.
+-	 */
+-	BUG_ON(!page_mapping(page));
+-
+ 	pgd = pgd_offset(mm, addr);
+ 	spin_lock(&mm->page_table_lock);
+ 
+diff -puN mm/mmap.c~exec-shield-on-nx-A9 mm/mmap.c
+--- linux-2.6.7-rc2-xx3/mm/mmap.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.477885504 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/mm/mmap.c	2004-06-07 04:37:36.924817560 -0400
+@@ -244,6 +244,8 @@ static inline void
+ __vma_link_list(struct mm_struct *mm, struct vm_area_struct *vma,
+ 		struct vm_area_struct *prev, struct rb_node *rb_parent)
+ {
++	if (vma->vm_flags & VM_EXEC)
++		arch_add_exec_range(mm, vma->vm_end);
+ 	if (prev) {
+ 		vma->vm_next = prev->vm_next;
+ 		prev->vm_next = vma;
+@@ -348,6 +350,8 @@ __vma_unlink(struct mm_struct *mm, struc
+ 	rb_erase(&vma->vm_rb, &mm->mm_rb);
+ 	if (mm->mmap_cache == vma)
+ 		mm->mmap_cache = prev;
++	if (vma->vm_flags & VM_EXEC)
++		arch_remove_exec_range(mm, vma->vm_end);
+ }
+ 
+ /*
+@@ -633,6 +637,8 @@ struct vm_area_struct *vma_merge(struct 
+ 		} else					/* cases 2, 5, 7 */
+ 			vma_adjust(prev, prev->vm_start,
+ 				end, prev->vm_pgoff, NULL);
++		if (prev->vm_flags & VM_EXEC)
++			arch_add_exec_range(mm, prev->vm_end);
+ 		return prev;
+ 	}
+ 
+@@ -769,7 +775,7 @@ unsigned long __do_mmap_pgoff(struct mm_
+ 	/* Obtain the address to map to. we verify (or select) it and ensure
+ 	 * that it represents a valid section of the address space.
+ 	 */
+-	addr = get_unmapped_area(file, addr, len, pgoff, flags);
++	addr = get_unmapped_area(file, addr, len, pgoff, flags, prot & PROT_EXEC);
+ 	if (addr & ~PAGE_MASK)
+ 		return addr;
+ 
+@@ -1003,7 +1009,7 @@ EXPORT_SYMBOL(__do_mmap_pgoff);
+ #ifndef HAVE_ARCH_UNMAPPED_AREA
+ static inline unsigned long
+ arch_get_unmapped_area(struct file *filp, unsigned long addr,
+-		unsigned long len, unsigned long pgoff, unsigned long flags)
++		unsigned long len, unsigned long pgoff, unsigned long flags, unsigned long exec)
+ {
+ 	struct mm_struct *mm = current->mm;
+ 	struct vm_area_struct *vma;
+@@ -1048,12 +1054,12 @@ full_search:
+ #else
+ extern unsigned long
+ arch_get_unmapped_area(struct file *, unsigned long, unsigned long,
+-			unsigned long, unsigned long);
++			unsigned long, unsigned long, unsigned long);
+ #endif	
+ 
+ unsigned long
+ get_unmapped_area(struct file *file, unsigned long addr, unsigned long len,
+-		unsigned long pgoff, unsigned long flags)
++		unsigned long pgoff, unsigned long flags, unsigned long exec)
+ {
+ 	if (flags & MAP_FIXED) {
+ 		unsigned long ret;
+@@ -1085,7 +1091,7 @@ get_unmapped_area(struct file *file, uns
+ 		return file->f_op->get_unmapped_area(file, addr, len,
+ 						pgoff, flags);
+ 
+-	return arch_get_unmapped_area(file, addr, len, pgoff, flags);
++	return arch_get_unmapped_area(file, addr, len, pgoff, flags, exec);
+ }
+ 
+ EXPORT_SYMBOL(get_unmapped_area);
+@@ -1163,6 +1169,14 @@ out:
+ 	return prev ? prev->vm_next : vma;
+ }
+ 
++
++static int over_stack_limit(unsigned long sz)
++{
++	if (sz < EXEC_STACK_BIAS)
++		return 0;
++	return (sz - EXEC_STACK_BIAS) > current->rlim[RLIMIT_STACK].rlim_cur;
++}
++
+ #ifdef CONFIG_STACK_GROWSUP
+ /*
+  * vma is the first one with address > vma->vm_end.  Have to extend vma.
+@@ -1197,7 +1211,7 @@ int expand_stack(struct vm_area_struct *
+ 		return -ENOMEM;
+ 	}
+ 	
+-	if (address - vma->vm_start > current->rlim[RLIMIT_STACK].rlim_cur ||
++	if (over_stack_limit(address - vma->vm_start) ||
+ 			((vma->vm_mm->total_vm + grow) << PAGE_SHIFT) >
+ 			current->rlim[RLIMIT_AS].rlim_cur) {
+ 		anon_vma_unlock(vma);
+@@ -1258,7 +1272,7 @@ int expand_stack(struct vm_area_struct *
+ 		return -ENOMEM;
+ 	}
+ 	
+-	if (vma->vm_end - address > current->rlim[RLIMIT_STACK].rlim_cur ||
++	if (over_stack_limit(vma->vm_end - address) ||
+ 			((vma->vm_mm->total_vm + grow) << PAGE_SHIFT) >
+ 			current->rlim[RLIMIT_AS].rlim_cur) {
+ 		anon_vma_unlock(vma);
+@@ -1371,6 +1385,7 @@ no_mmaps:
+ static void unmap_vma(struct mm_struct *mm, struct vm_area_struct *area)
+ {
+ 	size_t len = area->vm_end - area->vm_start;
++	unsigned long old_end = area->vm_end;
+ 
+ 	area->vm_mm->total_vm -= len >> PAGE_SHIFT;
+ 	if (area->vm_flags & VM_LOCKED)
+@@ -1381,8 +1396,14 @@ static void unmap_vma(struct mm_struct *
+ 	if (area->vm_start >= TASK_UNMAPPED_BASE &&
+ 				area->vm_start < area->vm_mm->free_area_cache)
+ 	      area->vm_mm->free_area_cache = area->vm_start;
+-
++	/*
++	 * Is this a new hole at the highest possible address?
++	 */
++	if (area->vm_start > area->vm_mm->non_executable_cache)
++		area->vm_mm->non_executable_cache = area->vm_start;
+ 	remove_vm_struct(area);
++	if (unlikely(area->vm_flags & VM_EXEC))
++		arch_remove_exec_range(mm, old_end);
+ }
+ 
+ /*
+@@ -1492,10 +1513,14 @@ int split_vma(struct mm_struct * mm, str
+ 	if (new->vm_ops && new->vm_ops->open)
+ 		new->vm_ops->open(new);
+ 
+-	if (new_below)
++	if (new_below) {
++		unsigned long old_end = vma->vm_end;
++
+ 		vma_adjust(vma, addr, vma->vm_end, vma->vm_pgoff +
+ 			((addr - new->vm_start) >> PAGE_SHIFT), new);
+-	else
++		if (vma->vm_flags & VM_EXEC)
++			arch_remove_exec_range(mm, old_end);
++	} else
+ 		vma_adjust(vma, vma->vm_start, addr, vma->vm_pgoff, new);
+ 
+ 	return 0;
+@@ -1703,6 +1728,7 @@ void exit_mmap(struct mm_struct *mm)
+ 	mm->rss = 0;
+ 	mm->total_vm = 0;
+ 	mm->locked_vm = 0;
++	arch_flush_exec_range(mm);
+ 
+ 	spin_unlock(&mm->page_table_lock);
+ 
+diff -puN mm/mprotect.c~exec-shield-on-nx-A9 mm/mprotect.c
+--- linux-2.6.7-rc2-xx3/mm/mprotect.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.514879880 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/mm/mprotect.c	2004-06-07 04:37:36.926817256 -0400
+@@ -20,6 +20,7 @@
+ 
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
++#include <asm/pgalloc.h>
+ #include <asm/cacheflush.h>
+ #include <asm/tlbflush.h>
+ 
+@@ -112,8 +113,9 @@ mprotect_fixup(struct vm_area_struct *vm
+ 	unsigned long start, unsigned long end, unsigned int newflags)
+ {
+ 	struct mm_struct * mm = vma->vm_mm;
+-	unsigned long charged = 0;
++	unsigned long charged = 0, old_end = vma->vm_end;
+ 	pgprot_t newprot;
++	unsigned int oldflags;
+ 	pgoff_t pgoff;
+ 	int error;
+ 
+@@ -174,8 +176,11 @@ success:
+ 	 * vm_flags and vm_page_prot are protected by the mmap_sem
+ 	 * held in write mode.
+ 	 */
++	oldflags = vma->vm_flags;
+ 	vma->vm_flags = newflags;
+ 	vma->vm_page_prot = newprot;
++	if (oldflags & VM_EXEC)
++		arch_remove_exec_range(current->mm, old_end);
+ 	change_protection(vma, start, end, newprot);
+ 	return 0;
+ 
+diff -puN mm/mremap.c~exec-shield-on-nx-A9 mm/mremap.c
+--- linux-2.6.7-rc2-xx3/mm/mremap.c~exec-shield-on-nx-A9	2004-06-07 04:37:36.549874560 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/mm/mremap.c	2004-06-07 04:37:36.932816344 -0400
+@@ -380,7 +380,8 @@ unsigned long do_mremap(unsigned long ad
+ 				map_flags |= MAP_SHARED;
+ 
+ 			new_addr = get_unmapped_area(vma->vm_file, 0, new_len,
+-						vma->vm_pgoff, map_flags);
++					vma->vm_pgoff, map_flags,
++						vma->vm_flags & VM_EXEC);
+ 			ret = new_addr;
+ 			if (new_addr & ~PAGE_MASK)
+ 				goto out;
+
+_

@@ -1,0 +1,220 @@
+All the sleepstuff can be shared so make it public.
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2005-01-14 19:16:09.581487496 +0000
++++ xx-sources/kernel/sched.c	2005-01-14 19:18:40.501544160 +0000
+@@ -2910,77 +2910,6 @@
+ }
+ EXPORT_SYMBOL(wait_for_completion);
+ 
+-#define	SLEEP_ON_VAR					\
+-	unsigned long flags;				\
+-	wait_queue_t wait;				\
+-	init_waitqueue_entry(&wait, current);
+-
+-#define SLEEP_ON_HEAD					\
+-	spin_lock_irqsave(&q->lock,flags);		\
+-	__add_wait_queue(q, &wait);			\
+-	spin_unlock(&q->lock);
+-
+-#define	SLEEP_ON_TAIL					\
+-	spin_lock_irq(&q->lock);			\
+-	__remove_wait_queue(q, &wait);			\
+-	spin_unlock_irqrestore(&q->lock, flags);
+-
+-void fastcall __sched interruptible_sleep_on(wait_queue_head_t *q)
+-{
+-	SLEEP_ON_VAR
+-
+-	current->state = TASK_INTERRUPTIBLE;
+-
+-	SLEEP_ON_HEAD
+-	schedule();
+-	SLEEP_ON_TAIL
+-}
+-
+-EXPORT_SYMBOL(interruptible_sleep_on);
+-
+-long fastcall __sched interruptible_sleep_on_timeout(wait_queue_head_t *q, long timeout)
+-{
+-	SLEEP_ON_VAR
+-
+-	current->state = TASK_INTERRUPTIBLE;
+-
+-	SLEEP_ON_HEAD
+-	timeout = schedule_timeout(timeout);
+-	SLEEP_ON_TAIL
+-
+-	return timeout;
+-}
+-
+-EXPORT_SYMBOL(interruptible_sleep_on_timeout);
+-
+-void fastcall __sched sleep_on(wait_queue_head_t *q)
+-{
+-	SLEEP_ON_VAR
+-
+-	current->state = TASK_UNINTERRUPTIBLE;
+-
+-	SLEEP_ON_HEAD
+-	schedule();
+-	SLEEP_ON_TAIL
+-}
+-
+-EXPORT_SYMBOL(sleep_on);
+-
+-long fastcall __sched sleep_on_timeout(wait_queue_head_t *q, long timeout)
+-{
+-	SLEEP_ON_VAR
+-
+-	current->state = TASK_UNINTERRUPTIBLE;
+-
+-	SLEEP_ON_HEAD
+-	timeout = schedule_timeout(timeout);
+-	SLEEP_ON_TAIL
+-
+-	return timeout;
+-}
+-
+-EXPORT_SYMBOL(sleep_on_timeout);
+-
+ static void ingo_set_user_nice(task_t *p, long nice)
+ {
+ 	unsigned long flags;
+@@ -4747,28 +4676,6 @@
+ 	init_idle(current, smp_processor_id());
+ }
+ 
+-#ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
+-void __might_sleep(char *file, int line)
+-{
+-#if defined(in_atomic)
+-	static unsigned long prev_jiffy;	/* ratelimiting */
+-
+-	if ((in_atomic() || irqs_disabled()) &&
+-	    system_state == SYSTEM_RUNNING && !oops_in_progress) {
+-		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
+-			return;
+-		prev_jiffy = jiffies;
+-		printk(KERN_ERR "Debug: sleeping function called from invalid"
+-				" context at %s:%d\n", file, line);
+-		printk("in_atomic():%d, irqs_disabled():%d\n",
+-			in_atomic(), irqs_disabled());
+-		dump_stack();
+-	}
+-#endif
+-}
+-EXPORT_SYMBOL(__might_sleep);
+-#endif
+-
+ #if defined(CONFIG_DEBUG_KERNEL)&&defined(CONFIG_SYSCTL)&&defined(CONFIG_SMP)
+ static struct ctl_table sd_ctl_dir[] = {
+ 	{1, "sched_domain", NULL, 0, 0755, NULL, },
+Index: xx-sources/kernel/scheduler.c
+===================================================================
+--- xx-sources.orig/kernel/scheduler.c	2005-01-14 19:16:04.792215576 +0000
++++ xx-sources/kernel/scheduler.c	2005-01-14 19:18:38.336873240 +0000
+@@ -182,6 +182,99 @@
+ }
+ #endif /* CONFIG_PREEMPT */
+ 
++#define	SLEEP_ON_VAR					\
++	unsigned long flags;				\
++	wait_queue_t wait;				\
++	init_waitqueue_entry(&wait, current);
++
++#define SLEEP_ON_HEAD					\
++	spin_lock_irqsave(&q->lock,flags);		\
++	__add_wait_queue(q, &wait);			\
++	spin_unlock(&q->lock);
++
++#define	SLEEP_ON_TAIL					\
++	spin_lock_irq(&q->lock);			\
++	__remove_wait_queue(q, &wait);			\
++	spin_unlock_irqrestore(&q->lock, flags);
++
++void fastcall __sched interruptible_sleep_on(wait_queue_head_t *q)
++{
++	SLEEP_ON_VAR
++
++	current->state = TASK_INTERRUPTIBLE;
++
++	SLEEP_ON_HEAD
++	schedule();
++	SLEEP_ON_TAIL
++}
++
++EXPORT_SYMBOL(interruptible_sleep_on);
++
++long fastcall __sched interruptible_sleep_on_timeout(wait_queue_head_t *q, long timeout)
++{
++	SLEEP_ON_VAR
++
++	current->state = TASK_INTERRUPTIBLE;
++
++	SLEEP_ON_HEAD
++	timeout = schedule_timeout(timeout);
++	SLEEP_ON_TAIL
++
++	return timeout;
++}
++
++EXPORT_SYMBOL(interruptible_sleep_on_timeout);
++
++void fastcall __sched sleep_on(wait_queue_head_t *q)
++{
++	SLEEP_ON_VAR
++
++	current->state = TASK_UNINTERRUPTIBLE;
++
++	SLEEP_ON_HEAD
++	schedule();
++	SLEEP_ON_TAIL
++}
++
++EXPORT_SYMBOL(sleep_on);
++
++long fastcall __sched sleep_on_timeout(wait_queue_head_t *q, long timeout)
++{
++	SLEEP_ON_VAR
++
++	current->state = TASK_UNINTERRUPTIBLE;
++
++	SLEEP_ON_HEAD
++	timeout = schedule_timeout(timeout);
++	SLEEP_ON_TAIL
++
++	return timeout;
++}
++
++EXPORT_SYMBOL(sleep_on_timeout);
++
++#ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
++void __might_sleep(char *file, int line)
++{
++#if defined(in_atomic)
++	static unsigned long prev_jiffy;	/* ratelimiting */
++
++	if ((in_atomic() || irqs_disabled()) &&
++	    system_state == SYSTEM_RUNNING && !oops_in_progress) {
++		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
++			return;
++		prev_jiffy = jiffies;
++		printk(KERN_ERR "Debug: sleeping function called from invalid"
++				" context at %s:%d\n", file, line);
++		printk("in_atomic():%d, irqs_disabled():%d\n",
++			in_atomic(), irqs_disabled());
++		dump_stack();
++	}
++#endif
++}
++EXPORT_SYMBOL(__might_sleep);
++#endif
++
+ extern struct sched_drv ingo_sched_drv;
+ static const struct sched_drv *scheduler = &ingo_sched_drv;
+ 

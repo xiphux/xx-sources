@@ -1,0 +1,2482 @@
+bk://kernel.bkbits.net/gregkh/linux/driver-2.6
+greg@kroah.com|ChangeSet|20041001000038|53880 greg
+
+# This is a BitKeeper generated diff -Nru style patch.
+#
+# fs/sysfs/dir.c
+#   2004/09/24 11:49:28-07:00 mochel@digitalimplant.org +3 -3
+#   [sysfs] Change symbol exports to GPL only in dir.c
+# 
+# lib/kobject.c
+#   2004/09/15 11:35:27-07:00 greg@kroah.com +2 -2
+#   kevent: standardize on the event types
+#   
+#   This prevents any potential typos from happening.
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# lib/kobject.c
+#   2004/09/10 16:45:17-07:00 greg@kroah.com +5 -128
+#   Kobject Userspace Event Notification
+#     
+#   Implemetation of userspace events through a netlink socket. The kernel events
+#   layer provides the functionality to raise an event from a given kobject
+#   represented by its sysfs-path and a signal string to describe the type of
+#   event.
+#     
+#   Currently, kobject additions and removals are signalized to userspace by forking
+#   the /sbin/hotplug helper. This patch moves this special case of userspace-event
+#   out of the kobject core to the new kobject_uevent implementation. This makes it
+#   possible to send all hotplug messages also through the new netlink transport.
+#     
+#   Possible new users of the kernel userspace functionality are filesystem
+#   mount events (block device claim/release) or simple device state transitions
+#   (cpu overheating).
+#     
+#   To send an event, the user needs to pass the kobject, a optional
+#   sysfs-attribute and the signal string to the following function:
+#     
+#     kobject_uevent(const char *signal,
+#                    struct kobject *kobj,
+#                    struct attribute *attr)
+#     
+#     Example:
+#     kobject_uevent("overheating", &cpu->kobj, NULL);
+#     
+#   The message itself is sent over multicast netlink socket, which makes
+#   it possible for userspace to listen with multiple applications for the same
+#   messages.
+#     
+#   Signed-off-by: Robert Love <rml@novell.com>
+#   Signed-off-by: Kay Sievers <kay.sievers@vrfy.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# lib/kobject.c
+#   2004/09/08 17:33:38-07:00 greg@kroah.com +1 -1
+#   ksyms: don't implement /sys/kernel/hotplug_seqnum if CONFIG_HOTPLUG is not enabled.
+# 
+# lib/kobject.c
+#   2004/09/08 21:17:58-07:00 greg@kroah.com +1 -1
+#   kobject: hotplug_seqnum is not 64 bits on all platforms, so fix it.
+# 
+# lib/kobject.c
+#   2004/09/05 00:58:23+02:00 greg@kroah.com +1 -1
+#   kobject: fix build error if CONFIG_HOTPLUG is not enabled.
+#   
+#   Thanks to Kay Sievers for pointing this out.
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# include/linux/kobject.h
+#   2004/09/29 16:51:02-07:00 roland@topspin.com +9 -1
+#   kobject: add add_hotplug_env_var()
+# 
+# lib/kobject.c
+#   2004/09/04 01:19:44+02:00 greg@kroah.com +1 -1
+#   kobject: adjust hotplug_seqnum increment to keep userspace and kernel agreeing.
+# 
+# lib/kobject.c
+#   2004/09/03 11:00:55+02:00 kay.sievers@vrfy.org +2 -2
+#   export of SEQNUM to userspace (creates /sys/kernel)
+# 
+# include/linux/kobject.h
+#   2004/09/15 11:35:27-07:00 greg@kroah.com +3 -24
+#   kevent: standardize on the event types
+#   
+#   This prevents any potential typos from happening.
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# include/linux/kobject.h
+#   2004/09/10 16:45:17-07:00 greg@kroah.com +29 -3
+#   Kobject Userspace Event Notification
+#     
+#   Implemetation of userspace events through a netlink socket. The kernel events
+#   layer provides the functionality to raise an event from a given kobject
+#   represented by its sysfs-path and a signal string to describe the type of
+#   event.
+#     
+#   Currently, kobject additions and removals are signalized to userspace by forking
+#   the /sbin/hotplug helper. This patch moves this special case of userspace-event
+#   out of the kobject core to the new kobject_uevent implementation. This makes it
+#   possible to send all hotplug messages also through the new netlink transport.
+#     
+#   Possible new users of the kernel userspace functionality are filesystem
+#   mount events (block device claim/release) or simple device state transitions
+#   (cpu overheating).
+#     
+#   To send an event, the user needs to pass the kobject, a optional
+#   sysfs-attribute and the signal string to the following function:
+#     
+#     kobject_uevent(const char *signal,
+#                    struct kobject *kobj,
+#                    struct attribute *attr)
+#     
+#     Example:
+#     kobject_uevent("overheating", &cpu->kobj, NULL);
+#     
+#   The message itself is sent over multicast netlink socket, which makes
+#   it possible for userspace to listen with multiple applications for the same
+#   messages.
+#     
+#   Signed-off-by: Robert Love <rml@novell.com>
+#   Signed-off-by: Kay Sievers <kay.sievers@vrfy.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# include/linux/kobject.h
+#   2004/09/08 21:19:11-07:00 greg@kroah.com +1 -1
+#   kobject: hotplug_seqnum is not 64 bits on all platforms, so fix it.
+# 
+# include/linux/kobject.h
+#   2004/09/03 11:00:55+02:00 kay.sievers@vrfy.org +3 -0
+#   export of SEQNUM to userspace (creates /sys/kernel)
+# 
+# drivers/base/class.c
+#   2004/09/24 11:43:37-07:00 mochel@digitalimplant.org +17 -17
+#   [driver model] Change sybmols exports to GPL only in class.c
+# 
+# ChangeSet
+#   2004/10/02 19:05:20-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-driver-core
+# 
+# drivers/char/tty_io.c
+#   2004/10/02 19:05:17-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/30 21:36:32-07:00 akpm@bix.(none) 
+#   Merge bk://kernel.bkbits.net/gregkh/linux/driver-2.6
+#   into bix.(none):/usr/src/bk-driver-core
+# 
+# drivers/pci/pci-driver.c
+#   2004/09/30 21:36:28-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/30 17:00:38-07:00 greg@kroah.com 
+#   Merge kroah.com:/home/greg/linux/BK/bleed-2.6
+#   into kroah.com:/home/greg/linux/BK/driver-2.6
+# 
+# drivers/pci/pci-driver.c
+#   2004/09/30 17:00:32-07:00 greg@kroah.com +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/30 13:33:57-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-driver-core
+# 
+# drivers/pci/pci-driver.c
+#   2004/09/30 13:33:53-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# drivers/char/tty_io.c
+#   2004/09/30 13:33:53-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/29 17:26:15-07:00 roland@topspin.com 
+#   [PATCH] USB: use add_hotplug_env_var() in core/usb.c
+#   
+#   Use the new add_hotplug_env_var() function in drivers/usb/core/usb.c.
+#   In addition to cleaning up the code, this fixes a (probably harmless)
+#   bug here: for each value added to the environment, the code did
+#   
+#   	length += sprintf(...);
+#   
+#   and then
+#   
+#   	scratch += length;
+#   
+#   which means that we skip the sum of the lengths of all the values
+#   we've put so far, rather than just the length of the value we just
+#   put.  This is probably harmless since we're unlikely to run out of
+#   space but if nothing else it's setting a bad example....
+#   
+#   I've tested this on a system with USB floppy and CD-ROM; hotplug gets
+#   the same environment with the patch as without.
+#   
+#   
+#   Signed-off-by: Roland Dreier <roland@topspin.com>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/usb/core/usb.c
+#   2004/09/28 10:19:22-07:00 roland@topspin.com +23 -36
+#   USB: use add_hotplug_env_var() in core/usb.c
+# 
+# ChangeSet
+#   2004/09/29 17:24:36-07:00 roland@topspin.com 
+#   [PATCH] kobject: add add_hotplug_env_var()
+#   
+#   Add a (non-inlined) add_hotplug_env_var() function to <linux/kobject.h>
+#   and lib/kobject.c.  There's a lot of boilerplate code involved in
+#   setting environment variables in a hotplug method, so we should have a
+#   convenience function to consolidate it (and avoid subtle bugs).
+#   
+#   
+#   Signed-off-by: Roland Dreier <roland@topspin.com>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# lib/kobject_uevent.c
+#   2004/09/29 16:54:19-07:00 roland@topspin.com +51 -1
+#   kobject: add add_hotplug_env_var()
+# 
+# ChangeSet
+#   2004/09/29 16:28:06-07:00 hare@suse.de 
+#   [PATCH] Driver Core: Handle NULL arg for put_device()
+#   
+#   Since get_device() accepts a NULL argument, put_device() should do so, too.
+#   
+#   Signed-off-by: Hannes Reinecke <hare@suse.de>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/base/core.c
+#   2004/09/28 00:01:20-07:00 hare@suse.de +2 -1
+#   Driver Core: Handle NULL arg for put_device()
+# 
+# ChangeSet
+#   2004/09/29 13:12:09-07:00 akpm@osdl.org 
+#   [PATCH] module.h build fix
+#   
+#   From: Ingo Molnar <mingo@elte.hu>
+#   
+#   Forward-declare the structures before using them, rather than relying on
+#   previous inclusions.
+#   
+#   akpm: The breakage was introduced by bk-driver-core.patch
+#   
+#   Signed-off-by: Andrew Morton <akpm@osdl.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# include/linux/module.h
+#   2004/09/23 08:16:40-07:00 akpm@osdl.org +5 -2
+#   module.h build fix
+# 
+# ChangeSet
+#   2004/09/26 11:06:09-07:00 akpm@bix.(none) 
+#   Merge bk://kernel.bkbits.net/gregkh/linux/driver-2.6
+#   into bix.(none):/usr/src/bk-driver-core
+# 
+# lib/Makefile
+#   2004/09/26 11:06:03-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# fs/super.c
+#   2004/09/26 11:06:03-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/25 00:07:32-07:00 greg@kroah.com 
+#   Merge bk://kernel.bkbits.net//home/mochel/linux-2.6-core
+#   into kroah.com:/home/greg/linux/BK/driver-2.6
+# 
+# drivers/base/bus.c
+#   2004/09/25 00:07:30-07:00 greg@kroah.com +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/25 00:04:39-07:00 greg@kroah.com 
+#   Merge kroah.com:/home/greg/linux/BK/bleed-2.6
+#   into kroah.com:/home/greg/linux/BK/driver-2.6
+# 
+# lib/Makefile
+#   2004/09/25 00:04:37-07:00 greg@kroah.com +0 -0
+#   Auto merged
+# 
+# fs/super.c
+#   2004/09/25 00:04:37-07:00 greg@kroah.com +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/24 19:25:13-07:00 mochel@digitalimplant.org 
+#   [driver core] Change symbol exports to GPL only in power/suspend.c.
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/base/power/suspend.c
+#   2004/09/24 19:24:59-07:00 mochel@digitalimplant.org +2 -2
+#   [driver core] Change symbol exports to GPL only in power/suspend.c.
+# 
+# ChangeSet
+#   2004/09/24 19:24:17-07:00 mochel@digitalimplant.org 
+#   [driver core] Change symbol exports to GPL only in power/resume.c
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/base/power/resume.c
+#   2004/09/24 19:24:01-07:00 mochel@digitalimplant.org +2 -2
+#   [driver core] Change symbol exports to GPL only in power/resume.c
+# 
+# ChangeSet
+#   2004/09/24 19:23:11-07:00 mochel@digitalimplant.org 
+#   [driver core] Change symbol exports to GPL only in power/main.c
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/base/power/main.c
+#   2004/09/24 19:22:57-07:00 mochel@digitalimplant.org +1 -1
+#   [driver core] Change symbol exports to GPL only in power/main.c
+# 
+# ChangeSet
+#   2004/09/24 14:02:12-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-driver-core
+# 
+# lib/Makefile
+#   2004/09/24 14:02:08-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/24 11:52:50-07:00 mochel@digitalimplant.org 
+#   [sysfs] Change symbol exports to GPL only in symlink.c.
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# fs/sysfs/symlink.c
+#   2004/09/24 11:52:28-07:00 mochel@digitalimplant.org +2 -2
+#   [sysfs] Change symbol exports to GPL only in symlink.c.
+# 
+# ChangeSet
+#   2004/09/24 11:51:37-07:00 mochel@digitalimplant.org 
+#   [sysfs] Change symbol exports to GPL only in group.c.
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# fs/sysfs/group.c
+#   2004/09/24 11:51:23-07:00 mochel@digitalimplant.org +2 -2
+#   [sysfs] Change symbol exports to GPL only in group.c.
+# 
+# ChangeSet
+#   2004/09/24 11:50:39-07:00 mochel@digitalimplant.org 
+#   [sysfs] Change symbol exports to GPL only in file.c.
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# fs/sysfs/file.c
+#   2004/09/24 11:50:26-07:00 mochel@digitalimplant.org +3 -3
+#   [sysfs] Change symbol exports to GPL only in file.c.
+# 
+# ChangeSet
+#   2004/09/24 11:49:41-07:00 mochel@digitalimplant.org 
+#   [sysfs] Change symbol exports to GPL only in dir.c
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# ChangeSet
+#   2004/09/24 11:48:47-07:00 mochel@digitalimplant.org 
+#   [sysfs] Change symbol exports to GPL only in bin.c
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# fs/sysfs/bin.c
+#   2004/09/24 11:48:34-07:00 mochel@digitalimplant.org +2 -2
+#   [sysfs] Change symbol exports to GPL only in bin.c
+# 
+# ChangeSet
+#   2004/09/24 11:47:15-07:00 mochel@digitalimplant.org 
+#   [driver model] Change symbol exports to GPL only in sys.c
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/base/sys.c
+#   2004/09/24 11:47:02-07:00 mochel@digitalimplant.org +8 -8
+#   [driver model] Change symbol exports to GPL only in sys.c
+# 
+# ChangeSet
+#   2004/09/24 11:46:32-07:00 mochel@digitalimplant.org 
+#   [driver model] Change symbol exports to GPL only in platform.c.
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/base/platform.c
+#   2004/09/24 11:46:18-07:00 mochel@digitalimplant.org +8 -8
+#   [driver model] Change symbol exports to GPL only in platform.c.
+# 
+# ChangeSet
+#   2004/09/24 11:45:49-07:00 mochel@digitalimplant.org 
+#   [driver model] Change symbol exports to GPL only in firmware.c
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/base/firmware.c
+#   2004/09/24 11:45:35-07:00 mochel@digitalimplant.org +2 -2
+#   [driver model] Change symbol exports to GPL only in firmware.c
+# 
+# ChangeSet
+#   2004/09/24 11:45:06-07:00 mochel@digitalimplant.org 
+#   [driver model] Change symbol exports to GPL only in driver.c
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/base/driver.c
+#   2004/09/24 11:44:53-07:00 mochel@digitalimplant.org +7 -7
+#   [driver model] Change symbol exports to GPL only in driver.c
+# 
+# ChangeSet
+#   2004/09/24 11:44:27-07:00 mochel@digitalimplant.org 
+#   [driver model] Change symbol exports to GPL only in core.c
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/base/core.c
+#   2004/09/24 11:44:13-07:00 mochel@digitalimplant.org +11 -11
+#   [driver model] Change symbol exports to GPL only in core.c
+# 
+# ChangeSet
+#   2004/09/24 11:43:50-07:00 mochel@digitalimplant.org 
+#   [driver model] Change sybmols exports to GPL only in class.c
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# ChangeSet
+#   2004/09/24 11:43:03-07:00 mochel@digitalimplant.org 
+#   [driver model] Change symbol exports to GPL only in drivers/base/bus.c.
+#   
+#   Signed-off-by: Patrick Mochel <mochel@digitalimplant.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/base/bus.c
+#   2004/09/24 11:42:48-07:00 mochel@digitalimplant.org +14 -14
+#   [driver model] Change symbol exports to GPL only in drivers/base/bus.c.
+# 
+# ChangeSet
+#   2004/09/22 23:45:21-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-driver-core
+# 
+# fs/super.c
+#   2004/09/22 23:45:17-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/22 16:25:38-07:00 greg@kroah.com 
+#   [PATCH] PCI: add "struct module *" to struct pci_driver to show symlink in sysfs for pci drivers.
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# include/linux/pci.h
+#   2004/09/22 16:24:57-07:00 greg@kroah.com +2 -0
+#   PCI: add "struct module *" to struct pci_driver to show symlink in sysfs for pci drivers.
+# 
+# drivers/pci/pci-driver.c
+#   2004/09/22 16:24:57-07:00 greg@kroah.com +1 -0
+#   PCI: add "struct module *" to struct pci_driver to show symlink in sysfs for pci drivers.
+# 
+# ChangeSet
+#   2004/09/22 16:12:59-07:00 greg@kroah.com 
+#   [PATCH] USB: add support for symlink from usb and usb-serial driver to its module in sysfs
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/usb/serial/bus.c
+#   2004/09/22 15:56:44-07:00 greg@kroah.com +1 -0
+#   USB: add support for symlink from usb and usb-serial driver to its module in sysfs
+# 
+# drivers/usb/core/usb.c
+#   2004/09/22 15:56:44-07:00 greg@kroah.com +2 -0
+#   USB: add support for symlink from usb and usb-serial driver to its module in sysfs
+# 
+# ChangeSet
+#   2004/09/22 16:09:41-07:00 greg@kroah.com 
+#   [PATCH] Put symbolic links between drivers and modules in the sysfs tree
+#   
+#   This functionality is essential for us to work out which drivers are
+#   supplied by which modules.  We use this in turn to work out which
+#   modules are necessary to find the root device (and hence what
+#   initrd/initramfs needs to insert).
+#   
+#   If you look at debian at the moment, it uses a huge mapping table on
+#   /proc/scsi/* to do this.  If we implement the sysfs feature, we can
+#   simply go from /sys/block/<device> to the actual device to the driver
+#   and then to the module with no need of any fixed tables.
+#   
+#   Signed-off-by: James Bottomley <James.Bottomley@SteelEye.com>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# kernel/module.c
+#   2004/09/22 15:56:32-07:00 greg@kroah.com +21 -0
+#   Put symbolic links between drivers and modules in the sysfs tree
+# 
+# include/linux/module.h
+#   2004/09/22 15:56:32-07:00 greg@kroah.com +14 -0
+#   Put symbolic links between drivers and modules in the sysfs tree
+# 
+# include/linux/device.h
+#   2004/09/22 15:56:32-07:00 greg@kroah.com +2 -0
+#   Put symbolic links between drivers and modules in the sysfs tree
+# 
+# drivers/base/bus.c
+#   2004/09/22 15:56:32-07:00 greg@kroah.com +2 -0
+#   Put symbolic links between drivers and modules in the sysfs tree
+# 
+# ChangeSet
+#   2004/09/22 14:01:17-07:00 akpm@bix.(none) 
+#   Merge bk://kernel.bkbits.net/gregkh/linux/driver-2.6
+#   into bix.(none):/usr/src/bk-driver-core
+# 
+# lib/Makefile
+#   2004/09/22 14:01:12-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/22 09:29:34+00:00 greg@press.kroah.org 
+#   Merge gregkh@kernel.bkbits.net:linux/driver-2.6
+#   into press.kroah.org:/home/greg/linux/BK/driver-2.6
+# 
+# lib/Makefile
+#   2004/09/22 09:29:30+00:00 greg@press.kroah.org +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/15 14:16:46-07:00 greg@kroah.com 
+#   kevent: add block mount and umount support
+#   
+#   Send notification over the new netlink socket to let userspace know that
+#   the filesystem code claims/releases the superblock on an blockdevice.
+#   This way, userspace can get rid of constantly polling /proc/mounts to
+#   watch for filesystem changes.
+#   
+#   Signed-off-by: Kay Sievers <kay.sievers@vrfy.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# lib/kobject_uevent.c
+#   2004/09/15 14:16:09-07:00 greg@kroah.com +1 -0
+#   kevent: add block mount and umount support
+#   
+#   Send notification over the new netlink socket to let userspace know that
+#   the filesystem code claims/releases the superblock on an blockdevice.
+#   This way, userspace can get rid of constantly polling /proc/mounts to
+#   watch for filesystem changes.
+#   
+#   Signed-off-by: Kay Sievers <kay.sievers@vrfy.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# include/linux/kobject_uevent.h
+#   2004/09/15 14:16:09-07:00 greg@kroah.com +1 -0
+#   kevent: add block mount and umount support
+#   
+#   Send notification over the new netlink socket to let userspace know that
+#   the filesystem code claims/releases the superblock on an blockdevice.
+#   This way, userspace can get rid of constantly polling /proc/mounts to
+#   watch for filesystem changes.
+#   
+#   Signed-off-by: Kay Sievers <kay.sievers@vrfy.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# fs/super.c
+#   2004/09/15 14:16:09-07:00 greg@kroah.com +16 -1
+#   kevent: add block mount and umount support
+#   
+#   Send notification over the new netlink socket to let userspace know that
+#   the filesystem code claims/releases the superblock on an blockdevice.
+#   This way, userspace can get rid of constantly polling /proc/mounts to
+#   watch for filesystem changes.
+#   
+#   Signed-off-by: Kay Sievers <kay.sievers@vrfy.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# ChangeSet
+#   2004/09/15 11:36:09-07:00 greg@kroah.com 
+#   kevent: standardize on the event types
+#   
+#   This prevents any potential typos from happening.
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# lib/kobject_uevent.c
+#   2004/09/15 11:35:27-07:00 greg@kroah.com +38 -8
+#   kevent: standardize on the event types
+#   
+#   This prevents any potential typos from happening.
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# include/linux/kobject_uevent.h
+#   2004/09/15 11:35:27-07:00 greg@kroah.com +50 -0
+#   kevent: standardize on the event types
+#   
+#   This prevents any potential typos from happening.
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# drivers/base/firmware_class.c
+#   2004/09/15 11:35:27-07:00 greg@kroah.com +1 -1
+#   kevent: standardize on the event types
+#   
+#   This prevents any potential typos from happening.
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# include/linux/kobject_uevent.h
+#   2004/09/15 11:35:27-07:00 greg@kroah.com +0 -0
+#   BitKeeper file /home/greg/linux/BK/driver-2.6/include/linux/kobject_uevent.h
+# 
+# ChangeSet
+#   2004/09/14 11:12:38-07:00 akpm@osdl.org 
+#   [PATCH] ksysfs warning fix
+#   
+#   kernel/ksysfs.c: In function `hotplug_seqnum_show':
+#   kernel/ksysfs.c:28: warning: long long unsigned int format, u64 arg (arg 3)
+#   
+#   Signed-off-by: Andrew Morton <akpm@osdl.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# kernel/ksysfs.c
+#   2004/09/11 22:04:23-07:00 akpm@osdl.org +1 -1
+#   ksysfs warning fix
+# 
+# ChangeSet
+#   2004/09/14 11:12:09-07:00 akpm@osdl.org 
+#   [PATCH] kobject_uevent warning fix
+#   
+#   lib/kobject_uevent.c: In function `kobject_hotplug':
+#   lib/kobject_uevent.c:225: warning: long long int format, u64 arg (arg 3)
+#   
+#   
+#   Signed-off-by: Andrew Morton <akpm@osdl.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# lib/kobject_uevent.c
+#   2004/09/11 18:50:05-07:00 akpm@osdl.org +1 -1
+#   kobject_uevent warning fix
+# 
+# ChangeSet
+#   2004/09/13 15:30:55-07:00 akpm@bix.(none) 
+#   Merge bk://kernel.bkbits.net/gregkh/linux/driver-2.6
+#   into bix.(none):/usr/src/bk-driver-core
+# 
+# kernel/Makefile
+#   2004/09/13 15:30:51-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# init/Kconfig
+#   2004/09/13 15:30:51-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/13 15:29:46-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-driver-core
+# 
+# lib/Makefile
+#   2004/09/13 15:29:42-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/13 11:00:26-07:00 greg@kroah.com 
+#   Merge kroah.com:/home/greg/linux/BK/bleed-2.6
+#   into kroah.com:/home/greg/linux/BK/driver-2.6
+# 
+# kernel/Makefile
+#   2004/09/13 11:00:18-07:00 greg@kroah.com +0 -0
+#   Auto merged
+# 
+# init/Kconfig
+#   2004/09/13 11:00:18-07:00 greg@kroah.com +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/11 15:06:46-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-driver-core
+# 
+# init/Kconfig
+#   2004/09/11 15:06:42-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/10 16:45:35-07:00 greg@kroah.com 
+#   Kobject Userspace Event Notification
+#     
+#   Implemetation of userspace events through a netlink socket. The kernel events
+#   layer provides the functionality to raise an event from a given kobject
+#   represented by its sysfs-path and a signal string to describe the type of
+#   event.
+#     
+#   Currently, kobject additions and removals are signalized to userspace by forking
+#   the /sbin/hotplug helper. This patch moves this special case of userspace-event
+#   out of the kobject core to the new kobject_uevent implementation. This makes it
+#   possible to send all hotplug messages also through the new netlink transport.
+#     
+#   Possible new users of the kernel userspace functionality are filesystem
+#   mount events (block device claim/release) or simple device state transitions
+#   (cpu overheating).
+#     
+#   To send an event, the user needs to pass the kobject, a optional
+#   sysfs-attribute and the signal string to the following function:
+#     
+#     kobject_uevent(const char *signal,
+#                    struct kobject *kobj,
+#                    struct attribute *attr)
+#     
+#     Example:
+#     kobject_uevent("overheating", &cpu->kobj, NULL);
+#     
+#   The message itself is sent over multicast netlink socket, which makes
+#   it possible for userspace to listen with multiple applications for the same
+#   messages.
+#     
+#   Signed-off-by: Robert Love <rml@novell.com>
+#   Signed-off-by: Kay Sievers <kay.sievers@vrfy.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# lib/kobject_uevent.c
+#   2004/09/10 16:45:17-07:00 greg@kroah.com +264 -0
+# 
+# lib/kobject_uevent.c
+#   2004/09/10 16:45:17-07:00 greg@kroah.com +0 -0
+#   BitKeeper file /home/greg/linux/BK/driver-2.6/lib/kobject_uevent.c
+# 
+# lib/Makefile
+#   2004/09/10 16:45:17-07:00 greg@kroah.com +1 -1
+#   Kobject Userspace Event Notification
+#     
+#   Implemetation of userspace events through a netlink socket. The kernel events
+#   layer provides the functionality to raise an event from a given kobject
+#   represented by its sysfs-path and a signal string to describe the type of
+#   event.
+#     
+#   Currently, kobject additions and removals are signalized to userspace by forking
+#   the /sbin/hotplug helper. This patch moves this special case of userspace-event
+#   out of the kobject core to the new kobject_uevent implementation. This makes it
+#   possible to send all hotplug messages also through the new netlink transport.
+#     
+#   Possible new users of the kernel userspace functionality are filesystem
+#   mount events (block device claim/release) or simple device state transitions
+#   (cpu overheating).
+#     
+#   To send an event, the user needs to pass the kobject, a optional
+#   sysfs-attribute and the signal string to the following function:
+#     
+#     kobject_uevent(const char *signal,
+#                    struct kobject *kobj,
+#                    struct attribute *attr)
+#     
+#     Example:
+#     kobject_uevent("overheating", &cpu->kobj, NULL);
+#     
+#   The message itself is sent over multicast netlink socket, which makes
+#   it possible for userspace to listen with multiple applications for the same
+#   messages.
+#     
+#   Signed-off-by: Robert Love <rml@novell.com>
+#   Signed-off-by: Kay Sievers <kay.sievers@vrfy.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# init/Kconfig
+#   2004/09/10 16:45:17-07:00 greg@kroah.com +19 -0
+#   Kobject Userspace Event Notification
+#     
+#   Implemetation of userspace events through a netlink socket. The kernel events
+#   layer provides the functionality to raise an event from a given kobject
+#   represented by its sysfs-path and a signal string to describe the type of
+#   event.
+#     
+#   Currently, kobject additions and removals are signalized to userspace by forking
+#   the /sbin/hotplug helper. This patch moves this special case of userspace-event
+#   out of the kobject core to the new kobject_uevent implementation. This makes it
+#   possible to send all hotplug messages also through the new netlink transport.
+#     
+#   Possible new users of the kernel userspace functionality are filesystem
+#   mount events (block device claim/release) or simple device state transitions
+#   (cpu overheating).
+#     
+#   To send an event, the user needs to pass the kobject, a optional
+#   sysfs-attribute and the signal string to the following function:
+#     
+#     kobject_uevent(const char *signal,
+#                    struct kobject *kobj,
+#                    struct attribute *attr)
+#     
+#     Example:
+#     kobject_uevent("overheating", &cpu->kobj, NULL);
+#     
+#   The message itself is sent over multicast netlink socket, which makes
+#   it possible for userspace to listen with multiple applications for the same
+#   messages.
+#     
+#   Signed-off-by: Robert Love <rml@novell.com>
+#   Signed-off-by: Kay Sievers <kay.sievers@vrfy.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# include/linux/netlink.h
+#   2004/09/10 16:45:17-07:00 greg@kroah.com +1 -0
+#   Kobject Userspace Event Notification
+#     
+#   Implemetation of userspace events through a netlink socket. The kernel events
+#   layer provides the functionality to raise an event from a given kobject
+#   represented by its sysfs-path and a signal string to describe the type of
+#   event.
+#     
+#   Currently, kobject additions and removals are signalized to userspace by forking
+#   the /sbin/hotplug helper. This patch moves this special case of userspace-event
+#   out of the kobject core to the new kobject_uevent implementation. This makes it
+#   possible to send all hotplug messages also through the new netlink transport.
+#     
+#   Possible new users of the kernel userspace functionality are filesystem
+#   mount events (block device claim/release) or simple device state transitions
+#   (cpu overheating).
+#     
+#   To send an event, the user needs to pass the kobject, a optional
+#   sysfs-attribute and the signal string to the following function:
+#     
+#     kobject_uevent(const char *signal,
+#                    struct kobject *kobj,
+#                    struct attribute *attr)
+#     
+#     Example:
+#     kobject_uevent("overheating", &cpu->kobj, NULL);
+#     
+#   The message itself is sent over multicast netlink socket, which makes
+#   it possible for userspace to listen with multiple applications for the same
+#   messages.
+#     
+#   Signed-off-by: Robert Love <rml@novell.com>
+#   Signed-off-by: Kay Sievers <kay.sievers@vrfy.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# ChangeSet
+#   2004/09/08 21:25:19-07:00 greg@kroah.com 
+#   [PATCH] ksyms: don't implement /sys/kernel/hotplug_seqnum if CONFIG_HOTPLUG is not enabled.
+#   
+#   Signed-off-by: Andrew Morton <akpm@osdl.org>
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# kernel/ksysfs.c
+#   2004/09/08 17:33:38-07:00 greg@kroah.com +6 -2
+#   ksyms: don't implement /sys/kernel/hotplug_seqnum if CONFIG_HOTPLUG is not enabled.
+# 
+# ChangeSet
+#   2004/09/08 21:23:42-07:00 greg@kroah.com 
+#   [PATCH] kobject: hotplug_seqnum is not 64 bits on all platforms, so fix it.
+#   
+#   Thanks to Kay Sievers for pointing this out.
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# kernel/ksysfs.c
+#   2004/09/08 21:17:58-07:00 greg@kroah.com +1 -1
+#   kobject: hotplug_seqnum is not 64 bits on all platforms, so fix it.
+# 
+# ChangeSet
+#   2004/09/04 17:52:24-07:00 akpm@bix.(none) 
+#   Merge bk://kernel.bkbits.net/gregkh/linux/driver-2.6
+#   into bix.(none):/usr/src/bk-driver-core
+# 
+# kernel/Makefile
+#   2004/09/04 17:52:20-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/09/05 00:59:19+02:00 greg@kroah.com 
+#   kobject: fix build error if CONFIG_HOTPLUG is not enabled.
+#   
+#   Thanks to Kay Sievers for pointing this out.
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# ChangeSet
+#   2004/09/04 18:56:35+02:00 greg@kroah.com 
+#   ksysfs: don't build ksysfs if CONFIG_SYSFS is not enabled.
+#   
+#   Thanks to Kay Sievers for pointing this out.
+#     
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# kernel/Makefile
+#   2004/09/04 18:56:13+02:00 greg@kroah.com +2 -1
+#   ksysfs: don't build ksysfs if CONFIG_SYSFS is not enabled.
+#   
+#   Thanks to Kay Sievers for pointing this out.
+#     
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# ChangeSet
+#   2004/09/04 01:20:44+02:00 greg@kroah.com 
+#   kobject: adjust hotplug_seqnum increment to keep userspace and kernel agreeing.
+# 
+# ChangeSet
+#   2004/09/04 00:11:26+02:00 kay.sievers@vrfy.org 
+#   [PATCH] export of SEQNUM to userspace (creates /sys/kernel)
+#   
+#   o /sys/kernel/hotplug_seqnum exports the current number
+#   o lib/kobject.c's  sequence_num is renamed to hotplug_seqnum and
+#     exported by include/linux/kobject.h
+#   o the source file ksysfs.c in kernel/ creates on init the
+#     sybsystem "/sys/kernel/" in sysfs
+#   
+#   
+#   Signed-off-by: Greg Kroah-Hartman <greg@kroah.com>
+# 
+# kernel/Makefile
+#   2004/09/03 11:00:55+02:00 kay.sievers@vrfy.org +1 -1
+#   export of SEQNUM to userspace (creates /sys/kernel)
+# 
+# kernel/ksysfs.c
+#   2004/09/03 11:00:55+02:00 kay.sievers@vrfy.org +52 -0
+#   export of SEQNUM to userspace (creates /sys/kernel)
+# 
+# kernel/ksysfs.c
+#   2004/09/03 11:00:55+02:00 kay.sievers@vrfy.org +0 -0
+#   BitKeeper file /home/greg/linux/BK/driver-2.6/kernel/ksysfs.c
+# 
+# ChangeSet
+#   2004/09/02 16:50:51-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-driver-core
+# 
+# drivers/char/tty_io.c
+#   2004/09/02 16:50:47-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/28 16:22:31-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-driver-core
+# 
+# drivers/scsi/sr.c
+#   2004/08/28 16:22:27-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# drivers/scsi/sd.c
+#   2004/08/28 16:22:27-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/26 19:33:03-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-driver-core
+# 
+# drivers/usb/core/message.c
+#   2004/08/26 19:32:57-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/25 14:11:23-07:00 akpm@bix.(none) 
+#   Merge bk://kernel.bkbits.net/gregkh/linux/driver-2.6
+#   into bix.(none):/usr/src/bk-driver-core
+# 
+# drivers/usb/core/urb.c
+#   2004/08/25 14:11:19-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# drivers/usb/core/message.c
+#   2004/08/25 14:11:19-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# drivers/scsi/sr.c
+#   2004/08/25 14:11:19-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# drivers/scsi/sd.c
+#   2004/08/25 14:11:19-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# drivers/char/tty_io.c
+#   2004/08/25 14:11:19-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/24 17:43:51-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-driver-core
+# 
+# drivers/char/tty_io.c
+#   2004/08/24 17:43:47-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/23 21:36:39-07:00 akpm@bix.(none) 
+#   Merge bk://kernel.bkbits.net/gregkh/linux/driver-2.6
+#   into bix.(none):/usr/src/bk-driver-core
+# 
+# ChangeSet
+#   2004/08/23 16:45:53-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-driver-core
+# 
+# drivers/scsi/sr.c
+#   2004/08/23 21:36:35-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# drivers/scsi/sd.c
+#   2004/08/23 21:36:35-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# drivers/usb/core/urb.c
+#   2004/08/23 16:45:49-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# drivers/usb/core/message.c
+#   2004/08/23 16:45:49-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/23 13:56:59-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-driver-core
+# 
+# drivers/scsi/sd.c
+#   2004/08/23 13:56:55-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/15 01:06:01-07:00 akpm@bix.(none) 
+#   Merge bk://kernel.bkbits.net/gregkh/linux/driver-2.6
+#   into bix.(none):/usr/src/bk-driver-core
+# 
+# drivers/char/tty_io.c
+#   2004/08/15 01:05:58-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# ChangeSet
+#   2004/08/15 01:05:05-07:00 akpm@bix.(none) 
+#   Merge bix.(none):/usr/src/bk25 into bix.(none):/usr/src/bk-driver-core
+# 
+# drivers/scsi/sr.c
+#   2004/08/15 01:05:02-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+# drivers/scsi/sd.c
+#   2004/08/15 01:05:01-07:00 akpm@bix.(none) +0 -0
+#   Auto merged
+# 
+diff -Nru a/drivers/base/bus.c b/drivers/base/bus.c
+--- a/drivers/base/bus.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/base/bus.c	2004-10-10 22:25:02 -07:00
+@@ -529,6 +529,7 @@
+ 		down_write(&bus->subsys.rwsem);
+ 		driver_attach(drv);
+ 		up_write(&bus->subsys.rwsem);
++		module_add_driver(drv->owner, drv);
+ 
+ 		driver_add_attrs(bus, drv);
+ 	}
+@@ -553,6 +554,7 @@
+ 		pr_debug("bus %s: remove driver %s\n", drv->bus->name, drv->name);
+ 		driver_detach(drv);
+ 		up_write(&drv->bus->subsys.rwsem);
++		module_remove_driver(drv);
+ 		kobject_unregister(&drv->kobj);
+ 		put_bus(drv->bus);
+ 	}
+@@ -721,20 +723,20 @@
+ }
+ 
+ 
+-EXPORT_SYMBOL(bus_for_each_dev);
+-EXPORT_SYMBOL(bus_for_each_drv);
++EXPORT_SYMBOL_GPL(bus_for_each_dev);
++EXPORT_SYMBOL_GPL(bus_for_each_drv);
+ 
+-EXPORT_SYMBOL(device_bind_driver);
+-EXPORT_SYMBOL(device_release_driver);
++EXPORT_SYMBOL_GPL(device_bind_driver);
++EXPORT_SYMBOL_GPL(device_release_driver);
+ 
+-EXPORT_SYMBOL(bus_add_device);
+-EXPORT_SYMBOL(bus_remove_device);
+-EXPORT_SYMBOL(bus_register);
+-EXPORT_SYMBOL(bus_unregister);
+-EXPORT_SYMBOL(bus_rescan_devices);
+-EXPORT_SYMBOL(get_bus);
+-EXPORT_SYMBOL(put_bus);
+-EXPORT_SYMBOL(find_bus);
++EXPORT_SYMBOL_GPL(bus_add_device);
++EXPORT_SYMBOL_GPL(bus_remove_device);
++EXPORT_SYMBOL_GPL(bus_register);
++EXPORT_SYMBOL_GPL(bus_unregister);
++EXPORT_SYMBOL_GPL(bus_rescan_devices);
++EXPORT_SYMBOL_GPL(get_bus);
++EXPORT_SYMBOL_GPL(put_bus);
++EXPORT_SYMBOL_GPL(find_bus);
+ 
+-EXPORT_SYMBOL(bus_create_file);
+-EXPORT_SYMBOL(bus_remove_file);
++EXPORT_SYMBOL_GPL(bus_create_file);
++EXPORT_SYMBOL_GPL(bus_remove_file);
+diff -Nru a/drivers/base/class.c b/drivers/base/class.c
+--- a/drivers/base/class.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/base/class.c	2004-10-10 22:25:02 -07:00
+@@ -528,22 +528,22 @@
+ 	return 0;
+ }
+ 
+-EXPORT_SYMBOL(class_create_file);
+-EXPORT_SYMBOL(class_remove_file);
+-EXPORT_SYMBOL(class_register);
+-EXPORT_SYMBOL(class_unregister);
+-EXPORT_SYMBOL(class_get);
+-EXPORT_SYMBOL(class_put);
++EXPORT_SYMBOL_GPL(class_create_file);
++EXPORT_SYMBOL_GPL(class_remove_file);
++EXPORT_SYMBOL_GPL(class_register);
++EXPORT_SYMBOL_GPL(class_unregister);
++EXPORT_SYMBOL_GPL(class_get);
++EXPORT_SYMBOL_GPL(class_put);
+ 
+-EXPORT_SYMBOL(class_device_register);
+-EXPORT_SYMBOL(class_device_unregister);
+-EXPORT_SYMBOL(class_device_initialize);
+-EXPORT_SYMBOL(class_device_add);
+-EXPORT_SYMBOL(class_device_del);
+-EXPORT_SYMBOL(class_device_get);
+-EXPORT_SYMBOL(class_device_put);
+-EXPORT_SYMBOL(class_device_create_file);
+-EXPORT_SYMBOL(class_device_remove_file);
++EXPORT_SYMBOL_GPL(class_device_register);
++EXPORT_SYMBOL_GPL(class_device_unregister);
++EXPORT_SYMBOL_GPL(class_device_initialize);
++EXPORT_SYMBOL_GPL(class_device_add);
++EXPORT_SYMBOL_GPL(class_device_del);
++EXPORT_SYMBOL_GPL(class_device_get);
++EXPORT_SYMBOL_GPL(class_device_put);
++EXPORT_SYMBOL_GPL(class_device_create_file);
++EXPORT_SYMBOL_GPL(class_device_remove_file);
+ 
+-EXPORT_SYMBOL(class_interface_register);
+-EXPORT_SYMBOL(class_interface_unregister);
++EXPORT_SYMBOL_GPL(class_interface_register);
++EXPORT_SYMBOL_GPL(class_interface_unregister);
+diff -Nru a/drivers/base/core.c b/drivers/base/core.c
+--- a/drivers/base/core.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/base/core.c	2004-10-10 22:25:02 -07:00
+@@ -293,7 +293,8 @@
+  */
+ void put_device(struct device * dev)
+ {
+-	kobject_put(&dev->kobj);
++	if (dev)
++		kobject_put(&dev->kobj);
+ }
+ 
+ 
+@@ -401,17 +402,17 @@
+ 	return subsystem_register(&devices_subsys);
+ }
+ 
+-EXPORT_SYMBOL(device_for_each_child);
++EXPORT_SYMBOL_GPL(device_for_each_child);
+ 
+-EXPORT_SYMBOL(device_initialize);
+-EXPORT_SYMBOL(device_add);
+-EXPORT_SYMBOL(device_register);
+-
+-EXPORT_SYMBOL(device_del);
+-EXPORT_SYMBOL(device_unregister);
+-EXPORT_SYMBOL(get_device);
+-EXPORT_SYMBOL(put_device);
+-EXPORT_SYMBOL(device_find);
++EXPORT_SYMBOL_GPL(device_initialize);
++EXPORT_SYMBOL_GPL(device_add);
++EXPORT_SYMBOL_GPL(device_register);
++
++EXPORT_SYMBOL_GPL(device_del);
++EXPORT_SYMBOL_GPL(device_unregister);
++EXPORT_SYMBOL_GPL(get_device);
++EXPORT_SYMBOL_GPL(put_device);
++EXPORT_SYMBOL_GPL(device_find);
+ 
+-EXPORT_SYMBOL(device_create_file);
+-EXPORT_SYMBOL(device_remove_file);
++EXPORT_SYMBOL_GPL(device_create_file);
++EXPORT_SYMBOL_GPL(device_remove_file);
+diff -Nru a/drivers/base/driver.c b/drivers/base/driver.c
+--- a/drivers/base/driver.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/base/driver.c	2004-10-10 22:25:02 -07:00
+@@ -129,11 +129,11 @@
+ 	return NULL;
+ }
+ 
+-EXPORT_SYMBOL(driver_register);
+-EXPORT_SYMBOL(driver_unregister);
+-EXPORT_SYMBOL(get_driver);
+-EXPORT_SYMBOL(put_driver);
+-EXPORT_SYMBOL(driver_find);
++EXPORT_SYMBOL_GPL(driver_register);
++EXPORT_SYMBOL_GPL(driver_unregister);
++EXPORT_SYMBOL_GPL(get_driver);
++EXPORT_SYMBOL_GPL(put_driver);
++EXPORT_SYMBOL_GPL(driver_find);
+ 
+-EXPORT_SYMBOL(driver_create_file);
+-EXPORT_SYMBOL(driver_remove_file);
++EXPORT_SYMBOL_GPL(driver_create_file);
++EXPORT_SYMBOL_GPL(driver_remove_file);
+diff -Nru a/drivers/base/firmware.c b/drivers/base/firmware.c
+--- a/drivers/base/firmware.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/base/firmware.c	2004-10-10 22:25:02 -07:00
+@@ -30,5 +30,5 @@
+ 	return subsystem_register(&firmware_subsys);
+ }
+ 
+-EXPORT_SYMBOL(firmware_register);
+-EXPORT_SYMBOL(firmware_unregister);
++EXPORT_SYMBOL_GPL(firmware_register);
++EXPORT_SYMBOL_GPL(firmware_unregister);
+diff -Nru a/drivers/base/firmware_class.c b/drivers/base/firmware_class.c
+--- a/drivers/base/firmware_class.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/base/firmware_class.c	2004-10-10 22:25:02 -07:00
+@@ -420,7 +420,7 @@
+ 		add_timer(&fw_priv->timeout);
+ 	}
+ 
+-	kobject_hotplug("add", &class_dev->kobj);
++	kobject_hotplug(&class_dev->kobj, KOBJ_ADD);
+ 	wait_for_completion(&fw_priv->completion);
+ 	set_bit(FW_STATUS_DONE, &fw_priv->status);
+ 
+diff -Nru a/drivers/base/platform.c b/drivers/base/platform.c
+--- a/drivers/base/platform.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/base/platform.c	2004-10-10 22:25:02 -07:00
+@@ -298,13 +298,13 @@
+ 	}
+ 	return mask & *dev->dma_mask;
+ }
+-EXPORT_SYMBOL(dma_get_required_mask);
++EXPORT_SYMBOL_GPL(dma_get_required_mask);
+ #endif
+ 
+-EXPORT_SYMBOL(platform_bus);
+-EXPORT_SYMBOL(platform_bus_type);
+-EXPORT_SYMBOL(platform_device_register);
+-EXPORT_SYMBOL(platform_device_register_simple);
+-EXPORT_SYMBOL(platform_device_unregister);
+-EXPORT_SYMBOL(platform_get_irq);
+-EXPORT_SYMBOL(platform_get_resource);
++EXPORT_SYMBOL_GPL(platform_bus);
++EXPORT_SYMBOL_GPL(platform_bus_type);
++EXPORT_SYMBOL_GPL(platform_device_register);
++EXPORT_SYMBOL_GPL(platform_device_register_simple);
++EXPORT_SYMBOL_GPL(platform_device_unregister);
++EXPORT_SYMBOL_GPL(platform_get_irq);
++EXPORT_SYMBOL_GPL(platform_get_resource);
+diff -Nru a/drivers/base/power/main.c b/drivers/base/power/main.c
+--- a/drivers/base/power/main.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/base/power/main.c	2004-10-10 22:25:02 -07:00
+@@ -66,7 +66,7 @@
+ 	dev->power.pm_parent = parent;
+ 	device_pm_hold(parent);
+ }
+-EXPORT_SYMBOL(device_pm_set_parent);
++EXPORT_SYMBOL_GPL(device_pm_set_parent);
+ 
+ int device_pm_add(struct device * dev)
+ {
+diff -Nru a/drivers/base/power/resume.c b/drivers/base/power/resume.c
+--- a/drivers/base/power/resume.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/base/power/resume.c	2004-10-10 22:25:02 -07:00
+@@ -58,7 +58,7 @@
+ 	up(&dpm_sem);
+ }
+ 
+-EXPORT_SYMBOL(device_resume);
++EXPORT_SYMBOL_GPL(device_resume);
+ 
+ 
+ /**
+@@ -97,6 +97,6 @@
+ 	dpm_power_up();
+ }
+ 
+-EXPORT_SYMBOL(device_power_up);
++EXPORT_SYMBOL_GPL(device_power_up);
+ 
+ 
+diff -Nru a/drivers/base/power/suspend.c b/drivers/base/power/suspend.c
+--- a/drivers/base/power/suspend.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/base/power/suspend.c	2004-10-10 22:25:02 -07:00
+@@ -100,7 +100,7 @@
+ 	goto Done;
+ }
+ 
+-EXPORT_SYMBOL(device_suspend);
++EXPORT_SYMBOL_GPL(device_suspend);
+ 
+ 
+ /**
+@@ -132,5 +132,5 @@
+ 	goto Done;
+ }
+ 
+-EXPORT_SYMBOL(device_power_down);
++EXPORT_SYMBOL_GPL(device_power_down);
+ 
+diff -Nru a/drivers/base/sys.c b/drivers/base/sys.c
+--- a/drivers/base/sys.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/base/sys.c	2004-10-10 22:25:02 -07:00
+@@ -73,8 +73,8 @@
+ 	sysfs_remove_file(&s->kobj, &a->attr);
+ }
+ 
+-EXPORT_SYMBOL(sysdev_create_file);
+-EXPORT_SYMBOL(sysdev_remove_file);
++EXPORT_SYMBOL_GPL(sysdev_create_file);
++EXPORT_SYMBOL_GPL(sysdev_remove_file);
+ 
+ /*
+  * declare system_subsys
+@@ -98,8 +98,8 @@
+ 	kset_unregister(&cls->kset);
+ }
+ 
+-EXPORT_SYMBOL(sysdev_class_register);
+-EXPORT_SYMBOL(sysdev_class_unregister);
++EXPORT_SYMBOL_GPL(sysdev_class_register);
++EXPORT_SYMBOL_GPL(sysdev_class_unregister);
+ 
+ 
+ static LIST_HEAD(global_drivers);
+@@ -157,8 +157,8 @@
+ 	up_write(&system_subsys.rwsem);
+ }
+ 
+-EXPORT_SYMBOL(sysdev_driver_register);
+-EXPORT_SYMBOL(sysdev_driver_unregister);
++EXPORT_SYMBOL_GPL(sysdev_driver_register);
++EXPORT_SYMBOL_GPL(sysdev_driver_unregister);
+ 
+ 
+ 
+@@ -392,5 +392,5 @@
+ 	return subsystem_register(&system_subsys);
+ }
+ 
+-EXPORT_SYMBOL(sysdev_register);
+-EXPORT_SYMBOL(sysdev_unregister);
++EXPORT_SYMBOL_GPL(sysdev_register);
++EXPORT_SYMBOL_GPL(sysdev_unregister);
+diff -Nru a/drivers/pci/pci-driver.c b/drivers/pci/pci-driver.c
+--- a/drivers/pci/pci-driver.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/pci/pci-driver.c	2004-10-10 22:25:02 -07:00
+@@ -417,6 +417,7 @@
+ 	drv->driver.bus = &pci_bus_type;
+ 	drv->driver.probe = pci_device_probe;
+ 	drv->driver.remove = pci_device_remove;
++	drv->driver.owner = drv->owner;
+ 	drv->driver.kobj.ktype = &pci_driver_kobj_type;
+ 	pci_init_dynids(&drv->dynids);
+ 
+diff -Nru a/drivers/usb/core/usb.c b/drivers/usb/core/usb.c
+--- a/drivers/usb/core/usb.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/usb/core/usb.c	2004-10-10 22:25:02 -07:00
+@@ -73,6 +73,7 @@
+ }
+ 
+ static struct device_driver usb_generic_driver = {
++	.owner = THIS_MODULE,
+ 	.name =	"usb",
+ 	.bus = &usb_bus_type,
+ 	.probe = generic_probe,
+@@ -150,6 +151,7 @@
+ 	new_driver->driver.bus = &usb_bus_type;
+ 	new_driver->driver.probe = usb_probe_interface;
+ 	new_driver->driver.remove = usb_unbind_interface;
++	new_driver->driver.owner = new_driver->owner;
+ 
+ 	retval = driver_register(&new_driver->driver);
+ 
+@@ -564,7 +566,6 @@
+ {
+ 	struct usb_interface *intf;
+ 	struct usb_device *usb_dev;
+-	char *scratch;
+ 	int i = 0;
+ 	int length = 0;
+ 
+@@ -591,8 +592,6 @@
+ 		return -ENODEV;
+ 	}
+ 
+-	scratch = buffer;
+-
+ #ifdef	CONFIG_USB_DEVICEFS
+ 	/* If this is available, userspace programs can directly read
+ 	 * all the device descriptors we don't tell them about.  Or
+@@ -600,37 +599,30 @@
+ 	 *
+ 	 * FIXME reduce hardwired intelligence here
+ 	 */
+-	envp [i++] = scratch;
+-	length += snprintf (scratch, buffer_size - length,
+-			    "DEVICE=/proc/bus/usb/%03d/%03d",
+-			    usb_dev->bus->busnum, usb_dev->devnum);
+-	if ((buffer_size - length <= 0) || (i >= num_envp))
++	if (add_hotplug_env_var(envp, num_envp, &i,
++				buffer, buffer_size, &length,
++				"DEVICE=/proc/bus/usb/%03d/%03d",
++				usb_dev->bus->busnum, usb_dev->devnum))
+ 		return -ENOMEM;
+-	++length;
+-	scratch += length;
+ #endif
+ 
+ 	/* per-device configurations are common */
+-	envp [i++] = scratch;
+-	length += snprintf (scratch, buffer_size - length, "PRODUCT=%x/%x/%x",
+-			    usb_dev->descriptor.idVendor,
+-			    usb_dev->descriptor.idProduct,
+-			    usb_dev->descriptor.bcdDevice);
+-	if ((buffer_size - length <= 0) || (i >= num_envp))
++	if (add_hotplug_env_var(envp, num_envp, &i,
++				buffer, buffer_size, &length,
++				"PRODUCT=%x/%x/%x",
++				usb_dev->descriptor.idVendor,
++				usb_dev->descriptor.idProduct,
++				usb_dev->descriptor.bcdDevice))
+ 		return -ENOMEM;
+-	++length;
+-	scratch += length;
+ 
+ 	/* class-based driver binding models */
+-	envp [i++] = scratch;
+-	length += snprintf (scratch, buffer_size - length, "TYPE=%d/%d/%d",
+-			    usb_dev->descriptor.bDeviceClass,
+-			    usb_dev->descriptor.bDeviceSubClass,
+-			    usb_dev->descriptor.bDeviceProtocol);
+-	if ((buffer_size - length <= 0) || (i >= num_envp))
++	if (add_hotplug_env_var(envp, num_envp, &i,
++				buffer, buffer_size, &length,
++				"TYPE=%d/%d/%d",
++				usb_dev->descriptor.bDeviceClass,
++				usb_dev->descriptor.bDeviceSubClass,
++				usb_dev->descriptor.bDeviceProtocol))
+ 		return -ENOMEM;
+-	++length;
+-	scratch += length;
+ 
+ 	if (usb_dev->descriptor.bDeviceClass == 0) {
+ 		struct usb_host_interface *alt = intf->cur_altsetting;
+@@ -639,18 +631,15 @@
+ 		 * agents are called for all interfaces, and can use
+ 		 * $DEVPATH/bInterfaceNumber if necessary.
+ 		 */
+-		envp [i++] = scratch;
+-		length += snprintf (scratch, buffer_size - length,
+-			    "INTERFACE=%d/%d/%d",
+-			    alt->desc.bInterfaceClass,
+-			    alt->desc.bInterfaceSubClass,
+-			    alt->desc.bInterfaceProtocol);
+-		if ((buffer_size - length <= 0) || (i >= num_envp))
++		if (add_hotplug_env_var(envp, num_envp, &i,
++					buffer, buffer_size, &length,
++					"INTERFACE=%d/%d/%d",
++					alt->desc.bInterfaceClass,
++					alt->desc.bInterfaceSubClass,
++					alt->desc.bInterfaceProtocol))
+ 			return -ENOMEM;
+-		++length;
+-		scratch += length;
+-
+ 	}
++
+ 	envp[i++] = NULL;
+ 
+ 	return 0;
+diff -Nru a/drivers/usb/serial/bus.c b/drivers/usb/serial/bus.c
+--- a/drivers/usb/serial/bus.c	2004-10-10 22:25:02 -07:00
++++ b/drivers/usb/serial/bus.c	2004-10-10 22:25:02 -07:00
+@@ -120,6 +120,7 @@
+ 	device->driver.bus = &usb_serial_bus_type;
+ 	device->driver.probe = usb_serial_device_probe;
+ 	device->driver.remove = usb_serial_device_remove;
++	device->driver.owner = device->owner;
+ 
+ 	retval = driver_register(&device->driver);
+ 
+diff -Nru a/fs/super.c b/fs/super.c
+--- a/fs/super.c	2004-10-10 22:25:02 -07:00
++++ b/fs/super.c	2004-10-10 22:25:02 -07:00
+@@ -35,6 +35,7 @@
+ #include <linux/vfs.h>
+ #include <linux/writeback.h>		/* for the emergency remount stuff */
+ #include <linux/idr.h>
++#include <linux/kobject.h>
+ #include <asm/uaccess.h>
+ 
+ 
+@@ -655,6 +656,16 @@
+ 	return (void *)s->s_bdev == data;
+ }
+ 
++static void bdev_uevent(struct block_device *bdev, enum kobject_action action)
++{
++	if (bdev->bd_disk) {
++		if (bdev->bd_part)
++			kobject_uevent(&bdev->bd_part->kobj, action, NULL);
++		else
++			kobject_uevent(&bdev->bd_disk->kobj, action, NULL);
++	}
++}
++
+ struct super_block *get_sb_bdev(struct file_system_type *fs_type,
+ 	int flags, const char *dev_name, void *data,
+ 	int (*fill_super)(struct super_block *, void *, int))
+@@ -697,8 +708,10 @@
+ 			up_write(&s->s_umount);
+ 			deactivate_super(s);
+ 			s = ERR_PTR(error);
+-		} else
++		} else {
+ 			s->s_flags |= MS_ACTIVE;
++			bdev_uevent(bdev, KOBJ_MOUNT);
++		}
+ 	}
+ 
+ 	return s;
+@@ -713,6 +726,8 @@
+ void kill_block_super(struct super_block *sb)
+ {
+ 	struct block_device *bdev = sb->s_bdev;
++
++	bdev_uevent(bdev, KOBJ_UMOUNT);
+ 	generic_shutdown_super(sb);
+ 	set_blocksize(bdev, sb->s_old_blocksize);
+ 	close_bdev_excl(bdev);
+diff -Nru a/fs/sysfs/bin.c b/fs/sysfs/bin.c
+--- a/fs/sysfs/bin.c	2004-10-10 22:25:02 -07:00
++++ b/fs/sysfs/bin.c	2004-10-10 22:25:02 -07:00
+@@ -199,5 +199,5 @@
+ 	return 0;
+ }
+ 
+-EXPORT_SYMBOL(sysfs_create_bin_file);
+-EXPORT_SYMBOL(sysfs_remove_bin_file);
++EXPORT_SYMBOL_GPL(sysfs_create_bin_file);
++EXPORT_SYMBOL_GPL(sysfs_remove_bin_file);
+diff -Nru a/fs/sysfs/dir.c b/fs/sysfs/dir.c
+--- a/fs/sysfs/dir.c	2004-10-10 22:25:02 -07:00
++++ b/fs/sysfs/dir.c	2004-10-10 22:25:02 -07:00
+@@ -193,7 +193,7 @@
+ 	return error;
+ }
+ 
+-EXPORT_SYMBOL(sysfs_create_dir);
+-EXPORT_SYMBOL(sysfs_remove_dir);
+-EXPORT_SYMBOL(sysfs_rename_dir);
++EXPORT_SYMBOL_GPL(sysfs_create_dir);
++EXPORT_SYMBOL_GPL(sysfs_remove_dir);
++EXPORT_SYMBOL_GPL(sysfs_rename_dir);
+ 
+diff -Nru a/fs/sysfs/file.c b/fs/sysfs/file.c
+--- a/fs/sysfs/file.c	2004-10-10 22:25:02 -07:00
++++ b/fs/sysfs/file.c	2004-10-10 22:25:02 -07:00
+@@ -436,7 +436,7 @@
+ }
+ 
+ 
+-EXPORT_SYMBOL(sysfs_create_file);
+-EXPORT_SYMBOL(sysfs_remove_file);
+-EXPORT_SYMBOL(sysfs_update_file);
++EXPORT_SYMBOL_GPL(sysfs_create_file);
++EXPORT_SYMBOL_GPL(sysfs_remove_file);
++EXPORT_SYMBOL_GPL(sysfs_update_file);
+ 
+diff -Nru a/fs/sysfs/group.c b/fs/sysfs/group.c
+--- a/fs/sysfs/group.c	2004-10-10 22:25:02 -07:00
++++ b/fs/sysfs/group.c	2004-10-10 22:25:02 -07:00
+@@ -78,5 +78,5 @@
+ }
+ 
+ 
+-EXPORT_SYMBOL(sysfs_create_group);
+-EXPORT_SYMBOL(sysfs_remove_group);
++EXPORT_SYMBOL_GPL(sysfs_create_group);
++EXPORT_SYMBOL_GPL(sysfs_remove_group);
+diff -Nru a/fs/sysfs/symlink.c b/fs/sysfs/symlink.c
+--- a/fs/sysfs/symlink.c	2004-10-10 22:25:02 -07:00
++++ b/fs/sysfs/symlink.c	2004-10-10 22:25:02 -07:00
+@@ -159,6 +159,6 @@
+ 		free_page((unsigned long)page);
+ }
+ 
+-EXPORT_SYMBOL(sysfs_create_link);
+-EXPORT_SYMBOL(sysfs_remove_link);
++EXPORT_SYMBOL_GPL(sysfs_create_link);
++EXPORT_SYMBOL_GPL(sysfs_remove_link);
+ 
+diff -Nru a/include/linux/device.h b/include/linux/device.h
+--- a/include/linux/device.h	2004-10-10 22:25:02 -07:00
++++ b/include/linux/device.h	2004-10-10 22:25:02 -07:00
+@@ -106,6 +106,8 @@
+ 	struct kobject		kobj;
+ 	struct list_head	devices;
+ 
++	struct module 		* owner;
++
+ 	int	(*probe)	(struct device * dev);
+ 	int 	(*remove)	(struct device * dev);
+ 	void	(*shutdown)	(struct device * dev);
+diff -Nru a/include/linux/kobject.h b/include/linux/kobject.h
+--- a/include/linux/kobject.h	2004-10-10 22:25:02 -07:00
++++ b/include/linux/kobject.h	2004-10-10 22:25:02 -07:00
+@@ -22,10 +22,14 @@
+ #include <linux/sysfs.h>
+ #include <linux/rwsem.h>
+ #include <linux/kref.h>
++#include <linux/kobject_uevent.h>
+ #include <asm/atomic.h>
+ 
+ #define KOBJ_NAME_LEN	20
+ 
++/* counter to tag the hotplug event, read only except for the kobject core */
++extern u64 hotplug_seqnum;
++
+ struct kobject {
+ 	char			* k_name;
+ 	char			name[KOBJ_NAME_LEN];
+@@ -59,9 +63,7 @@
+ extern struct kobject * kobject_get(struct kobject *);
+ extern void kobject_put(struct kobject *);
+ 
+-extern void kobject_hotplug(const char *action, struct kobject *);
+-
+-extern char * kobject_get_path(struct kset *, struct kobject *, int);
++extern char * kobject_get_path(struct kobject *, int);
+ 
+ struct kobj_type {
+ 	void (*release)(struct kobject *);
+@@ -233,6 +235,20 @@
+ 
+ extern int subsys_create_file(struct subsystem * , struct subsys_attribute *);
+ extern void subsys_remove_file(struct subsystem * , struct subsys_attribute *);
++
++#ifdef CONFIG_HOTPLUG
++void kobject_hotplug(struct kobject *kobj, enum kobject_action action);
++int add_hotplug_env_var(char **envp, int num_envp, int *cur_index,
++			char *buffer, int buffer_size, int *cur_len,
++			const char *format, ...)
++	__attribute__((format (printf, 7, 8)));
++#else
++static inline void kobject_hotplug(struct kobject *kobj, enum kobject_action action) { }
++static inline int add_hotplug_env_var(char **envp, int num_envp, int *cur_index, 
++				      char *buffer, int buffer_size, int *cur_len, 
++				      const char *format, ...)
++{ return 0; }
++#endif
+ 
+ #endif /* __KERNEL__ */
+ #endif /* _KOBJECT_H_ */
+diff -Nru a/include/linux/kobject_uevent.h b/include/linux/kobject_uevent.h
+--- /dev/null	Wed Dec 31 16:00:00 196900
++++ b/include/linux/kobject_uevent.h	2004-10-10 22:25:02 -07:00
+@@ -0,0 +1,51 @@
++/*
++ * kobject_uevent.h - list of kobject user events that can be generated
++ *
++ * Copyright (C) 2004 IBM Corp.
++ * Copyright (C) 2004 Greg Kroah-Hartman <greg@kroah.com>
++ *
++ * This file is released under the GPLv2.
++ *
++ */
++
++#ifndef _KOBJECT_EVENT_H_
++#define _KOBJECT_EVENT_H_
++
++/*
++ * If you add an action here, you must also add the proper string to the
++ * lib/kobject_uevent.c file.
++ */
++
++enum kobject_action {
++	KOBJ_ADD	= 0x00,	/* add event, for hotplug */
++	KOBJ_REMOVE	= 0x01,	/* remove event, for hotplug */
++	KOBJ_CHANGE	= 0x02,	/* a sysfs attribute file has changed */
++	KOBJ_MOUNT	= 0x03,	/* mount event for block devices */
++	KOBJ_UMOUNT	= 0x04,	/* umount event for block devices */
++	KOBJ_MAX_ACTION,	/* must be last action listed */
++};
++
++
++#ifdef CONFIG_KOBJECT_UEVENT
++int kobject_uevent(struct kobject *kobj,
++		   enum kobject_action action,
++		   struct attribute *attr);
++int kobject_uevent_atomic(struct kobject *kobj,
++			  enum kobject_action action,
++			  struct attribute *attr);
++#else
++static inline int kobject_uevent(struct kobject *kobj,
++				 enum kobject_action action,
++				 struct attribute *attr)
++{
++	return 0;
++}
++static inline int kobject_uevent_atomic(struct kobject *kobj,
++				        enum kobject_action action,
++					struct attribute *attr)
++{
++	return 0;
++}
++#endif
++
++#endif
+diff -Nru a/include/linux/module.h b/include/linux/module.h
+--- a/include/linux/module.h	2004-10-10 22:25:02 -07:00
++++ b/include/linux/module.h	2004-10-10 22:25:02 -07:00
+@@ -445,6 +445,11 @@
+ int unregister_module_notifier(struct notifier_block * nb);
+ 
+ extern void print_modules(void);
++
++struct device_driver;
++void module_add_driver(struct module *, struct device_driver *);
++void module_remove_driver(struct device_driver *);
++
+ #else /* !CONFIG_MODULES... */
+ #define EXPORT_SYMBOL(sym)
+ #define EXPORT_SYMBOL_GPL(sym)
+@@ -534,6 +539,18 @@
+ static inline void print_modules(void)
+ {
+ }
++
++struct device_driver;
++struct module;
++
++static inline void module_add_driver(struct module *module, struct device_driver *driver)
++{
++}
++
++static inline void module_remove_driver(struct device_driver *driver)
++{
++}
++
+ #endif /* CONFIG_MODULES */
+ 
+ #define symbol_request(x) try_then_request_module(symbol_get(x), "symbol:" #x)
+diff -Nru a/include/linux/netlink.h b/include/linux/netlink.h
+--- a/include/linux/netlink.h	2004-10-10 22:25:02 -07:00
++++ b/include/linux/netlink.h	2004-10-10 22:25:02 -07:00
+@@ -17,6 +17,7 @@
+ #define NETLINK_ROUTE6		11	/* af_inet6 route comm channel */
+ #define NETLINK_IP6_FW		13
+ #define NETLINK_DNRTMSG		14	/* DECnet routing messages */
++#define NETLINK_KOBJECT_UEVENT	15	/* Kernel messages to userspace */
+ #define NETLINK_TAPBASE		16	/* 16 to 31 are ethertap */
+ 
+ #define MAX_LINKS 32		
+diff -Nru a/include/linux/pci.h b/include/linux/pci.h
+--- a/include/linux/pci.h	2004-10-10 22:25:02 -07:00
++++ b/include/linux/pci.h	2004-10-10 22:25:02 -07:00
+@@ -631,9 +631,11 @@
+ 	unsigned int use_driver_data:1; /* pci_driver->driver_data is used */
+ };
+ 
++struct module;
+ struct pci_driver {
+ 	struct list_head node;
+ 	char *name;
++	struct module *owner;
+ 	const struct pci_device_id *id_table;	/* must be non-NULL for probe to be called */
+ 	int  (*probe)  (struct pci_dev *dev, const struct pci_device_id *id);	/* New device inserted */
+ 	void (*remove) (struct pci_dev *dev);	/* Device removed (NULL if not a hot-plug capable driver) */
+diff -Nru a/init/Kconfig b/init/Kconfig
+--- a/init/Kconfig	2004-10-10 22:25:02 -07:00
++++ b/init/Kconfig	2004-10-10 22:25:02 -07:00
+@@ -205,6 +205,25 @@
+ 	  agent" (/sbin/hotplug) to load modules and set up software needed
+ 	  to use devices as you hotplug them.
+ 
++config KOBJECT_UEVENT
++	bool "Kernel Userspace Events"
++	depends on NET
++	default y
++	help
++	  This option enables the kernel userspace event layer, which is a
++	  simple mechanism for kernel-to-user communication over a netlink
++	  socket.
++	  The goal of the kernel userspace events layer is to provide a simple
++	  and efficient events system, that notifies userspace about kobject
++	  state changes. This will enable applications to just listen for
++	  events instead of polling system devices and files.
++	  Hotplug events (kobject addition and removal) are also available on
++	  the netlink socket in addition to the execution of /sbin/hotplug if
++	  CONFIG_HOTPLUG is enabled.
++
++	  Say Y, unless you are building a system requiring minimal memory
++	  consumption.
++
+ config IKCONFIG
+ 	bool "Kernel .config support"
+ 	---help---
+diff -Nru a/kernel/Makefile b/kernel/Makefile
+--- a/kernel/Makefile	2004-10-10 22:25:02 -07:00
++++ b/kernel/Makefile	2004-10-10 22:25:02 -07:00
+@@ -7,7 +7,7 @@
+ 	    sysctl.o capability.o ptrace.o timer.o user.o \
+ 	    signal.o sys.o kmod.o workqueue.o pid.o \
+ 	    rcupdate.o intermodule.o extable.o params.o posix-timers.o \
+-	    kthread.o
++	    kthread.o 
+ 
+ obj-$(CONFIG_FUTEX) += futex.o
+ obj-$(CONFIG_GENERIC_ISA_DMA) += dma.o
+@@ -24,6 +24,7 @@
+ obj-$(CONFIG_AUDIT) += audit.o
+ obj-$(CONFIG_AUDITSYSCALL) += auditsc.o
+ obj-$(CONFIG_KPROBES) += kprobes.o
++obj-$(CONFIG_SYSFS) += ksysfs.o
+ 
+ ifneq ($(CONFIG_IA64),y)
+ # According to Alan Modra <alan@linuxcare.com.au>, the -fno-omit-frame-pointer is
+diff -Nru a/kernel/ksysfs.c b/kernel/ksysfs.c
+--- /dev/null	Wed Dec 31 16:00:00 196900
++++ b/kernel/ksysfs.c	2004-10-10 22:25:02 -07:00
+@@ -0,0 +1,56 @@
++/*
++ * kernel/ksysfs.c - sysfs attributes in /sys/kernel, which
++ * 		     are not related to any other subsystem
++ *
++ * Copyright (C) 2004 Kay Sievers <kay.sievers@vrfy.org>
++ * 
++ * This file is release under the GPLv2
++ *
++ */
++
++#include <linux/config.h>
++#include <linux/kobject.h>
++#include <linux/string.h>
++#include <linux/sysfs.h>
++#include <linux/module.h>
++#include <linux/init.h>
++
++#define KERNEL_ATTR_RO(_name) \
++static struct subsys_attribute _name##_attr = __ATTR_RO(_name)
++
++#define KERNEL_ATTR_RW(_name) \
++static struct subsys_attribute _name##_attr = \
++	__ATTR(_name, 0644, _name##_show, _name##_store)
++
++#ifdef CONFIG_HOTPLUG
++static ssize_t hotplug_seqnum_show(struct subsystem *subsys, char *page)
++{
++	return sprintf(page, "%llu\n", (unsigned long long)hotplug_seqnum);
++}
++KERNEL_ATTR_RO(hotplug_seqnum);
++#endif
++
++static decl_subsys(kernel, NULL, NULL);
++
++static struct attribute * kernel_attrs[] = {
++#ifdef CONFIG_HOTPLUG
++	&hotplug_seqnum_attr.attr,
++#endif
++	NULL
++};
++
++static struct attribute_group kernel_attr_group = {
++	.attrs = kernel_attrs,
++};
++
++static int __init ksysfs_init(void)
++{
++	int error = subsystem_register(&kernel_subsys);
++	if (!error)
++		error = sysfs_create_group(&kernel_subsys.kset.kobj,
++					   &kernel_attr_group);
++
++	return error;
++}
++
++core_initcall(ksysfs_init);
+diff -Nru a/kernel/module.c b/kernel/module.c
+--- a/kernel/module.c	2004-10-10 22:25:02 -07:00
++++ b/kernel/module.c	2004-10-10 22:25:02 -07:00
+@@ -34,6 +34,7 @@
+ #include <linux/vermagic.h>
+ #include <linux/notifier.h>
+ #include <linux/stop_machine.h>
++#include <linux/device.h>
+ #include <asm/uaccess.h>
+ #include <asm/semaphore.h>
+ #include <asm/cacheflush.h>
+@@ -2139,6 +2140,26 @@
+ 		printk(" %s", mod->name);
+ 	printk("\n");
+ }
++
++void module_add_driver(struct module *mod, struct device_driver *drv)
++{
++	if (!mod || !drv)
++		return;
++	if (!mod->mkobj)
++		return;
++
++	/* Don't check return code; this call is idempotent */
++	sysfs_create_link(&drv->kobj, &mod->mkobj->kobj, "module");
++}
++EXPORT_SYMBOL(module_add_driver);
++
++void module_remove_driver(struct device_driver *drv)
++{
++	if (!drv)
++		return;
++	sysfs_remove_link(&drv->kobj, "module");
++}
++EXPORT_SYMBOL(module_remove_driver);
+ 
+ #ifdef CONFIG_MODVERSIONS
+ /* Generate the signature for struct module here, too, for modversions. */
+diff -Nru a/lib/Makefile b/lib/Makefile
+--- a/lib/Makefile	2004-10-10 22:25:02 -07:00
++++ b/lib/Makefile	2004-10-10 22:25:02 -07:00
+@@ -6,7 +6,7 @@
+ lib-y := errno.o ctype.o string.o vsprintf.o cmdline.o \
+ 	 bust_spinlocks.o rbtree.o radix-tree.o dump_stack.o \
+ 	 kobject.o kref.o idr.o div64.o parser.o int_sqrt.o \
+-	 bitmap.o extable.o
++	 bitmap.o extable.o kobject_uevent.o
+ 
+ lib-$(CONFIG_RWSEM_GENERIC_SPINLOCK) += rwsem-spinlock.o
+ lib-$(CONFIG_RWSEM_XCHGADD_ALGORITHM) += rwsem.o
+diff -Nru a/lib/kobject.c b/lib/kobject.c
+--- a/lib/kobject.c	2004-10-10 22:25:02 -07:00
++++ b/lib/kobject.c	2004-10-10 22:25:02 -07:00
+@@ -63,7 +63,7 @@
+ 	return container_of(entry,struct kobject,entry);
+ }
+ 
+-static int get_kobj_path_length(struct kset *kset, struct kobject *kobj)
++static int get_kobj_path_length(struct kobject *kobj)
+ {
+ 	int length = 1;
+ 	struct kobject * parent = kobj;
+@@ -79,7 +79,7 @@
+ 	return length;
+ }
+ 
+-static void fill_kobj_path(struct kset *kset, struct kobject *kobj, char *path, int length)
++static void fill_kobj_path(struct kobject *kobj, char *path, int length)
+ {
+ 	struct kobject * parent;
+ 
+@@ -99,146 +99,24 @@
+  * kobject_get_path - generate and return the path associated with a given kobj
+  * and kset pair.  The result must be freed by the caller with kfree().
+  *
+- * @kset:	kset in question, with which to build the path
+  * @kobj:	kobject in question, with which to build the path
+  * @gfp_mask:	the allocation type used to allocate the path
+  */
+-char * kobject_get_path(struct kset *kset, struct kobject *kobj, int gfp_mask)
++char *kobject_get_path(struct kobject *kobj, int gfp_mask)
+ {
+ 	char *path;
+ 	int len;
+ 
+-	len = get_kobj_path_length(kset, kobj);
++	len = get_kobj_path_length(kobj);
+ 	path = kmalloc(len, gfp_mask);
+ 	if (!path)
+ 		return NULL;
+ 	memset(path, 0x00, len);
+-	fill_kobj_path(kset, kobj, path, len);
++	fill_kobj_path(kobj, path, len);
+ 
+ 	return path;
+ }
+ 
+-#ifdef CONFIG_HOTPLUG
+-
+-#define BUFFER_SIZE	1024	/* should be enough memory for the env */
+-#define NUM_ENVP	32	/* number of env pointers */
+-static unsigned long sequence_num;
+-static spinlock_t sequence_lock = SPIN_LOCK_UNLOCKED;
+-
+-static void kset_hotplug(const char *action, struct kset *kset,
+-			 struct kobject *kobj)
+-{
+-	char *argv [3];
+-	char **envp = NULL;
+-	char *buffer = NULL;
+-	char *scratch;
+-	int i = 0;
+-	int retval;
+-	char *kobj_path = NULL;
+-	char *name = NULL;
+-	unsigned long seq;
+-
+-	/* If the kset has a filter operation, call it. If it returns
+-	   failure, no hotplug event is required. */
+-	if (kset->hotplug_ops->filter) {
+-		if (!kset->hotplug_ops->filter(kset, kobj))
+-			return;
+-	}
+-
+-	pr_debug ("%s\n", __FUNCTION__);
+-
+-	if (!hotplug_path[0])
+-		return;
+-
+-	envp = kmalloc(NUM_ENVP * sizeof (char *), GFP_KERNEL);
+-	if (!envp)
+-		return;
+-	memset (envp, 0x00, NUM_ENVP * sizeof (char *));
+-
+-	buffer = kmalloc(BUFFER_SIZE, GFP_KERNEL);
+-	if (!buffer)
+-		goto exit;
+-
+-	if (kset->hotplug_ops->name)
+-		name = kset->hotplug_ops->name(kset, kobj);
+-	if (name == NULL)
+-		name = kset->kobj.name;
+-
+-	argv [0] = hotplug_path;
+-	argv [1] = name;
+-	argv [2] = NULL;
+-
+-	/* minimal command environment */
+-	envp [i++] = "HOME=/";
+-	envp [i++] = "PATH=/sbin:/bin:/usr/sbin:/usr/bin";
+-
+-	scratch = buffer;
+-
+-	envp [i++] = scratch;
+-	scratch += sprintf(scratch, "ACTION=%s", action) + 1;
+-
+-	spin_lock(&sequence_lock);
+-	seq = sequence_num++;
+-	spin_unlock(&sequence_lock);
+-
+-	envp [i++] = scratch;
+-	scratch += sprintf(scratch, "SEQNUM=%ld", seq) + 1;
+-
+-	kobj_path = kobject_get_path(kset, kobj, GFP_KERNEL);
+-	if (!kobj_path)
+-		goto exit;
+-
+-	envp [i++] = scratch;
+-	scratch += sprintf (scratch, "DEVPATH=%s", kobj_path) + 1;
+-
+-	if (kset->hotplug_ops->hotplug) {
+-		/* have the kset specific function add its stuff */
+-		retval = kset->hotplug_ops->hotplug (kset, kobj,
+-				  &envp[i], NUM_ENVP - i, scratch,
+-				  BUFFER_SIZE - (scratch - buffer));
+-		if (retval) {
+-			pr_debug ("%s - hotplug() returned %d\n",
+-				  __FUNCTION__, retval);
+-			goto exit;
+-		}
+-	}
+-
+-	pr_debug ("%s: %s %s %s %s %s %s %s\n", __FUNCTION__, argv[0], argv[1],
+-		  envp[0], envp[1], envp[2], envp[3], envp[4]);
+-	retval = call_usermodehelper (argv[0], argv, envp, 0);
+-	if (retval)
+-		pr_debug ("%s - call_usermodehelper returned %d\n",
+-			  __FUNCTION__, retval);
+-
+-exit:
+-	kfree(kobj_path);
+-	kfree(buffer);
+-	kfree(envp);
+-	return;
+-}
+-
+-void kobject_hotplug(const char *action, struct kobject *kobj)
+-{
+-	struct kobject * top_kobj = kobj;
+-
+-	/* If this kobj does not belong to a kset,
+-	   try to find a parent that does. */
+-	if (!top_kobj->kset && top_kobj->parent) {
+-		do {
+-			top_kobj = top_kobj->parent;
+-		} while (!top_kobj->kset && top_kobj->parent);
+-	}
+-
+-	if (top_kobj->kset && top_kobj->kset->hotplug_ops)
+-		kset_hotplug(action, top_kobj->kset, kobj);
+-}
+-#else
+-void kobject_hotplug(const char *action, struct kobject *kobj)
+-{
+-	return;
+-}
+-#endif	/* CONFIG_HOTPLUG */
+-
+ /**
+  *	kobject_init - initialize object.
+  *	@kobj:	object in question.
+@@ -308,7 +186,7 @@
+ 		if (parent)
+ 			kobject_put(parent);
+ 	} else {
+-		kobject_hotplug("add", kobj);
++		kobject_hotplug(kobj, KOBJ_ADD);
+ 	}
+ 
+ 	return error;
+@@ -422,7 +300,7 @@
+ 
+ void kobject_del(struct kobject * kobj)
+ {
+-	kobject_hotplug("remove", kobj);
++	kobject_hotplug(kobj, KOBJ_REMOVE);
+ 	sysfs_remove_dir(kobj);
+ 	unlink(kobj);
+ }
+@@ -654,7 +532,6 @@
+ EXPORT_SYMBOL(kobject_add);
+ EXPORT_SYMBOL(kobject_del);
+ EXPORT_SYMBOL(kobject_rename);
+-EXPORT_SYMBOL(kobject_hotplug);
+ 
+ EXPORT_SYMBOL(kset_register);
+ EXPORT_SYMBOL(kset_unregister);
+diff -Nru a/lib/kobject_uevent.c b/lib/kobject_uevent.c
+--- /dev/null	Wed Dec 31 16:00:00 196900
++++ b/lib/kobject_uevent.c	2004-10-10 22:25:02 -07:00
+@@ -0,0 +1,345 @@
++/*
++ * kernel userspace event delivery
++ *
++ * Copyright (C) 2004 Red Hat, Inc.  All rights reserved.
++ * Copyright (C) 2004 Novell, Inc.  All rights reserved.
++ * Copyright (C) 2004 IBM, Inc. All rights reserved.
++ *
++ * Licensed under the GNU GPL v2.
++ *
++ * Authors:
++ *	Robert Love		<rml@novell.com>
++ *	Kay Sievers		<kay.sievers@vrfy.org>
++ *	Arjan van de Ven	<arjanv@redhat.com>
++ *	Greg Kroah-Hartman	<greg@kroah.com>
++ */
++
++#include <linux/spinlock.h>
++#include <linux/socket.h>
++#include <linux/skbuff.h>
++#include <linux/netlink.h>
++#include <linux/string.h>
++#include <linux/kobject_uevent.h>
++#include <linux/kobject.h>
++#include <net/sock.h>
++
++/* 
++ * These must match up with the values for enum kobject_action
++ * as found in include/linux/kobject_uevent.h
++ */
++static char *actions[] = {
++	"add",		/* 0x00 */
++	"remove",	/* 0x01 */
++	"change",	/* 0x02 */
++	"mount",	/* 0x03 */
++	"umount",	/* 0x04 */
++};
++
++static char *action_to_string(enum kobject_action action)
++{
++	if (action >= KOBJ_MAX_ACTION)
++		return NULL;
++	else
++		return actions[action];
++}
++
++#ifdef CONFIG_KOBJECT_UEVENT
++static struct sock *uevent_sock;
++
++/**
++ * send_uevent - notify userspace by sending event trough netlink socket
++ *
++ * @signal: signal name
++ * @obj: object path (kobject)
++ * @buf: buffer used to pass auxiliary data like the hotplug environment
++ * @buflen:
++ * gfp_mask:
++ */
++static int send_uevent(const char *signal, const char *obj, const void *buf,
++			int buflen, int gfp_mask)
++{
++	struct sk_buff *skb;
++	char *pos;
++	int len;
++
++	if (!uevent_sock)
++		return -EIO;
++
++	len = strlen(signal) + 1;
++	len += strlen(obj) + 1;
++	len += buflen;
++
++	skb = alloc_skb(len, gfp_mask);
++	if (!skb)
++		return -ENOMEM;
++
++	pos = skb_put(skb, len);
++
++	pos += sprintf(pos, "%s@%s", signal, obj) + 1;
++	memcpy(pos, buf, buflen);
++
++	return netlink_broadcast(uevent_sock, skb, 0, 1, gfp_mask);
++}
++
++static int do_kobject_uevent(struct kobject *kobj, enum kobject_action action, 
++			     struct attribute *attr, int gfp_mask)
++{
++	char *path;
++	char *attrpath;
++	char *signal;
++	int len;
++	int rc = -ENOMEM;
++
++	path = kobject_get_path(kobj, gfp_mask);
++	if (!path)
++		return -ENOMEM;
++
++	signal = action_to_string(action);
++	if (!signal)
++		return -EINVAL;
++
++	if (attr) {
++		len = strlen(path);
++		len += strlen(attr->name) + 2;
++		attrpath = kmalloc(len, gfp_mask);
++		if (!attrpath)
++			goto exit;
++		sprintf(attrpath, "%s/%s", path, attr->name);
++		rc = send_uevent(signal, attrpath, NULL, 0, gfp_mask);
++		kfree(attrpath);
++	} else {
++		rc = send_uevent(signal, path, NULL, 0, gfp_mask);
++	}
++
++exit:
++	kfree(path);
++	return rc;
++}
++
++/**
++ * kobject_uevent - notify userspace by sending event through netlink socket
++ * 
++ * @signal: signal name
++ * @kobj: struct kobject that the event is happening to
++ * @attr: optional struct attribute the event belongs to
++ */
++int kobject_uevent(struct kobject *kobj, enum kobject_action action,
++		   struct attribute *attr)
++{
++	return do_kobject_uevent(kobj, action, attr, GFP_KERNEL);
++}
++EXPORT_SYMBOL_GPL(kobject_uevent);
++
++int kobject_uevent_atomic(struct kobject *kobj, enum kobject_action action,
++			  struct attribute *attr)
++{
++	return do_kobject_uevent(kobj, action, attr, GFP_ATOMIC);
++}
++
++EXPORT_SYMBOL_GPL(kobject_uevent_atomic);
++
++static int __init kobject_uevent_init(void)
++{
++	uevent_sock = netlink_kernel_create(NETLINK_KOBJECT_UEVENT, NULL);
++
++	if (!uevent_sock) {
++		printk(KERN_ERR
++		       "kobject_uevent: unable to create netlink socket!\n");
++		return -ENODEV;
++	}
++
++	return 0;
++}
++
++core_initcall(kobject_uevent_init);
++
++#else
++static inline int send_uevent(const char *signal, const char *obj,
++			      const void *buf, int buflen, int gfp_mask)
++{
++	return 0;
++}
++
++#endif /* CONFIG_KOBJECT_UEVENT */
++
++
++#ifdef CONFIG_HOTPLUG
++u64 hotplug_seqnum;
++static spinlock_t sequence_lock = SPIN_LOCK_UNLOCKED;
++
++#define BUFFER_SIZE	1024	/* should be enough memory for the env */
++#define NUM_ENVP	32	/* number of env pointers */
++/**
++ * kobject_hotplug - notify userspace by executing /sbin/hotplug
++ *
++ * @action: action that is happening (usually "ADD" or "REMOVE")
++ * @kobj: struct kobject that the action is happening to
++ */
++void kobject_hotplug(struct kobject *kobj, enum kobject_action action)
++{
++	char *argv [3];
++	char **envp = NULL;
++	char *buffer = NULL;
++	char *scratch;
++	int i = 0;
++	int retval;
++	char *kobj_path = NULL;
++	char *name = NULL;
++	char *action_string;
++	u64 seq;
++	struct kobject *top_kobj = kobj;
++	struct kset *kset;
++
++	if (!top_kobj->kset && top_kobj->parent) {
++		do {
++			top_kobj = top_kobj->parent;
++		} while (!top_kobj->kset && top_kobj->parent);
++	}
++
++	if (top_kobj->kset && top_kobj->kset->hotplug_ops)
++		kset = top_kobj->kset;
++	else
++		return;
++
++	/* If the kset has a filter operation, call it.
++	   Skip the event, if the filter returns zero. */
++	if (kset->hotplug_ops->filter) {
++		if (!kset->hotplug_ops->filter(kset, kobj))
++			return;
++	}
++
++	pr_debug ("%s\n", __FUNCTION__);
++
++	action_string = action_to_string(action);
++	if (!action_string)
++		return;
++
++	envp = kmalloc(NUM_ENVP * sizeof (char *), GFP_KERNEL);
++	if (!envp)
++		return;
++	memset (envp, 0x00, NUM_ENVP * sizeof (char *));
++
++	buffer = kmalloc(BUFFER_SIZE, GFP_KERNEL);
++	if (!buffer)
++		goto exit;
++
++	if (kset->hotplug_ops->name)
++		name = kset->hotplug_ops->name(kset, kobj);
++	if (name == NULL)
++		name = kset->kobj.name;
++
++	argv [0] = hotplug_path;
++	argv [1] = name;
++	argv [2] = NULL;
++
++	/* minimal command environment */
++	envp [i++] = "HOME=/";
++	envp [i++] = "PATH=/sbin:/bin:/usr/sbin:/usr/bin";
++
++	scratch = buffer;
++
++	envp [i++] = scratch;
++	scratch += sprintf(scratch, "ACTION=%s", action_string) + 1;
++
++	kobj_path = kobject_get_path(kobj, GFP_KERNEL);
++	if (!kobj_path)
++		goto exit;
++
++	envp [i++] = scratch;
++	scratch += sprintf (scratch, "DEVPATH=%s", kobj_path) + 1;
++
++	spin_lock(&sequence_lock);
++	seq = ++hotplug_seqnum;
++	spin_unlock(&sequence_lock);
++
++	envp [i++] = scratch;
++	scratch += sprintf(scratch, "SEQNUM=%lld", (long long)seq) + 1;
++
++	envp [i++] = scratch;
++	scratch += sprintf(scratch, "SUBSYSTEM=%s", name) + 1;
++
++	if (kset->hotplug_ops->hotplug) {
++		/* have the kset specific function add its stuff */
++		retval = kset->hotplug_ops->hotplug (kset, kobj,
++				  &envp[i], NUM_ENVP - i, scratch,
++				  BUFFER_SIZE - (scratch - buffer));
++		if (retval) {
++			pr_debug ("%s - hotplug() returned %d\n",
++				  __FUNCTION__, retval);
++			goto exit;
++		}
++	}
++
++	pr_debug ("%s: %s %s %s %s %s %s %s\n", __FUNCTION__, argv[0], argv[1],
++		  envp[0], envp[1], envp[2], envp[3], envp[4]);
++
++	send_uevent(action_string, kobj_path, buffer, scratch - buffer, GFP_KERNEL);
++
++	if (!hotplug_path[0])
++		goto exit;
++
++	retval = call_usermodehelper (argv[0], argv, envp, 0);
++	if (retval)
++		pr_debug ("%s - call_usermodehelper returned %d\n",
++			  __FUNCTION__, retval);
++
++exit:
++	kfree(kobj_path);
++	kfree(buffer);
++	kfree(envp);
++	return;
++}
++EXPORT_SYMBOL(kobject_hotplug);
++
++/**
++ * add_hotplug_env_var - helper for creating hotplug environment variables
++ * @envp: Pointer to table of environment variables, as passed into
++ * hotplug() method.
++ * @num_envp: Number of environment variable slots available, as
++ * passed into hotplug() method.
++ * @cur_index: Pointer to current index into @envp.  It should be
++ * initialized to 0 before the first call to add_hotplug_env_var(),
++ * and will be incremented on success.
++ * @buffer: Pointer to buffer for environment variables, as passed
++ * into hotplug() method.
++ * @buffer_size: Length of @buffer, as passed into hotplug() method.
++ * @cur_len: Pointer to current length of space used in @buffer.
++ * Should be initialized to 0 before the first call to
++ * add_hotplug_env_var(), and will be incremented on success.
++ * @format: Format for creating environment variable (of the form
++ * "XXX=%x") for snprintf().
++ *
++ * Returns 0 if environment variable was added successfully or -ENOMEM
++ * if no space was available.
++ */
++int add_hotplug_env_var(char **envp, int num_envp, int *cur_index,
++			char *buffer, int buffer_size, int *cur_len,
++			const char *format, ...)
++{
++	va_list args;
++
++	/*
++	 * We check against num_envp - 1 to make sure there is at
++	 * least one slot left after we return, since the hotplug
++	 * method needs to set the last slot to NULL.
++	 */
++	if (*cur_index >= num_envp - 1)
++		return -ENOMEM;
++
++	envp[*cur_index] = buffer + *cur_len;
++
++	va_start(args, format);
++	*cur_len += vsnprintf(envp[*cur_index],
++			      max(buffer_size - *cur_len, 0),
++			      format, args) + 1;
++	va_end(args);
++
++	if (*cur_len > buffer_size)
++		return -ENOMEM;
++
++	(*cur_index)++;
++	return 0;
++}
++EXPORT_SYMBOL(add_hotplug_env_var);
++
++#endif /* CONFIG_HOTPLUG */

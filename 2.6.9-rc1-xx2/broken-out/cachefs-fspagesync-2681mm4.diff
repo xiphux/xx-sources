@@ -1,0 +1,79 @@
+Index: xx-sources/include/linux/page-flags.h
+===================================================================
+--- xx-sources.orig/include/linux/page-flags.h	2004-08-31 06:58:44.817272000 -0400
++++ xx-sources/include/linux/page-flags.h	2004-08-31 07:10:37.906865904 -0400
+@@ -78,6 +78,7 @@
+ 
+ #define PG_usedonce		20	/* LRU page has been touched once */
+  #define PG_badram		21
++#define PG_fs_pagesync		22	/* Filesystem specific page sync, caching for instance */
+ 
+ 
+ /*
+@@ -336,4 +337,13 @@
+ 	test_set_page_writeback(page);
+ }
+ 
++/*
++ * Filesystem-specific page synchronisation
++ */
++#define PageFsPageSync(page)		test_bit(PG_fs_pagesync, &(page)->flags)
++#define SetPageFsPageSync(page)		set_bit(PG_fs_pagesync, &(page)->flags)
++#define TestSetPageFsPageSync(page)	test_and_set_bit(PG_fs_pagesync, &(page)->flags)
++#define ClearPageFsPageSync(page)	clear_bit(PG_fs_pagesync, &(page)->flags)
++#define TestClearPageFsPageSync(page)	test_and_clear_bit(PG_fs_pagesync, &(page)->flags)
++
+ #endif	/* PAGE_FLAGS_H */
+Index: xx-sources/include/linux/pagemap.h
+===================================================================
+--- xx-sources.orig/include/linux/pagemap.h	2004-08-31 06:26:24.000000000 -0400
++++ xx-sources/include/linux/pagemap.h	2004-08-31 07:10:38.225817416 -0400
+@@ -192,6 +192,20 @@
+ extern void end_page_writeback(struct page *page);
+ 
+ /*
++ * Wait for filesystem-specific page synchronisation to complete
++ *
++ * This is used to allow a page to be written to a filesystem cache in the
++ * background without holding up the completion of readpage
++ */
++static inline void wait_on_page_fs_pagesync(struct page *page)
++{
++	if (PageFsPageSync(page))
++		wait_on_page_bit(page, PG_fs_pagesync);
++}
++
++extern void fastcall end_page_fs_pagesync(struct page *page);
++
++/*
+  * Fault a userspace page into pagetables.  Return non-zero on a fault.
+  *
+  * This assumes that two userspace pages are always sufficient.  That's
+Index: xx-sources/mm/filemap.c
+===================================================================
+--- xx-sources.orig/mm/filemap.c	2004-08-31 06:57:28.008948640 -0400
++++ xx-sources/mm/filemap.c	2004-08-31 07:34:07.843522952 -0400
+@@ -442,6 +442,23 @@
+ EXPORT_SYMBOL(__lock_page);
+ 
+ /*
++ * Note completion of filesystem specific page synchronisation
++ *
++ * This is used to allow a page to be written to a filesystem cache in the
++ * background without holding up the completion of readpage
++ */
++void fastcall end_page_fs_pagesync(struct page *page)
++{
++	smp_mb__before_clear_bit();
++	if (!TestClearPageFsPageSync(page))
++		BUG();
++	smp_mb__after_clear_bit(); 
++	wake_up_page(page, PG_fs_pagesync);
++}
++
++EXPORT_SYMBOL(end_page_fs_pagesync);
++
++/*
+  * a rather lightweight function, finding and getting a reference to a
+  * hashed page atomically.
+  */

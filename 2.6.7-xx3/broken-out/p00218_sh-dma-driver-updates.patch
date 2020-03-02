@@ -1,0 +1,1015 @@
+
+From: Paul Mundt <lethal@Linux-SH.ORG>
+
+This updates the SuperH DMA driver, as well as cleaning up the registration
+interface.
+
+We also drop the use of bitfields in dma-sh since things like the SH4-202,
+7751R, 7760, etc.  all have a completely different set of register
+definitions.
+
+Signed-off-by: Paul Mundt <lethal@linux-sh.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/sh/drivers/dma/Makefile    |    1 
+ 25-akpm/arch/sh/drivers/dma/dma-api.c   |  175 ++++++++++++++++++++++++--------
+ 25-akpm/arch/sh/drivers/dma/dma-isa.c   |   29 +++--
+ 25-akpm/arch/sh/drivers/dma/dma-sh.c    |  164 +++++++++++++++--------------
+ 25-akpm/arch/sh/drivers/dma/dma-sysfs.c |  133 ++++++++++++++++++++++++
+ 25-akpm/include/asm-sh/cpu-sh4/dma.h    |   10 +
+ 25-akpm/include/asm-sh/dma.h            |   71 +++++++++---
+ 7 files changed, 438 insertions(+), 145 deletions(-)
+
+diff -puN arch/sh/drivers/dma/dma-api.c~sh-dma-driver-updates arch/sh/drivers/dma/dma-api.c
+--- 25/arch/sh/drivers/dma/dma-api.c~sh-dma-driver-updates	2004-06-23 20:00:14.618467680 -0700
++++ 25-akpm/arch/sh/drivers/dma/dma-api.c	2004-06-23 20:00:14.631465704 -0700
+@@ -3,23 +3,24 @@
+  *
+  * SuperH-specific DMA management API
+  *
+- * Copyright (C) 2003  Paul Mundt
++ * Copyright (C) 2003, 2004  Paul Mundt
+  *
+  * This file is subject to the terms and conditions of the GNU General Public
+  * License.  See the file "COPYING" in the main directory of this archive
+  * for more details.
+- */ 
++ */
+ #include <linux/init.h>
+ #include <linux/module.h>
+ #include <linux/interrupt.h>
+ #include <linux/spinlock.h>
+ #include <linux/proc_fs.h>
++#include <linux/list.h>
+ #include <asm/dma.h>
+ 
+-struct dma_info dma_info[MAX_DMA_CHANNELS] = { { 0, } };
+ spinlock_t dma_spin_lock = SPIN_LOCK_UNLOCKED;
++static LIST_HEAD(registered_dmac_list);
+ 
+-/* 
++/*
+  * A brief note about the reasons for this API as it stands.
+  *
+  * For starters, the old ISA DMA API didn't work for us for a number of
+@@ -54,124 +55,213 @@ spinlock_t dma_spin_lock = SPIN_LOCK_UNL
+ 
+ struct dma_info *get_dma_info(unsigned int chan)
+ {
+-	return dma_info + chan;
++	struct list_head *pos, *tmp;
++	unsigned int total = 0;
++
++	/*
++	 * Look for each DMAC's range to determine who the owner of
++	 * the channel is.
++	 */
++	list_for_each_safe(pos, tmp, &registered_dmac_list) {
++		struct dma_info *info = list_entry(pos, struct dma_info, list);
++
++		total += info->nr_channels;
++		if (chan > total)
++			continue;
++
++		return info;
++	}
++
++	return NULL;
++}
++
++struct dma_channel *get_dma_channel(unsigned int chan)
++{
++	struct dma_info *info = get_dma_info(chan);
++
++	if (!info)
++		return ERR_PTR(-EINVAL);
++
++	return info->channels + chan;
+ }
+ 
+ int get_dma_residue(unsigned int chan)
+ {
+ 	struct dma_info *info = get_dma_info(chan);
++	struct dma_channel *channel = &info->channels[chan];
+ 
+ 	if (info->ops->get_residue)
+-		return info->ops->get_residue(info);
+-	
++		return info->ops->get_residue(channel);
++
+ 	return 0;
+ }
+ 
+ int request_dma(unsigned int chan, const char *dev_id)
+ {
+ 	struct dma_info *info = get_dma_info(chan);
++	struct dma_channel *channel = &info->channels[chan];
+ 
+-	down(&info->sem);
++	down(&channel->sem);
+ 
+ 	if (!info->ops || chan >= MAX_DMA_CHANNELS) {
+-		up(&info->sem);
++		up(&channel->sem);
+ 		return -EINVAL;
+ 	}
+-	
+-	atomic_set(&info->busy, 1);
+ 
+-	info->dev_id = dev_id;
++	atomic_set(&channel->busy, 1);
+ 
+-	up(&info->sem);
++	strlcpy(channel->dev_id, dev_id, sizeof(channel->dev_id));
++
++	up(&channel->sem);
+ 
+ 	if (info->ops->request)
+-		return info->ops->request(info);
+-	
++		return info->ops->request(channel);
++
+ 	return 0;
+ }
+ 
+ void free_dma(unsigned int chan)
+ {
+ 	struct dma_info *info = get_dma_info(chan);
++	struct dma_channel *channel = &info->channels[chan];
+ 
+ 	if (info->ops->free)
+-		info->ops->free(info);
+-	
+-	atomic_set(&info->busy, 0);
++		info->ops->free(channel);
++
++	atomic_set(&channel->busy, 0);
+ }
+ 
+ void dma_wait_for_completion(unsigned int chan)
+ {
+ 	struct dma_info *info = get_dma_info(chan);
++	struct dma_channel *channel = &info->channels[chan];
+ 
+-	if (info->tei_capable) {
+-		wait_event(info->wait_queue, (info->ops->get_residue(info) == 0));
++	if (channel->flags & DMA_TEI_CAPABLE) {
++		wait_event(channel->wait_queue,
++			   (info->ops->get_residue(channel) == 0));
+ 		return;
+ 	}
+ 
+-	while (info->ops->get_residue(info))
++	while (info->ops->get_residue(channel))
+ 		cpu_relax();
+ }
+ 
+ void dma_configure_channel(unsigned int chan, unsigned long flags)
+ {
+ 	struct dma_info *info = get_dma_info(chan);
++	struct dma_channel *channel = &info->channels[chan];
+ 
+ 	if (info->ops->configure)
+-		info->ops->configure(info, flags);
++		info->ops->configure(channel, flags);
+ }
+ 
+ int dma_xfer(unsigned int chan, unsigned long from,
+ 	     unsigned long to, size_t size, unsigned int mode)
+ {
+ 	struct dma_info *info = get_dma_info(chan);
++	struct dma_channel *channel = &info->channels[chan];
+ 
+-	info->sar	= from;
+-	info->dar	= to;
+-	info->count	= size;
+-	info->mode	= mode;
++	channel->sar	= from;
++	channel->dar	= to;
++	channel->count	= size;
++	channel->mode	= mode;
+ 
+-	return info->ops->xfer(info);
++	return info->ops->xfer(channel);
+ }
+ 
+ #ifdef CONFIG_PROC_FS
+ static int dma_read_proc(char *buf, char **start, off_t off,
+ 			 int len, int *eof, void *data)
+ {
+-	struct dma_info *info;
++	struct list_head *pos, *tmp;
+ 	char *p = buf;
+-	int i;
+ 
+-	for (i = 0, info = dma_info; i < MAX_DMA_CHANNELS; i++, info++) {
+-		if (!atomic_read(&info->busy))
+-			continue;
++	if (list_empty(&registered_dmac_list))
++		return 0;
+ 
+-		p += sprintf(p, "%2d: %14s    %s\n", i,
+-			     info->ops->name, info->dev_id);
++	/*
++	 * Iterate over each registered DMAC
++	 */
++	list_for_each_safe(pos, tmp, &registered_dmac_list) {
++		struct dma_info *info = list_entry(pos, struct dma_info, list);
++		int i;
++
++		/*
++		 * Iterate over each channel
++		 */
++		for (i = 0; i < info->nr_channels; i++) {
++			struct dma_channel *channel = info->channels + i;
++
++			if (!(channel->flags & DMA_CONFIGURED))
++				continue;
++
++			p += sprintf(p, "%2d: %14s    %s\n", i,
++				     info->name, channel->dev_id);
++		}
+ 	}
+ 
+ 	return p - buf;
+ }
+ #endif
+ 
+-int __init register_dmac(struct dma_ops *ops)
++
++int __init register_dmac(struct dma_info *info)
+ {
+ 	int i;
+ 
+-	printk("DMA: Registering %s handler.\n", ops->name);
++	INIT_LIST_HEAD(&info->list);
++
++	printk(KERN_INFO "DMA: Registering %s handler (%d channels).\n",
++	       info->name, info->nr_channels);
++
++	BUG_ON((info->flags & DMAC_CHANNELS_CONFIGURED) && !info->channels);
++
++	/*
++	 * Don't touch pre-configured channels
++	 */
++	if (!(info->flags & DMAC_CHANNELS_CONFIGURED)) {
++		unsigned int size;
++
++		size = sizeof(struct dma_channel) * info->nr_channels;
++
++		info->channels = kmalloc(size, GFP_KERNEL);
++		if (!info->channels)
++			return -ENOMEM;
++
++		memset(info->channels, 0, size);
++	}
++
++	for (i = 0; i < info->nr_channels; i++) {
++		struct dma_channel *chan = info->channels + i;
++
++		chan->chan = i;
++
++		memcpy(chan->dev_id, "Unused", 7);
+ 
+-	for (i = 0; i < MAX_DMA_CHANNELS; i++) {
+-		struct dma_info *info = get_dma_info(i);
++		if (info->flags & DMAC_CHANNELS_TEI_CAPABLE)
++			chan->flags |= DMA_TEI_CAPABLE;
+ 
+-		info->chan = i;
++		init_MUTEX(&chan->sem);
++		init_waitqueue_head(&chan->wait_queue);
+ 
+-		init_MUTEX(&info->sem);
+-		init_waitqueue_head(&info->wait_queue);
++#ifdef CONFIG_SYSFS
++		dma_create_sysfs_files(chan);
++#endif
+ 	}
+ 
++	list_add(&info->list, &registered_dmac_list);
++
+ 	return 0;
+ }
+ 
++void __exit unregister_dmac(struct dma_info *info)
++{
++	if (!(info->flags & DMAC_CHANNELS_CONFIGURED))
++		kfree(info->channels);
++
++	list_del(&info->list);
++}
++
+ static int __init dma_api_init(void)
+ {
+ 	printk("DMA: Registering DMA API.\n");
+@@ -191,8 +281,11 @@ MODULE_LICENSE("GPL");
+ 
+ EXPORT_SYMBOL(request_dma);
+ EXPORT_SYMBOL(free_dma);
++EXPORT_SYMBOL(register_dmac);
++EXPORT_SYMBOL(unregister_dmac);
+ EXPORT_SYMBOL(get_dma_residue);
+ EXPORT_SYMBOL(get_dma_info);
++EXPORT_SYMBOL(get_dma_channel);
+ EXPORT_SYMBOL(dma_xfer);
+ EXPORT_SYMBOL(dma_wait_for_completion);
+ EXPORT_SYMBOL(dma_configure_channel);
+diff -puN arch/sh/drivers/dma/dma-isa.c~sh-dma-driver-updates arch/sh/drivers/dma/dma-isa.c
+--- 25/arch/sh/drivers/dma/dma-isa.c~sh-dma-driver-updates	2004-06-23 20:00:14.619467528 -0700
++++ 25-akpm/arch/sh/drivers/dma/dma-isa.c	2004-06-23 20:00:14.632465552 -0700
+@@ -3,13 +3,14 @@
+  *
+  * Generic ISA DMA wrapper for SH DMA API
+  *
+- * Copyright (C) 2003  Paul Mundt
++ * Copyright (C) 2003, 2004  Paul Mundt
+  *
+  * This file is subject to the terms and conditions of the GNU General Public
+  * License.  See the file "COPYING" in the main directory of this archive
+  * for more details.
+- */ 
++ */
+ #include <linux/kernel.h>
++#include <linux/module.h>
+ #include <asm/dma.h>
+ 
+ /*
+@@ -39,55 +40,67 @@ unsigned long __deprecated claim_dma_loc
+ 
+ 	return flags;
+ }
++EXPORT_SYMBOL(claim_dma_lock);
+ 
+ void __deprecated release_dma_lock(unsigned long flags)
+ {
+ 	spin_unlock_irqrestore(&dma_spin_lock, flags);
+ }
++EXPORT_SYMBOL(release_dma_lock);
+ 
+ void __deprecated disable_dma(unsigned int chan)
+ {
+ 	/* Nothing */
+ }
++EXPORT_SYMBOL(disable_dma);
+ 
+ void __deprecated enable_dma(unsigned int chan)
+ {
+ 	struct dma_info *info = get_dma_info(chan);
++	struct dma_channel *channel = &info->channels[chan];
+ 
+-	info->ops->xfer(info);
++	info->ops->xfer(channel);
+ }
++EXPORT_SYMBOL(enable_dma);
+ 
+ void clear_dma_ff(unsigned int chan)
+ {
+ 	/* Nothing */
+ }
++EXPORT_SYMBOL(clear_dma_ff);
+ 
+ void set_dma_mode(unsigned int chan, char mode)
+ {
+ 	struct dma_info *info = get_dma_info(chan);
++	struct dma_channel *channel = &info->channels[chan];
+ 
+-	info->mode = mode;
++	channel->mode = mode;
+ }
++EXPORT_SYMBOL(set_dma_mode);
+ 
+ void set_dma_addr(unsigned int chan, unsigned int addr)
+ {
+ 	struct dma_info *info = get_dma_info(chan);
++	struct dma_channel *channel = &info->channels[chan];
+ 
+ 	/*
+ 	 * Single address mode is the only thing supported through
+ 	 * this interface.
+ 	 */
+-	if ((info->mode & DMA_MODE_MASK) == DMA_MODE_READ) {
+-		info->sar = addr;
++	if ((channel->mode & DMA_MODE_MASK) == DMA_MODE_READ) {
++		channel->sar = addr;
+ 	} else {
+-		info->dar = addr;
++		channel->dar = addr;
+ 	}
+ }
++EXPORT_SYMBOL(set_dma_addr);
+ 
+ void set_dma_count(unsigned int chan, unsigned int count)
+ {
+ 	struct dma_info *info = get_dma_info(chan);
++	struct dma_channel *channel = &info->channels[chan];
+ 
+-	info->count = count;
++	channel->count = count;
+ }
++EXPORT_SYMBOL(set_dma_count);
+ 
+diff -puN arch/sh/drivers/dma/dma-sh.c~sh-dma-driver-updates arch/sh/drivers/dma/dma-sh.c
+--- 25/arch/sh/drivers/dma/dma-sh.c~sh-dma-driver-updates	2004-06-23 20:00:14.621467224 -0700
++++ 25-akpm/arch/sh/drivers/dma/dma-sh.c	2004-06-23 20:00:14.633465400 -0700
+@@ -1,10 +1,10 @@
+ /*
+- * arch/sh/kernel/cpu/dma.c
++ * arch/sh/drivers/dma/dma-sh.c
+  *
+- * Copyright (C) 2000 Takashi YOSHII
+- * Copyright (C) 2003 Paul Mundt
++ * SuperH On-chip DMAC Support
+  *
+- * PC like DMA API for SuperH's DMAC.
++ * Copyright (C) 2000 Takashi YOSHII
++ * Copyright (C) 2003, 2004 Paul Mundt
+  *
+  * This file is subject to the terms and conditions of the GNU General Public
+  * License.  See the file "COPYING" in the main directory of this archive
+@@ -29,43 +29,29 @@
+  * Defaults to a 64-bit transfer size.
+  */
+ enum {
+-	XMIT_SZ_64BIT	= 0,
+-	XMIT_SZ_8BIT	= 1,
+-	XMIT_SZ_16BIT	= 2,
+-	XMIT_SZ_32BIT	= 3,
+-	XMIT_SZ_256BIT	= 4,
++	XMIT_SZ_64BIT,
++	XMIT_SZ_8BIT,
++	XMIT_SZ_16BIT,
++	XMIT_SZ_32BIT,
++	XMIT_SZ_256BIT,
+ };
+ 
+ /*
+  * The DMA count is defined as the number of bytes to transfer.
+  */
+ static unsigned int ts_shift[] = {
+-	[XMIT_SZ_64BIT]		3,
+-	[XMIT_SZ_8BIT]		0,
+-	[XMIT_SZ_16BIT]		1,
+-	[XMIT_SZ_32BIT]		2,
+-	[XMIT_SZ_256BIT]	5,
++	[XMIT_SZ_64BIT]		= 3,
++	[XMIT_SZ_8BIT]		= 0,
++	[XMIT_SZ_16BIT]		= 1,
++	[XMIT_SZ_32BIT]		= 2,
++	[XMIT_SZ_256BIT]	= 5,
+ };
+ 
+-struct sh_dmac_channel {
+-        unsigned long sar;
+-        unsigned long dar;
+-        unsigned long dmatcr;
+-        unsigned long chcr;
+-} __attribute__ ((aligned(16)));
+-
+-struct sh_dmac_info {
+-        struct sh_dmac_channel channel[4];
+-        unsigned long dmaor;
+-};
+-
+-static volatile struct sh_dmac_info *sh_dmac = (volatile struct sh_dmac_info *)SH_DMAC_BASE;
+-
+ static inline unsigned int get_dmte_irq(unsigned int chan)
+ {
+ 	unsigned int irq;
+ 
+-	/* 
++	/*
+ 	 * Normally we could just do DMTE0_IRQ + chan outright, though in the
+ 	 * case of the 7751R, the DMTE IRQs for channels > 4 start right above
+ 	 * the SCIF
+@@ -84,13 +70,17 @@ static inline unsigned int get_dmte_irq(
+  * We determine the correct shift size based off of the CHCR transmit size
+  * for the given channel. Since we know that it will take:
+  *
+- * 	info->count >> ts_shift[transmit_size]
++ *	info->count >> ts_shift[transmit_size]
+  *
+  * iterations to complete the transfer.
+  */
+-static inline unsigned int calc_xmit_shift(struct dma_info *info)
++static inline unsigned int calc_xmit_shift(struct dma_channel *chan)
+ {
+-	return ts_shift[(sh_dmac->channel[info->chan].chcr >> 4) & 0x0007];
++	u32 chcr = ctrl_inl(CHCR[chan->chan]);
++
++	chcr >>= 4;
++
++	return ts_shift[chcr & 0x0007];
+ }
+ 
+ /*
+@@ -101,68 +91,79 @@ static inline unsigned int calc_xmit_shi
+  */
+ static irqreturn_t dma_tei(int irq, void *dev_id, struct pt_regs *regs)
+ {
+-	struct dma_info * info = (struct dma_info *)dev_id;
+-	u32 chcr = sh_dmac->channel[info->chan].chcr;
++	struct dma_channel *chan = (struct dma_channel *)dev_id;
++	u32 chcr;
++
++	chcr = ctrl_inl(CHCR[chan->chan]);
+ 
+ 	if (!(chcr & CHCR_TE))
+ 		return IRQ_NONE;
+ 
+-	sh_dmac->channel[info->chan].chcr = chcr & ~(CHCR_IE | CHCR_DE);
++	chcr &= ~(CHCR_IE | CHCR_DE);
++	ctrl_outl(chcr, CHCR[chan->chan]);
+ 
+-	wake_up(&info->wait_queue);
++	wake_up(&chan->wait_queue);
+ 
+ 	return IRQ_HANDLED;
+ }
+ 
+-static int sh_dmac_request_dma(struct dma_info *info)
++static int sh_dmac_request_dma(struct dma_channel *chan)
+ {
+-	return request_irq(get_dmte_irq(info->chan), dma_tei,
+-			   SA_INTERRUPT, "DMAC Transfer End", info);
++	return request_irq(get_dmte_irq(chan->chan), dma_tei,
++			   SA_INTERRUPT, "DMAC Transfer End", chan);
+ }
+ 
+-static void sh_dmac_free_dma(struct dma_info *info)
++static void sh_dmac_free_dma(struct dma_channel *chan)
+ {
+-	free_irq(get_dmte_irq(info->chan), info);
++	free_irq(get_dmte_irq(chan->chan), chan);
+ }
+ 
+-static void sh_dmac_configure_channel(struct dma_info *info, unsigned long chcr)
++static void sh_dmac_configure_channel(struct dma_channel *chan, unsigned long chcr)
+ {
+ 	if (!chcr)
+ 		chcr = RS_DUAL;
+ 
+-	sh_dmac->channel[info->chan].chcr = chcr;
++	ctrl_outl(chcr, CHCR[chan->chan]);
+ 
+-	info->configured = 1;
++	chan->flags |= DMA_CONFIGURED;
+ }
+ 
+-static void sh_dmac_enable_dma(struct dma_info *info)
++static void sh_dmac_enable_dma(struct dma_channel *chan)
+ {
+-	int irq = get_dmte_irq(info->chan);
++	int irq = get_dmte_irq(chan->chan);
++	u32 chcr;
++
++	chcr = ctrl_inl(CHCR[chan->chan]);
++	chcr |= CHCR_DE | CHCR_IE;
++	ctrl_outl(chcr, CHCR[chan->chan]);
+ 
+-	sh_dmac->channel[info->chan].chcr |= (CHCR_DE | CHCR_IE);
+ 	enable_irq(irq);
+ }
+ 
+-static void sh_dmac_disable_dma(struct dma_info *info)
++static void sh_dmac_disable_dma(struct dma_channel *chan)
+ {
+-	int irq = get_dmte_irq(info->chan);
++	int irq = get_dmte_irq(chan->chan);
++	u32 chcr;
+ 
+ 	disable_irq(irq);
+-	sh_dmac->channel[info->chan].chcr &= ~(CHCR_DE | CHCR_TE | CHCR_IE);
++
++	chcr = ctrl_inl(CHCR[chan->chan]);
++	chcr &= ~(CHCR_DE | CHCR_TE | CHCR_IE);
++	ctrl_outl(chcr, CHCR[chan->chan]);
+ }
+ 
+-static int sh_dmac_xfer_dma(struct dma_info *info)
++static int sh_dmac_xfer_dma(struct dma_channel *chan)
+ {
+-	/* 
++	/*
+ 	 * If we haven't pre-configured the channel with special flags, use
+ 	 * the defaults.
+ 	 */
+-	if (!info->configured)
+-		sh_dmac_configure_channel(info, 0);
++	if (!(chan->flags & DMA_CONFIGURED))
++		sh_dmac_configure_channel(chan, 0);
+ 
+-	sh_dmac_disable_dma(info);
+-	
+-	/* 
++	sh_dmac_disable_dma(chan);
++
++	/*
+ 	 * Single-address mode usage note!
+ 	 *
+ 	 * It's important that we don't accidentally write any value to SAR/DAR
+@@ -177,33 +178,36 @@ static int sh_dmac_xfer_dma(struct dma_i
+ 	 * cascading to the PVR2 DMAC. In this case, we still need to write
+ 	 * SAR and DAR, regardless of value, in order for cascading to work.
+ 	 */
+-	if (info->sar || (mach_is_dreamcast() && info->chan == 2))
+-		sh_dmac->channel[info->chan].sar = info->sar;
+-	if (info->dar || (mach_is_dreamcast() && info->chan == 2))
+-		sh_dmac->channel[info->chan].dar = info->dar;
+-	
+-	sh_dmac->channel[info->chan].dmatcr = info->count >> calc_xmit_shift(info);
++	if (chan->sar || (mach_is_dreamcast() && chan->chan == 2))
++		ctrl_outl(chan->sar, SAR[chan->chan]);
++	if (chan->dar || (mach_is_dreamcast() && chan->chan == 2))
++		ctrl_outl(chan->dar, DAR[chan->chan]);
++
++	ctrl_outl(chan->count >> calc_xmit_shift(chan), DMATCR[chan->chan]);
+ 
+-	sh_dmac_enable_dma(info);
++	sh_dmac_enable_dma(chan);
+ 
+ 	return 0;
+ }
+ 
+-static int sh_dmac_get_dma_residue(struct dma_info *info)
++static int sh_dmac_get_dma_residue(struct dma_channel *chan)
+ {
+-	if (!(sh_dmac->channel[info->chan].chcr & CHCR_DE))
++	if (!(ctrl_inl(CHCR[chan->chan]) & CHCR_DE))
+ 		return 0;
+ 
+-	return sh_dmac->channel[info->chan].dmatcr << calc_xmit_shift(info);
++	return ctrl_inl(DMATCR[chan->chan]) << calc_xmit_shift(chan);
+ }
+ 
+ #if defined(CONFIG_CPU_SH4)
+ static irqreturn_t dma_err(int irq, void *dev_id, struct pt_regs *regs)
+ {
+-	printk("DMAE: DMAOR=%lx\n", sh_dmac->dmaor);
++	unsigned long dmaor = ctrl_inl(DMAOR);
++
++	printk("DMAE: DMAOR=%lx\n", dmaor);
+ 
+-	sh_dmac->dmaor &= ~(DMAOR_NMIF | DMAOR_AE);
+-	sh_dmac->dmaor |= DMAOR_DME;
++	ctrl_outl(ctrl_inl(DMAOR)&~DMAOR_NMIF, DMAOR);
++	ctrl_outl(ctrl_inl(DMAOR)&~DMAOR_AE, DMAOR);
++	ctrl_outl(ctrl_inl(DMAOR)|DMAOR_DME, DMAOR);
+ 
+ 	disable_irq(irq);
+ 
+@@ -212,16 +216,23 @@ static irqreturn_t dma_err(int irq, void
+ #endif
+ 
+ static struct dma_ops sh_dmac_ops = {
+-	.name		= "SuperH DMAC",
+ 	.request	= sh_dmac_request_dma,
+ 	.free		= sh_dmac_free_dma,
+ 	.get_residue	= sh_dmac_get_dma_residue,
+ 	.xfer		= sh_dmac_xfer_dma,
+ 	.configure	= sh_dmac_configure_channel,
+ };
+-	
++
++static struct dma_info sh_dmac_info = {
++	.name		= "SuperH DMAC",
++	.nr_channels	= 4,
++	.ops		= &sh_dmac_ops,
++	.flags		= DMAC_CHANNELS_TEI_CAPABLE,
++};
++
+ static int __init sh_dmac_init(void)
+ {
++	struct dma_info *info = &sh_dmac_info;
+ 	int i;
+ 
+ #ifdef CONFIG_CPU_SH4
+@@ -231,18 +242,15 @@ static int __init sh_dmac_init(void)
+ 		return i;
+ #endif
+ 
+-	for (i = 0; i < MAX_DMAC_CHANNELS; i++) {
++	for (i = 0; i < info->nr_channels; i++) {
+ 		int irq = get_dmte_irq(i);
+ 
+ 		make_ipr_irq(irq, DMA_IPR_ADDR, DMA_IPR_POS, DMA_PRIORITY);
+-
+-		dma_info[i].ops = &sh_dmac_ops;
+-		dma_info[i].tei_capable = 1;
+ 	}
+ 
+-	sh_dmac->dmaor |= 0x8000 | DMAOR_DME;
++	ctrl_outl(0x8000 | DMAOR_DME, DMAOR);
+ 
+-	return register_dmac(&sh_dmac_ops);
++	return register_dmac(info);
+ }
+ 
+ static void __exit sh_dmac_exit(void)
+diff -puN /dev/null arch/sh/drivers/dma/dma-sysfs.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/arch/sh/drivers/dma/dma-sysfs.c	2004-06-23 20:00:14.634465248 -0700
+@@ -0,0 +1,133 @@
++/*
++ * arch/sh/drivers/dma/dma-sysfs.c
++ *
++ * sysfs interface for SH DMA API
++ *
++ * Copyright (C) 2004  Paul Mundt
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ */
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/sysdev.h>
++#include <linux/module.h>
++#include <asm/dma.h>
++
++static struct sysdev_class dma_sysclass = {
++	set_kset_name("dma"),
++};
++
++EXPORT_SYMBOL(dma_sysclass);
++
++static ssize_t dma_show_devices(struct sys_device *dev, char *buf)
++{
++	ssize_t len = 0;
++	int i;
++
++	for (i = 0; i < MAX_DMA_CHANNELS; i++) {
++		struct dma_info *info = get_dma_info(i);
++		struct dma_channel *channel = &info->channels[i];
++
++		len += sprintf(buf + len, "%2d: %14s    %s\n",
++			       channel->chan, info->name,
++			       channel->dev_id);
++	}
++
++	return len;
++}
++
++static SYSDEV_ATTR(devices, S_IRUGO, dma_show_devices, NULL);
++
++static int __init dma_sysclass_init(void)
++{
++	int ret;
++
++	ret = sysdev_class_register(&dma_sysclass);
++	if (ret == 0)
++		sysfs_create_file(&dma_sysclass.kset.kobj, &attr_devices.attr);
++
++	return ret;
++}
++
++postcore_initcall(dma_sysclass_init);
++
++static ssize_t dma_show_dev_id(struct sys_device *dev, char *buf)
++{
++	struct dma_channel *channel = to_dma_channel(dev);
++	return sprintf(buf, "%s\n", channel->dev_id);
++}
++
++static ssize_t dma_store_dev_id(struct sys_device *dev,
++				const char *buf, size_t count)
++{
++	struct dma_channel *channel = to_dma_channel(dev);
++	strcpy(channel->dev_id, buf);
++	return count;
++}
++
++static SYSDEV_ATTR(dev_id, S_IRUGO | S_IWUSR, dma_show_dev_id, dma_store_dev_id);
++
++static ssize_t dma_store_config(struct sys_device *dev,
++				const char *buf, size_t count)
++{
++	struct dma_channel *channel = to_dma_channel(dev);
++	unsigned long config;
++
++	config = simple_strtoul(buf, NULL, 0);
++	dma_configure_channel(channel->chan, config);
++
++	return count;
++}
++
++static SYSDEV_ATTR(config, S_IWUSR, NULL, dma_store_config);
++
++static ssize_t dma_show_mode(struct sys_device *dev, char *buf)
++{
++	struct dma_channel *channel = to_dma_channel(dev);
++	return sprintf(buf, "0x%08x\n", channel->mode);
++}
++
++static ssize_t dma_store_mode(struct sys_device *dev,
++			      const char *buf, size_t count)
++{
++	struct dma_channel *channel = to_dma_channel(dev);
++	channel->mode = simple_strtoul(buf, NULL, 0);
++	return count;
++}
++
++static SYSDEV_ATTR(mode, S_IRUGO | S_IWUSR, dma_show_mode, dma_store_mode);
++
++#define dma_ro_attr(field, fmt)						\
++static ssize_t dma_show_##field(struct sys_device *dev, char *buf)	\
++{									\
++	struct dma_channel *channel = to_dma_channel(dev);		\
++	return sprintf(buf, fmt, channel->field);			\
++}									\
++static SYSDEV_ATTR(field, S_IRUGO, dma_show_##field, NULL);
++
++dma_ro_attr(count, "0x%08x\n");
++dma_ro_attr(flags, "0x%08lx\n");
++
++int __init dma_create_sysfs_files(struct dma_channel *chan)
++{
++	struct sys_device *dev = &chan->dev;
++	int ret;
++
++	dev->id  = chan->chan;
++	dev->cls = &dma_sysclass;
++
++	ret = sysdev_register(dev);
++	if (ret)
++		return ret;
++
++	sysdev_create_file(dev, &attr_dev_id);
++	sysdev_create_file(dev, &attr_count);
++	sysdev_create_file(dev, &attr_mode);
++	sysdev_create_file(dev, &attr_flags);
++	sysdev_create_file(dev, &attr_config);
++
++	return 0;
++}
++
+diff -puN arch/sh/drivers/dma/Makefile~sh-dma-driver-updates arch/sh/drivers/dma/Makefile
+--- 25/arch/sh/drivers/dma/Makefile~sh-dma-driver-updates	2004-06-23 20:00:14.623466920 -0700
++++ 25-akpm/arch/sh/drivers/dma/Makefile	2004-06-23 20:00:14.634465248 -0700
+@@ -3,6 +3,7 @@
+ #
+ 
+ obj-y				+= dma-api.o dma-isa.o
++obj-$(CONFIG_SYSFS)		+= dma-sysfs.o
+ obj-$(CONFIG_SH_DMA)		+= dma-sh.o
+ obj-$(CONFIG_SH_DREAMCAST)	+= dma-pvr2.o dma-g2.o
+ 
+diff -puN include/asm-sh/cpu-sh4/dma.h~sh-dma-driver-updates include/asm-sh/cpu-sh4/dma.h
+--- 25/include/asm-sh/cpu-sh4/dma.h~sh-dma-driver-updates	2004-06-23 20:00:14.624466768 -0700
++++ 25-akpm/include/asm-sh/cpu-sh4/dma.h	2004-06-23 20:00:14.635465096 -0700
+@@ -3,5 +3,15 @@
+ 
+ #define SH_DMAC_BASE	0xffa00000
+ 
++#define SAR	((unsigned long[]){SH_DMAC_BASE + 0x00, SH_DMAC_BASE + 0x10, \
++				   SH_DMAC_BASE + 0x20, SH_DMAC_BASE + 0x30})
++#define DAR	((unsigned long[]){SH_DMAC_BASE + 0x04, SH_DMAC_BASE + 0x14, \
++				   SH_DMAC_BASE + 0x24, SH_DMAC_BASE + 0x34})
++#define DMATCR	((unsigned long[]){SH_DMAC_BASE + 0x08, SH_DMAC_BASE + 0x18, \
++				   SH_DMAC_BASE + 0x28, SH_DMAC_BASE + 0x38})
++#define CHCR	((unsigned long[]){SH_DMAC_BASE + 0x0c, SH_DMAC_BASE + 0x1c, \
++				   SH_DMAC_BASE + 0x2c, SH_DMAC_BASE + 0x3c})
++#define DMAOR	(SH_DMAC_BASE + 0x40)
++
+ #endif /* __ASM_CPU_SH4_DMA_H */
+ 
+diff -puN include/asm-sh/dma.h~sh-dma-driver-updates include/asm-sh/dma.h
+--- 25/include/asm-sh/dma.h~sh-dma-driver-updates	2004-06-23 20:00:14.626466464 -0700
++++ 25-akpm/include/asm-sh/dma.h	2004-06-23 20:00:14.635465096 -0700
+@@ -1,7 +1,7 @@
+ /*
+  * include/asm-sh/dma.h
+  *
+- * Copyright (C) 2003  Paul Mundt
++ * Copyright (C) 2003, 2004  Paul Mundt
+  *
+  * This file is subject to the terms and conditions of the GNU General Public
+  * License.  See the file "COPYING" in the main directory of this archive
+@@ -13,6 +13,7 @@
+ #include <linux/config.h>
+ #include <linux/spinlock.h>
+ #include <linux/wait.h>
++#include <linux/sysdev.h>
+ #include <asm/cpu/dma.h>
+ #include <asm/semaphore.h>
+ 
+@@ -29,7 +30,7 @@
+ #  define MAX_DMA_CHANNELS	(CONFIG_NR_ONCHIP_DMA_CHANNELS)
+ #endif
+ 
+-/* 
++/*
+  * Read and write modes can mean drastically different things depending on the
+  * channel configuration. Consult your DMAC documentation and module
+  * implementation for further clues.
+@@ -38,40 +39,69 @@
+ #define DMA_MODE_WRITE		0x01
+ #define DMA_MODE_MASK		0x01
+ 
++#define DMA_AUTOINIT		0x10
++
++/*
++ * DMAC (dma_info) flags
++ */
++enum {
++	DMAC_CHANNELS_CONFIGURED	= 0x00,
++	DMAC_CHANNELS_TEI_CAPABLE	= 0x01,
++};
++
++/*
++ * DMA channel capabilities / flags
++ */
++enum {
++	DMA_CONFIGURED			= 0x00,
++	DMA_TEI_CAPABLE			= 0x01,
++};
++
+ extern spinlock_t dma_spin_lock;
+ 
+-struct dma_info;
++struct dma_channel;
+ 
+ struct dma_ops {
+-	const char *name;
+-
+-	int (*request)(struct dma_info *info);
+-	void (*free)(struct dma_info *info);
++	int (*request)(struct dma_channel *chan);
++	void (*free)(struct dma_channel *chan);
+ 
+-	int (*get_residue)(struct dma_info *info);
+-	int (*xfer)(struct dma_info *info);
+-	void (*configure)(struct dma_info *info, unsigned long flags);
++	int (*get_residue)(struct dma_channel *chan);
++	int (*xfer)(struct dma_channel *chan);
++	void (*configure)(struct dma_channel *chan, unsigned long flags);
+ };
+ 
+-struct dma_info {
+-	const char *dev_id;
++struct dma_channel {
++	char dev_id[16];
+ 
+ 	unsigned int chan;
+ 	unsigned int mode;
+ 	unsigned int count;
+-	
++
+ 	unsigned long sar;
+ 	unsigned long dar;
+ 
+-	unsigned int configured:1;
+-	unsigned int tei_capable:1;
++	unsigned long flags;
+ 	atomic_t busy;
+ 
+ 	struct semaphore sem;
+ 	wait_queue_head_t wait_queue;
++
++	struct sys_device dev;
++};
++
++struct dma_info {
++	const char *name;
++	unsigned int nr_channels;
++	unsigned long flags;
++
+ 	struct dma_ops *ops;
++	struct dma_channel *channels;
++
++	struct list_head list;
+ };
+ 
++#define to_dma_channel(channel) container_of(channel, struct dma_channel, dev)
++
+ /* arch/sh/drivers/dma/dma-api.c */
+ extern int dma_xfer(unsigned int chan, unsigned long from,
+ 		    unsigned long to, size_t size, unsigned int mode);
+@@ -90,17 +120,22 @@ extern int request_dma(unsigned int chan
+ extern void free_dma(unsigned int chan);
+ extern int get_dma_residue(unsigned int chan);
+ extern struct dma_info *get_dma_info(unsigned int chan);
++extern struct dma_channel *get_dma_channel(unsigned int chan);
+ extern void dma_wait_for_completion(unsigned int chan);
+ extern void dma_configure_channel(unsigned int chan, unsigned long flags);
+ 
+-extern int register_dmac(struct dma_ops *ops);
++extern int register_dmac(struct dma_info *info);
++extern void unregister_dmac(struct dma_info *info);
+ 
+-extern struct dma_info dma_info[];
++#ifdef CONFIG_SYSFS
++/* arch/sh/drivers/dma/dma-sysfs.c */
++extern int dma_create_sysfs_files(struct dma_channel *);
++#endif
+ 
+ #ifdef CONFIG_PCI
+ extern int isa_dma_bridge_buggy;
+ #else
+-#define isa_dma_bridge_buggy 	(0)
++#define isa_dma_bridge_buggy	(0)
+ #endif
+ 
+ #endif /* __ASM_SH_DMA_H */
+_

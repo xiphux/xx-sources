@@ -1,0 +1,244 @@
+
+From: Mingming Cao <cmm@us.ibm.com>
+
+Cleans up the old ext3 preallocation code carried from ext2 but turned off.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/ext3/balloc.c          |    3 -
+ 25-akpm/fs/ext3/file.c            |    2 
+ 25-akpm/fs/ext3/ialloc.c          |    4 -
+ 25-akpm/fs/ext3/inode.c           |   91 --------------------------------------
+ 25-akpm/fs/ext3/xattr.c           |    3 -
+ 25-akpm/include/linux/ext3_fs.h   |    9 ---
+ 25-akpm/include/linux/ext3_fs_i.h |    4 -
+ 7 files changed, 4 insertions(+), 112 deletions(-)
+
+diff -puN fs/ext3/balloc.c~ext3_rsv_cleanup fs/ext3/balloc.c
+--- 25/fs/ext3/balloc.c~ext3_rsv_cleanup	2004-09-26 17:18:00.578570496 -0700
++++ 25-akpm/fs/ext3/balloc.c	2004-09-26 17:18:00.591568520 -0700
+@@ -504,8 +504,7 @@ int ext3_should_retry_alloc(struct super
+  * This function also updates quota and i_blocks field.
+  */
+ int
+-ext3_new_block(handle_t *handle, struct inode *inode, unsigned long goal,
+-		u32 *prealloc_count, u32 *prealloc_block, int *errp)
++ext3_new_block(handle_t *handle, struct inode *inode, unsigned long goal, int *errp)
+ {
+ 	struct buffer_head *bitmap_bh = NULL;	/* bh */
+ 	struct buffer_head *gdp_bh;		/* bh2 */
+diff -puN fs/ext3/file.c~ext3_rsv_cleanup fs/ext3/file.c
+--- 25/fs/ext3/file.c~ext3_rsv_cleanup	2004-09-26 17:18:00.579570344 -0700
++++ 25-akpm/fs/ext3/file.c	2004-09-26 17:18:00.592568368 -0700
+@@ -33,8 +33,6 @@
+  */
+ static int ext3_release_file (struct inode * inode, struct file * filp)
+ {
+-	if (filp->f_mode & FMODE_WRITE)
+-		ext3_discard_prealloc (inode);
+ 	if (is_dx(inode) && filp->private_data)
+ 		ext3_htree_free_dir_info(filp->private_data);
+ 
+diff -puN fs/ext3/ialloc.c~ext3_rsv_cleanup fs/ext3/ialloc.c
+--- 25/fs/ext3/ialloc.c~ext3_rsv_cleanup	2004-09-26 17:18:00.581570040 -0700
++++ 25-akpm/fs/ext3/ialloc.c	2004-09-26 17:18:00.592568368 -0700
+@@ -582,10 +582,6 @@ got:
+ 	ei->i_file_acl = 0;
+ 	ei->i_dir_acl = 0;
+ 	ei->i_dtime = 0;
+-#ifdef EXT3_PREALLOCATE
+-	ei->i_prealloc_block = 0;
+-	ei->i_prealloc_count = 0;
+-#endif
+ 	ei->i_block_group = group;
+ 
+ 	ext3_set_inode_flags(inode);
+diff -puN fs/ext3/inode.c~ext3_rsv_cleanup fs/ext3/inode.c
+--- 25/fs/ext3/inode.c~ext3_rsv_cleanup	2004-09-26 17:18:00.583569736 -0700
++++ 25-akpm/fs/ext3/inode.c	2004-09-26 17:18:00.595567912 -0700
+@@ -187,8 +187,6 @@ static int ext3_journal_test_restart(han
+  */
+ void ext3_put_inode(struct inode *inode)
+ {
+-	if (!is_bad_inode(inode))
+-		ext3_discard_prealloc(inode);
+ }
+ 
+ /*
+@@ -244,62 +242,12 @@ no_delete:
+ 	clear_inode(inode);	/* We must guarantee clearing of inode... */
+ }
+ 
+-void ext3_discard_prealloc (struct inode * inode)
+-{
+-#ifdef EXT3_PREALLOCATE
+-	struct ext3_inode_info *ei = EXT3_I(inode);
+-	/* Writer: ->i_prealloc* */
+-	if (ei->i_prealloc_count) {
+-		unsigned short total = ei->i_prealloc_count;
+-		unsigned long block = ei->i_prealloc_block;
+-		ei->i_prealloc_count = 0;
+-		ei->i_prealloc_block = 0;
+-		/* Writer: end */
+-		ext3_free_blocks (inode, block, total);
+-	}
+-#endif
+-}
+-
+ static int ext3_alloc_block (handle_t *handle,
+ 			struct inode * inode, unsigned long goal, int *err)
+ {
+ 	unsigned long result;
+ 
+-#ifdef EXT3_PREALLOCATE
+-#ifdef EXT3FS_DEBUG
+-	static unsigned long alloc_hits, alloc_attempts;
+-#endif
+-	struct ext3_inode_info *ei = EXT3_I(inode);
+-	/* Writer: ->i_prealloc* */
+-	if (ei->i_prealloc_count &&
+-	    (goal == ei->i_prealloc_block ||
+-	     goal + 1 == ei->i_prealloc_block))
+-	{
+-		result = ei->i_prealloc_block++;
+-		ei->i_prealloc_count--;
+-		/* Writer: end */
+-		ext3_debug ("preallocation hit (%lu/%lu).\n",
+-			    ++alloc_hits, ++alloc_attempts);
+-	} else {
+-		ext3_discard_prealloc (inode);
+-		ext3_debug ("preallocation miss (%lu/%lu).\n",
+-			    alloc_hits, ++alloc_attempts);
+-		if (S_ISREG(inode->i_mode))
+-			result = ext3_new_block (inode, goal, 
+-				 &ei->i_prealloc_count,
+-				 &ei->i_prealloc_block, err);
+-		else
+-			result = ext3_new_block(inode, goal, NULL, NULL, err);
+-		/*
+-		 * AKPM: this is somewhat sticky.  I'm not surprised it was
+-		 * disabled in 2.2's ext3.  Need to integrate b_committed_data
+-		 * guarding with preallocation, if indeed preallocation is
+-		 * effective.
+-		 */
+-	}
+-#else
+-	result = ext3_new_block(handle, inode, goal, NULL, NULL, err);
+-#endif
++	result = ext3_new_block(handle, inode, goal, err);
+ 	return result;
+ }
+ 
+@@ -983,38 +931,6 @@ struct buffer_head *ext3_bread(handle_t 
+ 	bh = ext3_getblk (handle, inode, block, create, err);
+ 	if (!bh)
+ 		return bh;
+-#ifdef EXT3_PREALLOCATE
+-	/*
+-	 * If the inode has grown, and this is a directory, then use a few
+-	 * more of the preallocated blocks to keep directory fragmentation
+-	 * down.  The preallocated blocks are guaranteed to be contiguous.
+-	 */
+-	if (create &&
+-	    S_ISDIR(inode->i_mode) &&
+-	    inode->i_blocks > prev_blocks &&
+-	    EXT3_HAS_COMPAT_FEATURE(inode->i_sb,
+-				    EXT3_FEATURE_COMPAT_DIR_PREALLOC)) {
+-		int i;
+-		struct buffer_head *tmp_bh;
+-
+-		for (i = 1;
+-		     EXT3_I(inode)->i_prealloc_count &&
+-		     i < EXT3_SB(inode->i_sb)->s_es->s_prealloc_dir_blocks;
+-		     i++) {
+-			/*
+-			 * ext3_getblk will zero out the contents of the
+-			 * directory for us
+-			 */
+-			tmp_bh = ext3_getblk(handle, inode,
+-						block+i, create, err);
+-			if (!tmp_bh) {
+-				brelse (bh);
+-				return 0;
+-			}
+-			brelse (tmp_bh);
+-		}
+-	}
+-#endif
+ 	if (buffer_uptodate(bh))
+ 		return bh;
+ 	ll_rw_block (READ, 1, &bh);
+@@ -2159,8 +2075,6 @@ void ext3_truncate(struct inode * inode)
+ 	if (IS_APPEND(inode) || IS_IMMUTABLE(inode))
+ 		return;
+ 
+-	ext3_discard_prealloc(inode);
+-
+ 	/*
+ 	 * We have to lock the EOF page here, because lock_page() nests
+ 	 * outside journal_start().
+@@ -2552,9 +2466,6 @@ void ext3_read_inode(struct inode * inod
+ 	}
+ 	ei->i_disksize = inode->i_size;
+ 	inode->i_generation = le32_to_cpu(raw_inode->i_generation);
+-#ifdef EXT3_PREALLOCATE
+-	ei->i_prealloc_count = 0;
+-#endif
+ 	ei->i_block_group = iloc.block_group;
+ 
+ 	/*
+diff -puN fs/ext3/xattr.c~ext3_rsv_cleanup fs/ext3/xattr.c
+--- 25/fs/ext3/xattr.c~ext3_rsv_cleanup	2004-09-26 17:18:00.585569432 -0700
++++ 25-akpm/fs/ext3/xattr.c	2004-09-26 17:18:00.596567760 -0700
+@@ -786,8 +786,7 @@ ext3_xattr_set_handle2(handle_t *handle,
+ 					EXT3_SB(sb)->s_es->s_first_data_block) +
+ 				EXT3_I(inode)->i_block_group *
+ 				EXT3_BLOCKS_PER_GROUP(sb);
+-			int block = ext3_new_block(handle, inode, goal,
+-						   NULL, NULL, &error);
++			int block = ext3_new_block(handle, inode, goal, &error);
+ 			if (error)
+ 				goto cleanup;
+ 			ea_idebug(inode, "creating block %d", block);
+diff -puN include/linux/ext3_fs.h~ext3_rsv_cleanup include/linux/ext3_fs.h
+--- 25/include/linux/ext3_fs.h~ext3_rsv_cleanup	2004-09-26 17:18:00.586569280 -0700
++++ 25-akpm/include/linux/ext3_fs.h	2004-09-26 17:18:00.597567608 -0700
+@@ -33,12 +33,6 @@ struct statfs;
+ #undef EXT3FS_DEBUG
+ 
+ /*
+- * Define EXT3_PREALLOCATE to preallocate data blocks for expanding files
+- */
+-#undef  EXT3_PREALLOCATE /* @@@ Fix this! */
+-#define EXT3_DEFAULT_PREALLOC_BLOCKS	8
+-
+-/*
+  * Always enable hashed directories
+  */
+ #define CONFIG_EXT3_INDEX
+@@ -681,8 +675,7 @@ struct dir_private_info {
+ /* balloc.c */
+ extern int ext3_bg_has_super(struct super_block *sb, int group);
+ extern unsigned long ext3_bg_num_gdb(struct super_block *sb, int group);
+-extern int ext3_new_block (handle_t *, struct inode *, unsigned long,
+-					    __u32 *, __u32 *, int *);
++extern int ext3_new_block (handle_t *, struct inode *, unsigned long, int *);
+ extern void ext3_free_blocks (handle_t *, struct inode *, unsigned long,
+ 			      unsigned long);
+ extern unsigned long ext3_count_free_blocks (struct super_block *);
+diff -puN include/linux/ext3_fs_i.h~ext3_rsv_cleanup include/linux/ext3_fs_i.h
+--- 25/include/linux/ext3_fs_i.h~ext3_rsv_cleanup	2004-09-26 17:18:00.588568976 -0700
++++ 25-akpm/include/linux/ext3_fs_i.h	2004-09-26 17:18:00.598567456 -0700
+@@ -57,10 +57,6 @@ struct ext3_inode_info {
+ 	 * allocation when we detect linearly ascending requests.
+ 	 */
+ 	__u32	i_next_alloc_goal;
+-#ifdef EXT3_PREALLOCATE
+-	__u32	i_prealloc_block;
+-	__u32	i_prealloc_count;
+-#endif
+ 	__u32	i_dir_start_lookup;
+ #ifdef CONFIG_EXT3_FS_XATTR
+ 	/*
+_

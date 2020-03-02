@@ -1,0 +1,23 @@
+
+From: Pavel Machek <pavel@ucw.cz>
+
+IRQ balancing daemon needs try_to_freeze().
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/io_apic.c |    1 +
+ 1 files changed, 1 insertion(+)
+
+diff -puN arch/i386/kernel/io_apic.c~make-suspend-work-with-ioapic arch/i386/kernel/io_apic.c
+--- 25/arch/i386/kernel/io_apic.c~make-suspend-work-with-ioapic	Wed Jan 12 16:10:28 2005
++++ 25-akpm/arch/i386/kernel/io_apic.c	Wed Jan 12 16:10:28 2005
+@@ -573,6 +573,7 @@ static int balanced_irq(void *unused)
+ 	for ( ; ; ) {
+ 		set_current_state(TASK_INTERRUPTIBLE);
+ 		time_remaining = schedule_timeout(time_remaining);
++		try_to_freeze(PF_FREEZE);
+ 		if (time_after(jiffies,
+ 				prev_balance_time+balanced_irq_interval)) {
+ 			do_irq_balance();
+_

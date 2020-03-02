@@ -1,0 +1,251 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/acsi.c          |    2 +-
+ 25-akpm/drivers/block/amiflop.c       |    2 +-
+ 25-akpm/drivers/block/ataflop.c       |    2 +-
+ 25-akpm/drivers/block/elevator.c      |    2 +-
+ 25-akpm/drivers/block/floppy.c        |    6 +++---
+ 25-akpm/drivers/block/genhd.c         |    2 +-
+ 25-akpm/drivers/block/nbd.c           |    2 +-
+ 25-akpm/drivers/block/paride/paride.c |    2 +-
+ 25-akpm/drivers/block/paride/pd.c     |    2 +-
+ 25-akpm/drivers/block/paride/pseudo.h |    2 +-
+ 25-akpm/drivers/block/ps2esdi.c       |    2 +-
+ 25-akpm/drivers/block/swim3.c         |    2 +-
+ 25-akpm/drivers/block/swim_iop.c      |    2 +-
+ 25-akpm/drivers/block/ub.c            |    2 +-
+ 25-akpm/drivers/block/viodasd.c       |    2 +-
+ 25-akpm/drivers/block/xd.c            |    2 +-
+ 25-akpm/drivers/block/z2ram.c         |    2 +-
+ 17 files changed, 19 insertions(+), 19 deletions(-)
+
+diff -puN drivers/block/acsi.c~lock-initializer-cleanup-block-devices drivers/block/acsi.c
+--- 25/drivers/block/acsi.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/acsi.c	Wed Jan 12 16:54:36 2005
+@@ -250,7 +250,7 @@ static int				CurrentNReq;
+ static int				CurrentNSect;
+ static char				*CurrentBuffer;
+ 
+-static spinlock_t			acsi_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(acsi_lock);
+ 
+ 
+ #define SET_TIMER()	mod_timer(&acsi_timer, jiffies + ACSI_TIMEOUT)
+diff -puN drivers/block/amiflop.c~lock-initializer-cleanup-block-devices drivers/block/amiflop.c
+--- 25/drivers/block/amiflop.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/amiflop.c	Wed Jan 12 16:54:36 2005
+@@ -163,7 +163,7 @@ static int writepending;
+ static int writefromint;
+ static char *raw_buf;
+ 
+-static spinlock_t amiflop_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(amiflop_lock);
+ 
+ #define RAW_BUF_SIZE 30000  /* size of raw disk data */
+ 
+diff -puN drivers/block/ataflop.c~lock-initializer-cleanup-block-devices drivers/block/ataflop.c
+--- 25/drivers/block/ataflop.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/ataflop.c	Wed Jan 12 16:54:36 2005
+@@ -140,7 +140,7 @@ static int StartDiskType[] = {
+ 
+ static int DriveType = TYPE_HD;
+ 
+-static spinlock_t ataflop_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(ataflop_lock);
+ 
+ /* Array for translating minors into disk formats */
+ static struct {
+diff -puN drivers/block/elevator.c~lock-initializer-cleanup-block-devices drivers/block/elevator.c
+--- 25/drivers/block/elevator.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/elevator.c	Wed Jan 12 16:54:36 2005
+@@ -37,7 +37,7 @@
+ 
+ #include <asm/uaccess.h>
+ 
+-static spinlock_t elv_list_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(elv_list_lock);
+ static LIST_HEAD(elv_list);
+ 
+ /*
+diff -puN drivers/block/floppy.c~lock-initializer-cleanup-block-devices drivers/block/floppy.c
+--- 25/drivers/block/floppy.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/floppy.c	Wed Jan 12 16:54:36 2005
+@@ -216,7 +216,7 @@ static int use_virtual_dma;
+  * record each buffers capabilities
+  */
+ 
+-static spinlock_t floppy_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(floppy_lock);
+ static struct completion device_release;
+ 
+ static unsigned short virtual_dma_port = 0x3f0;
+@@ -1072,7 +1072,7 @@ static int fd_wait_for_completion(unsign
+ 	return 0;
+ }
+ 
+-static spinlock_t floppy_hlt_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(floppy_hlt_lock);
+ static int hlt_disabled;
+ static void floppy_disable_hlt(void)
+ {
+@@ -4415,7 +4415,7 @@ out_put_disk:
+ 	return err;
+ }
+ 
+-static spinlock_t floppy_usage_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(floppy_usage_lock);
+ 
+ static int floppy_grab_irq_and_dma(void)
+ {
+diff -puN drivers/block/genhd.c~lock-initializer-cleanup-block-devices drivers/block/genhd.c
+--- 25/drivers/block/genhd.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/genhd.c	Wed Jan 12 16:54:36 2005
+@@ -30,7 +30,7 @@ static struct blk_major_name {
+ 	char name[16];
+ } *major_names[MAX_PROBE_HASH];
+ 
+-static spinlock_t major_names_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(major_names_lock);
+ 
+ /* index in the above - for now: assume no multimajor ranges */
+ static inline int major_to_index(int major)
+diff -puN drivers/block/nbd.c~lock-initializer-cleanup-block-devices drivers/block/nbd.c
+--- 25/drivers/block/nbd.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/nbd.c	Wed Jan 12 16:54:36 2005
+@@ -92,7 +92,7 @@ static struct nbd_device nbd_dev[MAX_NBD
+  *    a single lock.
+  * Thanks go to Jens Axboe and Al Viro for their LKML emails explaining this!
+  */
+-static spinlock_t nbd_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(nbd_lock);
+ 
+ #ifndef NDEBUG
+ static const char *ioctl_cmd_to_ascii(int cmd)
+diff -puN drivers/block/paride/paride.c~lock-initializer-cleanup-block-devices drivers/block/paride/paride.c
+--- 25/drivers/block/paride/paride.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/paride/paride.c	Wed Jan 12 16:54:36 2005
+@@ -46,7 +46,7 @@ MODULE_LICENSE("GPL");
+ 
+ static struct pi_protocol *protocols[MAX_PROTOS];
+ 
+-static spinlock_t pi_spinlock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(pi_spinlock);
+ 
+ void pi_write_regr(PIA * pi, int cont, int regr, int val)
+ {
+diff -puN drivers/block/paride/pd.c~lock-initializer-cleanup-block-devices drivers/block/paride/pd.c
+--- 25/drivers/block/paride/pd.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/paride/pd.c	Wed Jan 12 16:54:36 2005
+@@ -155,7 +155,7 @@ enum {D_PRT, D_PRO, D_UNI, D_MOD, D_GEO,
+ #include <linux/sched.h>
+ #include <linux/workqueue.h>
+ 
+-static spinlock_t pd_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(pd_lock);
+ 
+ #ifndef MODULE
+ 
+diff -puN drivers/block/paride/pseudo.h~lock-initializer-cleanup-block-devices drivers/block/paride/pseudo.h
+--- 25/drivers/block/paride/pseudo.h~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/paride/pseudo.h	Wed Jan 12 16:54:36 2005
+@@ -43,7 +43,7 @@ static unsigned long ps_timeout;
+ static int ps_tq_active = 0;
+ static int ps_nice = 0;
+ 
+-static spinlock_t ps_spinlock __attribute__((unused)) = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(ps_spinlock __attribute__((unused)));
+ 
+ static DECLARE_WORK(ps_tq, ps_tq_int, NULL);
+ 
+diff -puN drivers/block/ps2esdi.c~lock-initializer-cleanup-block-devices drivers/block/ps2esdi.c
+--- 25/drivers/block/ps2esdi.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/ps2esdi.c	Wed Jan 12 16:54:36 2005
+@@ -108,7 +108,7 @@ static int intg_esdi = 0;       /* If in
+ struct ps2esdi_i_struct {
+ 	unsigned int head, sect, cyl, wpcom, lzone, ctl;
+ };
+-static spinlock_t ps2esdi_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(ps2esdi_lock);
+ static struct request_queue *ps2esdi_queue;
+ static struct request *current_req;
+ 
+diff -puN drivers/block/swim3.c~lock-initializer-cleanup-block-devices drivers/block/swim3.c
+--- 25/drivers/block/swim3.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/swim3.c	Wed Jan 12 16:54:36 2005
+@@ -206,7 +206,7 @@ struct floppy_state {
+ 
+ static struct floppy_state floppy_states[MAX_FLOPPIES];
+ static int floppy_count = 0;
+-static spinlock_t swim3_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(swim3_lock);
+ 
+ static unsigned short write_preamble[] = {
+ 	0x4e4e, 0x4e4e, 0x4e4e, 0x4e4e, 0x4e4e,	/* gap field */
+diff -puN drivers/block/swim_iop.c~lock-initializer-cleanup-block-devices drivers/block/swim_iop.c
+--- 25/drivers/block/swim_iop.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/swim_iop.c	Wed Jan 12 16:54:36 2005
+@@ -76,7 +76,7 @@ static struct swim_iop_req *current_req;
+ static int floppy_count;
+ 
+ static struct floppy_state floppy_states[MAX_FLOPPIES];
+-static spinlock_t swim_iop_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(swim_iop_lock);
+ 
+ #define CURRENT elv_next_request(swim_queue)
+ 
+diff -puN drivers/block/ub.c~lock-initializer-cleanup-block-devices drivers/block/ub.c
+--- 25/drivers/block/ub.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/ub.c	Wed Jan 12 16:54:36 2005
+@@ -336,7 +336,7 @@ MODULE_DEVICE_TABLE(usb, ub_usb_ids);
+  */
+ #define UB_MAX_HOSTS  26
+ static char ub_hostv[UB_MAX_HOSTS];
+-static spinlock_t ub_lock = SPIN_LOCK_UNLOCKED;	/* Locks globals and ->openc */
++static DEFINE_SPINLOCK(ub_lock);	/* Locks globals and ->openc */
+ 
+ /*
+  * The SCSI command tracing procedures.
+diff -puN drivers/block/viodasd.c~lock-initializer-cleanup-block-devices drivers/block/viodasd.c
+--- 25/drivers/block/viodasd.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/viodasd.c	Wed Jan 12 16:54:36 2005
+@@ -72,7 +72,7 @@ enum {
+ 	MAX_DISK_NAME = sizeof(((struct gendisk *)0)->disk_name)
+ };
+ 
+-static spinlock_t	viodasd_spinlock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(viodasd_spinlock);
+ 
+ #define VIOMAXREQ		16
+ #define VIOMAXBLOCKDMA		12
+diff -puN drivers/block/xd.c~lock-initializer-cleanup-block-devices drivers/block/xd.c
+--- 25/drivers/block/xd.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/xd.c	Wed Jan 12 16:54:36 2005
+@@ -123,7 +123,7 @@ static unsigned int xd_bases[] __initdat
+ 	0xE0000
+ };
+ 
+-static spinlock_t xd_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(xd_lock);
+ 
+ static struct gendisk *xd_gendisk[2];
+ 
+diff -puN drivers/block/z2ram.c~lock-initializer-cleanup-block-devices drivers/block/z2ram.c
+--- 25/drivers/block/z2ram.c~lock-initializer-cleanup-block-devices	Wed Jan 12 16:54:36 2005
++++ 25-akpm/drivers/block/z2ram.c	Wed Jan 12 16:54:36 2005
+@@ -65,7 +65,7 @@ static int chip_count       = 0;
+ static int list_count       = 0;
+ static int current_device   = -1;
+ 
+-static spinlock_t z2ram_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(z2ram_lock);
+ 
+ static struct block_device_operations z2_fops;
+ static struct gendisk *z2ram_gendisk;
+_

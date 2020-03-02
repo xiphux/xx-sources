@@ -1,0 +1,36 @@
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/sysfs/file.c |   10 +++++++++-
+ 1 files changed, 9 insertions(+), 1 deletion(-)
+
+diff -puN fs/sysfs/file.c~sysfs-overflow-debug fs/sysfs/file.c
+--- 25/fs/sysfs/file.c~sysfs-overflow-debug	2004-06-20 14:44:44.272707136 -0700
++++ 25-akpm/fs/sysfs/file.c	2004-06-20 14:48:23.580367304 -0700
+@@ -5,6 +5,8 @@
+ #include <linux/module.h>
+ #include <linux/dnotify.h>
+ #include <linux/kobject.h>
++#include <linux/kallsyms.h>
++
+ #include <asm/uaccess.h>
+ 
+ #include "sysfs.h"
+@@ -83,7 +85,13 @@ static int fill_read_buffer(struct file 
+ 		return -ENOMEM;
+ 
+ 	count = ops->show(kobj,attr,buffer->page);
+-	BUG_ON(count > PAGE_SIZE);
++	if (count > PAGE_SIZE) {
++		printk("%s: show handler overrun\n", __FUNCTION__);
++		printk("->show handler: 0x%p",  ops->show);
++		print_symbol(" (%s)", (unsigned long)ops->show);
++		printk("\n");
++		BUG();
++	}
+ 	if (count >= 0)
+ 		buffer->count = count;
+ 	else
+_

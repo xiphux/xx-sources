@@ -1,0 +1,50 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+The attached patch fixes a local_bh_enable() buglet: we first enabled
+softirqs then did we do local_softirq_pending() - often this is preemptible
+code.  So this task could be preempted and there's no guarantee that
+softirq processing will occur (except the periodic timer tick).
+
+The race window is small but existent.  This could result in packet
+processing latencies or timer expiration latencies - hard to detect and
+annoying bugs.
+
+The fix is to invoke softirqs with softirqs enabled but preemption still
+disabled.  Patch is against 2.6.9-rc2-mm1.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/softirq.c |   15 +++++++++++----
+ 1 files changed, 11 insertions(+), 4 deletions(-)
+
+diff -puN kernel/softirq.c~softirqs-fix-latency-of-softirq-processing kernel/softirq.c
+--- 25/kernel/softirq.c~softirqs-fix-latency-of-softirq-processing	Fri Sep 17 16:01:24 2004
++++ 25-akpm/kernel/softirq.c	Fri Sep 17 16:01:24 2004
+@@ -137,12 +137,19 @@ EXPORT_SYMBOL(do_softirq);
+ 
+ void local_bh_enable(void)
+ {
+-	__local_bh_enable();
+ 	WARN_ON(irqs_disabled());
+-	if (unlikely(!in_interrupt() &&
+-		     local_softirq_pending()))
++	if (unlikely(!in_interrupt() && local_softirq_pending())) {
++		/*
++		 * Keep preemption disabled until we are done with
++		 * softirq processing:
++	 	 */
++		preempt_count() -= SOFTIRQ_OFFSET - 1;
+ 		invoke_softirq();
+-	preempt_check_resched();
++		preempt_enable();
++	} else {
++		__local_bh_enable();
++		preempt_check_resched();
++	}
+ }
+ EXPORT_SYMBOL(local_bh_enable);
+ 
+_

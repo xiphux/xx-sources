@@ -1,0 +1,6115 @@
+
+From: David Howells <dhowells@redhat.com>
+
+I've made available a patch that does a better job of key and keyring
+management for authentication, cryptography, etc..  I've added a good bit
+of documentation and I've commented the code more thoroughly.
+
+The patch can be found at:
+
+	http://people.redhat.com/~dhowells/keys/keys-268rc2.diff.bz2
+
+The documentation is patched into Documentation/keys.txt.
+
+The feature set the patch includes:
+
+ - Key attributes:
+   - Key type
+   - Description (by which a key of a particular type can be selected)
+   - Payload
+   - UID, GID and permissions mask
+   - Expiry time
+ - Keyrings (just a type of key that holds links to other keys)
+ - User-defined keys
+ - Key revokation
+ - Access controls
+ - Per user key-count and key-memory consumption quota
+ - Three std keyrings per task: per-thread, per-process, session
+ - Two std keyrings per user: per-user and default-user-session
+ - prctl() functions for key and keyring creation and management
+ - Kernel interfaces for filesystem, blockdev, net stack access
+ - JIT key creation by usermode helper
+
+There are also two utility programs available:
+
+ (*) http://people.redhat.com/~dhowells/keys/keyctl.c
+
+     A comprehensive key management tool, permitting all the interfaces
+     available to userspace to be exercised.
+
+ (*) http://people.redhat.com/~dhowells/keys/request-key
+
+     An example shell script (to be installed in /sbin) for instantiating a
+     key.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+DESC
+keys build fix
+EDESC
+
+security/keys/key.c:28: error: static declaration of 'key_types_list' follows non-static declaration
+security/keys/internal.h:56: error: previous declaration of 'key_types_list' was here
+DESC
+keys & keyring management update patch
+EDESC
+From: David Howells <dhowells@redhat.com>
+
+ (*) There are now five permissions instead of three, which makes things
+     easier. Hopefully it also means that people will stop thinking keys have
+     UNIX access permissions, which they do not.
+
+ (*) The key "chmod" operation is now "setperm".
+
+ (*) fsuid/fsgid are now used instead of euid/egid when using permissions.
+
+ (*) Some stuff has been moved from the internal header file into
+     include/linux/key-ui.h to make it available to keyfs.
+
+ (*) /proc/keys is now disabled by default. It pretends keys don't exist
+     unless you have at least one permission on them.
+
+DESC
+implement-in-kernel-keys-keyring-management-update-build-fix
+EDESC
+DESC
+implement-in-kernel-keys-keyring-management-update-build-fix-2
+EDESC
+
+kernel/sys.c: In function `sys_setregid':
+kernel/sys.c:611: warning: implicit declaration of function `key_fsgid_changed'
+kernel/sys.c: In function `sys_setreuid':
+kernel/sys.c:739: warning: implicit declaration of function `key_fsuid_changed'
+kernel/built-in.o(.text+0x12184): In function `sys_setregid':
+/tmp/distcc_1108/kernel/sys.c:611: undefined reference to `key_fsgid_changed'
+kernel/built-in.o(.text+0x1224b): In function `sys_setgid':
+/tmp/distcc_1108/kernel/sys.c:650: undefined reference to `key_fsgid_changed'
+kernel/built-in.o(.text+0x12425): In function `sys_setreuid':
+/tmp/distcc_1108/kernel/sys.c:739: undefined reference to `key_fsuid_changed'
+kernel/built-in.o(.text+0x1252c): In function `sys_setuid':
+/tmp/distcc_1108/kernel/sys.c:786: undefined reference to `key_fsuid_changed'
+kernel/built-in.o(.text+0x126c2): In function `sys_setresuid':
+/tmp/distcc_1108/kernel/sys.c:834: undefined reference to `key_fsuid_changed'
+kernel/built-in.o(.text+0x128ce): In function `sys_setresgid':
+/tmp/distcc_1108/kernel/sys.c:886: undefined reference to `key_fsgid_changed'
+kernel/built-in.o(.text+0x12a44): In function `sys_setfsuid':
+/tmp/distcc_1108/kernel/sys.c:928: undefined reference to `key_fsuid_changed'
+kernel/built-in.o(.text+0x12af9): In function `sys_setfsgid':
+/tmp/distcc_1108/kernel/sys.c:956: undefined reference to `key_fsgid_changed'
+
+DESC
+key management patch cleanup
+EDESC
+From: David Howells <dhowells@redhat.com>
+
+Here's a patch to make a couple of cleanups to the key management stuff.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/keys.txt       |  796 ++++++++++++++++++++++++++
+ 25-akpm/fs/exec.c                    |   10 
+ 25-akpm/include/linux/key-ui.h       |   97 +++
+ 25-akpm/include/linux/key.h          |  276 +++++++++
+ 25-akpm/include/linux/prctl.h        |   25 
+ 25-akpm/include/linux/sched.h        |   16 
+ 25-akpm/kernel/exit.c                |    2 
+ 25-akpm/kernel/fork.c                |   13 
+ 25-akpm/kernel/sys.c                 |   29 
+ 25-akpm/kernel/user.c                |   16 
+ 25-akpm/security/Kconfig             |   29 
+ 25-akpm/security/Makefile            |    1 
+ 25-akpm/security/keys/Makefile       |   13 
+ 25-akpm/security/keys/internal.h     |   98 +++
+ 25-akpm/security/keys/key.c          | 1039 +++++++++++++++++++++++++++++++++++
+ 25-akpm/security/keys/keyctl.c       |  872 +++++++++++++++++++++++++++++
+ 25-akpm/security/keys/keyring.c      |  875 +++++++++++++++++++++++++++++
+ 25-akpm/security/keys/proc.c         |  251 ++++++++
+ 25-akpm/security/keys/process_keys.c |  685 +++++++++++++++++++++++
+ 25-akpm/security/keys/request_key.c  |  325 ++++++++++
+ 25-akpm/security/keys/user_defined.c |  191 ++++++
+ 21 files changed, 5651 insertions(+), 8 deletions(-)
+
+diff -puN /dev/null Documentation/keys.txt
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/Documentation/keys.txt	2004-08-30 22:21:39.587036352 -0700
+@@ -0,0 +1,796 @@
++			 ============================
++			 KERNEL KEY RETENTION SERVICE
++			 ============================
++
++This service allows cryptographic keys, authentication tokens, cross-domain
++user mappings, and similar to be cached in the kernel for the use of
++filesystems other kernel services.
++
++Keyrings are permitted; these are a special type of key that can hold links to
++other keys. Processes each have three standard keyring subscriptions that a
++kernel service can search for relevant keys.
++
++The key service can be configured on by enabling:
++
++	"Security options"/"Enable access key retention support" (CONFIG_KEYS)
++
++This document has the following sections:
++
++	- Key overview
++	- Key service overview
++	- Key access permissions
++	- New procfs files
++	- Userspace system call interface
++	- Kernel services
++	- Defining a key type
++	- Request-key callback service
++	- Key access filesystem
++
++
++============
++KEY OVERVIEW
++============
++
++In this context, keys represent units of cryptographic data, authentication
++tokens, keyrings, etc.. These are represented in the kernel by struct key.
++
++Each key has a number of attributes:
++
++	- A serial number.
++	- A type.
++	- A description (for matching a key in a search).
++	- Access control information.
++	- An expiry time.
++	- A payload.
++	- State.
++
++
++ (*) Each key is issued a serial number of type key_serial_t that is unique
++     for the lifetime of that key. All serial numbers are positive non-zero
++     32-bit integers.
++
++     Userspace programs can use a key's serial numbers as a way to gain access
++     to it, subject to permission checking.
++
++ (*) Each key is of a defined "type". Types must be registered inside the
++     kernel by a kernel service (such as a filesystem) before keys of that
++     type can be added or used. Userspace programs cannot define new types
++     directly.
++
++     Key types are represented in the kernel by struct key_type. This defines
++     a number of operations that can be performed on a key of that type.
++
++     Should a type be removed from the system, all the keys of that type will
++     be invalidated.
++
++ (*) Each key has a description. This should be a printable string. The key
++     type provides an operation to perform a match between the description on
++     a key and a criterion string.
++
++ (*) Each key has an owner user ID, a group ID and a permissions mask. These
++     are used to control what a process may do to a key from userspace, and
++     whether a kernel service will be able to find the key.
++
++ (*) Each key can be set to expire at a specific time by the key type's
++     instantiation function. Keys can also be immortal.
++
++ (*) Each key can have a payload. This is a quantity of data that represent
++     the actual "key". In the case of a keyring, this is a list of keys to
++     which the keyring links; in the case of a user-defined key, it's an
++     arbitrary blob of data.
++
++     Having a payload is not required; and the payload can, in fact, just be a
++     value stored in the struct key itself.
++
++     When a key is instantiated, the key type's instantiation function is
++     called with a blob of data, and that then creates the key's payload in
++     some way.
++
++     Similarly, when userspace wants to read back the contents of the key, if
++     permitted, another key type operation will be called to convert the key's
++     attached payload back into a blob of data.
++
++ (*) Each key can be in one of a number of basic states:
++
++     (*) Uninstantiated. The key exists, but does not have any data
++	 attached. Keys being requested from userspace will be in this state.
++
++     (*) Instantiated. This is the normal state. The key is fully formed, and
++	 has data attached.
++
++     (*) Negative. This is a relatively short-lived state. The key acts as a
++	 note saying that a previous call out to userspace failed, and acts as
++	 a throttle on key lookups. A negative key can be updated to a normal
++	 state.
++
++     (*) Expired. Keys can have lifetimes set. If their lifetime is exceeded,
++	 they traverse to this state. An expired key can be updated back to a
++	 normal state.
++
++     (*) Revoked. A key is put in this state by userspace action. It can't be
++	 found or operated upon (apart from by unlinking it).
++
++     (*) Dead. The key's type was unregistered, and so the key is now useless.
++
++
++====================
++KEY SERVICE OVERVIEW
++====================
++
++The key service provides a number of features besides keys:
++
++ (*) The key service defines two special key types:
++
++     (+) "keyring"
++
++	 Keyrings are special keys that contain a list of other keys. Keyring
++	 lists can be modified using various system calls. Keyrings should not
++	 be given a payload when created.
++
++     (+) "user"
++
++	 A key of this type has a description and a payload that are arbitrary
++	 blobs of data. These can be created, updated and read by userspace,
++	 and aren't intended for use by kernel services.
++
++ (*) Each process subscribes to three keyrings: a thread-specific keyring, a
++     process-specific keyring, and a session-specific keyring.
++
++     The thread-specific keyring is discarded from the child when any sort of
++     clone, fork, vfork or execve occurs. A new keyring is created only when
++     required.
++
++     The process-specific keyring is replaced with an empty one in the child
++     on clone, fork, vfork unless CLONE_THREAD is supplied, in which case it
++     is shared. execve also discards the process's process keyring and creates
++     a new one.
++
++     The session-specific keyring is persistent across clone, fork, vfork and
++     execve, even when the latter executes a set-UID or set-GID binary. A
++     process can, however, replace its current session keyring with a new one
++     by using PR_JOIN_SESSION_KEYRING. It is permitted to request an anonymous
++     new one, or to attempt to create or join one of a specific name.
++
++     The ownership of the thread and process-specific keyrings changes when
++     the real UID and GID of the thread changes.
++
++ (*) Each user ID resident in the system holds two special keyrings: a user
++     specific keyring and a default user session keyring. The default session
++     keyring is initialised with a link to the user-specific keyring.
++
++     When a process changes its real UID, if it used to have no session key, it
++     will be subscribed to the default session key for the new UID.
++
++     If a process attempts to access its session key when it doesn't have one,
++     it will be subscribed to the default for its current UID.
++
++ (*) Each user has two quotas against which the keys they own are tracked. One
++     limits the total number of keys and keyrings, the other limits the total
++     amount of description and payload space that can be consumed.
++
++     The user can view information on this and other statistics through procfs
++     files.
++
++     Process-specific and thread-specific keyrings are not counted towards a
++     user's quota.
++
++     If a system call that modifies a key or keyring in some way would put the
++     user over quota, the operation is refused and error EDQUOT is returned.
++
++ (*) There's a system call interface by which userspace programs can create
++     and manipulate keys and keyrings.
++
++ (*) There's a kernel interface by which services can register types and
++     search for keys.
++
++ (*) There's a way for the a search done from the kernel to call back to
++     userspace to request a key that can't be found in a process's keyrings.
++
++ (*) An optional filesystem is available through which the key database can be
++     viewed and manipulated.
++
++
++======================
++KEY ACCESS PERMISSIONS
++======================
++
++Keys have an owner user ID, a group access ID, and a permissions mask. The
++mask has up to eight bits each for user, group and other access. Only five of
++each set of eight bits are defined. These permissions granted are:
++
++ (*) View
++
++     This permits a key or keyring's attributes to be viewed - including key
++     type and description.
++
++ (*) Read
++
++     This permits a key's payload to be viewed or a keyring's list of linked
++     keys.
++
++ (*) Write
++
++     This permits a key's payload to be instantiated or updated, or it allows
++     a link to be added to or removed from a keyring.
++
++ (*) Search
++
++     This permits keyrings to be searched and keys to be found. Searches can
++     only recurse into nested keyrings that have search permission set.
++
++ (*) Link
++
++     This permits a key or keyring to be linked to. To create a link from a
++     keyring to a key, a process must have Write permission on the keyring and
++     Link permission on the key.
++
++For changing the ownership, group ID or permissions mask, being the owner of
++the key or having the sysadmin capability is sufficient.
++
++
++================
++NEW PROCFS FILES
++================
++
++Two files have been added to procfs by which an administrator can find out
++about the status of the key service:
++
++ (*) /proc/keys
++
++     This lists all the keys on the system, giving information about their
++     type, description and permissions. The payload of the key is not
++     available this way:
++
++	SERIAL   FLAGS  USAGE EXPY PERM   UID   GID   TYPE      DESCRIPTION: SUMMARY
++	00000001 I-----    39 perm 1f0000     0     0 keyring   _uid_ses.0: 1/4
++	00000002 I-----     2 perm 1f0000     0     0 keyring   _uid.0: empty
++	00000007 I-----     1 perm 1f0000     0     0 keyring   _pid.1: empty
++	0000018d I-----     1 perm 1f0000     0     0 keyring   _pid.412: empty
++	000004d2 I--Q--     1 perm 1f0000    32    -1 keyring   _uid.32: 1/4
++	000004d3 I--Q--     3 perm 1f0000    32    -1 keyring   _uid_ses.32: empty
++	00000892 I--QU-     1 perm 1f0000     0     0 user      metal:copper: 0
++	00000893 I--Q-N     1  35s 1f0000     0     0 user      metal:silver: 0
++	00000894 I--Q--     1  10h 1f0000     0     0 user      metal:gold: 0
++
++     The flags are:
++
++	I	Instantiated
++	R	Revoked
++	D	Dead
++	Q	Contributes to user's quota
++	U	Under contruction by callback to userspace
++	N	Negative key
++
++     This file must be enabled at kernel configuration time as it allows anyone
++     to list the keys database.
++
++ (*) /proc/key-users
++
++     This file lists the tracking data for each user that has at least one key
++     on the system. Such data includes quota information and statistics:
++
++	[root@andromeda root]# cat /proc/key-users
++	0:     46 45/45 1/100 13/10000
++	29:     2 2/2 2/100 40/10000
++	32:     2 2/2 2/100 40/10000
++	38:     2 2/2 2/100 40/10000
++
++     The format of each line is
++	<UID>:			User ID to which this applies
++	<usage>			Structure refcount
++	<inst>/<keys>		Total number of keys and number instantiated
++	<keys>/<max>		Key count quota
++	<bytes>/<max>		Key size quota
++
++
++===============================
++USERSPACE SYSTEM CALL INTERFACE
++===============================
++
++Userspace can manipulate keys directly through a number of prctl functions,
++and through a new syscall, keyctl, that also provides a number of
++functions. Currently the keyctl syscall is provided through prctl.
++
++When referring to a key directly, userspace programs should use the key's
++serial number (a positive 32-bit integer). However, there are some special
++values available for referring to special keys and keyrings that relate to the
++process making the call:
++
++	CONSTANT			VALUE	KEY REFERENCED
++	==============================	======	===========================
++	PR_SPEC_THREAD_KEYRING		-1	thread-specific keyring
++	PR_SPEC_PROCESS_KEYRING		-2	process-specific keyring
++	PR_SPEC_SESSION_KEYRING		-3	session-specific keyring
++	PR_SPEC_USER_KEYRING		-4	UID-specific keyring
++	PR_SPEC_USER_SESSION_KEYRING	-5	UID-session keyring
++	PR_SPEC_GROUP_KEYRING		-6	GID-specific keyring
++
++
++The additional prctl syscall functions are:
++
++ (*) Map a special key ID to a real key ID for this process:
++
++	key_serial_t prctl(PR_GET_KEYID, key_serial_t id, int create);
++
++     The special key specified by "id" is looked up (with the key being
++     created if necessary) and the ID of the key or keyring thus found is
++     returned if it exists.
++
++     If the key does not yet exist, the key will be created if "create" is
++     non-zero; and the error ENOENT will be returned if "create" is zero.
++
++
++ (*) Replace the session keyring this process subscribes to with a new one:
++
++	key_serial_t prctl(PR_JOIN_SESSION_KEYRING, const char *name);
++
++     If name is NULL, an anonymous keyring is created attached to the process
++     as its session keyring, displacing the old session keyring.
++
++     If name is not NULL, if a keyring of that name exists, the process
++     attempts to attach it as the session keyring, returning an error if that
++     is not permitted; otherwise a new keyring of that name is created and
++     attached as the session keyring.
++
++     To attach to a named keyring, the keyring must have search permission for
++     the process's ownership.
++
++     The ID of the new session keyring is returned if successful.
++
++
++The new keyctl syscall functions are:
++
++ (*) Create a new key of given type, description and payload and add it to the
++     nominated keyring:
++
++	key_serial_t keyctl(KEYCTL_NEW, key_serial_t keyring,
++			    const char *type, const char *desc,
++			    const void *payload);
++
++     If a key of the same type and description as that proposed already exists
++     in the keyring, this will try to update it with the given payload, or it
++     will return error EEXIST if that function is not supported by the key
++     type. The process must also have permission to write to the key to be
++     able to update it. The new key will have all user permissions granted and
++     no group or third party permissions.
++
++     Otherwise, this will attempt to create a new key of the specified type
++     and description, and to instantiate it with the supplied payload and
++     attach it to the keyring. In this case, an error will be generated if the
++     process does not have permission to write to the keyring.
++
++     The first two bytes in the payload buffer should be the length of the
++     data (in CPU byte order) followed by the data. The payload is optional,
++     and the pointer can be NULL if not required by the type.
++
++     A new keyring can be generated by setting type "keyring", the keyring
++     name as the description (or NULL) and setting the payload to NULL.
++
++     User defined keys can be created by specifying type "user". It is
++     recommended that a user defined key's description by prefixed with a type
++     ID and a colon, such as "krb5tgt:" for a Kerberos 5 ticket granting
++     ticket.
++
++     Any other type must have been registered with the kernel in advance by a
++     kernel service such as a filesystem.
++
++     The ID of the new or updated key is returned if successful.
++
++
++ (*) Update the specified key:
++
++	long keyctl(KEYCTL_UPDATE, key_serial_t key, const void *payload);
++
++     This will try to update the specified key with the given payload, or it
++     will return error EOPNOTSUPP if that function is not supported by the key
++     type. The process must also have permission to write to the key to be
++     able to update it.
++
++     The payload must be in the same format as for KEYCTL_NEW.
++
++
++ (*) Revoke a key:
++
++	long keyctl(KEYCTL_REVOKE, key_serial_t key);
++
++     This makes a key unavailable for further operations. Further attempts to
++     use it will be met with error EIO, and the key will no longer be
++     findable.
++
++
++ (*) Change the ownership of a key:
++
++	long keyctl(KEYCTL_CHOWN, key_serial_t key, uid_t uid, gid_t gid);
++
++     This function permits a key's owner and group ID to be changed. Either
++     one of uid or gid can be set to -1 to suppress that change.
++
++     Only the superuser can change a key's owner to something other than the
++     key's current owner. Similarly, only the superuser can change a key's
++     group ID to something other than the calling process's group ID or one of
++     its group list members.
++
++
++ (*) Change the permissions mask on a key:
++
++	long keyctl(KEYCTL_SETPERM, key_serial_t key, key_perm_t perm);
++
++     This function permits the owner of a key or the superuser to change the
++     permissions mask on a key.
++
++     Only bits the available bits are permitted; if any other bits are set,
++     error EINVAL will be returned.
++
++
++ (*) Describe a key:
++
++	long keyctl(KEYCTL_DESCRIBE, key_serial_t key, char *buffer,
++		    size_t buflen);
++
++     This function returns a summary of the key's attributes (but not its
++     payload data) as a string in the buffer provided.
++
++     Unless there's an error, it always returns the amount of data it could
++     produce, even if that's too big for the buffer, but it won't copy more
++     than requested to userspace. If the buffer pointer is NULL then no copy
++     will take place.
++
++     A process must have view permission on the key for this function to be
++     successful.
++
++     If successful, a string is placed in the buffer in the following format:
++
++	<type>;<uid>;<gid>;<perm>;<description>
++
++     Where type and description are strings, uid and gid are decimal, and perm
++     is hexadecimal. A NUL character is included at the end of the string if
++     the buffer is sufficiently big.
++
++     This can be parsed with
++
++	sscanf(buffer, "%[^;];%d;%d;%o;%s", type, &uid, &gid, &mode, desc);
++
++
++ (*) Clear out a keyring:
++
++	long keyctl(KEYCTL_CLEAR, key_serial_t keyring);
++
++     This function clears the list of keys attached to a keyring. The calling
++     process must have write permission on the keyring, and it must be a
++     keyring (or else error ENOTDIR will result).
++
++
++ (*) Link a key into a keyring:
++
++	long keyctl(KEYCTL_LINK, key_serial_t keyring, key_serial_t key);
++
++     This function creates a link from the keyring to the key. The process
++     must have write permission on the keyring and must have link permission
++     on the key.
++
++     Should the keyring not be a keyring, error ENOTDIR will result; and if
++     the keyring is full, error ENFILE will result.
++
++     The link procedure checks the nesting of the keyrings, returning ELOOP if
++     it appears to deep or EDEADLK if the link would introduce a cycle.
++
++
++ (*) Unlink a key or keyring from another keyring:
++
++	long keyctl(KEYCTL_UNLINK, key_serial_t keyring, key_serial_t key);
++
++     This function looks through the keyring for the first link to the
++     specified key, and removes it if found. Subsequent links to that key are
++     ignored. The process must have write permission on the keyring.
++
++     If the keyring is not a keyring, error ENOTDIR will result; and if the
++     key is not present, error ENOENT will be the result.
++
++
++ (*) Search a keyring tree for a key:
++
++	key_serial_t keyctl(KEYCTL_SEARCH, key_serial_t keyring,
++			    const char *type, const char *description,
++			    key_serial_t dest_keyring);
++
++     This searches the keyring tree headed by the specified keyring until a
++     key is found that matches the type and description criteria. Each keyring
++     is checked for keys before recursion into its children occurs.
++
++     The process must have search permission on the top level keyring, or else
++     error EACCES will result. Only keyrings that the process has search
++     permission on will be recursed into, and only keys and keyrings for which
++     a process has search permission can be matched. If the specified keyring
++     is not a keyring, ENOTDIR will result.
++
++     If the search succeeds, the function will attempt to link the found key
++     into the destination keyring if one is supplied (non-zero ID). All the
++     constraints applicable to KEYCTL_LINK apply in this case too.
++
++     Error ENOENT will be returned if the search fails. On success, the
++     resulting key ID will be returned.
++
++
++ (*) Search the process's keyrings for a key:
++
++	key_serial_t keyctl(KEYCTL_REQUEST_KEY,
++			    const char *type, const char *description,
++			    key_serial_t dest_keyring);
++
++     This function searches all the process's keyrings in the order thread,
++     process, session for a matching key. This works very much like
++     KEYCTL_SEARCH, including the optional attachment of the discovered key to
++     a keyring.
++
++
++ (*) Read the payload data from a key:
++
++	key_serial_t keyctl(KEYCTL_READ, key_serial_t keyring, char *buffer,
++			    size_t buflen);
++
++     This function attempts to read the payload data from the specified key
++     into the buffer. The process must have read permission on the key to
++     succeed.
++
++     The returned data will be processed for presentation by the key type. For
++     instance, a keyring will return an array of key_serial_t entries
++     representing the IDs of all the keys to which it is subscribed. The user
++     defined key type will return its data as is. If a key type does not
++     implement this function, error EOPNOTSUPP will result.
++
++     As much of the data as can be fitted into the buffer will be copied to
++     userspace if the buffer pointer is not NULL.
++
++     On a successful return, the function will always return the amount of
++     data available rather than the amount copied.
++
++
++ (*) Instantiate a partially constructed key.
++
++	key_serial_t keyctl(KEYCTL_INSTANTIATE, key_serial_t key,
++			    const void *payload, key_serial_t keyring);
++
++     If the kernel calls back to userspace to complete the instantiation of a
++     key, userspace should use this call to supply data for the key before the
++     invoked process returns, or else the key will be marked negative
++     automatically.
++
++     The process must have write access on the key to be able to instantiate
++     it, and the key must be uninstantiated.
++
++     If a keyring is specified (non-zero), the key will also be linked into
++     that keyring, however all the constraints applying in KEYCTL_LINK apply
++     in this case too.
++
++
++ (*) Negatively instantiate a partially constructed key.
++
++	key_serial_t keyctl(KEYCTL_NEGATE, key_serial_t key,
++			    unsigned timeout, key_serial_t keyring);
++
++     If the kernel calls back to userspace to complete the instantiation of a
++     key, userspace should use this call mark the key as negative before the
++     invoked process returns if it is unable to fulfil the request.
++
++     The process must have write access on the key to be able to instantiate
++     it, and the key must be uninstantiated.
++
++     If a keyring is specified (non-zero), the key will also be linked into
++     that keyring, however all the constraints applying in KEYCTL_LINK apply
++     in this case too.
++
++
++===============
++KERNEL SERVICES
++===============
++
++The kernel services for key managment are fairly simple to deal with. They can
++be broken down into two areas: keys and key types.
++
++Dealing with keys is fairly straightforward. Firstly, the kernel service
++registers its type, then it searches for a key of that type. It should retain
++the key as long as it has need of it, and then it should release it. For a
++filesystem or device file, a search would probably be performed during the
++open call, and the key released upon close. How to deal with conflicting keys
++due to two different users opening the same file is left to the filesystem
++author to solve.
++
++When accessing a key's payload data, the key->lock should be at least read
++locked, or else the data may be changed by update during the access.
++
++(*) To search for a key, call:
++
++	struct key *request_key(const struct key_type *type,
++				const char *description,
++				int callout);
++
++    This is used to request a key or keyring with a description that matches
++    the description specified according to the key type's match function. This
++    permits approximate matching to occur. If callout is non-zero, then the
++    key service is allowed to ask userspace to create or update the key.
++
++    Should the function fail error ENOENT (absent), EIO (expired) or EIDRM
++    (revoked or dead) will be returned.
++
++
++(*) When it is no longer required, the key should be released using:
++
++	void key_put(struct key *key);
++
++    This can be called from interrupt context.
++
++
++(*) If a keyring was found in the search, this can be further searched by:
++
++	struct key *keyring_search(struct key *keyring,
++				   const struct key_type *type,
++				   const char *description)
++
++    This searches the keyring tree specified for a matching key. Error ENOENT
++    is returned upon failure. If successful, the returned key will need to be
++    released.
++
++
++(*) To check the validity of a key, this function can be called:
++
++	int validate_key(struct key *key);
++
++    This checks that the key in question hasn't expired or and hasn't been
++    revoked. Should the key be invalid, error EIO (expired) or EIDRM (revoked
++    or dead) will be returned.
++
++
++(*) To register a key type, the following function should be called:
++
++	int register_key_type(struct key_type *type);
++
++    This will return error EEXIST if a type of the same name is already
++    present.
++
++
++(*) To unregister a key type, call:
++
++	void unregister_key_type(struct key_type *type);
++
++
++===================
++DEFINING A KEY TYPE
++===================
++
++A kernel service may want to define its own key type. For instance, an AFS
++filesystem might want to define a Kerberos 5 ticket key type. To do this, it
++author fills in a struct key_type and registers it with the system.
++
++The structure has a number of fields, some of which are mandatory:
++
++ (*) const char *name
++
++     The name of the key type. This is used to translate a key type name
++     supplied by userspace into a pointer to the structure.
++
++
++ (*) size_t def_datalen
++
++     This is optional - it supplies the default payload data length as
++     contributed to the quota. If the key type's payload is always or almost
++     always the same size, then this is a more efficient way to do things.
++
++     The data length (and quota) on a particular key can always be changed
++     during instantiation or update by calling:
++
++	int key_payload_reserve(struct key *key, size_t datalen);
++
++     With the revised data length. Error EDQUOT will be returned if this is
++     not viable.
++
++
++ (*) int (*instantiate)(struct key *key, const void *data, size_t datalen);
++
++     This method is called to attach a payload to a key during
++     construction. The payload attached need not bear any relation to the data
++     passed to this function.
++
++     If the amount of data attached to the key differs from the size in
++     keytype->def_datalen, then key_payload_reserve() should be called.
++
++
++ (*) int (*duplicate)(struct key *key, const struct key *source);
++
++     If this type of key can be duplicated, then this method should be
++     provided. It is called to copy the payload attached to the source into
++     the new key. The data length on the new key will have been updated and
++     the quota adjusted already.
++
++     The source key will be locked against change on the source->sem, so it is
++     safe to sleep here.
++
++
++ (*) int (*update)(struct key *key, const void *data, size_t datalen);
++
++     If this type of key can be updated, then this method should be
++     provided. It is called to update a key's payload from the blob of data
++     provided.
++
++     key_payload_reserve() should be called if the data length might change
++     before any changes are actually made. Note that if this succeeds, the
++     type is committed to changing the key because it's already been altered,
++     so all memory allocation must be done first.
++
++     The key will be locked against other changers on key->sem, so it is safe
++     to sleep here.
++
++     key_payload_reserve() should be called with the key->lock write locked,
++     and the changes to the key's attached payload should be made before the
++     key is locked.
++
++
++ (*) int (*match)(const struct key *key, const void *desc);
++
++     This method is called to match a key against a description. It should
++     return non-zero if the two match, zero if they don't.
++
++
++ (*) void (*destroy)(struct key *key);
++
++     This method is optional. It is called to discard the payload data on a
++     key when it is being destroyed.
++
++
++ (*) void (*describe)(const struct key *key, struct seq_file *p);
++
++     This method is optional. It is called during /proc/keys reading to
++     summarise a key in text form.
++
++
++ (*) long (*read)(const struct key *key, char __user *buffer, size_t buflen);
++
++     This method is optional. It is called by KEYCTL_READ to translate the
++     key's payload into something a blob of data for userspace to deal
++     with. Ideally, the blob should be in the same format as that passed in to
++     the instantiate and update methods.
++
++     If successful, the blob size that could be produced should be returned
++     rather than the size copied.
++
++
++============================
++REQUEST-KEY CALLBACK SERVICE
++============================
++
++To create a new key, the kernel will attempt to execute the following command
++line:
++
++	/sbin/request-key create <key> <uid> <gid> \
++		<threadring> <processring> <sessionring>
++
++<key> is the key being constructed, and the three keyrings are the process
++keyrings from the process that caused the search to be issued. These are
++included for two reasons:
++
++  (1) There may be an authentication token in one of the keyrings that is
++      required to obtain the key, eg: a Kerberos Ticket-Granting Ticket.
++
++  (2) The new key should probably be cached in one of these rings.
++
++This program should set it UID and GID to those specified before attempting to
++access any more keys. It may then look around for a user specific process to
++hand the request off to (perhaps a path held in placed in another key by, for
++example, the KDE desktop manager).
++
++The program (or whatever it calls) should finish construction of the key by
++calling KEYCTL_INSTANTIATE and then call KEYCTL_LINK to cache the key in one
++of the keyrings (probably the session ring) before returning.
++
++If it returns with the key remaining in the unconstructed state, the key will
++be marked as being negative, it will be added to the session keyring, and an
++error will be returned to the key requester.
++
++
++Similarly, the kernel may attempt to update an expired or a soon to expire key
++by executing:
++
++	/sbin/request-key update <key> <uid> <gid> \
++		<threadring> <processring> <sessionring>
++
++In this case, the program isn't required to actually attach the key to a ring;
++the rings are provided for reference.
+diff -puN fs/exec.c~implement-in-kernel-keys-keyring-management fs/exec.c
+--- 25/fs/exec.c~implement-in-kernel-keys-keyring-management	2004-08-30 22:21:39.565039696 -0700
++++ 25-akpm/fs/exec.c	2004-08-30 22:21:39.588036200 -0700
+@@ -34,6 +34,7 @@
+ #include <linux/pagemap.h>
+ #include <linux/highmem.h>
+ #include <linux/spinlock.h>
++#include <linux/key.h>
+ #include <linux/personality.h>
+ #include <linux/binfmts.h>
+ #include <linux/swap.h>
+@@ -858,8 +859,10 @@ int flush_old_exec(struct linux_binprm *
+ 
+ 	if (bprm->e_uid != current->euid || bprm->e_gid != current->egid || 
+ 	    permission(bprm->file->f_dentry->d_inode,MAY_READ, NULL) ||
+-	    (bprm->interp_flags & BINPRM_FLAGS_ENFORCE_NONDUMP))
++	    (bprm->interp_flags & BINPRM_FLAGS_ENFORCE_NONDUMP)) {
++		suid_keys(current);
+ 		current->mm->dumpable = 0;
++	}
+ 
+ 	/* An exec changes our domain. We are no longer part of the thread
+ 	   group */
+@@ -953,6 +956,11 @@ static inline int unsafe_exec(struct tas
+ void compute_creds(struct linux_binprm *bprm)
+ {
+ 	int unsafe;
++
++	if (bprm->e_uid != current->uid)
++		suid_keys(current);
++	exec_keys(current);
++
+ 	task_lock(current);
+ 	unsafe = unsafe_exec(current);
+ 	security_bprm_apply_creds(bprm, unsafe);
+diff -puN /dev/null include/linux/key.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/linux/key.h	2004-08-30 22:21:39.590035896 -0700
+@@ -0,0 +1,276 @@
++/* key.h: authentication token and access key management
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ *
++ *
++ * See Documentation/keys.txt for information on keys/keyrings.
++ */
++
++#ifndef _LINUX_KEY_H
++#define _LINUX_KEY_H
++
++#include <linux/types.h>
++#include <linux/list.h>
++#include <linux/rbtree.h>
++#include <linux/spinlock.h>
++#include <asm/atomic.h>
++
++#ifdef __KERNEL__
++#ifdef CONFIG_KEYS
++
++#undef KEY_DEBUGGING
++
++/* key handle serial number */
++typedef int32_t key_serial_t;
++
++/* key handle permissions mask */
++typedef uint32_t key_perm_t;
++#define KEY_USR_VIEW	0x00010000	/* user can view a key's attributes */
++#define KEY_USR_READ	0x00020000	/* user can read key payload / view keyring */
++#define KEY_USR_WRITE	0x00040000	/* user can update key payload / add link to keyring */
++#define KEY_USR_SEARCH	0x00080000	/* user can find a key in search / search a keyring */
++#define KEY_USR_LINK	0x00100000	/* user can create a link to a key/keyring */
++#define KEY_USR_ALL	0x001f0000
++
++#define KEY_GRP_VIEW	0x00000100	/* group permissions... */
++#define KEY_GRP_READ	0x00000200
++#define KEY_GRP_WRITE	0x00000400
++#define KEY_GRP_SEARCH	0x00000800
++#define KEY_GRP_LINK	0x00001000
++#define KEY_GRP_ALL	0x00001f00
++
++#define KEY_OTH_VIEW	0x00000001	/* third party permissions... */
++#define KEY_OTH_READ	0x00000002
++#define KEY_OTH_WRITE	0x00000004
++#define KEY_OTH_SEARCH	0x00000008
++#define KEY_OTH_LINK	0x00000010
++#define KEY_OTH_ALL	0x0000001f
++
++struct seq_file;
++
++struct key;
++struct key_type;
++struct key_owner;
++struct keyring_list;
++struct keyring_name;
++
++/*****************************************************************************/
++/*
++ * authentication token / access credential / keyring
++ * - types of key include:
++ *   - keyrings
++ *   - disk encryption IDs
++ *   - Kerberos TGTs and tickets
++ */
++struct key {
++	atomic_t		usage;		/* number of references */
++	key_serial_t		serial;		/* key serial number */
++	struct rb_node		serial_node;
++	struct key_type		*type;		/* type of key */
++	rwlock_t		lock;		/* examination vs change lock */
++	struct rw_semaphore	sem;		/* change vs change sem */
++	struct key_user		*user;		/* owner of this key */
++	time_t			expiry;		/* time at which key expires (or 0) */
++	uid_t			uid;
++	gid_t			gid;
++	key_perm_t		perm;		/* access permissions */
++	unsigned short		quotalen;	/* length added to quota */
++	unsigned short		datalen;	/* payload data length */
++	unsigned short		flags;		/* status flags (change with lock writelocked) */
++#define KEY_FLAG_INSTANTIATED	0x00000001	/* set if key has been instantiated */
++#define KEY_FLAG_DEAD		0x00000002	/* set if key type has been deleted */
++#define KEY_FLAG_REVOKED	0x00000004	/* set if key had been revoked */
++#define KEY_FLAG_IN_QUOTA	0x00000008	/* set if key consumes quota */
++#define KEY_FLAG_USER_CONSTRUCT	0x00000010	/* set if key is being constructed in userspace */
++#define KEY_FLAG_NEGATIVE	0x00000020	/* set if key is negative */
++
++#ifdef KEY_DEBUGGING
++	unsigned		magic;
++#define KEY_DEBUG_MAGIC		0x18273645u
++#define KEY_DEBUG_MAGIC_X	0xf8e9dacbu
++#endif
++
++	/* the description string
++	 * - this is used to match a key against search criteria
++	 * - this should be a printable string
++	 * - eg: for krb5 AFS, this might be "afs@REDHAT.COM"
++	 */
++	char			*description;
++
++	/* type specific data
++	 * - this is used by the keyring type to index the name
++	 */
++	union {
++		struct list_head	link;
++	} type_data;
++
++	/* key data
++	 * - this is used to hold the data actually used in cryptography or
++	 *   whatever
++	 */
++	union {
++		unsigned long		value;
++		void			*data;
++		struct keyring_list	*subscriptions;
++	} payload;
++};
++
++/*****************************************************************************/
++/*
++ * kernel managed key type definition
++ */
++struct key_type {
++	/* name of the type */
++	const char *name;
++
++	/* default payload length for quota precalculation (optional)
++	 * - this can be used instead of calling key_payload_reserve(), that
++	 *   function only needs to be called if the real datalen is different
++	 */
++	size_t def_datalen;
++
++	/* instantiate a key of this type
++	 * - this method should call key_payload_reserve() to determine if the
++	 *   user's quota will hold the payload
++	 */
++	int (*instantiate)(struct key *key, const void *data, size_t datalen);
++
++	/* duplicate a key of this type (optional)
++	 * - the source key will be locked against change
++	 * - the new description will be attached
++	 * - the quota will have been adjusted automatically from
++	 *   source->quotalen
++	 */
++	int (*duplicate)(struct key *key, const struct key *source);
++
++	/* update a key of this type (optional)
++	 * - this method should call key_payload_reserve() to recalculate the
++	 *   quota consumption
++	 * - the key must be locked against read when modifying
++	 */
++	int (*update)(struct key *key, const void *data, size_t datalen);
++
++	/* match a key against a description */
++	int (*match)(const struct key *key, const void *desc);
++
++	/* clear the data from a key (optional) */
++	void (*destroy)(struct key *key);
++
++	/* describe a key */
++	void (*describe)(const struct key *key, struct seq_file *p);
++
++	/* read a key's data (optional)
++	 * - permission checks will be done by the caller
++	 * - the key's semaphore will be readlocked by the caller
++	 * - should return the amount of data that could be read, no matter how
++	 *   much is copied into the buffer
++	 * - shouldn't do the copy if the buffer is NULL
++	 */
++	long (*read)(const struct key *key, char __user *buffer, size_t buflen);
++
++	/* internal fields */
++	struct list_head	link;		/* link in types list */
++};
++
++extern struct key_type key_type_keyring;
++
++extern int register_key_type(struct key_type *ktype);
++extern void unregister_key_type(struct key_type *ktype);
++
++extern struct key *key_alloc(struct key_type *type,
++			     const char *desc,
++			     uid_t uid, gid_t gid, key_perm_t perm,
++			     int not_in_quota);
++extern int key_payload_reserve(struct key *key, size_t datalen);
++extern int key_instantiate_and_link(struct key *key,
++				    const void *data,
++				    size_t datalen,
++				    struct key *keyring);
++extern int key_negate_and_link(struct key *key,
++			       unsigned timeout,
++			       struct key *keyring);
++extern void key_revoke(struct key *key);
++extern void key_put(struct key *key);
++
++extern struct key *request_key(struct key_type *type,
++			       const char *description,
++			       int callout);
++
++extern int key_validate(struct key *key);
++
++extern struct key *key_create_or_update(struct key *keyring,
++					const char *type,
++					const char *description,
++					const void *payload,
++					size_t plen,
++					int not_in_quota);
++
++extern int key_update(struct key *key,
++		      const void *payload,
++		      size_t plen);
++
++extern int key_link(struct key *keyring,
++		    struct key *key);
++
++extern int key_unlink(struct key *keyring,
++		      struct key *key);
++
++extern struct key *keyring_alloc(const char *description, uid_t uid, gid_t gid,
++				 int not_in_quota, struct key *dest);
++
++extern int keyring_clear(struct key *keyring);
++
++extern struct key *keyring_search(struct key *keyring,
++				  struct key_type *type,
++				  const char *description);
++
++extern struct key *search_process_keyrings(struct key_type *type,
++					   const char *description);
++
++extern int keyring_add_key(struct key *keyring,
++			   struct key *key);
++
++extern struct key *key_lookup(key_serial_t id);
++
++/*
++ * the userspace interface
++ */
++extern struct key root_user_keyring, root_session_keyring;
++extern int alloc_uid_keyring(struct user_struct *user);
++extern void switch_uid_keyring(struct user_struct *new_user);
++extern int copy_keys(unsigned long clone_flags, struct task_struct *tsk);
++extern void exit_keys(struct task_struct *tsk);
++extern int suid_keys(struct task_struct *tsk);
++extern int exec_keys(struct task_struct *tsk);
++extern void key_fsuid_changed(struct task_struct *tsk);
++extern void key_fsgid_changed(struct task_struct *tsk);
++extern long get_process_keyring_ID(key_serial_t id, int create);
++extern long join_session_keyring_user(const char __user *name);
++
++asmlinkage long sys_keyctl(int option, unsigned long arg2, unsigned long arg3,
++			   unsigned long arg4, unsigned long arg5);
++
++#else /* CONFIG_KEYS */
++
++#define key_put(k)			do { } while(0)
++#define alloc_uid_keyring(u)		0
++#define switch_uid_keyring(u)		do { } while(0)
++#define copy_keys(f,t)			0
++#define exit_keys(t)			do { } while(0)
++#define suid_keys(t)			do { } while(0)
++#define exec_keys(t)			do { } while(0)
++#define key_fsuid_changed(t)		do { } while(0)
++#define key_fsgid_changed(t)		do { } while(0)
++#define get_process_keyring_ID(s,c)	(-EINVAL)
++#define join_session_keyring_user(n)	(-EINVAL)
++#define sys_keyctl(o,b,c,d,e)		(-EINVAL)
++
++#endif /* CONFIG_KEYS */
++#endif /* __KERNEL__ */
++#endif /* _LINUX_KEY_H */
+diff -puN include/linux/prctl.h~implement-in-kernel-keys-keyring-management include/linux/prctl.h
+--- 25/include/linux/prctl.h~implement-in-kernel-keys-keyring-management	2004-08-30 22:21:39.566039544 -0700
++++ 25-akpm/include/linux/prctl.h	2004-08-30 22:21:39.591035744 -0700
+@@ -49,5 +49,30 @@
+ # define PR_TIMING_TIMESTAMP    1       /* Accurate timestamp based
+                                                    process timing */
+ 
++/* Manage a process's keyrings */
++#define PR_SPEC_THREAD_KEYRING		-1	/* - key ID for thread-specific keyring */
++#define PR_SPEC_PROCESS_KEYRING		-2	/* - key ID for process-specific keyring */
++#define PR_SPEC_SESSION_KEYRING		-3	/* - key ID for session-specific keyring */
++#define PR_SPEC_USER_KEYRING		-4	/* - key ID for UID-specific keyring */
++#define PR_SPEC_USER_SESSION_KEYRING	-5	/* - key ID for UID-session keyring */
++#define PR_SPEC_GROUP_KEYRING		-6	/* - key ID for GID-specific keyring */
++
++#define PR_GET_KEYRING_ID		15	/* ask for a keyring's ID */
++#define PR_JOIN_SESSION_KEYRING		16	/* join or start named session keyring */
++#define KEYCTL_NEW			0x100	/* create a key and add to specified keyring */
++#define KEYCTL_UPDATE			0x101	/* update a key */
++#define KEYCTL_REVOKE			0x102	/* revoke a key */
++#define KEYCTL_CHOWN			0x103	/* set ownership of a key */
++#define KEYCTL_SETPERM			0x104	/* set perms on a key */
++#define KEYCTL_DESCRIBE			0x105	/* describe a key */
++#define KEYCTL_CLEAR			0x106	/* clear contents of a keyring */
++#define KEYCTL_LINK			0x107	/* link a key into a keyring */
++#define KEYCTL_UNLINK			0x108	/* unlink a key from a keyring */
++#define KEYCTL_SEARCH			0x109	/* search for a key in a keyring */
++#define KEYCTL_READ			0x10a	/* read a key or keyring's contents */
++#define KEYCTL_REQUEST_KEY		0x10b	/* request a key from the process's keyrings */
++#define KEYCTL_INSTANTIATE		0x10c	/* instantiate a partially constructed key */
++#define KEYCTL_NEGATE			0x10d	/* negate a partially constructed key */
++#define __KEYCTL_LAST			0x10d
+ 
+ #endif /* _LINUX_PRCTL_H */
+diff -puN include/linux/sched.h~implement-in-kernel-keys-keyring-management include/linux/sched.h
+--- 25/include/linux/sched.h~implement-in-kernel-keys-keyring-management	2004-08-30 22:21:39.568039240 -0700
++++ 25-akpm/include/linux/sched.h	2004-08-30 22:21:39.592035592 -0700
+@@ -333,6 +333,11 @@ struct user_struct {
+ 	unsigned long mq_bytes;	/* How many bytes can be allocated to mqueue? */
+ 	unsigned long locked_shm; /* How many pages of mlocked shm ? */
+ 
++#ifdef CONFIG_KEYS
++	struct key *uid_keyring;	/* UID specific keyring */
++	struct key *session_keyring;	/* UID's default session keyring */
++#endif
++
+ 	/* Hash table maintenance information */
+ 	struct list_head uidhash_list;
+ 	uid_t uid;
+@@ -506,6 +511,11 @@ struct task_struct {
+ 	kernel_cap_t   cap_effective, cap_inheritable, cap_permitted;
+ 	unsigned keep_capabilities:1;
+ 	struct user_struct *user;
++#ifdef CONFIG_KEYS
++	struct key *session_keyring;	/* keyring inherited over fork */
++	struct key *process_keyring;	/* keyring private to this process (CLONE_THREAD) */
++	struct key *thread_keyring;	/* keyring private to this thread */
++#endif
+ /* limits */
+ 	struct rlimit rlim[RLIM_NLIMITS];
+ 	unsigned short used_math;
+@@ -541,7 +551,7 @@ struct task_struct {
+ /* Thread group tracking */
+    	u32 parent_exec_id;
+    	u32 self_exec_id;
+-/* Protection of (de-)allocation: mm, files, fs, tty */
++/* Protection of (de-)allocation: mm, files, fs, tty, keyrings */
+ 	spinlock_t alloc_lock;
+ /* Protection of proc_dentry: nesting proc_lock, dcache_lock, write_lock_irq(&tasklist_lock); */
+ 	spinlock_t proc_lock;
+@@ -876,8 +886,8 @@ static inline int thread_group_empty(tas
+ extern void unhash_process(struct task_struct *p);
+ 
+ /*
+- * Protects ->fs, ->files, ->mm, ->ptrace, ->group_info, ->comm and
+- * synchronises with wait4().
++ * Protects ->fs, ->files, ->mm, ->ptrace, ->group_info, ->comm, keyring
++ * subscriptions and synchronises with wait4().  Also used in procfs.
+  *
+  * Synchronises set_cpus_allowed(), unlink, and creat of ->thread.perfctr.
+  * [if CONFIG_PERFCTR_VIRTUAL]
+diff -puN kernel/exit.c~implement-in-kernel-keys-keyring-management kernel/exit.c
+--- 25/kernel/exit.c~implement-in-kernel-keys-keyring-management	2004-08-30 22:21:39.569039088 -0700
++++ 25-akpm/kernel/exit.c	2004-08-30 22:21:39.593035440 -0700
+@@ -14,6 +14,7 @@
+ #include <linux/personality.h>
+ #include <linux/tty.h>
+ #include <linux/namespace.h>
++#include <linux/key.h>
+ #include <linux/security.h>
+ #include <linux/cpu.h>
+ #include <linux/acct.h>
+@@ -820,6 +821,7 @@ asmlinkage NORET_TYPE void do_exit(long 
+ 	__exit_fs(tsk);
+ 	exit_namespace(tsk);
+ 	exit_thread();
++	exit_keys(tsk);
+ 
+ 	if (tsk->signal->leader)
+ 		disassociate_ctty(1);
+diff -puN kernel/fork.c~implement-in-kernel-keys-keyring-management kernel/fork.c
+--- 25/kernel/fork.c~implement-in-kernel-keys-keyring-management	2004-08-30 22:21:39.571038784 -0700
++++ 25-akpm/kernel/fork.c	2004-08-30 22:21:39.594035288 -0700
+@@ -24,6 +24,7 @@
+ #include <linux/mempolicy.h>
+ #include <linux/sem.h>
+ #include <linux/file.h>
++#include <linux/key.h>
+ #include <linux/binfmts.h>
+ #include <linux/mman.h>
+ #include <linux/fs.h>
+@@ -1002,6 +1003,10 @@ static task_t *copy_process(unsigned lon
+  	}
+ #endif
+ 
++	p->tgid = p->pid;
++	if (clone_flags & CLONE_THREAD)
++		p->tgid = current->tgid;
++
+ 	if ((retval = security_task_alloc(p)))
+ 		goto bad_fork_cleanup_policy;
+ 	if ((retval = audit_alloc(p)))
+@@ -1019,8 +1024,10 @@ static task_t *copy_process(unsigned lon
+ 		goto bad_fork_cleanup_sighand;
+ 	if ((retval = copy_mm(clone_flags, p)))
+ 		goto bad_fork_cleanup_signal;
+-	if ((retval = copy_namespace(clone_flags, p)))
++	if ((retval = copy_keys(clone_flags, p)))
+ 		goto bad_fork_cleanup_mm;
++	if ((retval = copy_namespace(clone_flags, p)))
++		goto bad_fork_cleanup_keys;
+ 	retval = copy_thread(0, clone_flags, stack_start, stack_size, p, regs);
+ 	if (retval)
+ 		goto bad_fork_cleanup_namespace;
+@@ -1053,7 +1060,6 @@ static task_t *copy_process(unsigned lon
+ 	 * Ok, make it visible to the rest of the system.
+ 	 * We dont wake it up yet.
+ 	 */
+-	p->tgid = p->pid;
+ 	p->group_leader = p;
+ 	INIT_LIST_HEAD(&p->ptrace_children);
+ 	INIT_LIST_HEAD(&p->ptrace_list);
+@@ -1101,7 +1107,6 @@ static task_t *copy_process(unsigned lon
+ 			retval = -EAGAIN;
+ 			goto bad_fork_cleanup_namespace;
+ 		}
+-		p->tgid = current->tgid;
+ 		p->group_leader = current->group_leader;
+ 
+ 		if (current->signal->group_stop_count > 0) {
+@@ -1142,6 +1147,8 @@ fork_out:
+ 
+ bad_fork_cleanup_namespace:
+ 	exit_namespace(p);
++bad_fork_cleanup_keys:
++	exit_keys(p);
+ bad_fork_cleanup_mm:
+ 	exit_mm(p);
+ 	if (p->active_mm)
+diff -puN kernel/sys.c~implement-in-kernel-keys-keyring-management kernel/sys.c
+--- 25/kernel/sys.c~implement-in-kernel-keys-keyring-management	2004-08-30 22:21:39.573038480 -0700
++++ 25-akpm/kernel/sys.c	2004-08-30 22:21:39.596034984 -0700
+@@ -23,6 +23,7 @@
+ #include <linux/security.h>
+ #include <linux/dcookies.h>
+ #include <linux/suspend.h>
++#include <linux/key.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/io.h>
+@@ -607,6 +608,7 @@ asmlinkage long sys_setregid(gid_t rgid,
+ 	current->fsgid = new_egid;
+ 	current->egid = new_egid;
+ 	current->gid = new_rgid;
++	key_fsgid_changed(current);
+ 	return 0;
+ }
+ 
+@@ -644,6 +646,8 @@ asmlinkage long sys_setgid(gid_t gid)
+ 	}
+ 	else
+ 		return -EPERM;
++
++	key_fsgid_changed(current);
+ 	return 0;
+ }
+   
+@@ -732,6 +736,8 @@ asmlinkage long sys_setreuid(uid_t ruid,
+ 		current->suid = current->euid;
+ 	current->fsuid = current->euid;
+ 
++	key_fsuid_changed(current);
++
+ 	return security_task_post_setuid(old_ruid, old_euid, old_suid, LSM_SETID_RE);
+ }
+ 
+@@ -777,6 +783,8 @@ asmlinkage long sys_setuid(uid_t uid)
+ 	current->fsuid = current->euid = uid;
+ 	current->suid = new_suid;
+ 
++	key_fsuid_changed(current);
++
+ 	return security_task_post_setuid(old_ruid, old_euid, old_suid, LSM_SETID_ID);
+ }
+ 
+@@ -823,6 +831,8 @@ asmlinkage long sys_setresuid(uid_t ruid
+ 	if (suid != (uid_t) -1)
+ 		current->suid = suid;
+ 
++	key_fsuid_changed(current);
++
+ 	return security_task_post_setuid(old_ruid, old_euid, old_suid, LSM_SETID_RES);
+ }
+ 
+@@ -872,6 +882,8 @@ asmlinkage long sys_setresgid(gid_t rgid
+ 		current->gid = rgid;
+ 	if (sgid != (gid_t) -1)
+ 		current->sgid = sgid;
++
++	key_fsgid_changed(current);
+ 	return 0;
+ }
+ 
+@@ -913,6 +925,8 @@ asmlinkage long sys_setfsuid(uid_t uid)
+ 		current->fsuid = uid;
+ 	}
+ 
++	key_fsuid_changed(current);
++
+ 	security_task_post_setuid(old_fsuid, (uid_t)-1, (uid_t)-1, LSM_SETID_FS);
+ 
+ 	return old_fsuid;
+@@ -939,6 +953,7 @@ asmlinkage long sys_setfsgid(gid_t gid)
+ 			wmb();
+ 		}
+ 		current->fsgid = gid;
++		key_fsgid_changed(current);
+ 	}
+ 	return old_fsgid;
+ }
+@@ -1596,7 +1611,7 @@ asmlinkage long sys_umask(int mask)
+ asmlinkage long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+ 			  unsigned long arg4, unsigned long arg5)
+ {
+-	int error;
++	long error;
+ 	int sig;
+ 
+ 	error = security_task_prctl(option, arg2, arg3, arg4, arg5);
+@@ -1666,6 +1681,18 @@ asmlinkage long sys_prctl(int option, un
+ 			}
+ 			current->keep_capabilities = arg2;
+ 			break;
++
++		case PR_GET_KEYRING_ID:
++			error = get_process_keyring_ID((key_serial_t) arg2, arg3);
++			break;
++		case PR_JOIN_SESSION_KEYRING:
++			error = join_session_keyring_user((const char __user *) arg2);
++			break;
++
++		case KEYCTL_NEW ... __KEYCTL_LAST:
++			error = sys_keyctl(option, arg2, arg3, arg4, arg5);
++			break;
++
+ 		default:
+ 			error = -EINVAL;
+ 			break;
+diff -puN kernel/user.c~implement-in-kernel-keys-keyring-management kernel/user.c
+--- 25/kernel/user.c~implement-in-kernel-keys-keyring-management	2004-08-30 22:21:39.574038328 -0700
++++ 25-akpm/kernel/user.c	2004-08-30 22:21:39.597034832 -0700
+@@ -12,6 +12,7 @@
+ #include <linux/sched.h>
+ #include <linux/slab.h>
+ #include <linux/bitops.h>
++#include <linux/key.h>
+ 
+ /*
+  * UID task count cache, to get fast user lookup in "alloc_uid"
+@@ -34,6 +35,10 @@ struct user_struct root_user = {
+ 	.sigpending	= ATOMIC_INIT(0),
+ 	.mq_bytes	= 0,
+ 	.locked_shm     = 0,
++#ifdef CONFIG_KEYS
++	.uid_keyring	= &root_user_keyring,
++	.session_keyring = &root_session_keyring,
++#endif
+ };
+ 
+ /*
+@@ -87,6 +92,8 @@ void free_uid(struct user_struct *up)
+ {
+ 	if (up && atomic_dec_and_lock(&up->__count, &uidhash_lock)) {
+ 		uid_hash_remove(up);
++		key_put(up->uid_keyring);
++		key_put(up->session_keyring);
+ 		kmem_cache_free(uid_cachep, up);
+ 		spin_unlock(&uidhash_lock);
+ 	}
+@@ -116,6 +123,11 @@ struct user_struct * alloc_uid(uid_t uid
+ 		new->mq_bytes = 0;
+ 		new->locked_shm = 0;
+ 
++		if (alloc_uid_keyring(new) < 0) {
++			kmem_cache_free(uid_cachep, new);
++			return NULL;
++		}
++
+ 		/*
+ 		 * Before adding this, check whether we raced
+ 		 * on adding the same user already..
+@@ -123,6 +135,8 @@ struct user_struct * alloc_uid(uid_t uid
+ 		spin_lock(&uidhash_lock);
+ 		up = uid_hash_find(uid, hashent);
+ 		if (up) {
++			key_put(new->uid_keyring);
++			key_put(new->session_keyring);
+ 			kmem_cache_free(uid_cachep, new);
+ 		} else {
+ 			uid_hash_insert(new, hashent);
+@@ -146,8 +160,10 @@ void switch_uid(struct user_struct *new_
+ 	old_user = current->user;
+ 	atomic_inc(&new_user->processes);
+ 	atomic_dec(&old_user->processes);
++	switch_uid_keyring(new_user);
+ 	current->user = new_user;
+ 	free_uid(old_user);
++	suid_keys(current);
+ }
+ 
+ 
+diff -puN security/Kconfig~implement-in-kernel-keys-keyring-management security/Kconfig
+--- 25/security/Kconfig~implement-in-kernel-keys-keyring-management	2004-08-30 22:21:39.576038024 -0700
++++ 25-akpm/security/Kconfig	2004-08-30 22:21:39.598034680 -0700
+@@ -4,6 +4,35 @@
+ 
+ menu "Security options"
+ 
++config KEYS
++	bool "Enable access key retention support"
++	help
++	  This option provides support for retaining authentication tokens and
++	  access keys in the kernel.
++
++	  It also includes provision of methods by which such keys might be
++	  associated with a process so that network filesystems, encryption
++	  support and the like can find them.
++
++	  Furthermore, a special type of key is available that acts as keyring:
++	  a searchable sequence of keys. Each process is equipped with access
++	  to five standard keyrings: UID-specific, GID-specific, session,
++	  process and thread.
++
++	  If you are unsure as to whether this is required, answer N.
++
++config KEYS_DEBUG_PROC_KEYS
++	bool "Enable the /proc/keys file by which all keys may be viewed"
++	depends on KEYS
++	help
++	  This option turns on support for the /proc/keys file through which
++	  all the keys on the system can be listed.
++
++	  This option is a slight security risk in that it makes it possible
++	  for anyone to see all the keys on the system. Normally the manager
++	  pretends keys that are inaccessible to a process don't exist as far
++	  as that process is concerned.
++
+ config SECURITY
+ 	bool "Enable different security models"
+ 	help
+diff -puN /dev/null security/keys/internal.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/security/keys/internal.h	2004-08-30 22:21:39.598034680 -0700
+@@ -0,0 +1,98 @@
++/* internal.h: authentication token and access key management internal defs
++ *
++ * Copyright (C) 2003 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#ifndef _INTERNAL_H
++#define _INTERNAL_H
++
++#include <linux/key.h>
++#include <linux/key-ui.h>
++
++extern struct key_type key_type_dead;
++extern struct key_type key_type_user;
++
++/*****************************************************************************/
++/*
++ * keep track of keys for a user
++ * - this needs to be separate to user_struct to avoid a refcount-loop
++ *   (user_struct pins some keyrings which pin this struct)
++ * - this also keeps track of keys under request from userspace for this UID
++ */
++struct key_user {
++	struct rb_node		node;
++	struct list_head	consq;		/* construction queue */
++	spinlock_t		lock;
++	atomic_t		usage;		/* for accessing qnkeys & qnbytes */
++	atomic_t		nkeys;		/* number of keys */
++	atomic_t		nikeys;		/* number of instantiated keys */
++	uid_t			uid;
++	int			qnkeys;		/* number of keys allocated to this user */
++	int			qnbytes;	/* number of bytes allocated to this user */
++};
++
++#define KEYQUOTA_MAX_KEYS	100
++#define KEYQUOTA_MAX_BYTES	10000
++#define KEYQUOTA_LINK_BYTES	4		/* a link in a keyring is worth 4 bytes */
++
++extern struct rb_root	key_user_tree;
++extern spinlock_t	key_user_lock;
++extern struct key_user	root_key_user;
++
++extern struct key_user *key_user_lookup(uid_t uid);
++extern void key_user_put(struct key_user *user);
++
++
++
++extern struct rb_root key_serial_tree;
++extern spinlock_t key_serial_lock;
++extern struct semaphore key_alloc_sem;
++extern struct rw_semaphore key_construction_sem;
++extern wait_queue_head_t request_key_conswq;
++
++
++extern void keyring_publish_name(struct key *keyring);
++
++extern int __key_link(struct key *keyring, struct key *key);
++
++extern struct key *__keyring_search_one(struct key *keyring,
++					const struct key_type *type,
++					const char *description,
++					key_perm_t perm);
++
++extern struct key *find_keyring_by_name(const char *name, key_serial_t bound);
++
++extern int install_thread_keyring(struct task_struct *tsk);
++
++
++/*
++ * debugging key validation
++ */
++#ifdef KEY_DEBUGGING
++static void __key_check(const struct key *key)
++{
++	printk("__key_check: key %p {%08x} should be {%08x}\n",
++	       key, key->magic, KEY_DEBUG_MAGIC);
++	BUG();
++}
++
++
++static inline void key_check(const struct key *key)
++{
++	if (key && (IS_ERR(key) || key->magic != KEY_DEBUG_MAGIC))
++		__key_check(key);
++}
++
++#else
++
++#define key_check(key) do {} while(0)
++
++#endif
++
++#endif /* _INTERNAL_H */
+diff -puN /dev/null security/keys/key.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/security/keys/key.c	2004-08-30 22:21:39.602034072 -0700
+@@ -0,0 +1,1039 @@
++/* key.c: basic authentication token and access key management
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/workqueue.h>
++#include <linux/err.h>
++#include "internal.h"
++
++static kmem_cache_t	*key_jar;
++static key_serial_t	key_serial_next = 3;
++struct rb_root		key_serial_tree; /* tree of keys indexed by serial */
++spinlock_t		key_serial_lock = SPIN_LOCK_UNLOCKED;
++
++struct rb_root	key_user_tree; /* tree of quota records indexed by UID */
++spinlock_t	key_user_lock = SPIN_LOCK_UNLOCKED;
++
++static LIST_HEAD(key_types_list);
++static DECLARE_RWSEM(key_types_sem);
++
++static void key_cleanup(void *data);
++static DECLARE_WORK(key_cleanup_task, key_cleanup, NULL);
++
++/* we serialise key instantiation and link */
++DECLARE_RWSEM(key_construction_sem);
++
++/* any key who's type gets unegistered will be re-typed to this */
++struct key_type key_type_dead = {
++	.name		= "dead",
++};
++
++/*****************************************************************************/
++/*
++ * get the key quota record for a user, allocating a new record if one doesn't
++ * already exist
++ */
++struct key_user *key_user_lookup(uid_t uid)
++{
++	struct key_user *candidate = NULL, *user;
++	struct rb_node *parent = NULL;
++	struct rb_node **p = &key_user_tree.rb_node;
++
++ try_again:
++	spin_lock(&key_user_lock);
++
++	/* search the tree for a user record with a matching UID */
++	while (*p) {
++		parent = *p;
++		user = rb_entry(parent, struct key_user, node);
++
++		if (uid < user->uid)
++			p = &(*p)->rb_left;
++		else if (uid > user->uid)
++			p = &(*p)->rb_right;
++		else
++			goto found;
++	}
++
++	/* if we get here, we failed to find a match in the tree */
++	if (!candidate) {
++		/* allocate a candidate user record if we don't already have
++		 * one */
++		spin_unlock(&key_user_lock);
++
++		user = NULL;
++		candidate = kmalloc(sizeof(struct key_user), GFP_KERNEL);
++		if (unlikely(!candidate))
++			goto out;
++
++		/* the allocation may have scheduled, so we need to repeat the
++		 * search lest someone else added the record whilst we were
++		 * asleep */
++		goto try_again;
++	}
++
++	/* if we get here, then the user record still hadn't appeared on the
++	 * second pass - so we use the candidate record */
++	atomic_set(&candidate->usage, 1);
++	atomic_set(&candidate->nkeys, 0);
++	atomic_set(&candidate->nikeys, 0);
++	candidate->uid = uid;
++	candidate->qnkeys = 0;
++	candidate->qnbytes = 0;
++	spin_lock_init(&candidate->lock);
++	INIT_LIST_HEAD(&candidate->consq);
++
++	rb_link_node(&candidate->node, parent, p);
++	rb_insert_color(&candidate->node, &key_user_tree);
++	spin_unlock(&key_user_lock);
++	user = candidate;
++	goto out;
++
++	/* okay - we found a user record for this UID */
++ found:
++	atomic_inc(&user->usage);
++	spin_unlock(&key_user_lock);
++	if (candidate)
++		kfree(candidate);
++ out:
++	return user;
++
++} /* end key_user_lookup() */
++
++/*****************************************************************************/
++/*
++ * dispose of a user structure
++ */
++void key_user_put(struct key_user *user)
++{
++	if (atomic_dec_and_lock(&user->usage, &key_user_lock)) {
++		rb_erase(&user->node, &key_user_tree);
++		spin_unlock(&key_user_lock);
++
++		kfree(user);
++	}
++
++} /* end key_user_put() */
++
++/*****************************************************************************/
++/*
++ * insert a key with a fixed serial number
++ */
++static void __init __key_insert_serial(struct key *key)
++{
++	struct rb_node *parent, **p;
++	struct key *xkey;
++
++	parent = NULL;
++	p = &key_serial_tree.rb_node;
++
++	while (*p) {
++		parent = *p;
++		xkey = rb_entry(parent, struct key, serial_node);
++
++		if (key->serial < xkey->serial)
++			p = &(*p)->rb_left;
++		else if (key->serial > xkey->serial)
++			p = &(*p)->rb_right;
++		else
++			BUG();
++	}
++
++	/* we've found a suitable hole - arrange for this key to occupy it */
++	rb_link_node(&key->serial_node, parent, p);
++	rb_insert_color(&key->serial_node, &key_serial_tree);
++
++} /* end __key_insert_serial() */
++
++/*****************************************************************************/
++/*
++ * assign a key the next unique serial number
++ * - we work through all the serial numbers between 2 and 2^31-1 in turn and
++ *   then wrap
++ */
++static inline void key_alloc_serial(struct key *key)
++{
++	struct rb_node *parent, **p;
++	struct key *xkey;
++
++	spin_lock(&key_serial_lock);
++
++	/* propose a likely serial number and look for a hole for it in the
++	 * serial number tree */
++	key->serial = key_serial_next;
++	if (key->serial < 3)
++		key->serial = 3;
++	key_serial_next = key->serial + 1;
++
++	parent = NULL;
++	p = &key_serial_tree.rb_node;
++
++	while (*p) {
++		parent = *p;
++		xkey = rb_entry(parent, struct key, serial_node);
++
++		if (key->serial < xkey->serial)
++			p = &(*p)->rb_left;
++		else if (key->serial > xkey->serial)
++			p = &(*p)->rb_right;
++		else
++			goto serial_exists;
++	}
++	goto insert_here;
++
++	/* we found a key with the proposed serial number - walk the tree from
++	 * that point looking for the next unused serial number */
++ serial_exists:
++	for (;;) {
++		key->serial = key_serial_next;
++		if (key->serial < 2)
++			key->serial = 2;
++		key_serial_next = key->serial + 1;
++
++		if (!parent->rb_parent)
++			p = &key_serial_tree.rb_node;
++		else if (parent->rb_parent->rb_left == parent)
++			p = &parent->rb_parent->rb_left;
++		else
++			p = &parent->rb_parent->rb_right;
++
++		parent = rb_next(parent);
++		if (!parent)
++			break;
++
++		xkey = rb_entry(parent, struct key, serial_node);
++		if (key->serial < xkey->serial)
++			goto insert_here;
++	}
++
++	/* we've found a suitable hole - arrange for this key to occupy it */
++ insert_here:
++	rb_link_node(&key->serial_node, parent, p);
++	rb_insert_color(&key->serial_node, &key_serial_tree);
++
++	spin_unlock(&key_serial_lock);
++
++} /* end key_alloc_serial() */
++
++/*****************************************************************************/
++/*
++ * allocate a key of the specified type
++ * - update the user's quota to reflect the existence of the key
++ * - called from a key-type operation with key_types_sem read-locked by either
++ *   key_create_or_update() or by key_duplicate(); this prevents unregistration
++ *   of the key type
++ * - upon return the key is as yet uninstantiated; the caller needs to either
++ *   instantiate the key or discard it before returning
++ */
++struct key *key_alloc(struct key_type *type, const char *desc,
++		      uid_t uid, gid_t gid, key_perm_t perm,
++		      int not_in_quota)
++{
++	struct key_user *user = NULL;
++	struct key *key;
++	size_t desclen, quotalen;
++
++	key = ERR_PTR(-EINVAL);
++	if (!desc || !*desc)
++		goto error;
++
++	desclen = strlen(desc) + 1;
++	quotalen = desclen + type->def_datalen;
++
++	/* get hold of the key tracking for this user */
++	user = key_user_lookup(uid);
++	if (!user)
++		goto no_memory_1;
++
++	/* check that the user's quota permits allocation of another key and
++	 * its description */
++	if (!not_in_quota) {
++		spin_lock(&user->lock);
++		if (user->qnkeys + 1 >= KEYQUOTA_MAX_KEYS &&
++		    user->qnbytes + quotalen >= KEYQUOTA_MAX_BYTES
++		    )
++			goto no_quota;
++
++		user->qnkeys++;
++		user->qnbytes += quotalen;
++		spin_unlock(&user->lock);
++	}
++
++	/* allocate and initialise the key and its description */
++	key = kmem_cache_alloc(key_jar, SLAB_KERNEL);
++	if (!key)
++		goto no_memory_2;
++
++	if (desc) {
++		key->description = kmalloc(desclen, GFP_KERNEL);
++		if (!key->description)
++			goto no_memory_3;
++
++		memcpy(key->description, desc, desclen);
++	}
++
++	atomic_set(&key->usage, 1);
++	rwlock_init(&key->lock);
++	init_rwsem(&key->sem);
++	key->type = type;
++	key->user = user;
++	key->quotalen = quotalen;
++	key->datalen = type->def_datalen;
++	key->uid = uid;
++	key->gid = gid;
++	key->perm = perm;
++	key->flags = 0;
++	key->expiry = 0;
++	key->payload.data = NULL;
++
++	if (!not_in_quota)
++		key->flags |= KEY_FLAG_IN_QUOTA;
++
++	memset(&key->type_data, 0, sizeof(key->type_data));
++
++#ifdef KEY_DEBUGGING
++	key->magic = KEY_DEBUG_MAGIC;
++#endif
++
++	/* publish the key by giving it a serial number */
++	atomic_inc(&user->nkeys);
++	key_alloc_serial(key);
++
++ error:
++	return key;
++
++ no_memory_3:
++	kmem_cache_free(key_jar, key);
++ no_memory_2:
++	if (!not_in_quota) {
++		spin_lock(&user->lock);
++		user->qnkeys--;
++		user->qnbytes -= quotalen;
++		spin_unlock(&user->lock);
++	}
++	key_user_put(user);
++ no_memory_1:
++	key = ERR_PTR(-ENOMEM);
++	goto error;
++
++ no_quota:
++	spin_unlock(&user->lock);
++	key_user_put(user);
++	key = ERR_PTR(-EDQUOT);
++	goto error;
++
++} /* end key_alloc() */
++
++EXPORT_SYMBOL(key_alloc);
++
++/*****************************************************************************/
++/*
++ * reserve an amount of quota for the key's payload
++ */
++int key_payload_reserve(struct key *key, size_t datalen)
++{
++	int delta = (int) datalen - key->datalen;
++	int ret = 0;
++
++	key_check(key);
++
++	/* contemplate the quota adjustment */
++	if (delta != 0 && key->flags & KEY_FLAG_IN_QUOTA) {
++		spin_lock(&key->user->lock);
++
++		if (delta > 0 &&
++		    key->user->qnbytes + delta > KEYQUOTA_MAX_BYTES
++		    ) {
++			ret = -EDQUOT;
++		}
++		else {
++			key->user->qnbytes += delta;
++			key->quotalen += delta;
++		}
++		spin_unlock(&key->user->lock);
++	}
++
++	/* change the recorded data length if that didn't generate an error */
++	if (ret == 0)
++		key->datalen = datalen;
++
++	return ret;
++
++} /* end key_payload_reserve() */
++
++EXPORT_SYMBOL(key_payload_reserve);
++
++/*****************************************************************************/
++/*
++ * instantiate a key and link it into the target keyring atomically
++ * - called with the target keyring's semaphore writelocked
++ */
++static int __key_instantiate_and_link(struct key *key,
++				      const void *data,
++				      size_t datalen,
++				      struct key *keyring)
++{
++	int ret, awaken;
++
++	key_check(key);
++	key_check(keyring);
++
++	awaken = 0;
++	ret = -EBUSY;
++
++	down_write(&key_construction_sem);
++
++	/* can't instantiate twice */
++	if (!(key->flags & KEY_FLAG_INSTANTIATED)) {
++		/* instantiate the key */
++		ret = key->type->instantiate(key, data, datalen);
++
++		if (ret == 0) {
++			/* mark the key as being instantiated */
++			write_lock(&key->lock);
++
++			atomic_inc(&key->user->nikeys);
++			key->flags |= KEY_FLAG_INSTANTIATED;
++
++			if (key->flags & KEY_FLAG_USER_CONSTRUCT) {
++				key->flags &= ~KEY_FLAG_USER_CONSTRUCT;
++				awaken = 1;
++			}
++
++			write_unlock(&key->lock);
++
++			/* and link it into the destination keyring */
++			if (keyring)
++				ret = __key_link(keyring, key);
++		}
++	}
++
++	up_write(&key_construction_sem);
++
++	/* wake up anyone waiting for a key to be constructed */
++	if (awaken)
++		wake_up_all(&request_key_conswq);
++
++	return ret;
++
++} /* end __key_instantiate_and_link() */
++
++/*****************************************************************************/
++/*
++ * instantiate a key and link it into the target keyring atomically
++ */
++int key_instantiate_and_link(struct key *key,
++			     const void *data,
++			     size_t datalen,
++			     struct key *keyring)
++{
++	int ret;
++
++	if (keyring)
++		down_write(&keyring->sem);
++
++	ret = __key_instantiate_and_link(key, data, datalen, keyring);
++
++	if (keyring)
++		up_write(&keyring->sem);
++
++	return ret;
++} /* end key_instantiate_and_link() */
++
++EXPORT_SYMBOL(key_instantiate_and_link);
++
++/*****************************************************************************/
++/*
++ * negatively instantiate a key and link it into the target keyring atomically
++ */
++int key_negate_and_link(struct key *key,
++			unsigned timeout,
++			struct key *keyring)
++{
++	struct timespec now;
++	int ret, awaken;
++
++	key_check(key);
++	key_check(keyring);
++
++	awaken = 0;
++	ret = -EBUSY;
++
++	if (keyring)
++		down_write(&keyring->sem);
++
++	down_write(&key_construction_sem);
++
++	/* can't instantiate twice */
++	if (!(key->flags & KEY_FLAG_INSTANTIATED)) {
++		/* mark the key as being negatively instantiated */
++		write_lock(&key->lock);
++
++		atomic_inc(&key->user->nikeys);
++		key->flags |= KEY_FLAG_INSTANTIATED | KEY_FLAG_NEGATIVE;
++		now = current_kernel_time();
++		key->expiry = now.tv_sec + timeout;
++
++		if (key->flags & KEY_FLAG_USER_CONSTRUCT) {
++			key->flags &= ~KEY_FLAG_USER_CONSTRUCT;
++			awaken = 1;
++		}
++
++		write_unlock(&key->lock);
++		ret = 0;
++
++		/* and link it into the destination keyring */
++		if (keyring)
++			ret = __key_link(keyring, key);
++	}
++
++	up_write(&key_construction_sem);
++
++	if (keyring)
++		up_write(&keyring->sem);
++
++	/* wake up anyone waiting for a key to be constructed */
++	if (awaken)
++		wake_up_all(&request_key_conswq);
++
++	return ret;
++
++} /* end key_negate_and_link() */
++
++EXPORT_SYMBOL(key_negate_and_link);
++
++/*****************************************************************************/
++/*
++ * do cleaning up in process context so that we don't have to disable
++ * interrupts all over the place
++ */
++static void key_cleanup(void *data)
++{
++	struct rb_node *_n;
++	struct key *key;
++
++ go_again:
++	/* look for a dead key in the tree */
++	spin_lock(&key_serial_lock);
++
++	for (_n = rb_first(&key_serial_tree); _n; _n = rb_next(_n)) {
++		key = rb_entry(_n, struct key, serial_node);
++
++		if (atomic_read(&key->usage) == 0)
++			goto found_dead_key;
++	}
++
++	spin_unlock(&key_serial_lock);
++	return;
++
++ found_dead_key:
++	/* we found a dead key - once we've removed it from the tree, we can
++	 * drop the lock */
++	rb_erase(&key->serial_node, &key_serial_tree);
++	spin_unlock(&key_serial_lock);
++
++	/* deal with the user's key tracking and quota */
++	if (key->flags & KEY_FLAG_IN_QUOTA) {
++		spin_lock(&key->user->lock);
++		key->user->qnkeys--;
++		key->user->qnbytes -= key->quotalen;
++		spin_unlock(&key->user->lock);
++	}
++
++	atomic_dec(&key->user->nkeys);
++	if (key->flags & KEY_FLAG_INSTANTIATED)
++		atomic_dec(&key->user->nikeys);
++
++	key_user_put(key->user);
++
++	/* now throw away the key memory */
++	if (key->type->destroy)
++		key->type->destroy(key);
++
++	kfree(key->description);
++
++#ifdef KEY_DEBUGGING
++	key->magic = KEY_DEBUG_MAGIC_X;
++#endif
++	kmem_cache_free(key_jar, key);
++
++	/* there may, of course, be more than one key to destroy */
++	goto go_again;
++
++} /* end key_cleanup() */
++
++/*****************************************************************************/
++/*
++ * dispose of a reference to a key
++ * - when all the references are gone, we schedule the cleanup task to come and
++ *   pull it out of the tree in definite process context
++ */
++void key_put(struct key *key)
++{
++	if (key) {
++		key_check(key);
++
++		if (atomic_dec_and_test(&key->usage))
++			schedule_work(&key_cleanup_task);
++	}
++
++} /* end key_put() */
++
++EXPORT_SYMBOL(key_put);
++
++/*****************************************************************************/
++/*
++ * find a key by its serial number
++ */
++struct key *key_lookup(key_serial_t id)
++{
++	struct rb_node *n;
++	struct key *key;
++
++	spin_lock(&key_serial_lock);
++
++	/* search the tree for the specified key */
++	n = key_serial_tree.rb_node;
++	while (n) {
++		key = rb_entry(n, struct key, serial_node);
++
++		if (id < key->serial)
++			n = n->rb_left;
++		else if (id > key->serial)
++			n = n->rb_right;
++		else
++			goto found;
++	}
++
++	spin_unlock(&key_serial_lock);
++
++ not_found:
++	key = ERR_PTR(-ENOENT);
++	goto error;
++
++ found:
++	/* pretent doesn't exist if it's dead */
++	if (atomic_read(&key->usage) == 0 ||
++	    (key->flags & KEY_FLAG_DEAD) ||
++	    key->type == &key_type_dead)
++		goto not_found;
++
++	/* this races with key_put(), but that doesn't matter since key_put()
++	 * doesn't actually change the key
++	 */
++	atomic_inc(&key->usage);
++
++	spin_unlock(&key_serial_lock);
++ error:
++	return key;
++
++} /* end key_lookup() */
++
++/*****************************************************************************/
++/*
++ * find and lock the specified key type against removal
++ * - we return with the sem readlocked
++ */
++struct key_type *key_type_lookup(const char *type)
++{
++	struct key_type *ktype;
++
++	down_read(&key_types_sem);
++
++	/* look up the key type to see if it's one of the registered kernel
++	 * types */
++	list_for_each_entry(ktype, &key_types_list, link) {
++		if (strcmp(ktype->name, type) == 0)
++			goto found_kernel_type;
++	}
++
++	up_read(&key_types_sem);
++	ktype = ERR_PTR(-ENOENT);
++
++ found_kernel_type:
++	return ktype;
++
++} /* end key_type_lookup() */
++
++/*****************************************************************************/
++/*
++ * unlock a key type
++ */
++void key_type_put(struct key_type *ktype)
++{
++	up_read(&key_types_sem);
++
++} /* end key_type_put() */
++
++/*****************************************************************************/
++/*
++ * attempt to update an existing key
++ * - the key has an incremented refcount
++ * - we need to put the key if we get an error
++ */
++static inline struct key *__key_update(struct key *key, const void *payload,
++				       size_t plen)
++{
++	int ret;
++
++	/* need write permission on the key to update it */
++	ret = -EACCES;
++	if (!key_permission(key, KEY_WRITE))
++		goto error;
++
++	ret = -EEXIST;
++	if (!key->type->update)
++		goto error;
++
++	down_write(&key->sem);
++
++	ret = key->type->update(key, payload, plen);
++
++	if (ret == 0) {
++		/* updating a negative key instantiates it */
++		write_lock(&key->lock);
++		key->flags &= ~KEY_FLAG_NEGATIVE;
++		write_unlock(&key->lock);
++	}
++
++	up_write(&key->sem);
++
++	if (ret < 0)
++		goto error;
++ out:
++	return key;
++
++ error:
++	key_put(key);
++	key = ERR_PTR(ret);
++	goto out;
++
++} /* end __key_update() */
++
++/*****************************************************************************/
++/*
++ * search the specified keyring for a key of the same description; if one is
++ * found, update it, otherwise add a new one
++ */
++struct key *key_create_or_update(struct key *keyring,
++				 const char *type,
++				 const char *description,
++				 const void *payload,
++				 size_t plen,
++				 int not_in_quota)
++{
++	struct key_type *ktype;
++	struct key *key = NULL;
++	key_perm_t perm;
++	int ret;
++
++	key_check(keyring);
++
++	/* look up the key type to see if it's one of the registered kernel
++	 * types */
++	ktype = key_type_lookup(type);
++	if (IS_ERR(ktype)) {
++		key = ERR_PTR(PTR_ERR(ktype));
++		goto error;
++	}
++
++	ret = -EINVAL;
++	if (!ktype->match || !ktype->instantiate)
++		goto error_2;
++
++	/* search for an existing key of the same type and description in the
++	 * destination keyring
++	 */
++	down_write(&keyring->sem);
++
++	key = __keyring_search_one(keyring, ktype, description, 0);
++	if (!IS_ERR(key))
++		goto found_matching_key;
++
++	/* if we're going to allocate a new key, we're going to have to modify
++	 * the keyring */
++	ret = -EACCES;
++	if (!key_permission(keyring, KEY_WRITE))
++		goto error_3;
++
++	/* decide on the permissions we want */
++	perm = KEY_USR_VIEW | KEY_USR_SEARCH | KEY_USR_LINK;
++
++	if (ktype->read)
++		perm |= KEY_USR_READ;
++
++	if (ktype == &key_type_keyring || ktype->update)
++		perm |= KEY_USR_WRITE;
++
++	/* allocate a new key */
++	key = key_alloc(ktype, description, current->fsuid, current->fsgid,
++			perm, not_in_quota);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++		goto error_3;
++	}
++
++	/* instantiate it and link it into the target keyring */
++	ret = __key_instantiate_and_link(key, payload, plen, keyring);
++	if (ret < 0) {
++		key_put(key);
++		key = ERR_PTR(ret);
++	}
++
++ error_3:
++	up_write(&keyring->sem);
++ error_2:
++	key_type_put(ktype);
++ error:
++	return key;
++
++ found_matching_key:
++	/* we found a matching key, so we're going to try to update it
++	 * - we can drop the locks first as we have the key pinned
++	 */
++	up_write(&keyring->sem);
++	key_type_put(ktype);
++
++	key = __key_update(key, payload, plen);
++	goto error;
++
++} /* end key_create_or_update() */
++
++EXPORT_SYMBOL(key_create_or_update);
++
++/*****************************************************************************/
++/*
++ * update a key
++ */
++int key_update(struct key *key, const void *payload, size_t plen)
++{
++	int ret;
++
++	key_check(key);
++
++	/* the key must be writable */
++	ret = -EACCES;
++	if (!key_permission(key, KEY_WRITE))
++		goto error;
++
++	/* attempt to update it if supported */
++	ret = -EOPNOTSUPP;
++	if (key->type->update) {
++		down_write(&key->sem);
++		ret = key->type->update(key, payload, plen);
++
++		if (ret == 0) {
++			/* updating a negative key instantiates it */
++			write_lock(&key->lock);
++			key->flags &= ~KEY_FLAG_NEGATIVE;
++			write_unlock(&key->lock);
++		}
++
++		up_write(&key->sem);
++	}
++
++ error:
++	return ret;
++
++} /* end key_update() */
++
++EXPORT_SYMBOL(key_update);
++
++/*****************************************************************************/
++/*
++ * duplicate a key, potentially with a revised description
++ * - must be supported by the keytype (keyrings for instance can be duplicated)
++ */
++struct key *key_duplicate(struct key *source, const char *desc)
++{
++	struct key *key;
++	int ret;
++
++	key_check(source);
++
++	if (!desc)
++		desc = source->description;
++
++	down_read(&key_types_sem);
++
++	ret = -EINVAL;
++	if (!source->type->duplicate)
++		goto error;
++
++	/* allocate and instantiate a key */
++	key = key_alloc(source->type, desc, current->fsuid, current->fsgid,
++			source->perm, 0);
++	if (IS_ERR(key))
++		goto error_k;
++
++	down_read(&source->sem);
++	ret = key->type->duplicate(key, source);
++	up_read(&source->sem);
++	if (ret < 0)
++		goto error2;
++
++	atomic_inc(&key->user->nikeys);
++
++	write_lock(&key->lock);
++	key->flags |= KEY_FLAG_INSTANTIATED;
++	write_unlock(&key->lock);
++
++ error_k:
++	up_read(&key_types_sem);
++ out:
++	return key;
++
++ error2:
++	key_put(key);
++ error:
++	up_read(&key_types_sem);
++	key = ERR_PTR(ret);
++	goto out;
++
++} /* end key_duplicate() */
++
++/*****************************************************************************/
++/*
++ * revoke a key
++ */
++void key_revoke(struct key *key)
++{
++	key_check(key);
++
++	/* make sure no one's trying to change or use the key when we mark
++	 * it */
++	down_write(&key->sem);
++	write_lock(&key->lock);
++	key->flags |= KEY_FLAG_REVOKED;
++	write_unlock(&key->lock);
++	up_write(&key->sem);
++
++} /* end key_revoke() */
++
++EXPORT_SYMBOL(key_revoke);
++
++/*****************************************************************************/
++/*
++ * register a type of key
++ */
++int register_key_type(struct key_type *ktype)
++{
++	struct key_type *p;
++	int ret;
++
++	ret = -EEXIST;
++	down_write(&key_types_sem);
++
++	/* disallow key types with the same name */
++	list_for_each_entry(p, &key_types_list, link) {
++		if (strcmp(p->name, ktype->name) == 0)
++			goto out;
++	}
++
++	/* store the type */
++	list_add(&ktype->link, &key_types_list);
++	ret = 0;
++
++ out:
++	up_write(&key_types_sem);
++	return ret;
++
++} /* end register_key_type() */
++
++EXPORT_SYMBOL(register_key_type);
++
++/*****************************************************************************/
++/*
++ * unregister a type of key
++ */
++void unregister_key_type(struct key_type *ktype)
++{
++	struct rb_node *_n;
++	struct key *key;
++
++	down_write(&key_types_sem);
++
++	/* withdraw the key type */
++	list_del_init(&ktype->link);
++
++	/* need to withdraw all keys of this type */
++	spin_lock(&key_serial_lock);
++
++	for (_n = rb_first(&key_serial_tree); _n; _n = rb_next(_n)) {
++		key = rb_entry(_n, struct key, serial_node);
++
++		if (key->type != ktype)
++			continue;
++
++		write_lock(&key->lock);
++		key->type = &key_type_dead;
++		write_unlock(&key->lock);
++
++		/* there shouldn't be anyone looking at the description or
++		 * payload now */
++		if (ktype->destroy)
++			ktype->destroy(key);
++		memset(&key->payload, 0xbd, sizeof(key->payload));
++	}
++
++	spin_unlock(&key_serial_lock);
++	up_write(&key_types_sem);
++
++} /* end unregister_key_type() */
++
++EXPORT_SYMBOL(unregister_key_type);
++
++/*****************************************************************************/
++/*
++ * initialise the key management stuff
++ */
++static int __init key_init(void)
++{
++	/* allocate a slab in which we can store keys */
++	key_jar = kmem_cache_create("key_jar", sizeof(struct key),
++				    0, SLAB_HWCACHE_ALIGN, NULL, NULL);
++	if (!key_jar)
++		panic("Cannot create key jar\n");
++
++	/* add the special key types */
++	list_add_tail(&key_type_keyring.link, &key_types_list);
++	list_add_tail(&key_type_dead.link, &key_types_list);
++	list_add_tail(&key_type_user.link, &key_types_list);
++
++	/* record the root user tracking */
++	rb_link_node(&root_key_user.node,
++		     NULL,
++		     &key_user_tree.rb_node);
++
++	rb_insert_color(&root_key_user.node,
++			&key_user_tree);
++
++	/* record root's user standard keyrings */
++	key_check(&root_user_keyring);
++	key_check(&root_session_keyring);
++
++	__key_insert_serial(&root_user_keyring);
++	__key_insert_serial(&root_session_keyring);
++
++	keyring_publish_name(&root_user_keyring);
++	keyring_publish_name(&root_session_keyring);
++
++	/* link the two root keyrings together */
++	key_link(&root_session_keyring, &root_user_keyring);
++
++	return 0;
++
++} /* end key_init() */
++
++subsys_initcall(key_init);
+diff -puN /dev/null security/keys/keyctl.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/security/keys/keyctl.c	2004-08-30 22:21:39.606033464 -0700
+@@ -0,0 +1,872 @@
++/* keyctl.c: userspace keyctl operations
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/prctl.h>
++#include <linux/fs.h>
++#include <linux/err.h>
++#include <asm/uaccess.h>
++#include "internal.h"
++
++/*****************************************************************************/
++/*
++ * extract the description of a new key from userspace and either add it as a
++ * new key to the specified keyring or update a matching key in that keyring
++ * - the keyring must be writable
++ * - returns the new key's serial number
++ * - implements keyctl(KEYCTL_NEW)
++ */
++static long user_add_key(key_serial_t ringid,
++			 const char __user *_type,
++			 const char __user *_description,
++			 const void __user *_payload)
++{
++	struct key *keyring, *key;
++	size_t plen;
++	char type[32], *description;
++	void *payload;
++	long dlen, ret;
++
++	/* draw all the data into kernel space */
++	ret = strncpy_from_user(type, _type, sizeof(type) - 1);
++	if (ret < 0)
++		goto error;
++	type[31] = '\0';
++
++	ret = -EFAULT;
++	dlen = strnlen_user(_description, PAGE_SIZE - 1);
++	if (dlen <= 0)
++		goto error;
++
++	ret = -EINVAL;
++	if (dlen > PAGE_SIZE - 1)
++		goto error;
++
++	ret = -ENOMEM;
++	description = kmalloc(dlen + 1, GFP_KERNEL);
++	if (!description)
++		goto error;
++
++	ret = -EFAULT;
++	if (copy_from_user(description, _description, dlen + 1) != 0)
++		goto error2;
++
++	/* pull the payload in if one was supplied */
++	payload = NULL;
++	plen = 0;
++
++	if (_payload) {
++		ret = get_user(plen, (uint16_t *) _payload);
++		if (ret < 0)
++			goto error2;
++		_payload += 2;
++
++		ret = -EINVAL;
++		if (plen < 0 || plen > PAGE_SIZE)
++			goto error2;
++
++		ret = -ENOMEM;
++		payload = (void *) get_zeroed_page(GFP_KERNEL);
++		if (!payload)
++			goto error2;
++
++		ret = -EFAULT;
++		if (copy_from_user(payload, _payload, plen) != 0)
++			goto error3;
++	}
++
++	/* find the target keyring (which must be writable) */
++	keyring = lookup_user_key(ringid, 1, 0, KEY_WRITE);
++	if (IS_ERR(keyring)) {
++		ret = PTR_ERR(keyring);
++		goto error3;
++	}
++
++	/* create or update the requested key and add it to the target
++	 * keyring */
++	key = key_create_or_update(keyring, type, description,
++				   payload, plen, 0);
++	if (!IS_ERR(key)) {
++		ret = key->serial;
++		key_put(key);
++	}
++	else {
++		ret = PTR_ERR(key);
++	}
++
++	key_put(keyring);
++ error3:
++	free_page((unsigned long) payload);
++ error2:
++	kfree(description);
++ error:
++	return ret;
++
++} /* end user_add_key() */
++
++/*****************************************************************************/
++/*
++ * update a key's data payload
++ * - the key must be writable
++ * - implements keyctl(KEYCTL_UPDATE)
++ */
++static long user_update_key(key_serial_t id, const void __user *_payload)
++{
++	struct key *key;
++	size_t plen;
++	void *payload;
++	long ret;
++
++	/* pull the payload in if one was supplied */
++	payload = NULL;
++	plen = 0;
++
++	if (_payload) {
++		ret = get_user(plen, (uint16_t *) _payload);
++		if (ret < 0)
++			goto error;
++		_payload += 2;
++
++		ret = -EINVAL;
++		if (plen < 0 || plen > PAGE_SIZE)
++			goto error;
++
++		ret = -ENOMEM;
++		payload = (void *) get_zeroed_page(GFP_KERNEL);
++		if (!payload)
++			goto error;
++
++		ret = -EFAULT;
++		if (copy_from_user(payload, _payload, plen) != 0)
++			goto error2;
++	}
++
++	/* find the target key (which must be writable) */
++	key = lookup_user_key(id, 0, 0, KEY_WRITE);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++		goto error2;
++	}
++
++	/* update the key */
++	ret = key_update(key, payload, plen);
++
++	key_put(key);
++ error2:
++	free_page((unsigned long) payload);
++ error:
++	return ret;
++
++} /* end user_update_key() */
++
++/*****************************************************************************/
++/*
++ * revoke a key
++ * - the key must be writable
++ * - implements keyctl(KEYCTL_REVOKE)
++ */
++static long user_revoke_key(key_serial_t id)
++{
++	struct key *key;
++	long ret;
++
++	key = lookup_user_key(id, 0, 0, KEY_WRITE);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++		goto error;
++	}
++
++	key_revoke(key);
++	ret = 0;
++
++	key_put(key);
++ error:
++	return 0;
++
++} /* end user_revoke_key() */
++
++/*****************************************************************************/
++/*
++ * clear the specified process keyring
++ * - the keyring must be writable
++ * - implements keyctl(KEYCTL_CLEAR)
++ */
++static long user_keyring_clear(key_serial_t ringid)
++{
++	struct key *keyring;
++	long ret;
++
++	keyring = lookup_user_key(ringid, 0, 0, KEY_WRITE);
++	if (IS_ERR(keyring)) {
++		ret = PTR_ERR(keyring);
++		goto error;
++	}
++
++	ret = keyring_clear(keyring);
++
++	key_put(keyring);
++ error:
++	return ret;
++
++} /* end user_keyring_clear() */
++
++/*****************************************************************************/
++/*
++ * link a key into a keyring
++ * - the keyring must be writable
++ * - the key must be linkable
++ * - implements keyctl(KEYCTL_LINK)
++ */
++static long user_keyring_link(key_serial_t ringid, key_serial_t id)
++{
++	struct key *keyring, *key;
++	long ret;
++
++	keyring = lookup_user_key(ringid, 1, 0, KEY_WRITE);
++	if (IS_ERR(keyring)) {
++		ret = PTR_ERR(keyring);
++		goto error;
++	}
++
++	key = lookup_user_key(id, 1, 0, KEY_LINK);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++		goto error2;
++	}
++
++	ret = key_link(keyring, key);
++
++	key_put(key);
++ error2:
++	key_put(keyring);
++ error:
++	return ret;
++
++} /* end user_keyring_link() */
++
++/*****************************************************************************/
++/*
++ * unlink the first attachment of a key from a keyring
++ * - the keyring must be writable
++ * - we don't need any permissions on the key
++ * - implements keyctl(KEYCTL_UNLINK)
++ */
++static long user_keyring_unlink(key_serial_t ringid, key_serial_t id)
++{
++	struct key *keyring, *key;
++	long ret;
++
++	keyring = lookup_user_key(ringid, 1, 0, KEY_WRITE);
++	if (IS_ERR(keyring)) {
++		ret = PTR_ERR(keyring);
++		goto error;
++	}
++
++	key = lookup_user_key(id, 0, 0, 0);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++		goto error2;
++	}
++
++	ret = key_unlink(keyring, key);
++
++	key_put(key);
++ error2:
++	key_put(keyring);
++ error:
++	return ret;
++
++} /* end user_keyring_unlink() */
++
++/*****************************************************************************/
++/*
++ * describe a user key
++ * - the key must have view permission
++ * - if there's a buffer, we place up to buflen bytes of data into it
++ * - unless there's an error, we return the amount of description available,
++ *   irrespective of how much we may have copied
++ * - the description is formatted thus:
++ *	type;uid;gid;perm;description<NUL>
++ * - implements keyctl(KEYCTL_DESCRIBE)
++ */
++static long user_describe_key(key_serial_t keyid,
++			      char __user *buffer,
++			      size_t buflen)
++{
++	struct key *key;
++	char *tmpbuf;
++	long ret;
++
++	key = lookup_user_key(keyid, 0, 1, KEY_VIEW);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++		goto error;
++	}
++
++	/* calculate how much description we're going to return */
++	ret = -ENOMEM;
++	tmpbuf = kmalloc(PAGE_SIZE, GFP_KERNEL);
++	if (!tmpbuf)
++		goto error2;
++
++	ret = snprintf(tmpbuf, PAGE_SIZE - 1,
++		       "%s;%d;%d;%06x;%s",
++		       key->type->name,
++		       key->uid,
++		       key->gid,
++		       key->perm,
++		       key->description ? key->description :""
++		       );
++
++	/* include a NUL char at the end of the data */
++	if (ret > PAGE_SIZE - 1)
++		ret = PAGE_SIZE - 1;
++	tmpbuf[ret] = 0;
++	ret++;
++
++	/* consider returning the data */
++	if (buffer && buflen > 0) {
++		if (buflen > ret)
++			buflen = ret;
++
++		if (copy_to_user(buffer, tmpbuf, buflen) != 0)
++			ret = -EFAULT;
++	}
++
++	kfree(tmpbuf);
++ error2:
++	key_put(key);
++ error:
++	return ret;
++
++} /* end user_describe_key() */
++
++/*****************************************************************************/
++/*
++ * search the specified keyring for a matching key
++ * - the start keyring must be searchable
++ * - nested keyrings may also be searched if they are searchable
++ * - only keys with search permission may be found
++ * - if a key is found, it will be attached to the destination keyring if
++ *   there's one specified
++ * - implements keyctl(KEYCTL_SEARCH)
++ */
++static long user_keyring_search(key_serial_t ringid,
++				const char __user *_type,
++				const char __user *_description,
++				key_serial_t destringid)
++{
++	struct key_type *ktype;
++	struct key *keyring, *key, *dest;
++	char type[32], *description;
++	long dlen, ret;
++
++	/* pull the type and description into kernel space */
++	ret = strncpy_from_user(type, _type, sizeof(type) - 1);
++	if (ret < 0)
++		goto error;
++	type[31] = '\0';
++
++	ret = -EFAULT;
++	dlen = strnlen_user(_description, PAGE_SIZE - 1);
++	if (dlen <= 0)
++		goto error;
++
++	ret = -EINVAL;
++	if (dlen > PAGE_SIZE - 1)
++		goto error;
++
++	ret = -ENOMEM;
++	description = kmalloc(dlen + 1, GFP_KERNEL);
++	if (!description)
++		goto error;
++
++	ret = -EFAULT;
++	if (copy_from_user(description, _description, dlen + 1) != 0)
++		goto error2;
++
++	/* get the keyring at which to begin the search */
++	keyring = lookup_user_key(ringid, 0, 0, KEY_SEARCH);
++	if (IS_ERR(keyring))
++		goto error2;
++
++	/* get the destination keyring if specified */
++	dest = NULL;
++	if (destringid) {
++		dest = lookup_user_key(destringid, 0, 0, KEY_WRITE);
++		if (IS_ERR(dest))
++			goto error3;
++	}
++
++	/* find the key type */
++	ktype = key_type_lookup(type);
++	if (IS_ERR(ktype)) {
++		ret = PTR_ERR(ktype);
++		goto error4;
++	}
++
++	/* do the search */
++	key = keyring_search(keyring, ktype, description);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++
++		/* treat lack or presence of a negative key the same */
++		if (ret == -EAGAIN)
++			ret = -ENOENT;
++		goto error5;
++	}
++
++	/* link the resulting key to the destination keyring if we can */
++	if (dest) {
++		ret = -EACCES;
++		if (!key_permission(key, KEY_LINK))
++			goto error6;
++
++		ret = key_link(dest, key);
++		if (ret < 0)
++			goto error6;
++	}
++
++	ret = key->serial;
++
++ error6:
++	key_put(key);
++ error5:
++	key_type_put(ktype);
++ error4:
++	key_put(dest);
++ error3:
++	key_put(keyring);
++ error2:
++	kfree(description);
++ error:
++	return ret;
++
++} /* end user_keyring_search() */
++
++/*****************************************************************************/
++/*
++ * read a user key's payload
++ * - the keyring must be readable
++ * - if there's a buffer, we place up to buflen bytes of data into it
++ * - unless there's an error, we return the amount of data in the key,
++ *   irrespective of how much we may have copied
++ * - implements keyctl(KEYCTL_READ)
++ */
++static long user_read_key(key_serial_t keyid,
++			  char __user *buffer,
++			  size_t buflen)
++{
++	struct key *key;
++	long ret;
++
++	key = lookup_user_key(keyid, 0, 0, KEY_READ);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++		goto error;
++	}
++
++	ret = -EOPNOTSUPP;
++	if (key->type->read) {
++		/* read the data with the semaphore held (since we
++		 * might sleep) */
++		down_read(&key->sem);
++		ret = key->type->read(key, buffer, buflen);
++		up_read(&key->sem);
++	}
++
++	key_put(key);
++ error:
++	return ret;
++
++} /* end user_read_key() */
++
++/*****************************************************************************/
++/*
++ * change the ownership of a key
++ * - the keyring owned by the changer
++ * - if the uid or gid is -1, then that parameter is not changed
++ * - implements keyctl(KEYCTL_CHOWN)
++ */
++static long user_chown_key(key_serial_t id, uid_t uid, gid_t gid)
++{
++	struct key *key;
++	long ret;
++
++	ret = 0;
++	if (uid == (uid_t) -1 && gid == (gid_t) -1)
++		goto error;
++
++	key = lookup_user_key(id, 1, 1, 0);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++		goto error;
++	}
++
++	/* make the changes with the locks held to prevent chown/chown races */
++	ret = -EACCES;
++	down_write(&key->sem);
++	write_lock(&key->lock);
++
++	if (!capable(CAP_SYS_ADMIN)) {
++		/* only the sysadmin can chown a key to some other UID */
++		if (uid != (uid_t) -1 && key->uid != uid)
++			goto no_access;
++
++		/* only the sysadmin can set the key's GID to a group other
++		 * than one of those that the current process subscribes to */
++		if (gid != (gid_t) -1 && gid != key->gid && !in_group_p(gid))
++			goto no_access;
++	}
++
++	/* change the UID (have to update the quotas) */
++	if (uid != (uid_t) -1 && uid != key->uid) {
++		/* don't support UID changing yet */
++		ret = -EOPNOTSUPP;
++		goto no_access;
++	}
++
++	/* change the GID */
++	if (gid != (gid_t) -1)
++		key->gid = gid;
++
++	ret = 0;
++
++ no_access:
++	write_unlock(&key->lock);
++	up_write(&key->sem);
++	key_put(key);
++ error:
++	return ret;
++
++} /* end user_chown_key() */
++
++/*****************************************************************************/
++/*
++ * change the permission mask on a key
++ * - the keyring owned by the changer
++ * - implements keyctl(KEYCTL_SETPERM)
++ */
++static long user_setperm_key(key_serial_t id, key_perm_t perm)
++{
++	struct key *key;
++	long ret;
++
++	ret = -EINVAL;
++	if (perm & ~(KEY_USR_ALL | KEY_GRP_ALL | KEY_OTH_ALL))
++		goto error;
++
++	key = lookup_user_key(id, 1, 1, 0);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++		goto error;
++	}
++
++	/* make the changes with the locks held to prevent chown/chmod
++	 * races */
++	ret = -EACCES;
++	down_write(&key->sem);
++	write_lock(&key->lock);
++
++	/* if we're not the sysadmin, we can only chmod a key that we
++	 * own */
++	if (!capable(CAP_SYS_ADMIN) && key->uid != current->fsuid)
++		goto no_access;
++
++	/* changing the permissions mask */
++	key->perm = perm;
++	ret = 0;
++
++ no_access:
++	write_unlock(&key->lock);
++	up_write(&key->sem);
++	key_put(key);
++ error:
++	return ret;
++
++} /* end user_serperm_key() */
++
++/*****************************************************************************/
++/*
++ * search the process keyrings for a matching key
++ * - nested keyrings may also be searched if they are searchable
++ * - if a key is found, it will be attached to the destination keyring if
++ *   there's one specified
++ * - implements keyctl(KEYCTL_REQUEST_KEY)
++ */
++static long user_request_key(const char __user *_type,
++			     const char __user *_description,
++			     key_serial_t destringid)
++{
++	struct key_type *ktype;
++	struct key *key, *dest;
++	char type[32], *description;
++	long dlen, ret;
++
++	/* pull the type and description into kernel space */
++	ret = strncpy_from_user(type, _type, sizeof(type) - 1);
++	if (ret < 0)
++		goto error;
++	type[31] = '\0';
++
++	ret = -EFAULT;
++	dlen = strnlen_user(_description, PAGE_SIZE - 1);
++	if (dlen <= 0)
++		goto error;
++
++	ret = -EINVAL;
++	if (dlen > PAGE_SIZE - 1)
++		goto error;
++
++	ret = -ENOMEM;
++	description = kmalloc(dlen + 1, GFP_KERNEL);
++	if (!description)
++		goto error;
++
++	ret = -EFAULT;
++	if (copy_from_user(description, _description, dlen + 1) != 0)
++		goto error2;
++
++	/* get the destination keyring if specified */
++	dest = NULL;
++	if (destringid) {
++		dest = lookup_user_key(destringid, 0, 0, KEY_WRITE);
++		if (IS_ERR(dest))
++			goto error2;
++	}
++
++	/* find the key type */
++	ktype = key_type_lookup(type);
++	if (IS_ERR(ktype)) {
++		ret = PTR_ERR(ktype);
++		goto error3;
++	}
++
++	/* do the search */
++	key = request_key(ktype, description, 1);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++		goto error4;
++	}
++
++	/* link the resulting key to the destination keyring */
++	if (dest) {
++		ret = key_link(dest, key);
++		if (ret < 0)
++			goto error5;
++	}
++
++	ret = key->serial;
++
++ error5:
++	key_put(key);
++ error4:
++	key_type_put(ktype);
++ error3:
++	key_put(dest);
++ error2:
++	kfree(description);
++ error:
++	return ret;
++
++} /* end user_request_key() */
++
++/*****************************************************************************/
++/*
++ * instantiate the key with the specified payload, and, if one is given, link
++ * the key into the keyring
++ */
++static long user_instantiate_key(key_serial_t id,
++				 const void __user *_payload,
++				 key_serial_t ringid)
++{
++	struct key *key, *keyring;
++	size_t plen;
++	void *payload;
++	long ret;
++
++	/* pull the payload in if one was supplied */
++	payload = NULL;
++	plen = 0;
++
++	if (_payload) {
++		ret = get_user(plen, (uint16_t *) _payload);
++		if (ret < 0)
++			goto error;
++		_payload += 2;
++
++		ret = -EINVAL;
++		if (plen < 0 || plen > PAGE_SIZE)
++			goto error;
++
++		ret = -ENOMEM;
++		payload = (void *) get_zeroed_page(GFP_KERNEL);
++		if (!payload)
++			goto error;
++
++		ret = -EFAULT;
++		if (copy_from_user(payload, _payload, plen) != 0)
++			goto error2;
++	}
++
++	/* find the target key (which must be writable) */
++	key = lookup_user_key(id, 0, 1, KEY_WRITE);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++		goto error2;
++	}
++
++	/* find the destination keyring if present (which must also be
++	 * writable) */
++	keyring = NULL;
++	if (ringid) {
++		keyring = lookup_user_key(ringid, 0, 0, KEY_WRITE);
++		if (IS_ERR(keyring)) {
++			ret = PTR_ERR(keyring);
++			goto error3;
++		}
++	}
++
++	/* instantiate the key and link it into a keyring */
++	ret = key_instantiate_and_link(key, payload, plen, keyring);
++
++	key_put(keyring);
++ error3:
++	key_put(key);
++ error2:
++	free_page((unsigned long) payload);
++ error:
++	return ret;
++
++} /* end user_instantiate_key() */
++
++/*****************************************************************************/
++/*
++ * negatively instantiate the key with the given timeout (in seconds), and, if
++ * one is given, link the key into the keyring
++ */
++static long user_negate_key(key_serial_t id,
++			    unsigned timeout,
++			    key_serial_t ringid)
++{
++	struct key *key, *keyring;
++	long ret;
++
++	/* find the target key (which must be writable) */
++	key = lookup_user_key(id, 0, 1, KEY_WRITE);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++		goto error;
++	}
++
++	/* find the destination keyring if present (which must also be
++	 * writable) */
++	keyring = NULL;
++	if (ringid) {
++		keyring = lookup_user_key(ringid, 0, 0, KEY_WRITE);
++		if (IS_ERR(keyring)) {
++			ret = PTR_ERR(keyring);
++			goto error2;
++		}
++	}
++
++	/* instantiate the key and link it into a keyring */
++	ret = key_negate_and_link(key, timeout, keyring);
++
++	key_put(keyring);
++ error2:
++	key_put(key);
++ error:
++	return ret;
++
++} /* end user_negate_key() */
++
++/*****************************************************************************/
++/*
++ * the key control system call
++ * - currently invoked through prctl()
++ */
++asmlinkage long sys_keyctl(int option, unsigned long arg2, unsigned long arg3,
++			   unsigned long arg4, unsigned long arg5)
++{
++	switch (option) {
++	case KEYCTL_NEW:
++		return user_add_key((key_serial_t) arg2,
++				    (const char __user *) arg3,
++				    (const char __user *) arg4,
++				    (const void __user *) arg5);
++
++	case KEYCTL_UPDATE:
++		return user_update_key((key_serial_t) arg2,
++				       (const void __user *) arg3);
++
++	case KEYCTL_REVOKE:
++		return user_revoke_key((key_serial_t) arg2);
++
++	case KEYCTL_DESCRIBE:
++		return user_describe_key((key_serial_t) arg2,
++					 (char __user *) arg3,
++					 (unsigned) arg4);
++
++	case KEYCTL_CLEAR:
++		return user_keyring_clear((key_serial_t) arg2);
++
++	case KEYCTL_LINK:
++		return user_keyring_link((key_serial_t) arg2,
++					 (key_serial_t) arg3);
++
++	case KEYCTL_UNLINK:
++		return user_keyring_unlink((key_serial_t) arg2,
++					   (key_serial_t) arg3);
++
++	case KEYCTL_SEARCH:
++		return user_keyring_search((key_serial_t) arg2,
++					   (const char __user *) arg3,
++					   (const char __user *) arg4,
++					   (key_serial_t) arg5);
++
++	case KEYCTL_READ:
++		return user_read_key((key_serial_t) arg2,
++				     (char __user *) arg3,
++				     (size_t) arg4);
++
++	case KEYCTL_CHOWN:
++		return user_chown_key((key_serial_t) arg2,
++				      (uid_t) arg3,
++				      (gid_t) arg4);
++
++	case KEYCTL_SETPERM:
++		return user_setperm_key((key_serial_t) arg2,
++					(key_perm_t) arg3);
++
++	case KEYCTL_REQUEST_KEY:
++		return user_request_key((const char __user *) arg2,
++					(const char __user *) arg3,
++					(key_serial_t) arg4);
++
++	case KEYCTL_INSTANTIATE:
++		return user_instantiate_key((key_serial_t) arg2,
++					    (const void __user *) arg3,
++					    (key_serial_t) arg4);
++
++	case KEYCTL_NEGATE:
++		return user_negate_key((key_serial_t) arg2,
++				       (unsigned) arg3,
++				       (key_serial_t) arg4);
++
++	default:
++		return -EINVAL;
++	}
++
++} /* end sys_keyctl() */
+diff -puN /dev/null security/keys/keyring.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/security/keys/keyring.c	2004-08-30 22:21:39.609033008 -0700
+@@ -0,0 +1,875 @@
++/* keyring.c: keyring handling
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/seq_file.h>
++#include <linux/err.h>
++#include <asm/uaccess.h>
++#include "internal.h"
++
++/*
++ * when plumbing the depths of the key tree, this sets a hard limit set on how
++ * deep we're willing to go
++ */
++#define KEYRING_SEARCH_MAX_DEPTH 6
++
++/*
++ * we keep all named keyrings in a hash to speed looking them up
++ */
++#define KEYRING_NAME_HASH_SIZE	(1 << 5)
++
++static struct list_head	keyring_name_hash[KEYRING_NAME_HASH_SIZE];
++static rwlock_t		keyring_name_lock = RW_LOCK_UNLOCKED;
++
++static inline unsigned keyring_hash(const char *desc)
++{
++	unsigned bucket = 0;
++
++	for (; *desc; desc++)
++		bucket += (unsigned char) *desc;
++
++	return bucket & (KEYRING_NAME_HASH_SIZE - 1);
++}
++
++/*
++ * the keyring type definition
++ */
++static int keyring_instantiate(struct key *keyring,
++			       const void *data, size_t datalen);
++static int keyring_duplicate(struct key *keyring, const struct key *source);
++static int keyring_match(const struct key *keyring, const void *criterion);
++static void keyring_destroy(struct key *keyring);
++static void keyring_describe(const struct key *keyring, struct seq_file *m);
++static long keyring_read(const struct key *keyring,
++			 char __user *buffer, size_t buflen);
++
++struct key_type key_type_keyring = {
++	.name		= "keyring",
++	.def_datalen	= sizeof(struct keyring_list),
++	.instantiate	= keyring_instantiate,
++	.duplicate	= keyring_duplicate,
++	.match		= keyring_match,
++	.destroy	= keyring_destroy,
++	.describe	= keyring_describe,
++	.read		= keyring_read,
++};
++
++/*
++ * semaphore to serialise link/link calls to prevent two link calls in parallel
++ * introducing a cycle
++ */
++DECLARE_RWSEM(keyring_serialise_link_sem);
++
++/*****************************************************************************/
++/*
++ * publish the name of a keyring so that it can be found by name (if it has
++ * one)
++ */
++void keyring_publish_name(struct key *keyring)
++{
++	int bucket;
++
++	if (keyring->description) {
++		bucket = keyring_hash(keyring->description);
++
++		write_lock(&keyring_name_lock);
++
++		if (!keyring_name_hash[bucket].next)
++			INIT_LIST_HEAD(&keyring_name_hash[bucket]);
++
++		list_add_tail(&keyring->type_data.link,
++			      &keyring_name_hash[bucket]);
++
++		write_unlock(&keyring_name_lock);
++	}
++
++} /* end keyring_publish_name() */
++
++/*****************************************************************************/
++/*
++ * initialise a keyring
++ * - we object if we were given any data
++ */
++static int keyring_instantiate(struct key *keyring,
++			       const void *data, size_t datalen)
++{
++	int ret;
++
++	ret = -EINVAL;
++	if (datalen == 0) {
++		/* make the keyring available by name if it has one */
++		keyring_publish_name(keyring);
++		ret = 0;
++	}
++
++	return ret;
++
++} /* end keyring_instantiate() */
++
++/*****************************************************************************/
++/*
++ * duplicate the list of subscribed keys from a source keyring into this one
++ */
++static int keyring_duplicate(struct key *keyring, const struct key *source)
++{
++	struct keyring_list *sklist, *klist;
++	unsigned max;
++	size_t size;
++	int loop, ret;
++
++	const unsigned limit =
++		(PAGE_SIZE - sizeof(*klist)) / sizeof(struct key);
++
++	ret = 0;
++	sklist = source->payload.subscriptions;
++
++	if (sklist && sklist->nkeys > 0) {
++		max = sklist->nkeys;
++		BUG_ON(max > limit);
++
++		max = (max + 3) & ~3;
++		if (max > limit)
++			max = limit;
++
++		ret = -ENOMEM;
++		size = sizeof(*klist) + sizeof(struct key) * max;
++		klist = kmalloc(size, GFP_KERNEL);
++		if (!klist)
++			goto error;
++
++		klist->maxkeys = max;
++		klist->nkeys = sklist->nkeys;
++		memcpy(klist->keys,
++		       sklist->keys,
++		       sklist->nkeys * sizeof(struct key));
++
++		for (loop = klist->nkeys - 1; loop >= 0; loop--)
++			atomic_inc(&klist->keys[loop]->usage);
++
++		keyring->payload.subscriptions = klist;
++		ret = 0;
++	}
++
++ error:
++	return ret;
++
++} /* end keyring_duplicate() */
++
++/*****************************************************************************/
++/*
++ * match keyrings on their name
++ */
++static int keyring_match(const struct key *keyring, const void *description)
++{
++	return keyring->description &&
++		strcmp(keyring->description, description) == 0;
++
++} /* end keyring_match() */
++
++/*****************************************************************************/
++/*
++ * dispose of the data dangling from the corpse of a keyring
++ */
++static void keyring_destroy(struct key *keyring)
++{
++	struct keyring_list *klist;
++	int loop;
++
++	if (keyring->description) {
++		write_lock(&keyring_name_lock);
++		list_del(&keyring->type_data.link);
++		write_unlock(&keyring_name_lock);
++	}
++
++	klist = keyring->payload.subscriptions;
++	if (klist) {
++		for (loop = klist->nkeys - 1; loop >= 0; loop--)
++			key_put(klist->keys[loop]);
++		kfree(klist);
++	}
++
++} /* end keyring_destroy() */
++
++/*****************************************************************************/
++/*
++ * describe the keyring
++ */
++static void keyring_describe(const struct key *keyring, struct seq_file *m)
++{
++	struct keyring_list *klist;
++
++	if (keyring->description) {
++		seq_puts(m, keyring->description);
++	}
++	else {
++		seq_puts(m, "[anon]");
++	}
++
++	klist = keyring->payload.subscriptions;
++	if (klist)
++		seq_printf(m, ": %u/%u", klist->nkeys, klist->maxkeys);
++	else
++		seq_puts(m, ": empty");
++
++} /* end keyring_describe() */
++
++/*****************************************************************************/
++/*
++ * read a list of key IDs from the keyring's contents
++ */
++static long keyring_read(const struct key *keyring,
++			 char __user *buffer, size_t buflen)
++{
++	struct keyring_list *klist;
++	struct key *key;
++	size_t qty, tmp;
++	int loop, ret;
++
++	ret = 0;
++	klist = keyring->payload.subscriptions;
++
++	if (klist) {
++		/* calculate how much data we could return */
++		qty = klist->nkeys * sizeof(key_serial_t);
++
++		if (buffer && buflen > 0) {
++			if (buflen > qty)
++				buflen = qty;
++
++			/* copy the IDs of the subscribed keys into the
++			 * buffer */
++			ret = -EFAULT;
++
++			for (loop = 0; loop < klist->nkeys; loop++) {
++				key = klist->keys[loop];
++
++				tmp = sizeof(key_serial_t);
++				if (tmp > buflen)
++					tmp = buflen;
++
++				if (copy_to_user(buffer,
++						 &key->serial,
++						 tmp) != 0)
++					goto error;
++
++				buflen -= tmp;
++				if (buflen == 0)
++					break;
++				buffer += tmp;
++			}
++		}
++
++		ret = qty;
++	}
++
++ error:
++	return ret;
++
++} /* end keyring_read() */
++
++/*****************************************************************************/
++/*
++ * allocate a keyring and link into the destination keyring
++ */
++struct key *keyring_alloc(const char *description, uid_t uid, gid_t gid,
++			  int not_in_quota, struct key *dest)
++{
++	struct key *keyring;
++	int ret;
++
++	keyring = key_alloc(&key_type_keyring, description,
++			    uid, gid, KEY_USR_ALL, not_in_quota);
++
++	if (!IS_ERR(keyring)) {
++		ret = key_instantiate_and_link(keyring, NULL, 0, dest);
++		if (ret < 0) {
++			key_put(keyring);
++			keyring = ERR_PTR(ret);
++		}
++	}
++
++	return keyring;
++
++} /* end keyring_alloc() */
++
++/*****************************************************************************/
++/*
++ * search the supplied keyring tree for a key that matches the criterion
++ * - perform a breadth-then-depth search up to the prescribed limit
++ * - we only find keys on which we have search permission
++ * - we readlock the keyrings as we search down the tree
++ * - we return -EAGAIN if we didn't find any matching key
++ * - we return -ENOENT if we only found negative matching keys
++ */
++struct key *keyring_search(struct key *keyring,
++			   struct key_type *type,
++			   const char *description)
++{
++	struct {
++		struct key *keyring;
++		int kix;
++	} stack[KEYRING_SEARCH_MAX_DEPTH];
++
++	struct keyring_list *keylist;
++	struct timespec now;
++	struct key *key;
++	long err;
++	int sp, psp, kix;
++
++	key_check(keyring);
++
++	/* top keyring must have search permission to begin the search */
++	key = ERR_PTR(-EACCES);
++	if (!key_permission(keyring, KEY_SEARCH))
++		goto error;
++
++	key = ERR_PTR(-ENOTDIR);
++	if (keyring->type != &key_type_keyring)
++		goto error;
++
++	now = current_kernel_time();
++	err = -EAGAIN;
++	sp = 0;
++
++	/* start processing a new keyring */
++ descend:
++	read_lock(&keyring->lock);
++	if (keyring->flags & KEY_FLAG_REVOKED)
++		goto not_this_keyring;
++
++	keylist = keyring->payload.subscriptions;
++	if (!keylist)
++		goto not_this_keyring;
++
++	/* iterate through the keys in this keyring first */
++	for (kix = 0; kix < keylist->nkeys; kix++) {
++		key = keylist->keys[kix];
++
++		/* ignore keys not of this type */
++		if (key->type != type)
++			continue;
++
++		/* skip revoked keys and expired keys */
++		if (key->flags & KEY_FLAG_REVOKED)
++			continue;
++
++		if (key->expiry && now.tv_sec >= key->expiry)
++			continue;
++
++		/* keys that don't match */
++		if (!key->type->match(key, description))
++			continue;
++
++		/* key must have search permissions */
++		if (!key_permission(key, KEY_SEARCH))
++			continue;
++
++		/* we set a different error code if we find a negative key */
++		if (key->flags & KEY_FLAG_NEGATIVE) {
++			err = -ENOENT;
++			continue;
++		}
++
++		goto found;
++	}
++
++	/* search through the keyrings nested in this one */
++	kix = 0;
++ ascend:
++	while (kix < keylist->nkeys) {
++		key = keylist->keys[kix];
++		if (key->type != &key_type_keyring)
++			goto next;
++
++		/* recursively search nested keyrings
++		 * - only search keyrings for which we have search permission
++		 */
++		if (sp >= KEYRING_SEARCH_MAX_DEPTH)
++			goto next;
++
++		if (!key_permission(key, KEY_SEARCH))
++			goto next;
++
++		/* evade loops in the keyring tree */
++		for (psp = 0; psp < sp; psp++)
++			if (stack[psp].keyring == keyring)
++				goto next;
++
++		/* stack the current position */
++		stack[sp].keyring = keyring;
++		stack[sp].kix = kix;
++		sp++;
++
++		/* begin again with the new keyring */
++		keyring = key;
++		goto descend;
++
++	next:
++		kix++;
++	}
++
++	/* the keyring we're looking at was disqualified or didn't contain a
++	 * matching key */
++ not_this_keyring:
++	read_unlock(&keyring->lock);
++
++	if (sp > 0) {
++		/* resume the processing of a keyring higher up in the tree */
++		sp--;
++		keyring = stack[sp].keyring;
++		keylist = keyring->payload.subscriptions;
++		kix = stack[sp].kix + 1;
++		goto ascend;
++	}
++
++	key = ERR_PTR(err);
++	goto error;
++
++	/* we found a viable match */
++ found:
++	atomic_inc(&key->usage);
++	read_unlock(&keyring->lock);
++
++	/* unwind the keyring stack */
++	while (sp > 0) {
++		sp--;
++		read_unlock(&stack[sp].keyring->lock);
++	}
++
++	key_check(key);
++ error:
++	return key;
++
++} /* end keyring_search() */
++
++EXPORT_SYMBOL(keyring_search);
++
++/*****************************************************************************/
++/*
++ * search the given keyring only (no recursion)
++ * - keyring must be locked by caller
++ */
++struct key *__keyring_search_one(struct key *keyring,
++				 const struct key_type *ktype,
++				 const char *description,
++				 key_perm_t perm)
++{
++	struct keyring_list *klist;
++	struct key *key;
++	int loop;
++
++	klist = keyring->payload.subscriptions;
++	if (klist) {
++		for (loop = 0; loop < klist->nkeys; loop++) {
++			key = klist->keys[loop];
++
++			if (key->type == ktype &&
++			    key->type->match(key, description) &&
++			    key_permission(key, perm) &&
++			    !(key->flags & KEY_FLAG_REVOKED)
++			    )
++				goto found;
++		}
++	}
++
++	key = ERR_PTR(-ENOENT);
++	goto error;
++
++ found:
++	atomic_inc(&key->usage);
++ error:
++	return key;
++
++} /* end __keyring_search_one() */
++
++/*****************************************************************************/
++/*
++ * find a keyring with the specified name
++ * - all named keyrings are searched
++ * - only find keyrings with search permission for the process
++ * - only find keyrings with a serial number greater than the one specified
++ */
++struct key *find_keyring_by_name(const char *name, key_serial_t bound)
++{
++	struct key *keyring;
++	int bucket;
++
++	keyring = ERR_PTR(-EINVAL);
++	if (!name)
++		goto error;
++
++	bucket = keyring_hash(name);
++
++	read_lock(&keyring_name_lock);
++
++	if (keyring_name_hash[bucket].next) {
++		/* search this hash bucket for a keyring with a matching name
++		 * that's readable and that hasn't been revoked */
++		list_for_each_entry(keyring,
++				    &keyring_name_hash[bucket],
++				    type_data.link
++				    ) {
++			if (keyring->flags & KEY_FLAG_REVOKED)
++				continue;
++
++			if (strcmp(keyring->description, name) != 0)
++				continue;
++
++			if (!key_permission(keyring, KEY_SEARCH))
++				continue;
++
++			/* found a potential candidate, but we still need to
++			 * check the serial number */
++			if (keyring->serial <= bound)
++				continue;
++
++			/* we've got a match */
++			atomic_inc(&keyring->usage);
++			read_unlock(&keyring_name_lock);
++			goto error;
++		}
++	}
++
++	read_unlock(&keyring_name_lock);
++	keyring = ERR_PTR(-ENOENT);
++
++ error:
++	return keyring;
++
++} /* end find_keyring_by_name() */
++
++/*****************************************************************************/
++/*
++ * see if a cycle will will be created by inserting acyclic tree B in acyclic
++ * tree A at the topmost level (ie: as a direct child of A)
++ * - since we are adding B to A at the top level, checking for cycles should
++ *   just be a matter of seeing if node A is somewhere in tree B
++ */
++static int keyring_detect_cycle(struct key *A, struct key *B)
++{
++	struct {
++		struct key *subtree;
++		int kix;
++	} stack[KEYRING_SEARCH_MAX_DEPTH];
++
++	struct keyring_list *keylist;
++	struct key *subtree, *key;
++	int sp, kix, ret;
++
++	ret = -EDEADLK;
++	if (A == B)
++		goto error;
++
++	subtree = B;
++	sp = 0;
++
++	/* start processing a new keyring */
++ descend:
++	read_lock(&subtree->lock);
++	if (subtree->flags & KEY_FLAG_REVOKED)
++		goto not_this_keyring;
++
++	keylist = subtree->payload.subscriptions;
++	if (!keylist)
++		goto not_this_keyring;
++	kix = 0;
++
++ ascend:
++	/* iterate through the remaining keys in this keyring */
++	for (; kix < keylist->nkeys; kix++) {
++		key = keylist->keys[kix];
++
++		if (key == A)
++			goto cycle_detected;
++
++		/* recursively check nested keyrings */
++		if (key->type == &key_type_keyring) {
++			if (sp >= KEYRING_SEARCH_MAX_DEPTH)
++				goto too_deep;
++
++			/* stack the current position */
++			stack[sp].subtree = subtree;
++			stack[sp].kix = kix;
++			sp++;
++
++			/* begin again with the new keyring */
++			subtree = key;
++			goto descend;
++		}
++	}
++
++	/* the keyring we're looking at was disqualified or didn't contain a
++	 * matching key */
++ not_this_keyring:
++	read_unlock(&subtree->lock);
++
++	if (sp > 0) {
++		/* resume the checking of a keyring higher up in the tree */
++		sp--;
++		subtree = stack[sp].subtree;
++		keylist = subtree->payload.subscriptions;
++		kix = stack[sp].kix + 1;
++		goto ascend;
++	}
++
++	ret = 0; /* no cycles detected */
++
++ error:
++	return ret;
++
++ too_deep:
++	ret = -ELOOP;
++	goto error_unwind;
++ cycle_detected:
++	ret = -EDEADLK;
++ error_unwind:
++	read_unlock(&subtree->lock);
++
++	/* unwind the keyring stack */
++	while (sp > 0) {
++		sp--;
++		read_unlock(&stack[sp].subtree->lock);
++	}
++
++	goto error;
++
++} /* end keyring_detect_cycle() */
++
++/*****************************************************************************/
++/*
++ * link a key into to a keyring
++ * - must be called with the keyring's semaphore held
++ */
++int __key_link(struct key *keyring, struct key *key)
++{
++	struct keyring_list *klist, *nklist;
++	unsigned max;
++	size_t size;
++	int ret;
++
++	ret = -EINVAL;
++	if (keyring->flags & KEY_FLAG_REVOKED)
++		goto error;
++
++	ret = -ENOTDIR;
++	if (keyring->type != &key_type_keyring)
++		goto error;
++
++	/* serialise link/link calls to prevent parallel calls causing a
++	 * cycle when applied to two keyring in opposite orders */
++	down_write(&keyring_serialise_link_sem);
++
++	/* check that we aren't going to create a cycle adding one keyring to
++	 * another */
++	if (key->type == &key_type_keyring) {
++		ret = keyring_detect_cycle(keyring, key);
++		if (ret < 0)
++			goto error2;
++	}
++
++	/* check that we aren't going to overrun the user's quota */
++	ret = key_payload_reserve(keyring,
++				  keyring->datalen + KEYQUOTA_LINK_BYTES);
++	if (ret < 0)
++		goto error2;
++
++	klist = keyring->payload.subscriptions;
++
++	if (klist && klist->nkeys < klist->maxkeys) {
++		/* there's sufficient slack space to add directly */
++		atomic_inc(&key->usage);
++
++		write_lock(&keyring->lock);
++		klist->keys[klist->nkeys++] = key;
++		write_unlock(&keyring->lock);
++
++		ret = 0;
++	}
++	else {
++		/* grow the key list */
++		max = 4;
++		if (klist)
++			max += klist->maxkeys;
++
++		ret = -ENFILE;
++		size = sizeof(*klist) + sizeof(*key) * max;
++		if (size > PAGE_SIZE)
++			goto error3;
++
++		ret = -ENOMEM;
++		nklist = kmalloc(size, GFP_KERNEL);
++		if (!nklist)
++			goto error3;
++		nklist->maxkeys = max;
++		nklist->nkeys = 0;
++
++		if (klist) {
++			nklist->nkeys = klist->nkeys;
++			memcpy(nklist->keys,
++			       klist->keys,
++			       sizeof(struct key *) * klist->nkeys);
++		}
++
++		/* add the key into the new space */
++		atomic_inc(&key->usage);
++
++		write_lock(&keyring->lock);
++		keyring->payload.subscriptions = nklist;
++		nklist->keys[nklist->nkeys++] = key;
++		write_unlock(&keyring->lock);
++
++		/* dispose of the old keyring list */
++		kfree(klist);
++
++		ret = 0;
++	}
++
++ error2:
++	up_write(&keyring_serialise_link_sem);
++ error:
++	return ret;
++
++ error3:
++	/* undo the quota changes */
++	key_payload_reserve(keyring,
++			    keyring->datalen - KEYQUOTA_LINK_BYTES);
++	goto error2;
++
++} /* end __key_link() */
++
++/*****************************************************************************/
++/*
++ * link a key to a keyring
++ */
++int key_link(struct key *keyring, struct key *key)
++{
++	int ret;
++
++	key_check(keyring);
++	key_check(key);
++
++	down_write(&keyring->sem);
++	ret = __key_link(keyring, key);
++	up_write(&keyring->sem);
++
++	return ret;
++
++} /* end key_link() */
++
++EXPORT_SYMBOL(key_link);
++
++/*****************************************************************************/
++/*
++ * unlink the first link to a key from a keyring
++ */
++int key_unlink(struct key *keyring, struct key *key)
++{
++	struct keyring_list *klist;
++	int loop, ret;
++
++	key_check(keyring);
++	key_check(key);
++
++	ret = -ENOTDIR;
++	if (keyring->type != &key_type_keyring)
++		goto error;
++
++	down_write(&keyring->sem);
++
++	klist = keyring->payload.subscriptions;
++	if (klist) {
++		/* search the keyring for the key */
++		for (loop = 0; loop < klist->nkeys; loop++)
++			if (klist->keys[loop] == key)
++				goto key_is_present;
++	}
++
++	up_write(&keyring->sem);
++	ret = -ENOENT;
++	goto error;
++
++ key_is_present:
++	/* adjust the user's quota */
++	key_payload_reserve(keyring,
++			    keyring->datalen - KEYQUOTA_LINK_BYTES);
++
++	/* shuffle down the key pointers
++	 * - it might be worth shrinking the allocated memory, but that runs
++	 *   the risk of ENOMEM as we would have to copy
++	 */
++	write_lock(&keyring->lock);
++
++	klist->nkeys--;
++	if (loop < klist->nkeys)
++		memcpy(&klist->keys[loop],
++		       &klist->keys[loop + 1],
++		       (klist->nkeys - loop) * sizeof(struct key *));
++
++	write_unlock(&keyring->lock);
++
++	up_write(&keyring->sem);
++	key_put(key);
++	ret = 0;
++
++ error:
++	return ret;
++
++} /* end key_unlink() */
++
++EXPORT_SYMBOL(key_unlink);
++
++/*****************************************************************************/
++/*
++ * clear the specified process keyring
++ * - implements keyctl(KEYCTL_CLEAR)
++ */
++int keyring_clear(struct key *keyring)
++{
++	struct keyring_list *klist;
++	int loop, ret;
++
++	ret = -ENOTDIR;
++	if (keyring->type == &key_type_keyring) {
++		/* detach the pointer block with the locks held */
++		down_write(&keyring->sem);
++
++		klist = keyring->payload.subscriptions;
++		if (klist) {
++			/* adjust the quota */
++			key_payload_reserve(keyring,
++					    sizeof(struct keyring_list));
++
++			write_lock(&keyring->lock);
++			keyring->payload.subscriptions = NULL;
++			write_unlock(&keyring->lock);
++		}
++
++		up_write(&keyring->sem);
++
++		/* free the keys after the locks have been dropped */
++		if (klist) {
++			for (loop = klist->nkeys - 1; loop >= 0; loop--)
++				key_put(klist->keys[loop]);
++
++			kfree(klist);
++		}
++
++		ret = 0;
++	}
++
++	return ret;
++
++} /* end keyring_clear() */
++
++EXPORT_SYMBOL(keyring_clear);
+diff -puN /dev/null security/keys/Makefile
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/security/keys/Makefile	2004-08-30 22:21:39.610032856 -0700
+@@ -0,0 +1,13 @@
++#
++# Makefile for key management
++#
++
++obj-y := \
++	key.o \
++	keyring.o \
++	keyctl.o \
++	process_keys.o \
++	user_defined.o \
++	request_key.o
++
++obj-$(CONFIG_PROC_FS) += proc.o
+diff -puN /dev/null security/keys/proc.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/security/keys/proc.c	2004-08-30 22:21:39.611032704 -0700
+@@ -0,0 +1,251 @@
++/* proc.c: proc files for key database enumeration
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/fs.h>
++#include <linux/proc_fs.h>
++#include <linux/seq_file.h>
++#include <asm/errno.h>
++#include "internal.h"
++
++#ifdef CONFIG_KEYS_DEBUG_PROC_KEYS
++static int proc_keys_open(struct inode *inode, struct file *file);
++static void *proc_keys_start(struct seq_file *p, loff_t *_pos);
++static void *proc_keys_next(struct seq_file *p, void *v, loff_t *_pos);
++static void proc_keys_stop(struct seq_file *p, void *v);
++static int proc_keys_show(struct seq_file *m, void *v);
++
++static struct seq_operations proc_keys_ops = {
++	.start	= proc_keys_start,
++	.next	= proc_keys_next,
++	.stop	= proc_keys_stop,
++	.show	= proc_keys_show,
++};
++
++static struct file_operations proc_keys_fops = {
++	.open		= proc_keys_open,
++	.read		= seq_read,
++	.llseek		= seq_lseek,
++	.release	= seq_release,
++};
++#endif
++
++static int proc_key_users_open(struct inode *inode, struct file *file);
++static void *proc_key_users_start(struct seq_file *p, loff_t *_pos);
++static void *proc_key_users_next(struct seq_file *p, void *v, loff_t *_pos);
++static void proc_key_users_stop(struct seq_file *p, void *v);
++static int proc_key_users_show(struct seq_file *m, void *v);
++
++static struct seq_operations proc_key_users_ops = {
++	.start	= proc_key_users_start,
++	.next	= proc_key_users_next,
++	.stop	= proc_key_users_stop,
++	.show	= proc_key_users_show,
++};
++
++static struct file_operations proc_key_users_fops = {
++	.open		= proc_key_users_open,
++	.read		= seq_read,
++	.llseek		= seq_lseek,
++	.release	= seq_release,
++};
++
++/*****************************************************************************/
++/*
++ * declare the /proc files
++ */
++static int __init key_proc_init(void)
++{
++	struct proc_dir_entry *p;
++
++#ifdef CONFIG_KEYS_DEBUG_PROC_KEYS
++	p = create_proc_entry("keys", 0, NULL);
++	if (!p)
++		panic("Cannot create /proc/keys\n");
++
++	p->proc_fops = &proc_keys_fops;
++#endif
++
++	p = create_proc_entry("key-users", 0, NULL);
++	if (!p)
++		panic("Cannot create /proc/key-users\n");
++
++	p->proc_fops = &proc_key_users_fops;
++
++	return 0;
++
++} /* end key_proc_init() */
++
++__initcall(key_proc_init);
++
++/*****************************************************************************/
++/*
++ * implement "/proc/keys" to provides a list of the keys on the system
++ */
++#ifdef CONFIG_KEYS_DEBUG_PROC_KEYS
++
++static int proc_keys_open(struct inode *inode, struct file *file)
++{
++	return seq_open(file, &proc_keys_ops);
++
++}
++
++static void *proc_keys_start(struct seq_file *p, loff_t *_pos)
++{
++	struct rb_node *_p;
++	loff_t pos = *_pos;
++
++	spin_lock(&key_serial_lock);
++
++	_p = rb_first(&key_serial_tree);
++	while (pos > 0 && _p) {
++		pos--;
++		_p = rb_next(_p);
++	}
++
++	return _p;
++
++}
++
++static void *proc_keys_next(struct seq_file *p, void *v, loff_t *_pos)
++{
++	(*_pos)++;
++	return rb_next((struct rb_node *) v);
++
++}
++
++static void proc_keys_stop(struct seq_file *p, void *v)
++{
++	spin_unlock(&key_serial_lock);
++}
++
++static int proc_keys_show(struct seq_file *m, void *v)
++{
++	struct rb_tree *_p = v;
++	struct key *key = rb_entry(_p, struct key, serial_node);
++	struct timespec now;
++	unsigned long timo;
++	char xbuf[12];
++
++	now = current_kernel_time();
++
++	read_lock(&key->lock);
++
++	/* come up with a suitable timeout value */
++	if (key->expiry == 0) {
++		memcpy(xbuf, "perm", 5);
++	}
++	else if (now.tv_sec >= key->expiry) {
++		memcpy(xbuf, "expd", 5);
++	}
++	else {
++		timo = key->expiry - now.tv_sec;
++
++		if (timo < 60)
++			sprintf(xbuf, "%lus", timo);
++		else if (timo < 60*60)
++			sprintf(xbuf, "%lum", timo / 60);
++		else if (timo < 60*60*24)
++			sprintf(xbuf, "%luh", timo / (60*60));
++		else if (timo < 60*60*24*7)
++			sprintf(xbuf, "%lud", timo / (60*60*24));
++		else
++			sprintf(xbuf, "%luw", timo / (60*60*24*7));
++	}
++
++	seq_printf(m, "%08x %c%c%c%c%c%c %5d %4s %06x %5d %5d %-9.9s ",
++		   key->serial,
++		   key->flags & KEY_FLAG_INSTANTIATED	? 'I' : '-',
++		   key->flags & KEY_FLAG_REVOKED	? 'R' : '-',
++		   key->flags & KEY_FLAG_DEAD		? 'D' : '-',
++		   key->flags & KEY_FLAG_IN_QUOTA	? 'Q' : '-',
++		   key->flags & KEY_FLAG_USER_CONSTRUCT	? 'U' : '-',
++		   key->flags & KEY_FLAG_NEGATIVE	? 'N' : '-',
++		   atomic_read(&key->usage),
++		   xbuf,
++		   key->perm,
++		   key->uid,
++		   key->gid,
++		   key->type->name);
++
++	if (key->type->describe)
++		key->type->describe(key, m);
++	seq_putc(m, '\n');
++
++	read_unlock(&key->lock);
++
++	return 0;
++
++}
++
++#endif /* CONFIG_KEYS_DEBUG_PROC_KEYS */
++
++/*****************************************************************************/
++/*
++ * implement "/proc/key-users" to provides a list of the key users
++ */
++static int proc_key_users_open(struct inode *inode, struct file *file)
++{
++	return seq_open(file, &proc_key_users_ops);
++
++}
++
++static void *proc_key_users_start(struct seq_file *p, loff_t *_pos)
++{
++	struct rb_node *_p;
++	loff_t pos = *_pos;
++
++	spin_lock(&key_user_lock);
++
++	_p = rb_first(&key_user_tree);
++	while (pos > 0 && _p) {
++		pos--;
++		_p = rb_next(_p);
++	}
++
++	return _p;
++
++}
++
++static void *proc_key_users_next(struct seq_file *p, void *v, loff_t *_pos)
++{
++	(*_pos)++;
++	return rb_next((struct rb_node *) v);
++
++}
++
++static void proc_key_users_stop(struct seq_file *p, void *v)
++{
++	spin_unlock(&key_user_lock);
++}
++
++static int proc_key_users_show(struct seq_file *m, void *v)
++{
++	struct rb_tree *_p = v;
++	struct key_user *user = rb_entry(_p, struct key_user, node);
++
++	seq_printf(m, "%5u: %5d %d/%d %d/%d %d/%d\n",
++		   user->uid,
++		   atomic_read(&user->usage),
++		   atomic_read(&user->nkeys),
++		   atomic_read(&user->nikeys),
++		   user->qnkeys,
++		   KEYQUOTA_MAX_KEYS,
++		   user->qnbytes,
++		   KEYQUOTA_MAX_BYTES
++		   );
++
++	return 0;
++
++}
+diff -puN /dev/null security/keys/process_keys.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/security/keys/process_keys.c	2004-08-30 22:21:39.614032248 -0700
+@@ -0,0 +1,685 @@
++/* process_keys.c: management of a process's keyrings
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/prctl.h>
++#include <linux/fs.h>
++#include <linux/err.h>
++#include <asm/uaccess.h>
++#include "internal.h"
++
++/* session keyring create vs join semaphore */
++static DECLARE_MUTEX(key_session_sem);
++
++/* the root user's tracking struct */
++struct key_user root_key_user = {
++	.usage		= ATOMIC_INIT(3),
++	.consq		= LIST_HEAD_INIT(root_key_user.consq),
++	.lock		= SPIN_LOCK_UNLOCKED,
++	.nkeys		= ATOMIC_INIT(2),
++	.nikeys		= ATOMIC_INIT(2),
++	.uid		= 0,
++};
++
++/* the root user's UID keyring */
++struct key root_user_keyring = {
++	.usage		= ATOMIC_INIT(1),
++	.serial		= 2,
++	.type		= &key_type_keyring,
++	.user		= &root_key_user,
++	.lock		= RW_LOCK_UNLOCKED,
++	.sem		= __RWSEM_INITIALIZER(root_user_keyring.sem),
++	.perm		= KEY_USR_ALL,
++	.flags		= KEY_FLAG_INSTANTIATED,
++	.description	= "_uid.0",
++#ifdef KEY_DEBUGGING
++	.magic		= KEY_DEBUG_MAGIC,
++#endif
++};
++
++/* the root user's default session keyring */
++struct key root_session_keyring = {
++	.usage		= ATOMIC_INIT(1),
++	.serial		= 1,
++	.type		= &key_type_keyring,
++	.user		= &root_key_user,
++	.lock		= RW_LOCK_UNLOCKED,
++	.sem		= __RWSEM_INITIALIZER(root_session_keyring.sem),
++	.perm		= KEY_USR_ALL,
++	.flags		= KEY_FLAG_INSTANTIATED,
++	.description	= "_uid_ses.0",
++#ifdef KEY_DEBUGGING
++	.magic		= KEY_DEBUG_MAGIC,
++#endif
++};
++
++/*****************************************************************************/
++/*
++ * allocate the keyrings to be associated with a UID
++ */
++int alloc_uid_keyring(struct user_struct *user)
++{
++	struct key *uid_keyring, *session_keyring;
++	char buf[20];
++	int ret;
++
++	/* concoct a UID specific keyring */
++	sprintf(buf, "_uid.%u", user->uid);
++
++	uid_keyring = keyring_alloc(buf, user->uid, (gid_t) -1, 0, NULL);
++	if (IS_ERR(uid_keyring)) {
++		ret = PTR_ERR(uid_keyring);
++		goto error;
++	}
++
++	/* and a default session keyring with a pointer to the UID specific
++	 * keyring */
++	sprintf(buf, "_uid_ses.%u", user->uid);
++
++	session_keyring = keyring_alloc(buf, user->uid, (gid_t) -1, 0,
++					uid_keyring);
++	if (IS_ERR(session_keyring)) {
++		key_put(uid_keyring);
++		ret = PTR_ERR(session_keyring);
++		goto error;
++	}
++
++	/* install the keyrings */
++	user->uid_keyring = uid_keyring;
++	user->session_keyring = session_keyring;
++	ret = 0;
++
++ error:
++	return ret;
++
++} /* end alloc_uid_keyring() */
++
++/*****************************************************************************/
++/*
++ * deal with the UID changing
++ */
++void switch_uid_keyring(struct user_struct *new_user)
++{
++#if 0 /* do nothing for now */
++	struct key *old;
++
++	/* switch to the new user's session keyring if we were running under
++	 * root's default session keyring */
++	if (new_user->uid != 0 &&
++	    current->session_keyring == &root_session_keyring
++	    ) {
++		atomic_inc(&new_user->session_keyring->usage);
++
++		task_lock(current);
++		old = current->session_keyring;
++		current->session_keyring = new_user->session_keyring;
++		task_unlock(current);
++
++		key_put(old);
++	}
++#endif
++
++} /* end switch_uid_keyring() */
++
++/*****************************************************************************/
++/*
++ * install a fresh thread keyring, discarding the old one
++ */
++int install_thread_keyring(struct task_struct *tsk)
++{
++	struct key *keyring, *old;
++	char buf[20];
++	int ret;
++
++	sprintf(buf, "_tid.%u", tsk->pid);
++
++	keyring = keyring_alloc(buf, tsk->uid, tsk->gid, 1, NULL);
++	if (IS_ERR(keyring)) {
++		ret = PTR_ERR(keyring);
++		goto error;
++	}
++
++	task_lock(tsk);
++	old = tsk->thread_keyring;
++	tsk->thread_keyring = keyring;
++	task_unlock(tsk);
++
++	ret = 0;
++
++	key_put(old);
++ error:
++	return ret;
++
++} /* end install_thread_keyring() */
++
++/*****************************************************************************/
++/*
++ * install a fresh process keyring, discarding the old one
++ */
++static int install_process_keyring(struct task_struct *tsk)
++{
++	struct key *keyring, *old;
++	char buf[20];
++	int ret;
++
++	sprintf(buf, "_pid.%u", tsk->tgid);
++
++	keyring = keyring_alloc(buf, tsk->uid, tsk->gid, 1, NULL);
++	if (IS_ERR(keyring)) {
++		ret = PTR_ERR(keyring);
++		goto error;
++	}
++
++	task_lock(tsk);
++	old = tsk->process_keyring;
++	tsk->process_keyring = keyring;
++	task_unlock(tsk);
++
++	ret = 0;
++
++	key_put(old);
++ error:
++	return ret;
++
++} /* end install_process_keyring() */
++
++/*****************************************************************************/
++/*
++ * install a session keyring, discarding the old one
++ * - if a keyring is not supplied, an empty one is invented
++ */
++static int install_session_keyring(struct task_struct *tsk,
++				   struct key *keyring)
++{
++	struct key *old;
++	char buf[20];
++	int ret;
++
++	/* create an empty session keyring */
++	if (!keyring) {
++		sprintf(buf, "_ses.%u", tsk->tgid);
++
++		keyring = keyring_alloc(buf, tsk->uid, tsk->gid, 1, NULL);
++		if (IS_ERR(keyring)) {
++			ret = PTR_ERR(keyring);
++			goto error;
++		}
++	}
++	else {
++		atomic_inc(&keyring->usage);
++	}
++
++	/* install the keyring */
++	task_lock(tsk);
++	old = tsk->session_keyring;
++	tsk->session_keyring = keyring;
++	task_unlock(tsk);
++
++	ret = 0;
++
++	key_put(old);
++ error:
++	return ret;
++
++} /* end install_session_keyring() */
++
++/*****************************************************************************/
++/*
++ * copy the keys for fork
++ */
++int copy_keys(unsigned long clone_flags, struct task_struct *tsk)
++{
++	int ret = 0;
++
++	key_check(tsk->session_keyring);
++	key_check(tsk->process_keyring);
++	key_check(tsk->thread_keyring);
++
++	if (tsk->session_keyring)
++		atomic_inc(&tsk->session_keyring->usage);
++
++	if (tsk->process_keyring) {
++		if (clone_flags & CLONE_THREAD) {
++			atomic_inc(&tsk->process_keyring->usage);
++		}
++		else {
++			tsk->process_keyring = NULL;
++			ret = install_process_keyring(tsk);
++		}
++	}
++
++	tsk->thread_keyring = NULL;
++	return ret;
++
++} /* end copy_keys() */
++
++/*****************************************************************************/
++/*
++ * dispose of keys upon exit
++ */
++void exit_keys(struct task_struct *tsk)
++{
++	key_put(tsk->session_keyring);
++	key_put(tsk->process_keyring);
++	key_put(tsk->thread_keyring);
++
++} /* end exit_keys() */
++
++/*****************************************************************************/
++/*
++ * deal with execve()
++ */
++int exec_keys(struct task_struct *tsk)
++{
++	struct key *old;
++
++	/* newly exec'd tasks don't get a thread keyring */
++	task_lock(tsk);
++	old = tsk->thread_keyring;
++	tsk->thread_keyring = NULL;
++	task_unlock(tsk);
++
++	key_put(old);
++
++	/* newly exec'd tasks get a fresh process keyring */
++	return install_process_keyring(tsk);
++
++} /* end exec_keys() */
++
++/*****************************************************************************/
++/*
++ * deal with SUID programs
++ * - we might want to make this invent a new session keyring
++ */
++int suid_keys(struct task_struct *tsk)
++{
++	return 0;
++
++} /* end suid_keys() */
++
++/*****************************************************************************/
++/*
++ * the filesystem user ID changed
++ */
++void key_fsuid_changed(struct task_struct *tsk)
++{
++	/* update the ownership of the process keyring */
++	if (tsk->process_keyring) {
++		down_write(&tsk->process_keyring->sem);
++		write_lock(&tsk->process_keyring->lock);
++		tsk->process_keyring->uid = tsk->fsuid;
++		write_unlock(&tsk->process_keyring->lock);
++		up_write(&tsk->process_keyring->sem);
++	}
++
++	/* update the ownership of the thread keyring */
++	if (tsk->thread_keyring) {
++		down_write(&tsk->thread_keyring->sem);
++		write_lock(&tsk->thread_keyring->lock);
++		tsk->thread_keyring->uid = tsk->fsuid;
++		write_unlock(&tsk->thread_keyring->lock);
++		up_write(&tsk->thread_keyring->sem);
++	}
++
++} /* end key_fsuid_changed() */
++
++/*****************************************************************************/
++/*
++ * the filesystem group ID changed
++ */
++void key_fsgid_changed(struct task_struct *tsk)
++{
++	/* update the ownership of the process keyring */
++	if (tsk->process_keyring) {
++		down_write(&tsk->process_keyring->sem);
++		write_lock(&tsk->process_keyring->lock);
++		tsk->process_keyring->gid = tsk->fsgid;
++		write_unlock(&tsk->process_keyring->lock);
++		up_write(&tsk->process_keyring->sem);
++	}
++
++	/* update the ownership of the thread keyring */
++	if (tsk->thread_keyring) {
++		down_write(&tsk->thread_keyring->sem);
++		write_lock(&tsk->thread_keyring->lock);
++		tsk->thread_keyring->gid = tsk->fsgid;
++		write_unlock(&tsk->thread_keyring->lock);
++		up_write(&tsk->thread_keyring->sem);
++	}
++
++} /* end key_fsgid_changed() */
++
++/*****************************************************************************/
++/*
++ * search the process keyrings for the first matching key
++ * - we return -EAGAIN if we didn't find any matching key
++ * - we return -ENOENT if we found only negative matching keys
++ */
++struct key *search_process_keyrings(struct key_type *type,
++				    const char *description)
++{
++	struct task_struct *tsk = current;
++	struct key *key, *ret, *err;
++
++	/* we want to return -EAGAIN or -ENOENT if any of the keyrings were
++	 * searchable, but we failed to find a key or we found a negative key;
++	 * otherwise we want to return a sample error (probably -EACCES) if
++	 * none of the keyrings were searchable
++	 *
++	 * in terms of priority: success > -ENOENT > -EAGAIN > other error
++	 */
++	key = NULL;
++	ret = NULL;
++	err = ERR_PTR(-EAGAIN);
++
++	/* search the thread keyring first */
++	if (tsk->thread_keyring) {
++		key = keyring_search(tsk->thread_keyring, type, description);
++		if (!IS_ERR(key))
++			goto found;
++
++		switch (PTR_ERR(key)) {
++		case -EAGAIN: /* no key */
++			if (ret)
++				break;
++		case -ENOENT: /* negative key */
++			ret = key;
++			break;
++		default:
++			err = key;
++			break;
++		}
++	}
++
++	/* search the process keyring second */
++	if (tsk->process_keyring) {
++		key = keyring_search(tsk->process_keyring, type, description);
++		if (!IS_ERR(key))
++			goto found;
++
++		switch (PTR_ERR(key)) {
++		case -EAGAIN: /* no key */
++			if (ret)
++				break;
++		case -ENOENT: /* negative key */
++			ret = key;
++			break;
++		default:
++			err = key;
++			break;
++		}
++	}
++
++	/* search the session keyring last */
++	if (tsk->session_keyring) {
++		key = keyring_search(tsk->session_keyring, type, description);
++		if (!IS_ERR(key))
++			goto found;
++
++		switch (PTR_ERR(key)) {
++		case -EAGAIN: /* no key */
++			if (ret)
++				break;
++		case -ENOENT: /* negative key */
++			ret = key;
++			break;
++		default:
++			err = key;
++			break;
++		}
++	}
++
++	/* no key - decide on the error we're going to go for */
++	key = ret ? ret : err;
++
++ found:
++	return key;
++
++} /* end search_process_keyrings() */
++
++/*****************************************************************************/
++/*
++ * lookup a key given a key ID from userspace with a given permissions mask
++ * - don't create special keyrings unless so requested
++ * - partially constructed keys aren't found unless requested
++ */
++struct key *lookup_user_key(key_serial_t id, int create, int partial,
++			    key_perm_t perm)
++{
++	struct task_struct *tsk = current;
++	struct key *key;
++	int ret;
++
++	key = ERR_PTR(-ENOENT);
++
++	switch (id) {
++	case PR_SPEC_THREAD_KEYRING:
++		if (!tsk->thread_keyring) {
++			if (!create)
++				goto error;
++
++			ret = install_thread_keyring(tsk);
++			if (ret < 0) {
++				key = ERR_PTR(ret);
++				goto error;
++			}
++		}
++
++		key = tsk->thread_keyring;
++		atomic_inc(&key->usage);
++		break;
++
++	case PR_SPEC_PROCESS_KEYRING:
++		if (!tsk->process_keyring) {
++			if (!create)
++				goto error;
++
++			ret = install_process_keyring(tsk);
++			if (ret < 0) {
++				key = ERR_PTR(ret);
++				goto error;
++			}
++		}
++
++		key = tsk->process_keyring;
++		atomic_inc(&key->usage);
++		break;
++
++	case PR_SPEC_SESSION_KEYRING:
++		if (!tsk->session_keyring) {
++			/* always install a session keyring upon access if one
++			 * doesn't exist yet */
++			ret = install_session_keyring(
++			       tsk, tsk->user->session_keyring);
++			if (ret < 0)
++				goto error;
++		}
++
++		key = tsk->session_keyring;
++		atomic_inc(&key->usage);
++		break;
++
++	case PR_SPEC_USER_KEYRING:
++		key = tsk->user->uid_keyring;
++		atomic_inc(&key->usage);
++		break;
++
++	case PR_SPEC_USER_SESSION_KEYRING:
++		key = tsk->user->session_keyring;
++		atomic_inc(&key->usage);
++		break;
++
++	case PR_SPEC_GROUP_KEYRING:
++		/* group keyrings are not yet supported */
++		key = ERR_PTR(-EINVAL);
++		goto error;
++
++	default:
++		key = ERR_PTR(-EINVAL);
++		if (id < 1)
++			goto error;
++
++		key = key_lookup(id);
++		if (IS_ERR(key))
++			goto error;
++		break;
++	}
++
++	/* check the status and permissions */
++	if (perm) {
++		ret = key_validate(key);
++		if (ret < 0)
++			goto invalid_key;
++	}
++
++	ret = -EIO;
++	if (!partial && !(key->flags & KEY_FLAG_INSTANTIATED))
++		goto invalid_key;
++
++	ret = -EACCES;
++	if (!key_permission(key, perm))
++		goto invalid_key;
++
++ error:
++	return key;
++
++ invalid_key:
++	key_put(key);
++	key = ERR_PTR(ret);
++	goto error;
++
++} /* end lookup_user_key() */
++
++/*****************************************************************************/
++/*
++ * get the ID of the specified process keyring
++ * - the keyring must have search permission to be found
++ * - implements prctl(PR_GET_KEYRING_ID)
++ */
++long get_process_keyring_ID(key_serial_t id, int create)
++{
++	struct key *key;
++	long ret;
++
++	key = lookup_user_key(id, create, 0, KEY_SEARCH);
++	if (IS_ERR(key)) {
++		ret = PTR_ERR(key);
++		goto error;
++	}
++
++	ret = key->serial;
++	key_put(key);
++ error:
++	return ret;
++
++} /* end get_process_keyring_ID() */
++
++/*****************************************************************************/
++/*
++ * join the named keyring as the session keyring if possible, or attempt to
++ * create a new one of that name if not
++ * - if the name is NULL, an empty anonymous keyring is installed instead
++ * - named session keyring joining is done with a semaphore held
++ */
++long join_session_keyring(const char *name)
++{
++	struct task_struct *tsk = current;
++	struct key *keyring;
++	long ret;
++
++	/* if no name is provided, install an anonymous keyring */
++	if (!name) {
++		ret = install_session_keyring(tsk, NULL);
++		if (ret < 0)
++			goto error;
++
++		ret = tsk->session_keyring->serial;
++		goto error;
++	}
++
++	/* allow the user to join or create a named keyring */
++	down(&key_session_sem);
++
++	/* look for an existing keyring of this name */
++	keyring = find_keyring_by_name(name, 0);
++	if (PTR_ERR(keyring) == -ENOENT) {
++		/* not found - try and create a new one */
++		keyring = keyring_alloc(name, tsk->uid, tsk->gid, 0, NULL);
++		if (IS_ERR(keyring)) {
++			ret = PTR_ERR(keyring);
++			goto error;
++		}
++	}
++	else if (IS_ERR(keyring)) {
++		ret = PTR_ERR(keyring);
++		goto error2;
++	}
++
++	/* we've got a keyring - now to install it */
++	ret = install_session_keyring(tsk, keyring);
++	if (ret < 0)
++		goto error2;
++
++	key_put(keyring);
++
++	ret = tsk->session_keyring->serial;
++
++ error2:
++	up(&key_session_sem);
++ error:
++	return ret;
++
++} /* end join_session_keyring() */
++
++/*****************************************************************************/
++/*
++ * join the session keyring
++ * - implements prctl(PR_JOIN_SESSION_KEYRING)
++ */
++long join_session_keyring_user(const char __user *_name)
++{
++	char *name;
++	long nlen, ret;
++
++	/* fetch the name from userspace */
++	name = NULL;
++	if (_name) {
++		ret = -EFAULT;
++		nlen = strnlen_user(_name, PAGE_SIZE - 1);
++		if (nlen <= 0)
++			goto error;
++
++		ret = -EINVAL;
++		if (nlen > PAGE_SIZE - 1)
++			goto error;
++
++		ret = -ENOMEM;
++		name = kmalloc(nlen + 1, GFP_KERNEL);
++		if (!name)
++			goto error;
++
++		ret = -EFAULT;
++		if (copy_from_user(name, _name, nlen + 1) != 0)
++			goto error2;
++	}
++
++	/* join the session */
++	ret = join_session_keyring(name);
++
++ error2:
++	kfree(name);
++ error:
++	return ret;
++
++} /* end join_session_keyring_user() */
+diff -puN /dev/null security/keys/request_key.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/security/keys/request_key.c	2004-08-30 22:21:39.615032096 -0700
+@@ -0,0 +1,325 @@
++/* request_key.c: request a key from userspace
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/sched.h>
++#include <linux/kmod.h>
++#include <linux/err.h>
++#include "internal.h"
++
++struct key_construction {
++	struct list_head	link;	/* link in construction queue */
++	struct key		*key;	/* key being constructed */
++};
++
++/* when waiting for someone else's keys, you get added to this */
++DECLARE_WAIT_QUEUE_HEAD(request_key_conswq);
++
++/*****************************************************************************/
++/*
++ * request userspace finish the construction of a key
++ * - execute "/sbin/request-key <op> <key> <uid> <gid> <keyring> <keyring> <keyring>"
++ */
++static int call_request_key(struct key *key, char *op)
++{
++	struct task_struct *tsk = current;
++	char *argv[9], *envp[3], uid_str[12], gid_str[12];
++	char key_str[12], keyring_str[3][12];
++	int i;
++
++	/* record the UID and GID */
++	sprintf(uid_str, "%d", current->fsuid);
++	sprintf(gid_str, "%d", current->fsgid);
++
++	/* we say which key is under construction */
++	sprintf(key_str, "%d", key->serial);
++
++	/* we specify the process's default keyrings */
++	task_lock(current);
++	sprintf(keyring_str[0], "%d",
++		tsk->thread_keyring ? tsk->thread_keyring->serial : 0);
++	sprintf(keyring_str[1], "%d",
++		tsk->process_keyring ? tsk->process_keyring->serial : 0);
++	sprintf(keyring_str[2], "%d",
++		tsk->session_keyring ? tsk->session_keyring->serial : 0);
++	task_unlock(tsk);
++
++	/* set up a minimal environment */
++	i = 0;
++	envp[i++] = "HOME=/";
++	envp[i++] = "PATH=/sbin:/bin:/usr/sbin:/usr/bin";
++	envp[i] = NULL;
++
++	/* set up the argument list */
++	i = 0;
++	argv[i++] = "/sbin/request-key";
++	argv[i++] = op;
++	argv[i++] = key_str;
++	argv[i++] = uid_str;
++	argv[i++] = gid_str;
++	argv[i++] = keyring_str[0];
++	argv[i++] = keyring_str[1];
++	argv[i++] = keyring_str[2];
++	argv[i] = NULL;
++
++	/* do it */
++	return call_usermodehelper(argv[0], argv, envp, 1);
++
++} /* end call_request_key() */
++
++/*****************************************************************************/
++/*
++ * call out to userspace for the key
++ * - called with the construction sem held, but the sem is dropped here
++ * - we ignore program failure and go on key status instead
++ */
++static struct key *__request_key_construction(struct key_type *type,
++					      const char *description)
++{
++	struct key_construction cons;
++	struct timespec now;
++	struct key *key;
++	int ret, negative;
++
++	/* create a key and add it to the queue */
++	key = key_alloc(type, description,
++			current->fsuid, current->fsgid, KEY_USR_ALL, 0);
++	if (IS_ERR(key))
++		goto alloc_failed;
++
++	write_lock(&key->lock);
++	key->flags |= KEY_FLAG_USER_CONSTRUCT;
++	write_unlock(&key->lock);
++
++	cons.key = key;
++	list_add_tail(&cons.link, &key->user->consq);
++
++	/* we drop the construction sem here on behalf of the caller */
++	up_write(&key_construction_sem);
++
++	/* make the call */
++	ret = call_request_key(key, "create");
++	if (ret < 0)
++		goto request_failed;
++
++	/* if the key wasn't instantiated, then we want to give an error */
++	ret = -ENOENT;
++	if (!(key->flags & KEY_FLAG_INSTANTIATED))
++		goto request_failed;
++
++	down_write(&key_construction_sem);
++	list_del(&cons.link);
++	up_write(&key_construction_sem);
++
++	/* also give an error if the key was negatively instantiated */
++ check_not_negative:
++	if (key->flags & KEY_FLAG_NEGATIVE) {
++		key_put(key);
++		key = ERR_PTR(-ENOENT);
++	}
++
++ out:
++	return key;
++
++ request_failed:
++	/* it wasn't instantiated
++	 * - remove from construction queue
++	 * - mark the key as dead
++	 */
++	negative = 0;
++	down_write(&key_construction_sem);
++
++	list_del(&cons.link);
++
++	write_lock(&key->lock);
++	key->flags &= ~KEY_FLAG_USER_CONSTRUCT;
++
++	/* check it didn't get instantiated between the check and the down */
++	if (!(key->flags & KEY_FLAG_INSTANTIATED)) {
++		key->flags |= KEY_FLAG_INSTANTIATED | KEY_FLAG_NEGATIVE;
++		negative = 1;
++	}
++
++	write_unlock(&key->lock);
++	up_write(&key_construction_sem);
++
++	if (!negative)
++		goto check_not_negative; /* surprisingly, the key got
++					  * instantiated */
++
++	/* set the timeout and store in the session keyring if we can */
++	now = current_kernel_time();
++	key->expiry = now.tv_sec + key_negative_timeout;
++
++	if (current->session_keyring)
++		key_link(current->session_keyring, key);
++	key_put(key);
++
++	/* notify anyone who was waiting */
++	wake_up_all(&request_key_conswq);
++
++	key = ERR_PTR(ret);
++	goto out;
++
++ alloc_failed:
++	up_write(&key_construction_sem);
++	goto out;
++
++} /* end __request_key_construction() */
++
++/*****************************************************************************/
++/*
++ * call out to userspace to request the key
++ * - we check the construction queue first to see if an appropriate key is
++ *   already being constructed by userspace
++ */
++static struct key *request_key_construction(struct key_type *type,
++					    const char *description,
++					    struct key_user *user)
++{
++	struct key_construction *pcons;
++	struct key *key, *ckey;
++
++	DECLARE_WAITQUEUE(myself, current);
++
++	/* see if there's such a key under construction already */
++	down_write(&key_construction_sem);
++
++	list_for_each_entry(pcons, &user->consq, link) {
++		ckey = pcons->key;
++
++		if (ckey->type != type)
++			continue;
++
++		if (type->match(ckey, description))
++			goto found_key_under_construction;
++	}
++
++	/* see about getting userspace to construct the key */
++	key = __request_key_construction(type, description);
++ error:
++	return key;
++
++	/* someone else has the same key under construction
++	 * - we want to keep an eye on their key
++	 */
++ found_key_under_construction:
++	atomic_inc(&ckey->usage);
++	up_write(&key_construction_sem);
++
++	/* wait for the key to be completed one way or another */
++	add_wait_queue(&request_key_conswq, &myself);
++
++	for (;;) {
++		set_current_state(TASK_UNINTERRUPTIBLE);
++		if (!(ckey->flags & KEY_FLAG_USER_CONSTRUCT))
++			break;
++		schedule();
++	}
++
++	set_current_state(TASK_RUNNING);
++	remove_wait_queue(&request_key_conswq, &myself);
++
++	/* we'll need to search this process's keyrings to see if the key is
++	 * now there since we can't automatically assume it's also available
++	 * there */
++	key_put(ckey);
++	ckey = NULL;
++
++	key = NULL; /* request a retry */
++	goto error;
++
++} /* end request_key_construction() */
++
++/*****************************************************************************/
++/*
++ * request a key
++ * - search the process's keyrings
++ * - check the list of keys being created or updated
++ * - call out to userspace for a key
++ */
++struct key *request_key(struct key_type *type,
++			const char *description,
++			int callout)
++{
++	struct key_user *user;
++	struct key *key;
++
++	/* search all the process keyrings for a key */
++	key = search_process_keyrings(type, description);
++
++	if (PTR_ERR(key) == -EAGAIN) {
++		/* the search failed, but the keyrings were searchable, so we
++		 * should consult userspace if we can */
++		key = ERR_PTR(-ENOENT);
++		if (!callout)
++			goto error;
++
++		/* - get hold of the user's construction queue */
++		user = key_user_lookup(current->fsuid);
++		if (IS_ERR(user)) {
++			key = ERR_PTR(PTR_ERR(user));
++			goto error;
++		}
++
++		for (;;) {
++			/* ask userspace (returns NULL if it waited on a key
++			 * being constructed) */
++			key = request_key_construction(type, description,
++						       user);
++			if (key)
++				break;
++
++			/* someone else made the key we want, so we need to
++			 * search again as it might now be available to us */
++			key = search_process_keyrings(type, description);
++			if (PTR_ERR(key) != -EAGAIN)
++				break;
++		}
++
++		key_user_put(user);
++	}
++
++ error:
++	return key;
++
++} /* end request_key() */
++
++EXPORT_SYMBOL(request_key);
++
++/*****************************************************************************/
++/*
++ * validate a key
++ */
++int key_validate(struct key *key)
++{
++	struct timespec now;
++	int ret;
++
++	/* check it's still accessible */
++	ret = -EIDRM;
++	if (key->flags & (KEY_FLAG_REVOKED | KEY_FLAG_DEAD))
++		goto error;
++
++	/* check it hasn't expired */
++	ret = 0;
++	if (key->expiry) {
++		now = current_kernel_time();
++		if (now.tv_sec >= key->expiry)
++			ret = -EIO;
++	}
++
++ error:
++	return ret;
++
++} /* end key_validate() */
++
++EXPORT_SYMBOL(key_validate);
+diff -puN /dev/null security/keys/user_defined.c
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/security/keys/user_defined.c	2004-08-30 22:21:39.616031944 -0700
+@@ -0,0 +1,191 @@
++/* user_defined.c: user defined key type
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/seq_file.h>
++#include <linux/err.h>
++#include <asm/uaccess.h>
++#include "internal.h"
++
++static int user_instantiate(struct key *key, const void *data, size_t datalen);
++static int user_duplicate(struct key *key, const struct key *source);
++static int user_update(struct key *key, const void *data, size_t datalen);
++static int user_match(const struct key *key, const void *criterion);
++static void user_destroy(struct key *key);
++static void user_describe(const struct key *user, struct seq_file *m);
++static long user_read(const struct key *key,
++		      char __user *buffer, size_t buflen);
++
++/*
++ * user defined keys take an arbitrary string as the description and an
++ * arbitrary blob of data as the payload
++ */
++struct key_type key_type_user = {
++	.name		= "user",
++	.instantiate	= user_instantiate,
++	.duplicate	= user_duplicate,
++	.update		= user_update,
++	.match		= user_match,
++	.destroy	= user_destroy,
++	.describe	= user_describe,
++	.read		= user_read,
++};
++
++/*****************************************************************************/
++/*
++ * instantiate a user defined key
++ */
++static int user_instantiate(struct key *key, const void *data, size_t datalen)
++{
++	int ret;
++
++	ret = -EINVAL;
++	if (datalen <= 0 || datalen > 32767 || !data)
++		goto error;
++
++	ret = key_payload_reserve(key, datalen);
++	if (ret < 0)
++		goto error;
++
++	/* attach the data */
++	ret = -ENOMEM;
++	key->payload.data = kmalloc(datalen, GFP_KERNEL);
++	if (!key->payload.data)
++		goto error;
++
++	memcpy(key->payload.data, data, datalen);
++	ret = 0;
++
++ error:
++	return ret;
++
++} /* end user_instantiate() */
++
++/*****************************************************************************/
++/*
++ * duplicate a user defined key
++ */
++static int user_duplicate(struct key *key, const struct key *source)
++{
++	int ret;
++
++	/* just copy the payload */
++	ret = -ENOMEM;
++	key->payload.data = kmalloc(source->datalen, GFP_KERNEL);
++
++	if (key->payload.data) {
++		key->datalen = source->datalen;
++		memcpy(key->payload.data, source->payload.data, source->datalen);
++		ret = 0;
++	}
++
++	return ret;
++
++} /* end user_duplicate() */
++
++/*****************************************************************************/
++/*
++ * update a user defined key
++ */
++static int user_update(struct key *key, const void *data, size_t datalen)
++{
++	void *new, *zap;
++	int ret;
++
++	ret = -EINVAL;
++	if (datalen <= 0 || datalen > 32767 || !data)
++		goto error;
++
++	/* copy the data */
++	ret = -ENOMEM;
++	new = kmalloc(datalen, GFP_KERNEL);
++	if (!new)
++		goto error;
++
++	memcpy(new, data, datalen);
++
++	/* check the quota and attach the new data */
++	zap = new;
++	write_lock(&key->lock);
++
++	ret = key_payload_reserve(key, datalen);
++
++	if (ret == 0) {
++		/* attach the new data, displacing the old */
++		zap = key->payload.data;
++		key->payload.data = new;
++		key->expiry = 0;
++	}
++
++	write_unlock(&key->lock);
++	kfree(zap);
++
++ error:
++	return ret;
++
++} /* end user_update() */
++
++/*****************************************************************************/
++/*
++ * match users on their name
++ */
++static int user_match(const struct key *key, const void *description)
++{
++	return strcmp(key->description, description) == 0;
++
++} /* end user_match() */
++
++/*****************************************************************************/
++/*
++ * dispose of the data dangling from the corpse of a user
++ */
++static void user_destroy(struct key *key)
++{
++	kfree(key->payload.data);
++
++} /* end user_destroy() */
++
++/*****************************************************************************/
++/*
++ * describe the user
++ */
++static void user_describe(const struct key *key, struct seq_file *m)
++{
++	seq_puts(m, key->description);
++
++	seq_printf(m, ": %u", key->datalen);
++
++} /* end user_describe() */
++
++/*****************************************************************************/
++/*
++ * read the key data
++ */
++static long user_read(const struct key *key,
++		      char __user *buffer, size_t buflen)
++{
++	long ret = key->datalen;
++
++	/* we can return the data as is */
++	if (buffer && buflen > 0) {
++		if (buflen > key->datalen)
++			buflen = key->datalen;
++
++		if (copy_to_user(buffer, key->payload.data, buflen) != 0)
++			ret = -EFAULT;
++	}
++
++	return ret;
++
++} /* end user_read() */
+diff -puN security/Makefile~implement-in-kernel-keys-keyring-management security/Makefile
+--- 25/security/Makefile~implement-in-kernel-keys-keyring-management	2004-08-30 22:21:39.578037720 -0700
++++ 25-akpm/security/Makefile	2004-08-30 22:21:39.616031944 -0700
+@@ -2,6 +2,7 @@
+ # Makefile for the kernel security code
+ #
+ 
++obj-$(CONFIG_KEYS)			+= keys/
+ subdir-$(CONFIG_SECURITY_SELINUX)	+= selinux
+ 
+ # if we don't select a security model, use the default capabilities
+diff -puN /dev/null include/linux/key-ui.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/linux/key-ui.h	2004-08-30 22:21:39.617031792 -0700
+@@ -0,0 +1,97 @@
++/* key-ui.h: key userspace interface stuff for use by keyfs
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#ifndef _LINUX_KEY_UI_H
++#define _LINUX_KEY_UI_H
++
++#include <linux/key.h>
++
++/* the key tree */
++extern struct rb_root key_serial_tree;
++extern spinlock_t key_serial_lock;
++
++/* required permissions */
++#define	KEY_VIEW	0x01	/* require permission to view attributes */
++#define	KEY_READ	0x02	/* require permission to read content */
++#define	KEY_WRITE	0x04	/* require permission to update / modify */
++#define	KEY_SEARCH	0x08	/* require permission to search (keyring) or find (key) */
++#define	KEY_LINK	0x10	/* require permission to link */
++#define	KEY_ALL		0x1f	/* all the above permissions */
++
++/*
++ * the keyring payload contains a list of the keys to which the keyring is
++ * subscribed
++ */
++struct keyring_list {
++	unsigned	maxkeys;	/* max keys this list can hold */
++	unsigned	nkeys;		/* number of keys currently held */
++	struct key	*keys[0];
++};
++
++
++/*
++ * check to see whether permission is granted to use a key in the desired way
++ */
++static inline int key_permission(const struct key *key, key_perm_t perm)
++{
++	key_perm_t kperm;
++
++	if (key->uid == current->fsuid)
++		kperm = key->perm >> 16;
++	else if (key->gid != -1 &&
++		 key->perm & KEY_GRP_ALL &&
++		 in_group_p(key->gid)
++		 )
++		kperm = key->perm >> 8;
++	else
++		kperm = key->perm;
++
++	kperm = kperm & perm & KEY_ALL;
++
++	return kperm == perm;
++}
++
++/*
++ * check to see whether permission is granted to use a key in at least one of
++ * the desired ways
++ */
++static inline int key_any_permission(const struct key *key, key_perm_t perm)
++{
++	key_perm_t kperm;
++
++	if (key->uid == current->fsuid)
++		kperm = key->perm >> 16;
++	else if (key->gid != -1 &&
++		 key->perm & KEY_GRP_ALL &&
++		 in_group_p(key->gid)
++		 )
++		kperm = key->perm >> 8;
++	else
++		kperm = key->perm;
++
++	kperm = kperm & perm & KEY_ALL;
++
++	return kperm != 0;
++}
++
++
++extern struct key *lookup_user_key(key_serial_t id, int create, int part,
++				   key_perm_t perm);
++
++extern long join_session_keyring(const char *name);
++
++extern struct key_type *key_type_lookup(const char *type);
++extern void key_type_put(struct key_type *ktype);
++
++#define key_negative_timeout	60	/* default timeout on a negative key's existence */
++
++
++#endif /* _LINUX_KEY_UI_H */
+_

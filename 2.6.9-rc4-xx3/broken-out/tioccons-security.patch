@@ -1,0 +1,45 @@
+
+From: Olaf Dabrunz <od@suse.de>
+
+The ioctl TIOCCONS allows any user to redirect console output to another
+tty.  This allows anyone to suppress messages to the console at will.
+
+AFAIK nowadays not many programs write to /dev/console, except for start
+scripts and the kernel (printk() above console log level).
+
+Still, I believe that administrators and operators would not like any user
+to be able to hijack messages that were written to the console.
+
+The only user of TIOCCONS that I am aware of is bootlogd/blogd, which runs
+as root.  Please comment if there are other users.
+
+Is there any reason why normal users should be able to use TIOCCONS?
+
+Otherwise I would suggest to restrict access to root (CAP_SYS_ADMIN), e.g. 
+with this patch.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ /dev/null                     |    0 
+ 25-akpm/drivers/char/tty_io.c |    4 ++--
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN drivers/char/tty_io.c~tioccons-security drivers/char/tty_io.c
+--- 25/drivers/char/tty_io.c~tioccons-security	2004-10-03 16:43:15.158027184 -0700
++++ 25-akpm/drivers/char/tty_io.c	2004-10-03 16:43:15.163026424 -0700
+@@ -1981,10 +1981,10 @@ static int tiocswinsz(struct tty_struct 
+ 
+ static int tioccons(struct file *file)
+ {
++	if (!capable(CAP_SYS_ADMIN))
++		return -EPERM;
+ 	if (file->f_op->write == redirected_tty_write) {
+ 		struct file *f;
+-		if (!capable(CAP_SYS_ADMIN))
+-			return -EPERM;
+ 		spin_lock(&redirect_lock);
+ 		f = redirect;
+ 		redirect = NULL;
+diff -L drivers/char/tty_io.c. -puN /dev/null /dev/null
+_

@@ -1,0 +1,295 @@
+
+From: Robert Picco <Robert.Picco@hp.com>
+
+I eliminated the request_irq brain damage, chopped off procfs support
+(didn't care for it too much in the first place and it was adopted from
+rtc.c), made the check for FMODE_WRITE in hpet_open and responded to a few
+other suggestions.  
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/devices.txt          |    1 
+ 25-akpm/Documentation/filesystems/proc.txt |    2 
+ 25-akpm/Documentation/hpet.txt             |    6 -
+ 25-akpm/arch/i386/kernel/time_hpet.c       |    7 --
+ 25-akpm/drivers/char/hpet.c                |   96 +++--------------------------
+ 25-akpm/include/linux/hpet.h               |    2 
+ 25-akpm/include/linux/miscdevice.h         |    2 
+ 7 files changed, 21 insertions(+), 95 deletions(-)
+
+diff -puN arch/i386/kernel/time_hpet.c~hpet-fixes arch/i386/kernel/time_hpet.c
+--- 25/arch/i386/kernel/time_hpet.c~hpet-fixes	Wed Jun 23 14:20:42 2004
++++ 25-akpm/arch/i386/kernel/time_hpet.c	Wed Jun 23 14:20:42 2004
+@@ -155,10 +155,9 @@ int __init hpet_enable(void)
+ 		hd.hd_address = hpet_virt_address;
+ 		hd.hd_nirqs = ntimer;
+ 		hd.hd_flags = HPET_DATA_PLATFORM;
+-#ifndef	CONFIG_HPET_EMULATE_RTC
+-		hd.hd_state = 0x1;
+-#else
+-		hd.hd_state = 0x3;
++		HD_STATE(&hd, 0);
++#ifdef	CONFIG_HPET_EMULATE_RTC
++		HD_STATE(&hd, 1);
+ #endif
+ 		hd.hd_irq[0] = HPET_LEGACY_8254;
+ 		hd.hd_irq[1] = HPET_LEGACY_RTC;
+diff -puN Documentation/devices.txt~hpet-fixes Documentation/devices.txt
+--- 25/Documentation/devices.txt~hpet-fixes	Wed Jun 23 14:20:42 2004
++++ 25-akpm/Documentation/devices.txt	Wed Jun 23 14:20:42 2004
+@@ -434,6 +434,7 @@ Your cooperation is appreciated.
+ 		225 = /dev/pps		Pulse Per Second driver
+ 		226 = /dev/systrace	Systrace device
+ 		227 = /dev/mcelog	X86_64 Machine Check Exception driver
++		228 = /dev/hpet		HPET driver
+ 		240-254			Reserved for local use
+ 		255			Reserved for MISC_DYNAMIC_MINOR
+ 
+diff -puN Documentation/filesystems/proc.txt~hpet-fixes Documentation/filesystems/proc.txt
+--- 25/Documentation/filesystems/proc.txt~hpet-fixes	Wed Jun 23 14:20:42 2004
++++ 25-akpm/Documentation/filesystems/proc.txt	Wed Jun 23 14:20:42 2004
+@@ -201,7 +201,7 @@ Table 1-3: Kernel info in /proc 
+  devices     Available devices (block and character)           
+  dma         Used DMS channels                                 
+  filesystems Supported filesystems                             
+- driver	     Various drivers grouped here, currently rtc (2.4) and hpet (2.6)
++ driver	     Various drivers grouped here, currently rtc (2.4)
+  execdomains Execdomains, related to security			(2.4)
+  fb	     Frame Buffer devices				(2.4)
+  fs	     File system parameters, currently nfs/exports	(2.4)
+diff -puN Documentation/hpet.txt~hpet-fixes Documentation/hpet.txt
+--- 25/Documentation/hpet.txt~hpet-fixes	Wed Jun 23 14:20:42 2004
++++ 25-akpm/Documentation/hpet.txt	Wed Jun 23 14:20:42 2004
+@@ -103,7 +103,7 @@ hpet_open_close(int argc, const char **a
+ 		return;
+ 	}
+ 
+-	fd = open(argv[0], O_RDWR);
++	fd = open(argv[0], O_RDONLY);
+ 	if (fd < 0)
+ 		fprintf(stderr, "hpet_open_close: open failed\n");
+ 	else
+@@ -136,7 +136,7 @@ hpet_poll(int argc, const char **argv)
+ 	freq = atoi(argv[1]);
+ 	iterations = atoi(argv[2]);
+ 
+-	fd = open(argv[0], O_RDWR);
++	fd = open(argv[0], O_RDONLY);
+ 
+ 	if (fd < 0) {
+ 		fprintf(stderr, "hpet_poll: open of %s failed\n", argv[0]);
+@@ -230,7 +230,7 @@ hpet_fasync(int argc, const char **argv)
+ 		goto out;
+ 	}
+ 
+-	fd = open(argv[0], O_RDWR);
++	fd = open(argv[0], O_RDONLY);
+ 
+ 	if (fd < 0) {
+ 		fprintf(stderr, "hpet_fasync: failed to open %s\n", argv[0]);
+diff -puN drivers/char/hpet.c~hpet-fixes drivers/char/hpet.c
+--- 25/drivers/char/hpet.c~hpet-fixes	Wed Jun 23 14:20:42 2004
++++ 25-akpm/drivers/char/hpet.c	Wed Jun 23 14:20:42 2004
+@@ -50,6 +50,8 @@ static spinlock_t hpet_lock = SPIN_LOCK_
+ /* A lock for concurrent intermodule access to hpet and isr hpet activity. */
+ static spinlock_t hpet_task_lock = SPIN_LOCK_UNLOCKED;
+ 
++#define	HPET_DEV_NAME	(7)
++
+ struct hpet_dev {
+ 	struct hpets *hd_hpets;
+ 	struct hpet *hd_hpet;
+@@ -62,6 +64,7 @@ struct hpet_dev {
+ 	unsigned int hd_flags;
+ 	unsigned int hd_irq;
+ 	unsigned int hd_hdwirq;
++	char hd_name[HPET_DEV_NAME];
+ };
+ 
+ struct hpets {
+@@ -148,6 +151,9 @@ static int hpet_open(struct inode *inode
+ 	struct hpets *hpetp;
+ 	int i;
+ 
++	if (file->f_mode & FMODE_WRITE)
++		return -EINVAL;
++
+ 	spin_lock_irq(&hpet_lock);
+ 
+ 	for (devp = NULL, hpetp = hpets; hpetp && !devp; hpetp = hpetp->hp_next)
+@@ -191,8 +197,6 @@ hpet_read(struct file *file, char *buf, 
+ 	add_wait_queue(&devp->hd_waitqueue, &wait);
+ 
+ 	do {
+-		__set_current_state(TASK_INTERRUPTIBLE);
+-
+ 		spin_lock_irq(&hpet_lock);
+ 		data = devp->hd_irqdata;
+ 		devp->hd_irqdata = 0;
+@@ -208,6 +212,7 @@ hpet_read(struct file *file, char *buf, 
+ 			goto out;
+ 		}
+ 
++		set_current_state(TASK_INTERRUPTIBLE);
+ 		schedule();
+ 
+ 	} while (1);
+@@ -255,9 +260,6 @@ static int hpet_mmap(struct file *file, 
+ 	if (((vma->vm_end - vma->vm_start) != PAGE_SIZE) || vma->vm_pgoff)
+ 		return -EINVAL;
+ 
+-	if (vma->vm_flags & VM_WRITE)
+-		return -EPERM;
+-
+ 	devp = file->private_data;
+ 	addr = (unsigned long)devp->hd_hpet;
+ 
+@@ -371,12 +373,10 @@ static int hpet_ioctl_ieon(struct hpet_d
+ 	irq = devp->hd_hdwirq;
+ 
+ 	if (irq) {
+-		char name[7];
+-
+-		sprintf(name, "hpet%d", (int)(devp - hpetp->hp_dev));
++		sprintf(devp->hd_name, "hpet%d", (int)(devp - hpetp->hp_dev));
+ 
+ 		if (request_irq
+-		    (irq, hpet_interrupt, SA_INTERRUPT, name, (void *)devp)) {
++		    (irq, hpet_interrupt, SA_INTERRUPT, devp->hd_name, (void *)devp)) {
+ 			printk(KERN_ERR "hpet: IRQ %d is not free\n", irq);
+ 			irq = 0;
+ 		}
+@@ -731,73 +731,6 @@ static ctl_table dev_root[] = {
+ 
+ static struct ctl_table_header *sysctl_header;
+ 
+-static void *hpet_start(struct seq_file *s, loff_t * pos)
+-{
+-	struct hpets *hpetp;
+-	loff_t n;
+-
+-	for (n = *pos, hpetp = hpets; hpetp; hpetp = hpetp->hp_next)
+-		if (!n--)
+-			return hpetp;
+-
+-	return 0;
+-}
+-
+-static void *hpet_next(struct seq_file *s, void *v, loff_t * pos)
+-{
+-	struct hpets *hpetp;
+-
+-	hpetp = v;
+-	++*pos;
+-	return hpetp->hp_next;
+-}
+-
+-static void hpet_stop(struct seq_file *s, void *v)
+-{
+-	return;
+-}
+-
+-static int hpet_show(struct seq_file *s, void *v)
+-{
+-	struct hpets *hpetp;
+-	struct hpet *hpet;
+-	u64 cap, vendor, period;
+-
+-	hpetp = v;
+-	hpet = hpetp->hp_hpet;
+-
+-	cap = readq(&hpet->hpet_cap);
+-	period = (cap & HPET_COUNTER_CLK_PERIOD_MASK) >>
+-	    HPET_COUNTER_CLK_PERIOD_SHIFT;
+-	vendor = (cap & HPET_VENDOR_ID_MASK) >> HPET_VENDOR_ID_SHIFT;
+-
+-	seq_printf(s,
+-		   "HPET%d period = %d 10**-15  vendor = 0x%x number timer = %d\n",
+-		   hpetp->hp_which, (u32) period, (u32) vendor,
+-		   hpetp->hp_ntimer);
+-
+-	return 0;
+-}
+-
+-static struct seq_operations hpet_seq_ops = {
+-	.start = hpet_start,
+-	.next = hpet_next,
+-	.stop = hpet_stop,
+-	.show = hpet_show
+-};
+-
+-static int hpet_proc_open(struct inode *inode, struct file *file)
+-{
+-	return seq_open(file, &hpet_seq_ops);
+-}
+-
+-static struct file_operations hpet_proc_fops = {
+-	.open = hpet_proc_open,
+-	.read = seq_read,
+-	.llseek = seq_lseek,
+-	.release = seq_release
+-};
+-
+ /*
+  * Adjustment for when arming the timer with
+  * initial conditions.  That is, main counter
+@@ -1025,19 +958,12 @@ static struct miscdevice hpet_misc = { H
+ 
+ static int __init hpet_init(void)
+ {
+-	struct proc_dir_entry *entry;
+-
+ 	(void)acpi_bus_register_driver(&hpet_acpi_driver);
+ 
+ 	if (hpets) {
+ 		if (misc_register(&hpet_misc))
+ 			return -ENODEV;
+ 
+-		entry = create_proc_entry("driver/hpet", 0, 0);
+-
+-		if (entry)
+-			entry->proc_fops = &hpet_proc_fops;
+-
+ 		sysctl_header = register_sysctl_table(dev_root, 0);
+ 
+ #ifdef	CONFIG_TIME_INTERPOLATION
+@@ -1062,10 +988,8 @@ static void __exit hpet_exit(void)
+ {
+ 	acpi_bus_unregister_driver(&hpet_acpi_driver);
+ 
+-	if (hpets) {
++	if (hpets)
+ 		unregister_sysctl_table(sysctl_header);
+-		remove_proc_entry("driver/hpet", NULL);
+-	}
+ 
+ 	return;
+ }
+diff -puN include/linux/hpet.h~hpet-fixes include/linux/hpet.h
+--- 25/include/linux/hpet.h~hpet-fixes	Wed Jun 23 14:20:42 2004
++++ 25-akpm/include/linux/hpet.h	Wed Jun 23 14:20:42 2004
+@@ -115,6 +115,8 @@ struct hpet_task {
+ 	void *ht_opaque;
+ };
+ 
++#define	HD_STATE(HD, TIMER)	(HD)->hd_state |= (1 << TIMER)
++
+ struct hpet_data {
+ 	unsigned long hd_address;
+ 	unsigned short hd_nirqs;
+diff -puN include/linux/miscdevice.h~hpet-fixes include/linux/miscdevice.h
+--- 25/include/linux/miscdevice.h~hpet-fixes	Wed Jun 23 14:20:42 2004
++++ 25-akpm/include/linux/miscdevice.h	Wed Jun 23 14:20:42 2004
+@@ -33,9 +33,9 @@
+ #define SGI_STREAMS_KEYBOARD 150
+ /* drivers/sgi/char/usema.c */
+ #define SGI_USEMACLONE	     151
+-#define	HPET_MINOR	     152
+ 
+ #define TUN_MINOR	     200
++#define	HPET_MINOR	     228
+ 
+ struct device;
+ 
+_

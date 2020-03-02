@@ -1,0 +1,287 @@
+
+From: Matt Porter <mporter@kernel.crashing.org>
+
+Use gen550 for early PPC progress messages and for the in-kernel ppc-stub.c
+on PPC44x.
+
+Signed-off-by: Matt Porter <mporter@kernel.crashing.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc/platforms/4xx/Kconfig  |    5 +++
+ 25-akpm/arch/ppc/platforms/4xx/ebony.c  |   24 +++++++++++----
+ 25-akpm/arch/ppc/platforms/4xx/ocotea.c |   18 ++++++++---
+ 25-akpm/arch/ppc/syslib/gen550_kgdb.c   |    6 ++-
+ 25-akpm/arch/ppc/syslib/ibm44x_common.c |   51 +++++---------------------------
+ 25-akpm/include/asm-ppc/machdep.h       |    1 
+ 6 files changed, 51 insertions(+), 54 deletions(-)
+
+diff -puN arch/ppc/platforms/4xx/ebony.c~ppc32-use-gen550-for-ppc44x-progress-ppc-stub arch/ppc/platforms/4xx/ebony.c
+--- 25/arch/ppc/platforms/4xx/ebony.c~ppc32-use-gen550-for-ppc44x-progress-ppc-stub	2004-10-09 20:24:31.706102184 -0700
++++ 25-akpm/arch/ppc/platforms/4xx/ebony.c	2004-10-09 20:24:31.718100360 -0700
+@@ -1,10 +1,10 @@
+ /*
+- * arch/ppc/platforms/ebony.c
++ * arch/ppc/platforms/4xx/ebony.c
+  *
+  * Ebony board specific routines
+  *
+- * Matt Porter <mporter@mvista.com>
+- * Copyright 2002 MontaVista Software Inc.
++ * Matt Porter <mporter@kernel.crashing.org>
++ * Copyright 2002-2004 MontaVista Software Inc.
+  *
+  * Eugene Surovegin <eugene.surovegin@zultys.com> or <ebs@ebshome.net>
+  * Copyright (c) 2003, 2004 Zultys Technologies
+@@ -50,6 +50,10 @@
+ #include <asm/bootinfo.h>
+ #include <asm/ppc4xx_pic.h>
+ 
++#include <syslib/gen550.h>
++
++static struct ibm44x_clocks clocks __initdata;
++
+ /*
+  * Ebony IRQ triggering/polarity settings
+  */
+@@ -120,8 +124,6 @@ static u_char ebony_IRQ_initsenses[] __i
+ 	(IRQ_SENSE_LEVEL | IRQ_POLARITY_POSITIVE),	/* 63: EMAC 1 WOL */
+ };
+ 
+-static struct ibm44x_clocks clocks __initdata;
+-
+ static void __init
+ ebony_calibrate_decr(void)
+ {
+@@ -284,13 +286,24 @@ ebony_early_serial_map(void)
+ 		printk("Early serial init of port 0 failed\n");
+ 	}
+ 
++#if defined(CONFIG_SERIAL_TEXT_DEBUG) || defined(CONFIG_KGDB)
++	/* Configure debug serial access */
++	gen550_init(0, &port);
++#endif
++
+ 	port.membase = ioremap64(PPC440GP_UART1_ADDR, 8);
+ 	port.irq = 1;
++	port.uartclk = clocks.uart1;
+ 	port.line = 1;
+ 
+ 	if (early_serial_setup(&port) != 0) {
+ 		printk("Early serial init of port 1 failed\n");
+ 	}
++
++#if defined(CONFIG_SERIAL_TEXT_DEBUG) || defined(CONFIG_KGDB)
++	/* Configure debug serial access */
++	gen550_init(1, &port);
++#endif
+ }
+ 
+ static void __init
+@@ -378,7 +391,6 @@ void __init platform_init(unsigned long 
+ 
+ 	ppc_md.nvram_read_val = todc_direct_read_val;
+ 	ppc_md.nvram_write_val = todc_direct_write_val;
+-
+ #ifdef CONFIG_KGDB
+ 	ppc_md.early_serial_map = ebony_early_serial_map;
+ #endif
+diff -puN arch/ppc/platforms/4xx/Kconfig~ppc32-use-gen550-for-ppc44x-progress-ppc-stub arch/ppc/platforms/4xx/Kconfig
+--- 25/arch/ppc/platforms/4xx/Kconfig~ppc32-use-gen550-for-ppc44x-progress-ppc-stub	2004-10-09 20:24:31.708101880 -0700
++++ 25-akpm/arch/ppc/platforms/4xx/Kconfig	2004-10-09 20:24:31.717100512 -0700
+@@ -199,6 +199,11 @@ config PPC4xx_EDMA
+ 	depends on !STB03xxx && PPC4xx_DMA
+ 	default y
+ 
++config PPC_GEN550
++	bool
++	depends on 44x
++	default y
++
+ config PM
+ 	bool "Power Management support (EXPERIMENTAL)"
+ 	depends on 4xx && EXPERIMENTAL
+diff -puN arch/ppc/platforms/4xx/ocotea.c~ppc32-use-gen550-for-ppc44x-progress-ppc-stub arch/ppc/platforms/4xx/ocotea.c
+--- 25/arch/ppc/platforms/4xx/ocotea.c~ppc32-use-gen550-for-ppc44x-progress-ppc-stub	2004-10-09 20:24:31.709101728 -0700
++++ 25-akpm/arch/ppc/platforms/4xx/ocotea.c	2004-10-09 20:24:31.719100208 -0700
+@@ -1,11 +1,11 @@
+ /*
+- * arch/ppc/platforms/ocotea.c
++ * arch/ppc/platforms/4xx/ocotea.c
+  *
+  * Ocotea board specific routines
+  *
+- * Matt Porter <mporter@mvista.com>
++ * Matt Porter <mporter@kernel.crashing.org>
+  *
+- * Copyright 2003 MontaVista Software Inc.
++ * Copyright 2003-2004 MontaVista Software Inc.
+  *
+  * This program is free software; you can redistribute  it and/or modify it
+  * under  the terms of  the GNU General  Public License as published by the
+@@ -49,6 +49,7 @@
+ #include <asm/ppc4xx_pic.h>
+ #include <asm/ppcboot.h>
+ 
++#include <syslib/gen550.h>
+ #include <syslib/ibm440gx_common.h>
+ 
+ /*
+@@ -263,6 +264,11 @@ ocotea_early_serial_map(void)
+ 		printk("Early serial init of port 0 failed\n");
+ 	}
+ 
++#if defined(CONFIG_SERIAL_TEXT_DEBUG) || defined(CONFIG_KGDB)
++	/* Configure debug serial access */
++	gen550_init(0, &port);
++#endif
++
+ 	port.membase = ioremap64(PPC440GX_UART1_ADDR, 8);
+ 	port.irq = UART1_INT;
+ 	port.uartclk = clocks.uart1;
+@@ -271,6 +277,11 @@ ocotea_early_serial_map(void)
+ 	if (early_serial_setup(&port) != 0) {
+ 		printk("Early serial init of port 1 failed\n");
+ 	}
++
++#if defined(CONFIG_SERIAL_TEXT_DEBUG) || defined(CONFIG_KGDB)
++	/* Configure debug serial access */
++	gen550_init(1, &port);
++#endif
+ }
+ 
+ static void __init
+@@ -355,7 +366,6 @@ void __init platform_init(unsigned long 
+ 
+ 	ppc_md.nvram_read_val = todc_direct_read_val;
+ 	ppc_md.nvram_write_val = todc_direct_write_val;
+-
+ #ifdef CONFIG_KGDB
+ 	ppc_md.early_serial_map = ocotea_early_serial_map;
+ #endif
+diff -puN arch/ppc/syslib/gen550_kgdb.c~ppc32-use-gen550-for-ppc44x-progress-ppc-stub arch/ppc/syslib/gen550_kgdb.c
+--- 25/arch/ppc/syslib/gen550_kgdb.c~ppc32-use-gen550-for-ppc44x-progress-ppc-stub	2004-10-09 20:24:31.711101424 -0700
++++ 25-akpm/arch/ppc/syslib/gen550_kgdb.c	2004-10-09 20:24:31.719100208 -0700
+@@ -9,9 +9,9 @@
+  *
+  * Adapted from ppc4xx_kgdb.c.
+  *
+- * Author: Matt Porter <mporter@mvista.com>
++ * Author: Matt Porter <mporter@kernel.crashing.org>
+  *
+- * 2002-2003 (c) MontaVista Software, Inc.  This file is licensed under
++ * 2002-2004 (c) MontaVista Software, Inc.  This file is licensed under
+  * the terms of the GNU General Public License version 2.  This program
+  * is licensed "as is" without any warranty of any kind, whether express
+  * or implied.
+@@ -80,5 +80,7 @@ void
+ gen550_kgdb_map_scc(void)
+ {
+ 	printk(KERN_DEBUG "kgdb init\n");
++	if (ppc_md.early_serial_map)
++		ppc_md.early_serial_map();
+ 	kgdb_debugport = serial_init(KGDB_PORT, NULL);
+ }
+diff -puN arch/ppc/syslib/ibm44x_common.c~ppc32-use-gen550-for-ppc44x-progress-ppc-stub arch/ppc/syslib/ibm44x_common.c
+--- 25/arch/ppc/syslib/ibm44x_common.c~ppc32-use-gen550-for-ppc44x-progress-ppc-stub	2004-10-09 20:24:31.712101272 -0700
++++ 25-akpm/arch/ppc/syslib/ibm44x_common.c	2004-10-09 20:24:31.720100056 -0700
+@@ -3,8 +3,8 @@
+  *
+  * PPC44x system library
+  *
+- * Matt Porter <mporter@mvista.com>
+- * Copyright 2002-2003 MontaVista Software Inc.
++ * Matt Porter <mporter@kernel.crashing.org>
++ * Copyright 2002-2004 MontaVista Software Inc.
+  *
+  * Eugene Surovegin <eugene.surovegin@zultys.com> or <ebs@ebshome.net>
+  * Copyright (c) 2003, 2004 Zultys Technologies
+@@ -16,16 +16,18 @@
+  *
+  */
+ #include <linux/config.h>
++#include <linux/time.h>
+ #include <linux/types.h>
+ #include <linux/serial.h>
+ 
+-#include <asm/param.h>
+ #include <asm/ibm44x.h>
+ #include <asm/mmu.h>
+ #include <asm/machdep.h>
+ #include <asm/time.h>
+ #include <asm/ppc4xx_pic.h>
+ 
++#include <syslib/gen550.h>
++
+ phys_addr_t fixup_bigphys_addr(phys_addr_t addr, phys_addr_t size)
+ {
+ 	phys_addr_t page_4gb = 0;
+@@ -149,44 +151,6 @@ static void __init ibm44x_init_irq(void)
+ 		irq_desc[i].handler = ppc4xx_pic;
+ }
+ 
+-#ifdef CONFIG_SERIAL_TEXT_DEBUG
+-#include <linux/serialP.h>
+-#include <linux/serial_reg.h>
+-#include <asm/serial.h>
+-
+-static struct serial_state rs_table[RS_TABLE_SIZE] = {
+-	SERIAL_PORT_DFNS	/* Defined in <asm/serial.h> */
+-};
+-
+-static void ibm44x_progress(char *s, unsigned short hex)
+-{
+-	volatile char c;
+-	volatile unsigned long com_port;
+-	u16 shift;
+-
+-	com_port = (unsigned long)rs_table[0].iomem_base;
+-	shift = rs_table[0].iomem_reg_shift;
+-
+-	while ((c = *s++) != 0) {
+-		while ((*((volatile unsigned char *)com_port +
+-				(UART_LSR << shift)) & UART_LSR_THRE) == 0)
+-			;
+-		*(volatile unsigned char *)com_port = c;
+-
+-	}
+-
+-	/* Send LF/CR to pretty up output */
+-	while ((*((volatile unsigned char *)com_port +
+-		(UART_LSR << shift)) & UART_LSR_THRE) == 0)
+-		;
+-	*(volatile unsigned char *)com_port = '\r';
+-	while ((*((volatile unsigned char *)com_port +
+-		(UART_LSR << shift)) & UART_LSR_THRE) == 0)
+-		;
+-	*(volatile unsigned char *)com_port = '\n';
+-}
+-#endif /* CONFIG_SERIAL_TEXT_DEBUG */
+-
+ void __init ibm44x_platform_init(void)
+ {
+ 	ppc_md.init_IRQ = ibm44x_init_irq;
+@@ -196,7 +160,10 @@ void __init ibm44x_platform_init(void)
+ 	ppc_md.halt = ibm44x_halt;
+ 
+ #ifdef CONFIG_SERIAL_TEXT_DEBUG
+-	ppc_md.progress = ibm44x_progress;
++	ppc_md.progress = gen550_progress;
+ #endif /* CONFIG_SERIAL_TEXT_DEBUG */
++#ifdef CONFIG_KGDB
++	ppc_md.kgdb_map_scc = gen550_kgdb_map_scc;
++#endif
+ }
+ 
+diff -puN include/asm-ppc/machdep.h~ppc32-use-gen550-for-ppc44x-progress-ppc-stub include/asm-ppc/machdep.h
+--- 25/include/asm-ppc/machdep.h~ppc32-use-gen550-for-ppc44x-progress-ppc-stub	2004-10-09 20:24:31.714100968 -0700
++++ 25-akpm/include/asm-ppc/machdep.h	2004-10-09 20:24:31.720100056 -0700
+@@ -56,6 +56,7 @@ struct machdep_calls {
+ 	unsigned long	(*find_end_of_memory)(void);
+ 	void		(*setup_io_mappings)(void);
+ 
++	void		(*early_serial_map)(void);
+   	void		(*progress)(char *, unsigned short);
+ 	void		(*kgdb_map_scc)(void);
+ 
+_

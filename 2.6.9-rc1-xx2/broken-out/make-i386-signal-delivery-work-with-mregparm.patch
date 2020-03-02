@@ -1,0 +1,95 @@
+
+From: "H. Peter Anvin" <hpa@zytor.com>
+
+This patch allows i386 signal delivery to work correctly when userspace is
+compiled with -mregparm.  This is somewhat hacky: it passes the arguments
+*both* on the stack and in registers, but it works because there are only
+one or three (depending on SA_SIGINFO) official arguments.  If you're
+relying on the unofficial arguments then you're doing something nonportable
+anyway and can put in the __attribute__((cdecl,regparm(0))) in the correct
+place.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/signal.c |   34 ++++++++++++++++++++++------------
+ 1 files changed, 22 insertions(+), 12 deletions(-)
+
+diff -puN arch/i386/kernel/signal.c~make-i386-signal-delivery-work-with-mregparm arch/i386/kernel/signal.c
+--- 25/arch/i386/kernel/signal.c~make-i386-signal-delivery-work-with-mregparm	Thu Aug 26 16:37:13 2004
++++ 25-akpm/arch/i386/kernel/signal.c	Thu Aug 26 16:37:13 2004
+@@ -345,18 +345,20 @@ static void setup_frame(int sig, struct 
+ 	void __user *restorer;
+ 	struct sigframe __user *frame;
+ 	int err = 0;
++	int usig;
+ 
+ 	frame = get_sigframe(ka, regs, sizeof(*frame));
+ 
+ 	if (!access_ok(VERIFY_WRITE, frame, sizeof(*frame)))
+ 		goto give_sigsegv;
+ 
+-	err |= __put_user((current_thread_info()->exec_domain
+-		           && current_thread_info()->exec_domain->signal_invmap
+-		           && sig < 32
+-		           ? current_thread_info()->exec_domain->signal_invmap[sig]
+-		           : sig),
+-		          &frame->sig);
++	usig = current_thread_info()->exec_domain
++		&& current_thread_info()->exec_domain->signal_invmap
++		&& sig < 32
++		? current_thread_info()->exec_domain->signal_invmap[sig]
++		: sig;
++
++	err |= __put_user(usig, &frame->sig);
+ 	if (err)
+ 		goto give_sigsegv;
+ 
+@@ -395,6 +397,9 @@ static void setup_frame(int sig, struct 
+ 	/* Set up registers for signal handler */
+ 	regs->esp = (unsigned long) frame;
+ 	regs->eip = (unsigned long) ka->sa.sa_handler;
++	regs->eax = (unsigned long) sig;
++	regs->edx = (unsigned long) 0;
++	regs->ecx = (unsigned long) 0;
+ 
+ 	set_fs(USER_DS);
+ 	regs->xds = __USER_DS;
+@@ -420,18 +425,20 @@ static void setup_rt_frame(int sig, stru
+ 	void __user *restorer;
+ 	struct rt_sigframe __user *frame;
+ 	int err = 0;
++	int usig;
+ 
+ 	frame = get_sigframe(ka, regs, sizeof(*frame));
+ 
+ 	if (!access_ok(VERIFY_WRITE, frame, sizeof(*frame)))
+ 		goto give_sigsegv;
+ 
+-	err |= __put_user((current_thread_info()->exec_domain
+-		    	   && current_thread_info()->exec_domain->signal_invmap
+-		    	   && sig < 32
+-		    	   ? current_thread_info()->exec_domain->signal_invmap[sig]
+-			   : sig),
+-			  &frame->sig);
++	usig = current_thread_info()->exec_domain
++		&& current_thread_info()->exec_domain->signal_invmap
++		&& sig < 32
++		? current_thread_info()->exec_domain->signal_invmap[sig]
++		: sig;
++
++	err |= __put_user(usig, &frame->sig);
+ 	err |= __put_user(&frame->info, &frame->pinfo);
+ 	err |= __put_user(&frame->uc, &frame->puc);
+ 	err |= copy_siginfo_to_user(&frame->info, info);
+@@ -474,6 +481,9 @@ static void setup_rt_frame(int sig, stru
+ 	/* Set up registers for signal handler */
+ 	regs->esp = (unsigned long) frame;
+ 	regs->eip = (unsigned long) ka->sa.sa_handler;
++	regs->eax = (unsigned long) usig;
++	regs->edx = (unsigned long) &frame->info;
++	regs->ecx = (unsigned long) &frame->uc;
+ 
+ 	set_fs(USER_DS);
+ 	regs->xds = __USER_DS;
+_

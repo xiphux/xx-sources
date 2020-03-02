@@ -1,0 +1,201 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/sparc64/kernel/auxio.c      |    2 +-
+ 25-akpm/arch/sparc64/kernel/devices.c    |    2 +-
+ 25-akpm/arch/sparc64/kernel/irq.c        |    2 +-
+ 25-akpm/arch/sparc64/kernel/pci.c        |    2 +-
+ 25-akpm/arch/sparc64/kernel/pci_psycho.c |    2 +-
+ 25-akpm/arch/sparc64/kernel/pci_schizo.c |    2 +-
+ 25-akpm/arch/sparc64/kernel/process.c    |    2 +-
+ 25-akpm/arch/sparc64/kernel/smp.c        |    6 +++---
+ 25-akpm/arch/sparc64/kernel/time.c       |    4 ++--
+ 25-akpm/arch/sparc64/kernel/traps.c      |    2 +-
+ 25-akpm/arch/sparc64/mm/init.c           |    2 +-
+ 25-akpm/arch/sparc64/prom/p1275.c        |    2 +-
+ 25-akpm/arch/sparc64/solaris/timod.c     |    2 +-
+ 13 files changed, 16 insertions(+), 16 deletions(-)
+
+diff -puN arch/sparc64/kernel/auxio.c~lock-initializer-cleanup-sparc64 arch/sparc64/kernel/auxio.c
+--- 25/arch/sparc64/kernel/auxio.c~lock-initializer-cleanup-sparc64	Wed Jan 12 16:55:01 2005
++++ 25-akpm/arch/sparc64/kernel/auxio.c	Wed Jan 12 16:55:01 2005
+@@ -26,7 +26,7 @@ enum auxio_type {
+ };
+ 
+ static enum auxio_type auxio_devtype = AUXIO_TYPE_NODEV;
+-static spinlock_t auxio_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(auxio_lock);
+ 
+ static void __auxio_sbus_set(u8 bits_on, u8 bits_off)
+ {
+diff -puN arch/sparc64/kernel/devices.c~lock-initializer-cleanup-sparc64 arch/sparc64/kernel/devices.c
+--- 25/arch/sparc64/kernel/devices.c~lock-initializer-cleanup-sparc64	Wed Jan 12 16:55:01 2005
++++ 25-akpm/arch/sparc64/kernel/devices.c	Wed Jan 12 16:55:01 2005
+@@ -24,7 +24,7 @@
+ /* Used to synchronize acceses to NatSemi SUPER I/O chip configure
+  * operations in asm/ns87303.h
+  */
+-spinlock_t ns87303_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(ns87303_lock);
+ 
+ extern void cpu_probe(void);
+ extern void central_probe(void);
+diff -puN arch/sparc64/kernel/irq.c~lock-initializer-cleanup-sparc64 arch/sparc64/kernel/irq.c
+--- 25/arch/sparc64/kernel/irq.c~lock-initializer-cleanup-sparc64	Wed Jan 12 16:55:01 2005
++++ 25-akpm/arch/sparc64/kernel/irq.c	Wed Jan 12 16:55:01 2005
+@@ -101,7 +101,7 @@ struct irqaction *irq_action[NR_IRQS+1] 
+  * read things in the table.  IRQ handler processing orders
+  * its' accesses such that no locking is needed.
+  */
+-static spinlock_t irq_action_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(irq_action_lock);
+ 
+ static void register_irq_proc (unsigned int irq);
+ 
+diff -puN arch/sparc64/kernel/pci.c~lock-initializer-cleanup-sparc64 arch/sparc64/kernel/pci.c
+--- 25/arch/sparc64/kernel/pci.c~lock-initializer-cleanup-sparc64	Wed Jan 12 16:55:01 2005
++++ 25-akpm/arch/sparc64/kernel/pci.c	Wed Jan 12 16:55:01 2005
+@@ -56,7 +56,7 @@ volatile int pci_poke_in_progress;
+ volatile int pci_poke_cpu = -1;
+ volatile int pci_poke_faulted;
+ 
+-static spinlock_t pci_poke_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(pci_poke_lock);
+ 
+ void pci_config_read8(u8 *addr, u8 *ret)
+ {
+diff -puN arch/sparc64/kernel/pci_psycho.c~lock-initializer-cleanup-sparc64 arch/sparc64/kernel/pci_psycho.c
+--- 25/arch/sparc64/kernel/pci_psycho.c~lock-initializer-cleanup-sparc64	Wed Jan 12 16:55:01 2005
++++ 25-akpm/arch/sparc64/kernel/pci_psycho.c	Wed Jan 12 16:55:01 2005
+@@ -433,7 +433,7 @@ enum psycho_error_type {
+ #define  PSYCHO_STCLINE_VALID	 0x0000000000000002UL	/* Valid */
+ #define  PSYCHO_STCLINE_FOFN	 0x0000000000000001UL	/* Fetch Outstanding / Flush Necessary */
+ 
+-static spinlock_t stc_buf_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(stc_buf_lock);
+ static unsigned long stc_error_buf[128];
+ static unsigned long stc_tag_buf[16];
+ static unsigned long stc_line_buf[16];
+diff -puN arch/sparc64/kernel/pci_schizo.c~lock-initializer-cleanup-sparc64 arch/sparc64/kernel/pci_schizo.c
+--- 25/arch/sparc64/kernel/pci_schizo.c~lock-initializer-cleanup-sparc64	Wed Jan 12 16:55:01 2005
++++ 25-akpm/arch/sparc64/kernel/pci_schizo.c	Wed Jan 12 16:55:01 2005
+@@ -377,7 +377,7 @@ enum schizo_error_type {
+ 	UE_ERR, CE_ERR, PCI_ERR, SAFARI_ERR
+ };
+ 
+-static spinlock_t stc_buf_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(stc_buf_lock);
+ static unsigned long stc_error_buf[128];
+ static unsigned long stc_tag_buf[16];
+ static unsigned long stc_line_buf[16];
+diff -puN arch/sparc64/kernel/process.c~lock-initializer-cleanup-sparc64 arch/sparc64/kernel/process.c
+--- 25/arch/sparc64/kernel/process.c~lock-initializer-cleanup-sparc64	Wed Jan 12 16:55:01 2005
++++ 25-akpm/arch/sparc64/kernel/process.c	Wed Jan 12 16:55:01 2005
+@@ -282,7 +282,7 @@ void show_stackframe32(struct sparc_stac
+ }
+ 
+ #ifdef CONFIG_SMP
+-static spinlock_t regdump_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(regdump_lock);
+ #endif
+ 
+ void __show_regs(struct pt_regs * regs)
+diff -puN arch/sparc64/kernel/smp.c~lock-initializer-cleanup-sparc64 arch/sparc64/kernel/smp.c
+--- 25/arch/sparc64/kernel/smp.c~lock-initializer-cleanup-sparc64	Wed Jan 12 16:55:01 2005
++++ 25-akpm/arch/sparc64/kernel/smp.c	Wed Jan 12 16:55:01 2005
+@@ -154,7 +154,7 @@ static unsigned long current_tick_offset
+ #define NUM_ROUNDS	64	/* magic value */
+ #define NUM_ITERS	5	/* likewise */
+ 
+-static spinlock_t itc_sync_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(itc_sync_lock);
+ static unsigned long go[SLAVE + 1];
+ 
+ #define DEBUG_TICK_SYNC	0
+@@ -546,7 +546,7 @@ struct call_data_struct {
+ 	int wait;
+ };
+ 
+-static spinlock_t call_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(call_lock);
+ static struct call_data_struct *call_data;
+ 
+ extern unsigned long xcall_call_function;
+@@ -1146,7 +1146,7 @@ report:
+ }
+ 
+ /* /proc/profile writes can call this, don't __init it please. */
+-static spinlock_t prof_setup_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(prof_setup_lock);
+ 
+ int setup_profiling_timer(unsigned int multiplier)
+ {
+diff -puN arch/sparc64/kernel/time.c~lock-initializer-cleanup-sparc64 arch/sparc64/kernel/time.c
+--- 25/arch/sparc64/kernel/time.c~lock-initializer-cleanup-sparc64	Wed Jan 12 16:55:01 2005
++++ 25-akpm/arch/sparc64/kernel/time.c	Wed Jan 12 16:55:01 2005
+@@ -46,8 +46,8 @@
+ #include <asm/sections.h>
+ #include <asm/cpudata.h>
+ 
+-spinlock_t mostek_lock = SPIN_LOCK_UNLOCKED;
+-spinlock_t rtc_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(mostek_lock);
++DEFINE_SPINLOCK(rtc_lock);
+ unsigned long mstk48t02_regs = 0UL;
+ #ifdef CONFIG_PCI
+ unsigned long ds1287_regs = 0UL;
+diff -puN arch/sparc64/kernel/traps.c~lock-initializer-cleanup-sparc64 arch/sparc64/kernel/traps.c
+--- 25/arch/sparc64/kernel/traps.c~lock-initializer-cleanup-sparc64	Wed Jan 12 16:55:01 2005
++++ 25-akpm/arch/sparc64/kernel/traps.c	Wed Jan 12 16:55:01 2005
+@@ -42,7 +42,7 @@
+ #endif
+ 
+ struct notifier_block *sparc64die_chain;
+-static spinlock_t die_notifier_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(die_notifier_lock);
+ 
+ int register_die_notifier(struct notifier_block *nb)
+ {
+diff -puN arch/sparc64/mm/init.c~lock-initializer-cleanup-sparc64 arch/sparc64/mm/init.c
+--- 25/arch/sparc64/mm/init.c~lock-initializer-cleanup-sparc64	Wed Jan 12 16:55:01 2005
++++ 25-akpm/arch/sparc64/mm/init.c	Wed Jan 12 16:55:01 2005
+@@ -59,7 +59,7 @@ unsigned long pfn_base;
+ static unsigned long bootmap_base;
+ 
+ /* get_new_mmu_context() uses "cache + 1".  */
+-spinlock_t ctx_alloc_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(ctx_alloc_lock);
+ unsigned long tlb_context_cache = CTX_FIRST_VERSION - 1;
+ #define CTX_BMAP_SLOTS (1UL << (CTX_VERSION_SHIFT - 6))
+ unsigned long mmu_context_bmap[CTX_BMAP_SLOTS];
+diff -puN arch/sparc64/prom/p1275.c~lock-initializer-cleanup-sparc64 arch/sparc64/prom/p1275.c
+--- 25/arch/sparc64/prom/p1275.c~lock-initializer-cleanup-sparc64	Wed Jan 12 16:55:01 2005
++++ 25-akpm/arch/sparc64/prom/p1275.c	Wed Jan 12 16:55:01 2005
+@@ -251,7 +251,7 @@ void prom_cif_callback(void)
+  * This provides SMP safety on the p1275buf. prom_callback() drops this lock
+  * to allow recursuve acquisition.
+  */
+-spinlock_t prom_entry_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(prom_entry_lock);
+ 
+ long p1275_cmd (char *service, long fmt, ...)
+ {
+diff -puN arch/sparc64/solaris/timod.c~lock-initializer-cleanup-sparc64 arch/sparc64/solaris/timod.c
+--- 25/arch/sparc64/solaris/timod.c~lock-initializer-cleanup-sparc64	Wed Jan 12 16:55:01 2005
++++ 25-akpm/arch/sparc64/solaris/timod.c	Wed Jan 12 16:55:01 2005
+@@ -29,7 +29,7 @@
+ 
+ asmlinkage int solaris_ioctl(unsigned int fd, unsigned int cmd, u32 arg);
+ 
+-static spinlock_t timod_pagelock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(timod_pagelock);
+ static char * page = NULL ;
+ 
+ #ifndef DEBUG_SOLARIS_KMALLOC
+_

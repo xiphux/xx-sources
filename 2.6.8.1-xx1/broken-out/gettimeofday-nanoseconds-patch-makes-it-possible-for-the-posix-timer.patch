@@ -1,0 +1,144 @@
+
+From: Christoph Lameter <clameter@sgi.com>
+
+This issue was discussed on lkml and linux-ia64.  The patch introduces
+"getnstimeofday" and removes all the code scaling gettimeofday to
+nanoseoncs.  It makes it possible for the posix-timer functions to return
+higher accuracy.
+
+Signed-off-by: Christoph Lameter <clameter@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/time.h  |    1 +
+ 25-akpm/kernel/posix-timers.c |   17 ++---------------
+ 25-akpm/kernel/time.c         |   38 ++++++++++++++++++++++++++++++++++++++
+ 25-akpm/kernel/timer.c        |    3 +--
+ 4 files changed, 42 insertions(+), 17 deletions(-)
+
+diff -puN include/linux/time.h~gettimeofday-nanoseconds-patch-makes-it-possible-for-the-posix-timer include/linux/time.h
+--- 25/include/linux/time.h~gettimeofday-nanoseconds-patch-makes-it-possible-for-the-posix-timer	2004-07-26 15:20:23.830526848 -0700
++++ 25-akpm/include/linux/time.h	2004-07-26 15:20:23.840525328 -0700
+@@ -348,6 +348,7 @@ extern long do_utimes(char __user * file
+ struct itimerval;
+ extern int do_setitimer(int which, struct itimerval *value, struct itimerval *ovalue);
+ extern int do_getitimer(int which, struct itimerval *value);
++extern void getnstimeofday (struct timespec *tv);
+ 
+ static inline void
+ set_normalized_timespec (struct timespec *ts, time_t sec, long nsec)
+diff -puN kernel/posix-timers.c~gettimeofday-nanoseconds-patch-makes-it-possible-for-the-posix-timer kernel/posix-timers.c
+--- 25/kernel/posix-timers.c~gettimeofday-nanoseconds-patch-makes-it-possible-for-the-posix-timer	2004-07-26 15:20:23.832526544 -0700
++++ 25-akpm/kernel/posix-timers.c	2004-07-26 15:20:23.840525328 -0700
+@@ -1168,15 +1168,10 @@ void exit_itimers(struct signal_struct *
+  */
+ static int do_posix_gettime(struct k_clock *clock, struct timespec *tp)
+ {
+-	struct timeval tv;
+-
+ 	if (clock->clock_get)
+ 		return clock->clock_get(tp);
+ 
+-	do_gettimeofday(&tv);
+-	tp->tv_sec = tv.tv_sec;
+-	tp->tv_nsec = tv.tv_usec * NSEC_PER_USEC;
+-
++	getnstimeofday(tp);
+ 	return 0;
+ }
+ 
+@@ -1192,24 +1187,16 @@ static u64 do_posix_clock_monotonic_gett
+ 	struct timespec *tp, struct timespec *mo)
+ {
+ 	u64 jiff;
+-	struct timeval tpv;
+ 	unsigned int seq;
+ 
+ 	do {
+ 		seq = read_seqbegin(&xtime_lock);
+-		do_gettimeofday(&tpv);
++		getnstimeofday(tp);
+ 		*mo = wall_to_monotonic;
+ 		jiff = jiffies_64;
+ 
+ 	} while(read_seqretry(&xtime_lock, seq));
+ 
+-	/*
+-	 * Love to get this before it is converted to usec.
+-	 * It would save a div AND a mpy.
+-	 */
+-	tp->tv_sec = tpv.tv_sec;
+-	tp->tv_nsec = tpv.tv_usec * NSEC_PER_USEC;
+-
+ 	return jiff;
+ }
+ 
+diff -puN kernel/time.c~gettimeofday-nanoseconds-patch-makes-it-possible-for-the-posix-timer kernel/time.c
+--- 25/kernel/time.c~gettimeofday-nanoseconds-patch-makes-it-possible-for-the-posix-timer	2004-07-26 15:20:23.833526392 -0700
++++ 25-akpm/kernel/time.c	2004-07-26 15:20:23.841525176 -0700
+@@ -22,6 +22,9 @@
+  *	"A Kernel Model for Precision Timekeeping" by Dave Mills
+  *	Allow time_constant larger than MAXTC(6) for NTP v4 (MAXTC == 10)
+  *	(Even though the technical memorandum forbids it)
++ * 2004-07-14	 Christoph Lameter
++ *	Added getnstimeofday to allow the posix timer functions to return
++ *	with nanosecond accuracy
+  */
+ 
+ #include <linux/module.h>
+@@ -421,6 +424,41 @@ struct timespec current_kernel_time(void
+ 
+ EXPORT_SYMBOL(current_kernel_time);
+ 
++#ifdef CONFIG_TIME_INTERPOLATION
++void getnstimeofday (struct timespec *tv)
++{
++	unsigned long seq,sec,nsec;
++
++	do {
++		seq = read_seqbegin(&xtime_lock);
++		sec = xtime.tv_sec;
++		nsec = xtime.tv_nsec+time_interpolator_get_offset();
++	} while (unlikely(read_seqretry(&xtime_lock, seq)));
++
++	while (unlikely(nsec >= NSEC_PER_SEC)) {
++		nsec -= NSEC_PER_SEC;
++		++sec;
++	}
++	tv->tv_sec = sec;
++	tv->tv_nsec = nsec;
++}
++#else
++/*
++ * Simulate gettimeofday using do_gettimeofday which only allows a timeval
++ * and therefore only yields usec accuracy
++ */
++void getnstimeofday(struct timespec *tv)
++{
++	struct timeval x;
++
++	do_gettimeofday(&x);
++	tv->tv_sec = x.tv_sec;
++	tv->tv_nsec = x.tv_usec * NSEC_PER_USEC;
++}
++#endif
++
++EXPORT_SYMBOL(getnstimeofday);
++
+ #if (BITS_PER_LONG < 64)
+ u64 get_jiffies_64(void)
+ {
+diff -puN kernel/timer.c~gettimeofday-nanoseconds-patch-makes-it-possible-for-the-posix-timer kernel/timer.c
+--- 25/kernel/timer.c~gettimeofday-nanoseconds-patch-makes-it-possible-for-the-posix-timer	2004-07-26 15:20:23.835526088 -0700
++++ 25-akpm/kernel/timer.c	2004-07-26 15:20:23.839525480 -0700
+@@ -1243,8 +1243,7 @@ asmlinkage long sys_sysinfo(struct sysin
+ 		 * too.
+ 		 */
+ 
+-		do_gettimeofday((struct timeval *)&tp);
+-		tp.tv_nsec *= NSEC_PER_USEC;
++		getnstimeofday(&tp);
+ 		tp.tv_sec += wall_to_monotonic.tv_sec;
+ 		tp.tv_nsec += wall_to_monotonic.tv_nsec;
+ 		if (tp.tv_nsec - NSEC_PER_SEC >= 0) {
+_

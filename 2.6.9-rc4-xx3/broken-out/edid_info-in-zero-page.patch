@@ -1,0 +1,65 @@
+
+From: "Pallipadi, Venkatesh" <venkatesh.pallipadi@intel.com>
+
+EDID_INFO is encroaching on the space meant for E820 map in zero-page. 
+This will result in E820 map corruption on any system that has more=20 than
+18 E820 entries and CONFIG_VIDEO_SELECT.  Not sure how this bug=20 managed
+to hide for more than a year.
+
+Attached patch should fix the bug.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/i386/zero-page.txt |    3 ++-
+ 25-akpm/arch/i386/boot/video.S           |    4 ++--
+ 25-akpm/include/asm-i386/setup.h         |    2 +-
+ 3 files changed, 5 insertions(+), 4 deletions(-)
+
+diff -puN arch/i386/boot/video.S~edid_info-in-zero-page arch/i386/boot/video.S
+--- 25/arch/i386/boot/video.S~edid_info-in-zero-page	2004-09-30 22:39:51.251716000 -0700
++++ 25-akpm/arch/i386/boot/video.S	2004-09-30 22:39:51.259714784 -0700
+@@ -1936,7 +1936,7 @@ store_edid:
+ 
+ 	movl	$0x13131313, %eax		# memset block with 0x13
+ 	movw    $32, %cx
+-	movw	$0x440, %di
++	movw	$0x140, %di
+ 	cld
+ 	rep 
+ 	stosl  
+@@ -1945,7 +1945,7 @@ store_edid:
+ 	movw	$0x01, %bx
+ 	movw	$0x00, %cx
+ 	movw    $0x01, %dx
+-	movw	$0x440, %di
++	movw	$0x140, %di
+ 	int	$0x10	
+ 
+ 	popw	%di				# restore all registers        
+diff -puN Documentation/i386/zero-page.txt~edid_info-in-zero-page Documentation/i386/zero-page.txt
+--- 25/Documentation/i386/zero-page.txt~edid_info-in-zero-page	2004-09-30 22:39:51.253715696 -0700
++++ 25-akpm/Documentation/i386/zero-page.txt	2004-09-30 22:39:51.259714784 -0700
+@@ -28,7 +28,8 @@ Offset	Type		Description
+ 
+  0xa0	16 bytes	System description table truncated to 16 bytes.
+ 			( struct sys_desc_table_struct )
+- 0xb0 - 0x1c3		Free. Add more parameters here if you really need them.
++ 0xb0 - 0x13f		Free. Add more parameters here if you really need them.
++ 0x140- 0x1be		EDID_INFO Video mode setup
+ 
+ 0x1c4	unsigned long	EFI system table pointer
+ 0x1c8	unsigned long	EFI memory descriptor size
+diff -puN include/asm-i386/setup.h~edid_info-in-zero-page include/asm-i386/setup.h
+--- 25/include/asm-i386/setup.h~edid_info-in-zero-page	2004-09-30 22:39:51.254715544 -0700
++++ 25-akpm/include/asm-i386/setup.h	2004-09-30 22:39:51.257715088 -0700
+@@ -55,7 +55,7 @@ extern unsigned char boot_params[PARAM_S
+ #define KERNEL_START (*(unsigned long *) (PARAM+0x214))
+ #define INITRD_START (*(unsigned long *) (PARAM+0x218))
+ #define INITRD_SIZE (*(unsigned long *) (PARAM+0x21c))
+-#define EDID_INFO   (*(struct edid_info *) (PARAM+0x440))
++#define EDID_INFO   (*(struct edid_info *) (PARAM+0x140))
+ #define EDD_NR     (*(unsigned char *) (PARAM+EDDNR))
+ #define EDD_MBR_SIG_NR (*(unsigned char *) (PARAM+EDD_MBR_SIG_NR_BUF))
+ #define EDD_MBR_SIGNATURE ((unsigned int *) (PARAM+EDD_MBR_SIG_BUF))
+_

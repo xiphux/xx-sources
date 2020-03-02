@@ -1,0 +1,57 @@
+
+From: Roland McGrath <roland@redhat.com>
+
+Using kgdb-ga.patch from -mm, if userland single-steps (PTRACE_SINGLESTEP)
+into the `sysenter' instruction, kgdb reports a bogus trap:
+
+	Program received signal SIGTRAP, Trace/breakpoint trap.
+	sysenter_past_esp () at arch/i386/kernel/entry.S:249
+	1: x/i $pc  0xc0106023 <sysenter_past_esp>:	sti    
+	(gdb) 
+
+The hackery in the "FIX_STACK" macro in entry.S changes the saved PC for a
+the spurious kernel-mode debug trap when TF was set on user-mode execution
+of `sysenter', so sysenter_past_esp is where it actually lies in this case.
+ The following patch removes the kgdb hiccup when userland
+PTRACE_SINGLESTEP's into sysenter.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/entry.S |    1 +
+ 25-akpm/arch/i386/kernel/traps.c |    4 ++--
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff -puN arch/i386/kernel/entry.S~kgdb-gapatch-fix-for-i386-single-step-into-sysenter arch/i386/kernel/entry.S
+--- 25/arch/i386/kernel/entry.S~kgdb-gapatch-fix-for-i386-single-step-into-sysenter	2004-06-28 00:47:21.807798944 -0700
++++ 25-akpm/arch/i386/kernel/entry.S	2004-06-28 00:47:21.812798184 -0700
+@@ -245,6 +245,7 @@ need_resched:
+ 	# sysenter call handler stub
+ ENTRY(sysenter_entry)
+ 	movl TSS_sysenter_esp0(%esp),%esp
++	.globl sysenter_past_esp
+ sysenter_past_esp:
+ 	sti
+ 	pushl $(__USER_DS)
+diff -puN arch/i386/kernel/traps.c~kgdb-gapatch-fix-for-i386-single-step-into-sysenter arch/i386/kernel/traps.c
+--- 25/arch/i386/kernel/traps.c~kgdb-gapatch-fix-for-i386-single-step-into-sysenter	2004-06-28 00:47:21.808798792 -0700
++++ 25-akpm/arch/i386/kernel/traps.c	2004-06-28 00:47:21.813798032 -0700
+@@ -103,7 +103,7 @@ static int valid_stack_ptr(struct task_s
+ }
+ 
+ #ifdef CONFIG_KGDB
+-extern void sysenter_entry(void);
++extern void sysenter_past_esp(void);
+ #include <asm/kgdb.h>
+ #include <linux/init.h>
+ void set_intr_gate(unsigned int n, void *addr);
+@@ -668,7 +668,7 @@ asmlinkage void do_debug(struct pt_regs 
+ 		 * that really belongs to user space.  Others are
+ 		 * "Ours all ours!"
+ 		 */
+-		if (((regs->xcs & 3) == 0) && ((void *)regs->eip == sysenter_entry))
++		if (((regs->xcs & 3) == 0) && ((void *)regs->eip == sysenter_past_esp))
+ 			goto clear_TF_reenable;
+ #else
+ 		if ((regs->xcs & 3) == 0)
+_

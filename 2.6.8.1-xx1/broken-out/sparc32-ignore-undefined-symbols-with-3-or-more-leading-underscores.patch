@@ -1,0 +1,27 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+All of the BTFIXUP-related symbols are prefixed with at least three
+underscores.  In order not to trip this error, sparc32 needs to have some kind
+of hook around this phase of linking.  So here is one method.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Makefile |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletion(-)
+
+diff -puN Makefile~sparc32-ignore-undefined-symbols-with-3-or-more-leading-underscores Makefile
+--- 25/Makefile~sparc32-ignore-undefined-symbols-with-3-or-more-leading-underscores	2004-08-04 22:38:35.685816512 -0700
++++ 25-akpm/Makefile	2004-08-04 22:38:35.690815752 -0700
+@@ -538,7 +538,8 @@ define rule_vmlinux__
+ 	$(if $($(quiet)cmd_vmlinux__),					\
+ 	  echo '  $($(quiet)cmd_vmlinux__)' &&) 			\
+ 	$(cmd_vmlinux__);						\
+-	if $(OBJDUMP) --syms $@ | egrep -q '^([^R]|R[^E]|RE[^G])[^w]*\*UND\*'; then	\
++	if $(OBJDUMP) --syms $@ | $(AWK) '$$4!~/^___.*/ { print $$0 }'	\
++		| egrep -q '^([^R]|R[^E]|RE[^G])[^w]*\*UND\*'; then	\
+ 		echo 'ldchk: $@: final image has undefined symbols:';	\
+ 		$(NM) $@ | sed 's/^ *U \(.*\)/  \1/p;d';		\
+ 		$(RM) -f $@;						\
+_

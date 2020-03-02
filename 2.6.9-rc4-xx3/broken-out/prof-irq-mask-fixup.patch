@@ -1,0 +1,83 @@
+
+
+Fix up confusion over who owns prof_cpu_mask.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/irq/proc.c |   41 -----------------------------------------
+ 1 files changed, 41 deletions(-)
+
+diff -puN kernel/irq/proc.c~prof-irq-mask-fixup kernel/irq/proc.c
+--- 25/kernel/irq/proc.c~prof-irq-mask-fixup	Thu Oct  7 15:12:08 2004
++++ 25-akpm/kernel/irq/proc.c	Thu Oct  7 15:12:08 2004
+@@ -10,8 +10,6 @@
+ #include <linux/proc_fs.h>
+ #include <linux/interrupt.h>
+ 
+-unsigned long prof_cpu_mask = -1;
+-
+ static struct proc_dir_entry *root_irq_dir, *irq_dir[NR_IRQS];
+ 
+ #ifdef CONFIG_SMP
+@@ -65,34 +63,6 @@ static int irq_affinity_write_proc(struc
+ 
+ #endif
+ 
+-static int prof_cpu_mask_read_proc(char *page, char **start, off_t off,
+-				   int count, int *eof, void *data)
+-{
+-	int len = cpumask_scnprintf(page, count, *(cpumask_t *)data);
+-
+-	if (count - len < 2)
+-		return -EINVAL;
+-	len += sprintf(page + len, "\n");
+-	return len;
+-}
+-
+-static int prof_cpu_mask_write_proc(struct file *file,
+-				    const char __user *buffer,
+-				    unsigned long count, void *data)
+-{
+-	unsigned long full_count = count, err;
+-	cpumask_t *mask = (cpumask_t *)data;
+-	cpumask_t new_value;
+-
+-	err = cpumask_parse(buffer, count, new_value);
+-	if (err)
+-		return err;
+-
+-	*mask = new_value;
+-
+-	return full_count;
+-}
+-
+ #define MAX_NAMELEN 128
+ 
+ void register_handler_proc(unsigned int irq, struct irqaction *action)
+@@ -156,7 +126,6 @@ void unregister_handler_proc(unsigned in
+ 
+ void init_irq_proc(void)
+ {
+-	struct proc_dir_entry *entry;
+ 	int i;
+ 
+ 	/* create /proc/irq */
+@@ -164,16 +133,6 @@ void init_irq_proc(void)
+ 	if (!root_irq_dir)
+ 		return;
+ 
+-	/* create /proc/irq/prof_cpu_mask */
+-	entry = create_proc_entry("prof_cpu_mask", 0600, root_irq_dir);
+-	if (!entry)
+-		return;
+-
+-	entry->nlink = 1;
+-	entry->data = (void *)&prof_cpu_mask;
+-	entry->read_proc = prof_cpu_mask_read_proc;
+-	entry->write_proc = prof_cpu_mask_write_proc;
+-
+ 	/*
+ 	 * Create entries for all existing IRQs.
+ 	 */
+_

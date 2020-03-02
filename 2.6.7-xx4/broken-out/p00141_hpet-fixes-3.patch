@@ -1,0 +1,94 @@
+
+From: Robert Picco <Robert.Picco@hp.com>
+
+Some hpet clean up and a fix to the RTC request_irq issue.
+
+Signed-off-by: Bob Picco <Robert.Picco@hp.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/time_hpet.c |    4 ++--
+ 25-akpm/drivers/char/Kconfig         |    4 ++--
+ 25-akpm/drivers/char/rtc.c           |    1 -
+ 25-akpm/include/linux/hpet.h         |   14 ++++++--------
+ 4 files changed, 10 insertions(+), 13 deletions(-)
+
+diff -puN arch/i386/kernel/time_hpet.c~hpet-fixes-3 arch/i386/kernel/time_hpet.c
+--- 25/arch/i386/kernel/time_hpet.c~hpet-fixes-3	2004-06-28 13:24:37.476834816 -0700
++++ 25-akpm/arch/i386/kernel/time_hpet.c	2004-06-28 13:24:37.485833448 -0700
+@@ -155,9 +155,9 @@ int __init hpet_enable(void)
+ 		hd.hd_address = hpet_virt_address;
+ 		hd.hd_nirqs = ntimer;
+ 		hd.hd_flags = HPET_DATA_PLATFORM;
+-		HD_STATE(&hd, 0);
++		hpet_reserve_timer(&hd, 0);
+ #ifdef	CONFIG_HPET_EMULATE_RTC
+-		HD_STATE(&hd, 1);
++		hpet_reserve_timer(&hd, 1);
+ #endif
+ 		hd.hd_irq[0] = HPET_LEGACY_8254;
+ 		hd.hd_irq[1] = HPET_LEGACY_RTC;
+diff -puN drivers/char/Kconfig~hpet-fixes-3 drivers/char/Kconfig
+--- 25/drivers/char/Kconfig~hpet-fixes-3	2004-06-28 13:24:37.478834512 -0700
++++ 25-akpm/drivers/char/Kconfig	2004-06-28 13:24:37.486833296 -0700
+@@ -955,8 +955,8 @@ config HPET
+ 	default n
+ 	depends on ACPI
+ 	help
+-	  If you say Y here, you will have a device named "/dev/hpet/XX" for
+-	  each timer supported by the HPET.  The timers are
++	  If you say Y here, you will have a miscdevice named "/dev/hpet/".  Each
++	  open selects one of the timers supported by the HPET.  The timers are
+ 	  non-periodioc and/or periodic.
+ 
+ config HPET_RTC_IRQ
+diff -puN drivers/char/rtc.c~hpet-fixes-3 drivers/char/rtc.c
+--- 25/drivers/char/rtc.c~hpet-fixes-3	2004-06-28 13:24:37.480834208 -0700
++++ 25-akpm/drivers/char/rtc.c	2004-06-28 13:24:37.487833144 -0700
+@@ -99,7 +99,6 @@ static int rtc_irq = PCI_IRQ_NONE;
+ 
+ #ifdef	CONFIG_HPET_RTC_IRQ
+ #undef	RTC_IRQ
+-#define	RTC_IRQ	0
+ #endif
+ 
+ #ifdef RTC_IRQ
+diff -puN include/linux/hpet.h~hpet-fixes-3 include/linux/hpet.h
+--- 25/include/linux/hpet.h~hpet-fixes-3	2004-06-28 13:24:37.481834056 -0700
++++ 25-akpm/include/linux/hpet.h	2004-06-28 13:24:37.487833144 -0700
+@@ -54,12 +54,6 @@ struct hpet {
+ #define	HPET_LEG_RT_CNF_MASK		(2UL)
+ #define	HPET_ENABLE_CNF_MASK		(1UL)
+ 
+-/*
+- * HPET interrupt status register
+- */
+-
+-#define	HPET_ISR_CLEAR(HPET, TIMER)				\
+-		(HPET)->hpet_isr |= (1UL << TIMER)
+ 
+ /*
+  * Timer configuration register
+@@ -115,8 +109,6 @@ struct hpet_task {
+ 	void *ht_opaque;
+ };
+ 
+-#define	HD_STATE(HD, TIMER)	(HD)->hd_state |= (1 << TIMER)
+-
+ struct hpet_data {
+ 	unsigned long hd_address;
+ 	unsigned short hd_nirqs;
+@@ -127,6 +119,12 @@ struct hpet_data {
+ 
+ #define	HPET_DATA_PLATFORM	0x0001	/* platform call to hpet_alloc */
+ 
++static inline void hpet_reserve_timer(struct hpet_data *hd, int timer)
++{
++	hd->hd_state |= (1 << timer);
++	return;
++}
++
+ int hpet_alloc(struct hpet_data *);
+ int hpet_register(struct hpet_task *, int);
+ int hpet_unregister(struct hpet_task *);
+_

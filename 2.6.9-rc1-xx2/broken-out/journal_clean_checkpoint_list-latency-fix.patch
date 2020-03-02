@@ -1,0 +1,116 @@
+
+
+journal_clean_checkpoint_list() is supposed to release any written-back
+checkpointed buffers from the journalling system.  The number of such buffers
+is potentially enough to cover the whole journal - that's a lot with a
+maximum-sized journal of 409600 blocks.
+
+The function is fairly lame, really.  A better solution would be to hook into
+the blockdev mapping's ->releasepage a_op, but that's messy.
+
+Change it so that it will drop locks and schedule away if it is holding off
+preemption.  Rotate the where-to-start-next-time pointers to try to avoid the
+obvious quadratic search problems.
+
+Note that it can still hold off preemption for a long time if lots of those
+buffers are dirty.  We cannot do much about that if livelock is to be avoided.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/jbd/checkpoint.c |   39 +++++++++++++++++++++++++++++++++------
+ 25-akpm/fs/jbd/commit.c     |   13 ++++++++++---
+ 2 files changed, 43 insertions(+), 9 deletions(-)
+
+diff -puN fs/jbd/checkpoint.c~journal_clean_checkpoint_list-latency-fix fs/jbd/checkpoint.c
+--- 25/fs/jbd/checkpoint.c~journal_clean_checkpoint_list-latency-fix	Tue Jul 13 15:39:06 2004
++++ 25-akpm/fs/jbd/checkpoint.c	Tue Jul 13 15:40:50 2004
+@@ -455,9 +455,8 @@ int cleanup_journal_tail(journal_t *jour
+  *
+  * Find all the written-back checkpoint buffers in the journal and release them.
+  *
+- * Called with the journal locked.
+- * Called with j_list_lock held.
+- * Returns number of bufers reaped (for debug)
++ * Called with j_list_lock held, drops it.
++ * Returns number of bufers reaped
+  */
+ 
+ int __journal_clean_checkpoint_list(journal_t *journal)
+@@ -467,7 +466,7 @@ int __journal_clean_checkpoint_list(jour
+ 
+ 	transaction = journal->j_checkpoint_transactions;
+ 	if (transaction == 0)
+-		goto out;
++		goto out_unlock;
+ 
+ 	last_transaction = transaction->t_cpprev;
+ 	next_transaction = transaction;
+@@ -484,13 +483,41 @@ int __journal_clean_checkpoint_list(jour
+ 			do {
+ 				jh = next_jh;
+ 				next_jh = jh->b_cpnext;
+-				/* Use trylock because of the ranknig */
++				/* Use trylock because of the ranking */
+ 				if (jbd_trylock_bh_state(jh2bh(jh)))
+ 					ret += __try_to_free_cp_buf(jh);
+ 			} while (jh != last_jh);
+ 		}
++#ifdef CONFIG_PREEMPT
++		/*
++		 * This is potentially sucky: semi-quadratic performance if
++		 * there are a lot of dirty buffers.  So only do it if the user
++		 * has chosen a preemptible kernel.  If !CONFIG_PREEMPT we're
++		 * optimimising for straight-line performance, after all.
++		 * We don't test cond_resched() here because another CPU could
++		 * be waiting on j_list_lock() while holding a different lock.
++		 */
++		if ((ret & 127) == 127) {
++			spin_unlock(&journal->j_list_lock);
++			/*
++			 * We need to schedule away.  Rotate both this
++			 * transaction's buffer list and the checkpoint list to
++			 * try to avoid quadratic behaviour.
++			 */
++			jh = transaction->t_checkpoint_list;
++			if (jh)
++				transaction->t_checkpoint_list = jh->b_cpnext;
++
++			transaction = journal->j_checkpoint_transactions;
++			if (transaction)
++				journal->j_checkpoint_transactions =
++					transaction->t_cpnext;
++			return ret;
++		}
++#endif
+ 	} while (transaction != last_transaction);
+-out:
++out_unlock:
++	spin_unlock(&journal->j_list_lock);
+ 	return ret;
+ }
+ 
+diff -puN fs/jbd/commit.c~journal_clean_checkpoint_list-latency-fix fs/jbd/commit.c
+--- 25/fs/jbd/commit.c~journal_clean_checkpoint_list-latency-fix	Tue Jul 13 15:39:06 2004
++++ 25-akpm/fs/jbd/commit.c	Tue Jul 13 15:40:50 2004
+@@ -208,9 +208,16 @@ void journal_commit_transaction(journal_
+ 	 * checkpoint lists.  We do this *before* commit because it potentially
+ 	 * frees some memory
+ 	 */
+-	spin_lock(&journal->j_list_lock);
+-	__journal_clean_checkpoint_list(journal);
+-	spin_unlock(&journal->j_list_lock);
++	spin_unlock(&journal->j_state_lock);
++	{
++		int nr_cleaned;
++
++		do {
++			spin_lock(&journal->j_list_lock);
++			nr_cleaned = __journal_clean_checkpoint_list(journal);
++		} while (nr_cleaned);
++	}
++	spin_lock(&journal->j_state_lock);
+ 
+ 	jbd_debug (3, "JBD: commit phase 1\n");
+ 
+_

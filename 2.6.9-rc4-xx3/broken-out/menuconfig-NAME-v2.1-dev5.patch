@@ -1,0 +1,186 @@
+Index: xx-sources/Makefile
+===================================================================
+--- xx-sources.orig/Makefile	2004-09-09 15:07:59.059866448 -0400
++++ xx-sources/Makefile	2004-09-09 15:10:31.845639480 -0400
+@@ -350,7 +350,7 @@
+ export	VERSION PATCHLEVEL SUBLEVEL EXTRAVERSION LOCALVERSION KERNELRELEASE \
+ 	ARCH CONFIG_SHELL HOSTCC HOSTCFLAGS CROSS_COMPILE AS LD CC \
+ 	CPP AR NM STRIP OBJCOPY OBJDUMP MAKE AWK GENKSYMS PERL UTS_MACHINE \
+-	HOSTCXX HOSTCXXFLAGS LDFLAGS_MODULE CHECK CHECKFLAGS
++	HOSTCXX HOSTCXXFLAGS LDFLAGS_MODULE CHECK CHECKFLAGS NAME
+ 
+ export CPPFLAGS NOSTDINC_FLAGS LINUXINCLUDE OBJCOPYFLAGS LDFLAGS
+ export CFLAGS CFLAGS_KERNEL CFLAGS_MODULE 
+Index: xx-sources/scripts/kconfig/confdata.c
+===================================================================
+--- xx-sources.orig/scripts/kconfig/confdata.c	2004-09-07 15:55:58.000000000 -0400
++++ xx-sources/scripts/kconfig/confdata.c	2004-09-09 15:08:44.624939504 -0400
+@@ -308,19 +308,21 @@
+ 	time(&now);
+ 	fprintf(out, "#\n"
+ 		     "# Automatically generated make config: don't edit\n"
+-		     "# Linux kernel version: %s\n"
++		     "# Linux kernel version: %s \"%s\"\n"
+ 		     "# %s"
+ 		     "#\n",
+ 		     sym_get_string_value(sym),
++		     getenv("NAME"),
+ 		     ctime(&now));
+ 	if (out_h)
+ 		fprintf(out_h, "/*\n"
+ 			       " * Automatically generated C config: don't edit\n"
+-			       " * Linux kernel version: %s\n"
++			       " * Linux kernel version: %s \"%s\"\n"
+ 			       " * %s"
+ 			       " */\n"
+ 			       "#define AUTOCONF_INCLUDED\n",
+ 			       sym_get_string_value(sym),
++			       getenv("NAME"),
+ 			       ctime(&now));
+ 
+ 	if (!sym_change_count)
+Index: xx-sources/scripts/kconfig/gconf.c
+===================================================================
+--- xx-sources.orig/scripts/kconfig/gconf.c	2004-09-09 15:07:59.062865992 -0400
++++ xx-sources/scripts/kconfig/gconf.c	2004-09-09 15:08:44.626939200 -0400
+@@ -275,8 +275,8 @@
+ 					  /*"style", PANGO_STYLE_OBLIQUE, */
+ 					  NULL);
+ 
+-	sprintf(title, "Linux Kernel v%s Configuration",
+-		getenv("KERNELRELEASE"));
++	sprintf(title, "Linux Kernel v%s \"%s\" Configuration",
++		getenv("KERNELRELEASE"),getenv("NAME"));
+ 	gtk_window_set_title(GTK_WINDOW(main_wnd), title);
+ 
+ 	gtk_widget_show(main_wnd);
+Index: xx-sources/scripts/kconfig/mconf.c
+===================================================================
+--- xx-sources.orig/scripts/kconfig/mconf.c	2004-09-09 15:07:59.060866296 -0400
++++ xx-sources/scripts/kconfig/mconf.c	2004-09-09 15:08:44.628938896 -0400
+@@ -897,8 +897,8 @@
+ 
+ 	sym = sym_lookup("KERNELRELEASE", 0);
+ 	sym_calc_value(sym);
+-	sprintf(menu_backtitle, "Linux Kernel v%s Configuration",
+-		sym_get_string_value(sym));
++	sprintf(menu_backtitle, "Linux Kernel v%s \"%s\" Configuration",
++		sym_get_string_value(sym), getenv("NAME"));
+ 
+ 	mode = getenv("MENUCONFIG_MODE");
+ 	if (mode) {
+Index: xx-sources/scripts/kconfig/qconf.cc
+===================================================================
+--- xx-sources.orig/scripts/kconfig/qconf.cc	2004-08-14 06:54:48.000000000 -0400
++++ xx-sources/scripts/kconfig/qconf.cc	2004-09-09 15:08:44.630938592 -0400
+@@ -1112,14 +1112,14 @@
+ 	if (s.isNull())
+ 		return;
+ 	if (conf_read(s.latin1()))
+-		QMessageBox::information(this, "qconf", "Unable to load configuration!");
++		QMessageBox::information(this, "Error", "Unable to load configuration!");
+ 	ConfigView::updateListAll();
+ }
+ 
+ void ConfigMainWindow::saveConfig(void)
+ {
+ 	if (conf_write(NULL))
+-		QMessageBox::information(this, "qconf", "Unable to save configuration!");
++		QMessageBox::information(this, "Error", "Unable to save configuration!");
+ }
+ 
+ void ConfigMainWindow::saveConfigAs(void)
+@@ -1128,7 +1128,7 @@
+ 	if (s.isNull())
+ 		return;
+ 	if (conf_write(s.latin1()))
+-		QMessageBox::information(this, "qconf", "Unable to save configuration!");
++		QMessageBox::information(this, "Error", "Unable to save configuration!");
+ }
+ 
+ void ConfigMainWindow::changeMenu(struct menu *menu)
+@@ -1264,7 +1264,7 @@
+ 		e->accept();
+ 		return;
+ 	}
+-	QMessageBox mb("qconf", "Save configuration?", QMessageBox::Warning,
++	QMessageBox mb("Save .config?", "Save configuration?", QMessageBox::Warning,
+ 			QMessageBox::Yes | QMessageBox::Default, QMessageBox::No, QMessageBox::Cancel | QMessageBox::Escape);
+ 	mb.setButtonText(QMessageBox::Yes, "&Save Changes");
+ 	mb.setButtonText(QMessageBox::No, "&Discard Changes");
+@@ -1283,7 +1283,8 @@
+ 
+ void ConfigMainWindow::showIntro(void)
+ {
+-	static char str[] = "Welcome to the qconf graphical kernel configuration tool for Linux.\n\n"
++	static char str[1000];
++	sprintf(str, "Welcome to the qconf graphical kernel configuration tool for Linux %s \"%s\".\n\n"
+ 		"For each option, a blank box indicates the feature is disabled, a check\n"
+ 		"indicates it is enabled, and a dot indicates that it is to be compiled\n"
+ 		"as a module.  Clicking on the box will cycle through the three states.\n\n"
+@@ -1293,9 +1294,10 @@
+ 		"options must be enabled to support the option you are interested in, you can\n"
+ 		"still view the help of a grayed-out option.\n\n"
+ 		"Toggling Show Debug Info under the Options menu will show the dependencies,\n"
+-		"which you can then match by examining other options.\n\n";
++		"which you can then match by examining other options.\n\n",
++		getenv("KERNELRELEASE"), getenv("NAME"));
+ 
+-	QMessageBox::information(this, "qconf", str);
++	QMessageBox::information(this, "Introduction", str);
+ }
+ 
+ void ConfigMainWindow::showAbout(void)
+@@ -1303,7 +1305,7 @@
+ 	static char str[] = "qconf is Copyright (C) 2002 Roman Zippel <zippel@linux-m68k.org>.\n\n"
+ 		"Bug reports and feature request can also be entered at http://bugzilla.kernel.org/\n";
+ 
+-	QMessageBox::information(this, "qconf", str);
++	QMessageBox::information(this, "About", str);
+ }
+ 
+ void ConfigMainWindow::saveSettings(void)
+@@ -1371,7 +1373,12 @@
+ {
+ 	ConfigMainWindow* v;
+ 	const char *name;
+-
++	static char title[100];
++	
++	sprintf(title,"Linux Kernel %s \"%s\" Configuration",
++	getenv("KERNELRELEASE"), getenv("NAME")
++	);
++	
+ #ifndef LKC_DIRECT_LINK
+ 	kconfig_load();
+ #endif
+@@ -1397,6 +1404,7 @@
+ 
+ 	v = new ConfigMainWindow();
+ 
++	v->setCaption(title);
+ 	//zconfdump(stdout);
+ 	v->show();
+ 	configApp->connect(configApp, SIGNAL(lastWindowClosed()), SLOT(quit()));
+Index: xx-sources/scripts/kconfig/zconf.tab.c_shipped
+===================================================================
+--- xx-sources.orig/scripts/kconfig/zconf.tab.c_shipped	2004-08-14 06:56:00.000000000 -0400
++++ xx-sources/scripts/kconfig/zconf.tab.c_shipped	2004-09-09 15:08:44.633938136 -0400
+@@ -1917,13 +1917,16 @@
+ {
+ 	struct symbol *sym;
+ 	int i;
++	static char title[100];
+ 
+ 	zconf_initscan(name);
+ 
++	sprintf(title,"Linux Kernel %s \"%s\" Configuration",
++	getenv("KERNELRELEASE"), getenv("NAME"));
+ 	sym_init();
+ 	menu_init();
+ 	modules_sym = sym_lookup("MODULES", 0);
+-	rootmenu.prompt = menu_add_prop(P_MENU, "Linux Kernel Configuration", NULL, NULL);
++	rootmenu.prompt = menu_add_prop(P_MENU, title, NULL, NULL);
+ 
+ 	//zconfdebug = 1;
+ 	zconfparse();

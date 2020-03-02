@@ -1,0 +1,47 @@
+
+From: Hiroyuki KAMEZAWA <kamezawa.hiroyu@jp.fujitsu.com>
+
+This patch is for ia64 kernel.
+This defines CONFIG_HOLES_IN_ZONE in arch/ia64/Kconfig.
+IA64 has memory holes smaller than its MAX_ORDER and its virtual memmap
+allows holes in a zone's memmap.
+
+This patch makes vmemmap aligned with IA64_GRANULE_SIZE in
+arch/ia64/mm/init.c.
+
+Signed-off-by: KAMEZAWA Hiroyuki <kamezawa.hiroyu@jp.fujitsu.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ia64/Kconfig   |    4 ++++
+ 25-akpm/arch/ia64/mm/init.c |    3 ++-
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff -puN arch/ia64/Kconfig~no-buddy-bitmap-patch-revist-for-ia64 arch/ia64/Kconfig
+--- 25/arch/ia64/Kconfig~no-buddy-bitmap-patch-revist-for-ia64	Fri Oct  8 14:23:58 2004
++++ 25-akpm/arch/ia64/Kconfig	Fri Oct  8 14:23:58 2004
+@@ -178,6 +178,10 @@ config VIRTUAL_MEM_MAP
+ 	  require the DISCONTIGMEM option for your machine. If you are
+ 	  unsure, say Y.
+ 
++config HOLES_IN_ZONE
++	bool
++	default y if VIRTUAL_MEM_MAP
++
+ config DISCONTIGMEM
+ 	bool "Discontiguous memory support"
+ 	depends on (IA64_DIG || IA64_SGI_SN2 || IA64_GENERIC || IA64_HP_ZX1) && NUMA && VIRTUAL_MEM_MAP
+diff -puN arch/ia64/mm/init.c~no-buddy-bitmap-patch-revist-for-ia64 arch/ia64/mm/init.c
+--- 25/arch/ia64/mm/init.c~no-buddy-bitmap-patch-revist-for-ia64	Fri Oct  8 14:23:58 2004
++++ 25-akpm/arch/ia64/mm/init.c	Fri Oct  8 14:23:58 2004
+@@ -410,7 +410,8 @@ virtual_memmap_init (u64 start, u64 end,
+ 	struct page *map_start, *map_end;
+ 
+ 	args = (struct memmap_init_callback_data *) arg;
+-
++	start = GRANULEROUNDDOWN(start);
++	end = GRANULEROUNDUP(end);
+ 	map_start = vmem_map + (__pa(start) >> PAGE_SHIFT);
+ 	map_end   = vmem_map + (__pa(end) >> PAGE_SHIFT);
+ 
+_

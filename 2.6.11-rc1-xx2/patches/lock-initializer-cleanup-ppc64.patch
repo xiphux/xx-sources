@@ -1,0 +1,329 @@
+
+From: Thomas Gleixner <tglx@linutronix.de>
+
+Use the new lock initializers DEFINE_SPIN_LOCK and DEFINE_RW_LOCK
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ppc64/kernel/eeh.c           |    4 ++--
+ 25-akpm/arch/ppc64/kernel/i8259.c         |    2 +-
+ 25-akpm/arch/ppc64/kernel/iSeries_pci.c   |    2 +-
+ 25-akpm/arch/ppc64/kernel/mpic.c          |    2 +-
+ 25-akpm/arch/ppc64/kernel/pSeries_lpar.c  |    2 +-
+ 25-akpm/arch/ppc64/kernel/pSeries_nvram.c |    2 +-
+ 25-akpm/arch/ppc64/kernel/pSeries_setup.c |    2 +-
+ 25-akpm/arch/ppc64/kernel/pSeries_smp.c   |    2 +-
+ 25-akpm/arch/ppc64/kernel/pci.c           |    2 +-
+ 25-akpm/arch/ppc64/kernel/pmac_feature.c  |    2 +-
+ 25-akpm/arch/ppc64/kernel/pmac_nvram.c    |    2 +-
+ 25-akpm/arch/ppc64/kernel/pmac_smp.c      |    2 +-
+ 25-akpm/arch/ppc64/kernel/prom.c          |    2 +-
+ 25-akpm/arch/ppc64/kernel/ras.c           |    2 +-
+ 25-akpm/arch/ppc64/kernel/rtas.c          |    2 +-
+ 25-akpm/arch/ppc64/kernel/rtas_flash.c    |    2 +-
+ 25-akpm/arch/ppc64/kernel/rtasd.c         |    2 +-
+ 25-akpm/arch/ppc64/kernel/smp.c           |    2 +-
+ 25-akpm/arch/ppc64/kernel/time.c          |    2 +-
+ 25-akpm/arch/ppc64/kernel/traps.c         |    4 ++--
+ 25-akpm/arch/ppc64/kernel/viopath.c       |    2 +-
+ 25-akpm/arch/ppc64/mm/hash_native.c       |    2 +-
+ 25-akpm/arch/ppc64/mm/init.c              |    2 +-
+ 23 files changed, 25 insertions(+), 25 deletions(-)
+
+diff -puN arch/ppc64/kernel/eeh.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/eeh.c
+--- 25/arch/ppc64/kernel/eeh.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/eeh.c	Wed Jan 12 16:54:21 2005
+@@ -76,7 +76,7 @@
+ #define BUID_LO(buid) ((buid) & 0xffffffff)
+ 
+ /* EEH event workqueue setup. */
+-static spinlock_t eeh_eventlist_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(eeh_eventlist_lock);
+ LIST_HEAD(eeh_eventlist);
+ static void eeh_event_handler(void *);
+ DECLARE_WORK(eeh_event_wq, eeh_event_handler, NULL);
+@@ -103,7 +103,7 @@ static int eeh_subsystem_enabled;
+ 
+ /* Buffer for reporting slot-error-detail rtas calls */
+ static unsigned char slot_errbuf[RTAS_ERROR_LOG_MAX];
+-static spinlock_t slot_errbuf_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(slot_errbuf_lock);
+ static int eeh_error_buf_size;
+ 
+ /* System monitoring statistics */
+diff -puN arch/ppc64/kernel/i8259.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/i8259.c
+--- 25/arch/ppc64/kernel/i8259.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/i8259.c	Wed Jan 12 16:54:21 2005
+@@ -21,7 +21,7 @@ unsigned char cached_8259[2] = { 0xff, 0
+ #define cached_A1 (cached_8259[0])
+ #define cached_21 (cached_8259[1])
+ 
+-static spinlock_t i8259_lock __cacheline_aligned_in_smp = SPIN_LOCK_UNLOCKED;
++static  __cacheline_aligned_in_smp DEFINE_SPINLOCK(i8259_lock);
+ 
+ static int i8259_pic_irq_offset;
+ static int i8259_present;
+diff -puN arch/ppc64/kernel/iSeries_pci.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/iSeries_pci.c
+--- 25/arch/ppc64/kernel/iSeries_pci.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/iSeries_pci.c	Wed Jan 12 16:54:21 2005
+@@ -96,7 +96,7 @@ static u8 *iobar_table;
+  * Static and Global variables
+  */
+ static char *pci_io_text = "iSeries PCI I/O";
+-static spinlock_t iomm_table_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(iomm_table_lock);
+ 
+ /*
+  * iomm_table_initialize
+diff -puN arch/ppc64/kernel/mpic.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/mpic.c
+--- 25/arch/ppc64/kernel/mpic.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/mpic.c	Wed Jan 12 16:54:21 2005
+@@ -42,7 +42,7 @@
+ 
+ static struct mpic *mpics;
+ static struct mpic *mpic_primary;
+-static spinlock_t mpic_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(mpic_lock);
+ 
+ 
+ /*
+diff -puN arch/ppc64/kernel/pci.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/pci.c
+--- 25/arch/ppc64/kernel/pci.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/pci.c	Wed Jan 12 16:54:21 2005
+@@ -157,7 +157,7 @@ void pcibios_align_resource(void *data, 
+ 	res->start = start;
+ }
+ 
+-static spinlock_t hose_spinlock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(hose_spinlock);
+ 
+ /*
+  * pci_controller(phb) initialized common variables.
+diff -puN arch/ppc64/kernel/pmac_feature.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/pmac_feature.c
+--- 25/arch/ppc64/kernel/pmac_feature.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/pmac_feature.c	Wed Jan 12 16:54:21 2005
+@@ -53,7 +53,7 @@
+  * We use a single global lock to protect accesses. Each driver has
+  * to take care of its own locking
+  */
+-static spinlock_t feature_lock  __pmacdata = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(feature_lock  __pmacdata);
+ 
+ #define LOCK(flags)	spin_lock_irqsave(&feature_lock, flags);
+ #define UNLOCK(flags)	spin_unlock_irqrestore(&feature_lock, flags);
+diff -puN arch/ppc64/kernel/pmac_nvram.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/pmac_nvram.c
+--- 25/arch/ppc64/kernel/pmac_nvram.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/pmac_nvram.c	Wed Jan 12 16:54:21 2005
+@@ -75,7 +75,7 @@ struct core99_header {
+ static volatile unsigned char *nvram_data;
+ static int core99_bank = 0;
+ // XXX Turn that into a sem
+-static spinlock_t nv_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(nv_lock);
+ 
+ extern int system_running;
+ 
+diff -puN arch/ppc64/kernel/pmac_smp.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/pmac_smp.c
+--- 25/arch/ppc64/kernel/pmac_smp.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/pmac_smp.c	Wed Jan 12 16:54:21 2005
+@@ -68,7 +68,7 @@ extern struct smp_ops_t *smp_ops;
+ 
+ static void (*pmac_tb_freeze)(int freeze);
+ static struct device_node *pmac_tb_clock_chip_host;
+-static spinlock_t timebase_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(timebase_lock);
+ static unsigned long timebase;
+ 
+ static void smp_core99_cypress_tb_freeze(int freeze)
+diff -puN arch/ppc64/kernel/prom.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/prom.c
+--- 25/arch/ppc64/kernel/prom.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/prom.c	Wed Jan 12 16:54:21 2005
+@@ -95,7 +95,7 @@ static struct device_node *allnodes = NU
+ /* use when traversing tree through the allnext, child, sibling,
+  * or parent members of struct device_node.
+  */
+-static rwlock_t devtree_lock = RW_LOCK_UNLOCKED;
++static DEFINE_RWLOCK(devtree_lock);
+ 
+ /* export that to outside world */
+ struct device_node *of_chosen;
+diff -puN arch/ppc64/kernel/pSeries_lpar.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/pSeries_lpar.c
+--- 25/arch/ppc64/kernel/pSeries_lpar.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/pSeries_lpar.c	Wed Jan 12 16:54:21 2005
+@@ -335,7 +335,7 @@ long pSeries_lpar_hpte_insert(unsigned l
+ 	return (slot & 7) | (secondary << 3);
+ }
+ 
+-static spinlock_t pSeries_lpar_tlbie_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(pSeries_lpar_tlbie_lock);
+ 
+ static long pSeries_lpar_hpte_remove(unsigned long hpte_group)
+ {
+diff -puN arch/ppc64/kernel/pSeries_nvram.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/pSeries_nvram.c
+--- 25/arch/ppc64/kernel/pSeries_nvram.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/pSeries_nvram.c	Wed Jan 12 16:54:21 2005
+@@ -31,7 +31,7 @@
+ static unsigned int nvram_size;
+ static int nvram_fetch, nvram_store;
+ static char nvram_buf[NVRW_CNT];	/* assume this is in the first 4GB */
+-static spinlock_t nvram_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(nvram_lock);
+ 
+ 
+ static ssize_t pSeries_nvram_read(char *buf, size_t count, loff_t *index)
+diff -puN arch/ppc64/kernel/pSeries_setup.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/pSeries_setup.c
+--- 25/arch/ppc64/kernel/pSeries_setup.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/pSeries_setup.c	Wed Jan 12 16:54:21 2005
+@@ -394,7 +394,7 @@ static void pSeries_progress(char *s, un
+ 	char *os;
+ 	static int display_character, set_indicator;
+ 	static int max_width;
+-	static spinlock_t progress_lock = SPIN_LOCK_UNLOCKED;
++	static DEFINE_SPINLOCK(progress_lock);
+ 	static int pending_newline = 0;  /* did last write end with unprinted newline? */
+ 
+ 	if (!rtas.base)
+diff -puN arch/ppc64/kernel/pSeries_smp.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/pSeries_smp.c
+--- 25/arch/ppc64/kernel/pSeries_smp.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/pSeries_smp.c	Wed Jan 12 16:54:21 2005
+@@ -270,7 +270,7 @@ static void __devinit smp_xics_setup_cpu
+ #endif
+ }
+ 
+-static spinlock_t timebase_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(timebase_lock);
+ static unsigned long timebase = 0;
+ 
+ static void __devinit pSeries_give_timebase(void)
+diff -puN arch/ppc64/kernel/ras.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/ras.c
+--- 25/arch/ppc64/kernel/ras.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/ras.c	Wed Jan 12 16:54:21 2005
+@@ -53,7 +53,7 @@
+ #include <asm/ppcdebug.h>
+ 
+ static unsigned char ras_log_buf[RTAS_ERROR_LOG_MAX];
+-static spinlock_t ras_log_buf_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(ras_log_buf_lock);
+ 
+ char mce_data_buf[RTAS_ERROR_LOG_MAX]
+ ;
+diff -puN arch/ppc64/kernel/rtas.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/rtas.c
+--- 25/arch/ppc64/kernel/rtas.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/rtas.c	Wed Jan 12 16:54:21 2005
+@@ -41,7 +41,7 @@ EXPORT_SYMBOL(rtas);
+ 
+ char rtas_err_buf[RTAS_ERROR_LOG_MAX];
+ 
+-spinlock_t rtas_data_buf_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(rtas_data_buf_lock);
+ char rtas_data_buf[RTAS_DATA_BUF_SIZE]__page_aligned;
+ unsigned long rtas_rmo_buf;
+ 
+diff -puN arch/ppc64/kernel/rtasd.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/rtasd.c
+--- 25/arch/ppc64/kernel/rtasd.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/rtasd.c	Wed Jan 12 16:54:21 2005
+@@ -34,7 +34,7 @@
+ #define DEBUG(A...)
+ #endif
+ 
+-static spinlock_t rtasd_log_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(rtasd_log_lock);
+ 
+ DECLARE_WAIT_QUEUE_HEAD(rtas_log_wait);
+ 
+diff -puN arch/ppc64/kernel/rtas_flash.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/rtas_flash.c
+--- 25/arch/ppc64/kernel/rtas_flash.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/rtas_flash.c	Wed Jan 12 16:54:21 2005
+@@ -105,7 +105,7 @@ struct rtas_validate_flash_t
+ 	unsigned int update_results;	/* Update results token */
+ };
+ 
+-static spinlock_t flash_file_open_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(flash_file_open_lock);
+ static struct proc_dir_entry *firmware_flash_pde;
+ static struct proc_dir_entry *firmware_update_pde;
+ static struct proc_dir_entry *validate_pde;
+diff -puN arch/ppc64/kernel/smp.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/smp.c
+--- 25/arch/ppc64/kernel/smp.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/smp.c	Wed Jan 12 16:54:21 2005
+@@ -202,7 +202,7 @@ void smp_send_stop(void)
+  * static memory requirements. It also looks cleaner.
+  * Stolen from the i386 version.
+  */
+-static spinlock_t call_lock __cacheline_aligned_in_smp = SPIN_LOCK_UNLOCKED;
++static  __cacheline_aligned_in_smp DEFINE_SPINLOCK(call_lock);
+ 
+ static struct call_data_struct {
+ 	void (*func) (void *info);
+diff -puN arch/ppc64/kernel/time.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/time.c
+--- 25/arch/ppc64/kernel/time.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/time.c	Wed Jan 12 16:54:21 2005
+@@ -91,7 +91,7 @@ unsigned long xtime_sync_interval;
+ unsigned long tb_to_xs;
+ unsigned      tb_to_us;
+ unsigned long processor_freq;
+-spinlock_t rtc_lock = SPIN_LOCK_UNLOCKED;
++DEFINE_SPINLOCK(rtc_lock);
+ 
+ unsigned long tb_to_ns_scale;
+ unsigned long tb_to_ns_shift;
+diff -puN arch/ppc64/kernel/traps.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/traps.c
+--- 25/arch/ppc64/kernel/traps.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/traps.c	Wed Jan 12 16:54:21 2005
+@@ -60,7 +60,7 @@ EXPORT_SYMBOL(__debugger_fault_handler);
+ #endif
+ 
+ struct notifier_block *ppc64_die_chain;
+-static spinlock_t die_notifier_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(die_notifier_lock);
+ 
+ int register_die_notifier(struct notifier_block *nb)
+ {
+@@ -77,7 +77,7 @@ int register_die_notifier(struct notifie
+  * Trap & Exception support
+  */
+ 
+-static spinlock_t die_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(die_lock);
+ 
+ int die(const char *str, struct pt_regs *regs, long err)
+ {
+diff -puN arch/ppc64/kernel/viopath.c~lock-initializer-cleanup-ppc64 arch/ppc64/kernel/viopath.c
+--- 25/arch/ppc64/kernel/viopath.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/kernel/viopath.c	Wed Jan 12 16:54:21 2005
+@@ -64,7 +64,7 @@ static struct viopathStatus {
+ 	int numberAllocated;
+ } viopathStatus[HVMAXARCHITECTEDLPS];
+ 
+-static spinlock_t statuslock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(statuslock);
+ 
+ /*
+  * For each kind of event we allocate a buffer that is
+diff -puN arch/ppc64/mm/hash_native.c~lock-initializer-cleanup-ppc64 arch/ppc64/mm/hash_native.c
+--- 25/arch/ppc64/mm/hash_native.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/mm/hash_native.c	Wed Jan 12 16:54:21 2005
+@@ -25,7 +25,7 @@
+ 
+ #define HPTE_LOCK_BIT 3
+ 
+-static spinlock_t native_tlbie_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(native_tlbie_lock);
+ 
+ static inline void native_lock_hpte(HPTE *hptep)
+ {
+diff -puN arch/ppc64/mm/init.c~lock-initializer-cleanup-ppc64 arch/ppc64/mm/init.c
+--- 25/arch/ppc64/mm/init.c~lock-initializer-cleanup-ppc64	Wed Jan 12 16:54:21 2005
++++ 25-akpm/arch/ppc64/mm/init.c	Wed Jan 12 16:54:21 2005
+@@ -470,7 +470,7 @@ void free_initrd_mem(unsigned long start
+ }
+ #endif
+ 
+-static spinlock_t mmu_context_lock = SPIN_LOCK_UNLOCKED;
++static DEFINE_SPINLOCK(mmu_context_lock);
+ static DEFINE_IDR(mmu_context_idr);
+ 
+ int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
+_

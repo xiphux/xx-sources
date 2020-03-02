@@ -1,0 +1,29 @@
+
+From: Jens Axboe <axboe@suse.de>
+
+For requests marked read-ahead, it can legitimately fail without it being a
+path problem.  So don't fail a path just because this happens (can be the
+atomic request allocation going nuts, for instance), or all paths will quickly
+go away.
+
+Cc: <neilb@cse.unsw.edu.au>
+Signed-off-by: Jens Axboe <axboe@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/md/multipath.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN drivers/md/multipath.c~2-2-md-multipathing-fixes drivers/md/multipath.c
+--- 25/drivers/md/multipath.c~2-2-md-multipathing-fixes	2004-08-05 11:14:54.004263528 -0700
++++ 25-akpm/drivers/md/multipath.c	2004-08-05 11:14:54.007263072 -0700
+@@ -120,7 +120,7 @@ int multipath_end_request(struct bio *bi
+ 
+ 	if (uptodate)
+ 		multipath_end_bh_io(mp_bh, uptodate);
+-	else if ((bio->bi_rw & (1 << BIO_RW_AHEAD)) == 0) {
++	else if (!bio_rw_ahead(bio)) {
+ 		/*
+ 		 * oops, IO error:
+ 		 */
+_

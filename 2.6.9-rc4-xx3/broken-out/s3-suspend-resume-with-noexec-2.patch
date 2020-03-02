@@ -1,0 +1,101 @@
+
+From: Venkatesh Pallipadi <venkatesh.pallipadi@intel.com>
+
+This patch is required for S3 suspend-resume on noexec capable systems.  On
+these systems, we need to save and restore MSR_EFER during S3
+suspend-resume.
+
+Signed-off-by: "Venkatesh Pallipadi" <venkatesh.pallipadi@intel.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/acpi/wakeup.S |   25 +++++++++++++++++++++++++
+ 25-akpm/arch/i386/mm/init.c            |    2 +-
+ 25-akpm/include/asm-i386/page.h        |    3 +--
+ 3 files changed, 27 insertions(+), 3 deletions(-)
+
+diff -puN arch/i386/kernel/acpi/wakeup.S~s3-suspend-resume-with-noexec-2 arch/i386/kernel/acpi/wakeup.S
+--- 25/arch/i386/kernel/acpi/wakeup.S~s3-suspend-resume-with-noexec-2	2004-10-11 01:56:58.010006592 -0700
++++ 25-akpm/arch/i386/kernel/acpi/wakeup.S	2004-10-11 01:56:58.017005528 -0700
+@@ -59,6 +59,14 @@ wakeup_code:
+ 	movl	$swapper_pg_dir-__PAGE_OFFSET, %eax
+ 	movl	%eax, %cr3
+ 
++	testl	$1, real_efer_save_restore - wakeup_code
++	jz	4f
++	# restore efer setting
++	movl	real_save_efer_edx - wakeup_code, %edx
++	movl	real_save_efer_eax - wakeup_code, %eax
++	mov     $0xc0000080, %ecx
++	wrmsr
++4:
+ 	# make sure %cr4 is set correctly (features, etc)
+ 	movl	real_save_cr4 - wakeup_code, %eax
+ 	movl	%eax, %cr4
+@@ -89,6 +97,9 @@ real_save_cr4:	.long 0
+ real_magic:	.long 0
+ video_mode:	.long 0
+ video_flags:	.long 0
++real_efer_save_restore:	.long 0
++real_save_efer_edx: 	.long 0
++real_save_efer_eax: 	.long 0
+ 
+ bogus_real_magic:
+ 	movw	$0x0e00 + 'B', %fs:(0x12)
+@@ -223,6 +234,20 @@ ENTRY(acpi_copy_wakeup_routine)
+ 	sldt	saved_ldt
+ 	str	saved_tss
+ 
++	movl	nx_enabled, %edx
++	movl	%edx, real_efer_save_restore - wakeup_start (%eax)
++	testl	$1, real_efer_save_restore - wakeup_start (%eax)
++	jz	2f
++	# save efer setting
++	pushl	%eax
++	movl	%eax, %ebx
++	mov     $0xc0000080, %ecx
++	rdmsr
++	movl	%edx, real_save_efer_edx - wakeup_start (%ebx)
++	movl	%eax, real_save_efer_eax - wakeup_start (%ebx)
++	popl	%eax
++2:
++
+ 	movl    %cr3, %edx
+ 	movl    %edx, real_save_cr3 - wakeup_start (%eax)
+ 	movl    %cr4, %edx
+diff -puN arch/i386/mm/init.c~s3-suspend-resume-with-noexec-2 arch/i386/mm/init.c
+--- 25/arch/i386/mm/init.c~s3-suspend-resume-with-noexec-2	2004-10-11 01:56:58.011006440 -0700
++++ 25-akpm/arch/i386/mm/init.c	2004-10-11 01:56:58.017005528 -0700
+@@ -438,8 +438,8 @@ static int __init noexec_setup(char *str
+ 
+ __setup("noexec=", noexec_setup);
+ 
+-#ifdef CONFIG_X86_PAE
+ int nx_enabled = 0;
++#ifdef CONFIG_X86_PAE
+ 
+ static void __init set_nx(void)
+ {
+diff -puN include/asm-i386/page.h~s3-suspend-resume-with-noexec-2 include/asm-i386/page.h
+--- 25/include/asm-i386/page.h~s3-suspend-resume-with-noexec-2	2004-10-11 01:56:58.013006136 -0700
++++ 25-akpm/include/asm-i386/page.h	2004-10-11 01:56:58.018005376 -0700
+@@ -39,9 +39,9 @@
+ /*
+  * These are used to make use of C type-checking..
+  */
++extern int nx_enabled;
+ #ifdef CONFIG_X86_PAE
+ extern unsigned long long __supported_pte_mask;
+-extern int nx_enabled;
+ typedef struct { unsigned long pte_low, pte_high; } pte_t;
+ typedef struct { unsigned long long pmd; } pmd_t;
+ typedef struct { unsigned long long pgd; } pgd_t;
+@@ -49,7 +49,6 @@ typedef struct { unsigned long long pgpr
+ #define pte_val(x)	((x).pte_low | ((unsigned long long)(x).pte_high << 32))
+ #define HPAGE_SHIFT	21
+ #else
+-#define nx_enabled 0
+ typedef struct { unsigned long pte_low; } pte_t;
+ typedef struct { unsigned long pmd; } pmd_t;
+ typedef struct { unsigned long pgd; } pgd_t;
+_

@@ -1,0 +1,62 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+rename wake_up_new_process -> wake_up_new_task.
+
+in sched.c we are gradually moving away from the overloaded 'process' or
+'thread' notion to the traditional task (or context) naming.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/sched.h |    2 +-
+ 25-akpm/kernel/fork.c         |    2 +-
+ 25-akpm/kernel/sched.c        |    6 +++---
+ 3 files changed, 5 insertions(+), 5 deletions(-)
+
+diff -puN include/linux/sched.h~sched-clean-fork-rename-wake_up_new_process-wake_up_new_task include/linux/sched.h
+--- 25/include/linux/sched.h~sched-clean-fork-rename-wake_up_new_process-wake_up_new_task	2004-07-28 22:08:36.170532232 -0700
++++ 25-akpm/include/linux/sched.h	2004-07-28 22:08:36.179530864 -0700
+@@ -750,7 +750,7 @@ extern void do_timer(struct pt_regs *);
+ 
+ extern int FASTCALL(wake_up_state(struct task_struct * tsk, unsigned int state));
+ extern int FASTCALL(wake_up_process(struct task_struct * tsk));
+-extern void FASTCALL(wake_up_new_process(struct task_struct * tsk,
++extern void FASTCALL(wake_up_new_task(struct task_struct * tsk,
+ 						unsigned long clone_flags));
+ #ifdef CONFIG_SMP
+  extern void kick_process(struct task_struct *tsk);
+diff -puN kernel/fork.c~sched-clean-fork-rename-wake_up_new_process-wake_up_new_task kernel/fork.c
+--- 25/kernel/fork.c~sched-clean-fork-rename-wake_up_new_process-wake_up_new_task	2004-07-28 22:08:36.172531928 -0700
++++ 25-akpm/kernel/fork.c	2004-07-28 22:08:36.181530560 -0700
+@@ -1215,7 +1215,7 @@ long do_fork(unsigned long clone_flags,
+ 		}
+ 
+ 		if (!(clone_flags & CLONE_STOPPED))
+-			wake_up_new_process(p, clone_flags);
++			wake_up_new_task(p, clone_flags);
+ 		else
+ 			p->state = TASK_STOPPED;
+ 		++total_forks;
+diff -puN kernel/sched.c~sched-clean-fork-rename-wake_up_new_process-wake_up_new_task kernel/sched.c
+--- 25/kernel/sched.c~sched-clean-fork-rename-wake_up_new_process-wake_up_new_task	2004-07-28 22:08:36.174531624 -0700
++++ 25-akpm/kernel/sched.c	2004-07-28 22:08:36.184530104 -0700
+@@ -959,13 +959,13 @@ void fastcall sched_fork(task_t *p, unsi
+ }
+ 
+ /*
+- * wake_up_new_process - wake up a newly created process for the first time.
++ * wake_up_new_task - wake up a newly created task for the first time.
+  *
+  * This function will do some initial scheduler statistics housekeeping
+- * that must be done for every newly created context, then puts the process
++ * that must be done for every newly created context, then puts the task
+  * on the runqueue and wakes it.
+  */
+-void fastcall wake_up_new_process(task_t * p, unsigned long clone_flags)
++void fastcall wake_up_new_task(task_t * p, unsigned long clone_flags)
+ {
+ 	unsigned long flags;
+ 	int this_cpu, cpu;
+_

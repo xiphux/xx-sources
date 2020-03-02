@@ -1,0 +1,134 @@
+
+From: Andi Kleen <ak@muc.de>
+
+Add add_taint function to isolate modules from the tainted variable.
+
+Signed-off-by: Andi Kleen <ak@muc.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/cpu/mcheck/k7.c        |    2 +-
+ 25-akpm/arch/i386/kernel/cpu/mcheck/non-fatal.c |    2 +-
+ 25-akpm/arch/i386/kernel/cpu/mcheck/p4.c        |    6 +++---
+ 25-akpm/arch/i386/kernel/cpu/mcheck/p5.c        |    2 +-
+ 25-akpm/arch/i386/kernel/cpu/mcheck/p6.c        |    2 +-
+ 25-akpm/arch/i386/kernel/cpu/mcheck/winchip.c   |    2 +-
+ 25-akpm/include/linux/kernel.h                  |    1 +
+ 25-akpm/kernel/panic.c                          |    6 ++++++
+ 8 files changed, 15 insertions(+), 8 deletions(-)
+
+diff -puN arch/i386/kernel/cpu/mcheck/k7.c~x86-64-i386-add-mce-tainting-fix-2 arch/i386/kernel/cpu/mcheck/k7.c
+--- 25/arch/i386/kernel/cpu/mcheck/k7.c~x86-64-i386-add-mce-tainting-fix-2	Wed Oct  6 15:54:35 2004
++++ 25-akpm/arch/i386/kernel/cpu/mcheck/k7.c	Wed Oct  6 15:54:35 2004
+@@ -54,7 +54,7 @@ static asmlinkage void k7_machine_check(
+ 			wrmsr (MSR_IA32_MC0_STATUS+i*4, 0UL, 0UL);
+ 			/* Serialize */
+ 			wmb();
+-			tainted |= TAINT_MACHINE_CHECK;
++			add_taint(TAINT_MACHINE_CHECK);
+ 		}
+ 	}
+ 
+diff -puN arch/i386/kernel/cpu/mcheck/non-fatal.c~x86-64-i386-add-mce-tainting-fix-2 arch/i386/kernel/cpu/mcheck/non-fatal.c
+--- 25/arch/i386/kernel/cpu/mcheck/non-fatal.c~x86-64-i386-add-mce-tainting-fix-2	Wed Oct  6 15:54:35 2004
++++ 25-akpm/arch/i386/kernel/cpu/mcheck/non-fatal.c	Wed Oct  6 15:54:35 2004
+@@ -48,7 +48,7 @@ static void mce_checkregs (void *info)
+ 
+ 			/* Serialize */
+ 			wmb();
+-			tainted |= TAINT_MACHINE_CHECK;
++			add_taint(TAINT_MACHINE_CHECK);
+ 		}
+ 	}
+ }
+diff -puN arch/i386/kernel/cpu/mcheck/p4.c~x86-64-i386-add-mce-tainting-fix-2 arch/i386/kernel/cpu/mcheck/p4.c
+--- 25/arch/i386/kernel/cpu/mcheck/p4.c~x86-64-i386-add-mce-tainting-fix-2	Wed Oct  6 15:54:35 2004
++++ 25-akpm/arch/i386/kernel/cpu/mcheck/p4.c	Wed Oct  6 15:54:35 2004
+@@ -40,7 +40,7 @@ static void unexpected_thermal_interrupt
+ {	
+ 	printk(KERN_ERR "CPU%d: Unexpected LVT TMR interrupt!\n",
+ 			smp_processor_id());
+-	tainted |= TAINT_MACHINE_CHECK;
++	add_taint(TAINT_MACHINE_CHECK);
+ }
+ 
+ /* P4/Xeon Thermal transition interrupt handler */
+@@ -61,7 +61,7 @@ static void intel_thermal_interrupt(stru
+ 		printk(KERN_EMERG "CPU%d: Temperature above threshold\n", cpu);
+ 		printk(KERN_EMERG "CPU%d: Running in modulated clock mode\n",
+ 				cpu);
+-		tainted |= TAINT_MACHINE_CHECK;
++		add_taint(TAINT_MACHINE_CHECK);
+ 	} else {
+ 		printk(KERN_INFO "CPU%d: Temperature/speed normal\n", cpu);
+ 	}
+@@ -224,7 +224,7 @@ static asmlinkage void intel_machine_che
+ 			wrmsr(msr, 0UL, 0UL);
+ 			/* Serialize */
+ 			wmb();
+-			tainted |= TAINT_MACHINE_CHECK;
++			add_taint(TAINT_MACHINE_CHECK);
+ 		}
+ 	}
+ 	mcgstl &= ~(1<<2);
+diff -puN arch/i386/kernel/cpu/mcheck/p5.c~x86-64-i386-add-mce-tainting-fix-2 arch/i386/kernel/cpu/mcheck/p5.c
+--- 25/arch/i386/kernel/cpu/mcheck/p5.c~x86-64-i386-add-mce-tainting-fix-2	Wed Oct  6 15:54:35 2004
++++ 25-akpm/arch/i386/kernel/cpu/mcheck/p5.c	Wed Oct  6 15:54:35 2004
+@@ -25,7 +25,7 @@ static asmlinkage void pentium_machine_c
+ 	printk(KERN_EMERG "CPU#%d: Machine Check Exception:  0x%8X (type 0x%8X).\n", smp_processor_id(), loaddr, lotype);
+ 	if(lotype&(1<<5))
+ 		printk(KERN_EMERG "CPU#%d: Possible thermal failure (CPU on fire ?).\n", smp_processor_id());
+-	tainted |= TAINT_MACHINE_CHECK;
++	add_taint(TAINT_MACHINE_CHECK);
+ }
+ 
+ /* Set up machine check reporting for processors with Intel style MCE */
+diff -puN arch/i386/kernel/cpu/mcheck/p6.c~x86-64-i386-add-mce-tainting-fix-2 arch/i386/kernel/cpu/mcheck/p6.c
+--- 25/arch/i386/kernel/cpu/mcheck/p6.c~x86-64-i386-add-mce-tainting-fix-2	Wed Oct  6 15:54:35 2004
++++ 25-akpm/arch/i386/kernel/cpu/mcheck/p6.c	Wed Oct  6 15:54:35 2004
+@@ -72,7 +72,7 @@ static asmlinkage void intel_machine_che
+ 			wrmsr (msr, 0UL, 0UL);
+ 			/* Serialize */
+ 			wmb();
+-			tainted |= TAINT_MACHINE_CHECK;
++			add_taint(TAINT_MACHINE_CHECK);
+ 		}
+ 	}
+ 	mcgstl &= ~(1<<2);
+diff -puN arch/i386/kernel/cpu/mcheck/winchip.c~x86-64-i386-add-mce-tainting-fix-2 arch/i386/kernel/cpu/mcheck/winchip.c
+--- 25/arch/i386/kernel/cpu/mcheck/winchip.c~x86-64-i386-add-mce-tainting-fix-2	Wed Oct  6 15:54:35 2004
++++ 25-akpm/arch/i386/kernel/cpu/mcheck/winchip.c	Wed Oct  6 15:54:35 2004
+@@ -19,7 +19,7 @@
+ static asmlinkage void winchip_machine_check(struct pt_regs * regs, long error_code)
+ {
+ 	printk(KERN_EMERG "CPU0: Machine Check Exception.\n");
+-	tainted |= TAINT_MACHINE_CHECK;
++	add_taint(TAINT_MACHINE_CHECK);
+ }
+ 
+ /* Set up machine check reporting on the Winchip C6 series */
+diff -puN include/linux/kernel.h~x86-64-i386-add-mce-tainting-fix-2 include/linux/kernel.h
+--- 25/include/linux/kernel.h~x86-64-i386-add-mce-tainting-fix-2	Wed Oct  6 15:54:35 2004
++++ 25-akpm/include/linux/kernel.h	Wed Oct  6 15:54:35 2004
+@@ -136,6 +136,7 @@ extern int oops_in_progress;		/* If set,
+ extern int panic_on_oops;
+ extern int tainted;
+ extern const char *print_tainted(void);
++extern void add_taint(unsigned);
+ 
+ /* Values used for system_state */
+ extern enum system_states {
+diff -puN kernel/panic.c~x86-64-i386-add-mce-tainting-fix-2 kernel/panic.c
+--- 25/kernel/panic.c~x86-64-i386-add-mce-tainting-fix-2	Wed Oct  6 15:54:35 2004
++++ 25-akpm/kernel/panic.c	Wed Oct  6 15:54:35 2004
+@@ -135,3 +135,9 @@ const char *print_tainted(void)
+ 		snprintf(buf, sizeof(buf), "Not tainted");
+ 	return(buf);
+ }
++
++void add_taint(unsigned flag)
++{
++	tainted |= flag;
++}
++EXPORT_SYMBOL(add_taint);
+_

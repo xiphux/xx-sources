@@ -1,0 +1,86 @@
+
+From: Jeff Moyer <jmoyer@redhat.com>
+
+This patch removes CONFIG_NETPOLL_RX, as discussed.
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+Signed-off-by: Matt Mackall <mpm@selenic.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/netdevice.h |    2 +-
+ 25-akpm/net/core/dev.c            |    4 ++--
+ 25-akpm/net/core/netpoll.c        |   10 +++-------
+ net/Kconfig                       |    0 
+ 4 files changed, 6 insertions(+), 10 deletions(-)
+
+diff -puN include/linux/netdevice.h~netpoll-kill-config_netpoll_rx include/linux/netdevice.h
+--- 25/include/linux/netdevice.h~netpoll-kill-config_netpoll_rx	Thu Aug 26 16:34:44 2004
++++ 25-akpm/include/linux/netdevice.h	Thu Aug 26 16:34:44 2004
+@@ -464,7 +464,7 @@ struct net_device
+ 						     unsigned char *haddr);
+ 	int			(*neigh_setup)(struct net_device *dev, struct neigh_parms *);
+ 	int			(*accept_fastpath)(struct net_device *, struct dst_entry*);
+-#ifdef CONFIG_NETPOLL_RX
++#ifdef CONFIG_NETPOLL
+ 	int			netpoll_rx;
+ #endif
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+diff -puN net/core/dev.c~netpoll-kill-config_netpoll_rx net/core/dev.c
+--- 25/net/core/dev.c~netpoll-kill-config_netpoll_rx	Thu Aug 26 16:34:44 2004
++++ 25-akpm/net/core/dev.c	Thu Aug 26 16:34:44 2004
+@@ -1550,7 +1550,7 @@ int netif_rx(struct sk_buff *skb)
+ 	struct softnet_data *queue;
+ 	unsigned long flags;
+ 
+-#ifdef CONFIG_NETPOLL_RX
++#ifdef CONFIG_NETPOLL
+ 	if (skb->dev->netpoll_rx && netpoll_rx(skb)) {
+ 		kfree_skb(skb);
+ 		return NET_RX_DROP;
+@@ -1745,7 +1745,7 @@ int netif_receive_skb(struct sk_buff *sk
+ 	int ret = NET_RX_DROP;
+ 	unsigned short type;
+ 
+-#ifdef CONFIG_NETPOLL_RX
++#ifdef CONFIG_NETPOLL
+ 	if (skb->dev->netpoll_rx && skb->dev->poll && netpoll_rx(skb)) {
+ 		kfree_skb(skb);
+ 		return NET_RX_DROP;
+diff -puN net/core/netpoll.c~netpoll-kill-config_netpoll_rx net/core/netpoll.c
+--- 25/net/core/netpoll.c~netpoll-kill-config_netpoll_rx	Thu Aug 26 16:34:44 2004
++++ 25-akpm/net/core/netpoll.c	Thu Aug 26 16:35:49 2004
+@@ -607,9 +607,7 @@ int netpoll_setup(struct netpoll *np)
+ 	if(np->rx_hook) {
+ 		unsigned long flags;
+ 
+-#ifdef CONFIG_NETPOLL_RX
+ 		np->dev->netpoll_rx = 1;
+-#endif
+ 
+ 		spin_lock_irqsave(&rx_list_lock, flags);
+ 		list_add(&np->rx_list, &rx_list);
+@@ -624,18 +622,16 @@ int netpoll_setup(struct netpoll *np)
+ 
+ void netpoll_cleanup(struct netpoll *np)
+ {
+-	if(np->rx_hook) {
++	if (np->rx_hook) {
+ 		unsigned long flags;
+ 
+ 		spin_lock_irqsave(&rx_list_lock, flags);
+ 		list_del(&np->rx_list);
+-#ifdef CONFIG_NETPOLL_RX
+-		if (np->dev)
+-			np->dev->netpoll_rx = 0;
+-#endif
+ 		spin_unlock_irqrestore(&rx_list_lock, flags);
+ 	}
+ 
++	if (np->dev)
++		np->dev->netpoll_rx = 0;
+ 	dev_put(np->dev);
+ 	np->dev = NULL;
+ }
+diff -puN net/Kconfig~netpoll-kill-config_netpoll_rx net/Kconfig
+_

@@ -1,0 +1,57 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+Make sure getxattr inode op is non-NULL before calling it.
+
+Also, security hook should probably be called before calling the getxattr op
+the first time.
+
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/nfsd/vfs.c |   20 +++++++++++---------
+ 1 files changed, 11 insertions(+), 9 deletions(-)
+
+diff -puN fs/nfsd/vfs.c~nfsd-make-sure-getxattr-inode-op-is-non-null-before-calling-it fs/nfsd/vfs.c
+--- 25/fs/nfsd/vfs.c~nfsd-make-sure-getxattr-inode-op-is-non-null-before-calling-it	2004-09-23 22:06:19.668098616 -0700
++++ 25-akpm/fs/nfsd/vfs.c	2004-09-23 22:06:19.674097704 -0700
+@@ -448,6 +448,16 @@ _get_posix_acl(struct dentry *dentry, ch
+ 	int buflen, error = 0;
+ 	struct posix_acl *pacl = NULL;
+ 
++	error = -EOPNOTSUPP;
++	if (inode->i_op == NULL)
++		goto out_err;
++	if (inode->i_op->getxattr == NULL)
++		goto out_err;
++
++	error = security_inode_getxattr(dentry, key);
++	if (error)
++		goto out_err;
++
+ 	buflen = inode->i_op->getxattr(dentry, key, NULL, 0);
+ 	if (buflen <= 0) {
+ 		error = buflen < 0 ? buflen : -ENODATA;
+@@ -460,18 +470,10 @@ _get_posix_acl(struct dentry *dentry, ch
+ 		goto out_err;
+ 	}
+ 
+-	error = -EOPNOTSUPP;
+-	if (inode->i_op && inode->i_op->getxattr) {
+-		error = security_inode_getxattr(dentry, key);
+-		if (error)
+-			goto out_err;
+-		error = inode->i_op->getxattr(dentry, key, buf, buflen);
+-	}
++	error = inode->i_op->getxattr(dentry, key, buf, buflen);
+ 	if (error < 0)
+ 		goto out_err;
+ 
+-	error = 0;
+-
+ 	pacl = posix_acl_from_xattr(buf, buflen);
+  out:
+ 	kfree(buf);
+_

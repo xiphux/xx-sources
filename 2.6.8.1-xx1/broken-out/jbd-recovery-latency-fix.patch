@@ -1,0 +1,24 @@
+
+
+All the mount code runs under lock_kernel(), so JBD journal recovery can hold
+off preemption for a long time.  Drill a hole in it.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/jbd/recovery.c |    2 ++
+ 1 files changed, 2 insertions(+)
+
+diff -puN fs/jbd/recovery.c~jbd-recovery-latency-fix fs/jbd/recovery.c
+--- 25/fs/jbd/recovery.c~jbd-recovery-latency-fix	2004-07-12 22:35:32.666531312 -0700
++++ 25-akpm/fs/jbd/recovery.c	2004-07-12 22:35:56.260944416 -0700
+@@ -354,6 +354,8 @@ static int do_one_pass(journal_t *journa
+ 		struct buffer_head *	obh;
+ 		struct buffer_head *	nbh;
+ 
++		cond_resched();		/* We're under lock_kernel() */
++
+ 		/* If we already know where to stop the log traversal,
+ 		 * check right now that we haven't gone past the end of
+ 		 * the log. */
+_

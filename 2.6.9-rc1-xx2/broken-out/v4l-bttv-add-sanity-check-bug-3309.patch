@@ -1,0 +1,26 @@
+
+From: Gerd Knorr <kraxel@bytesex.org>
+
+Missing sanity check, overlay is supported for packed pixel formats only. 
+Patch below.  It's not API related btw, the bug can be triggered using the
+v4l2 API as well.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/media/video/bttv-driver.c |    2 ++
+ 1 files changed, 2 insertions(+)
+
+diff -puN drivers/media/video/bttv-driver.c~v4l-bttv-add-sanity-check-bug-3309 drivers/media/video/bttv-driver.c
+--- 25/drivers/media/video/bttv-driver.c~v4l-bttv-add-sanity-check-bug-3309	Mon Aug 30 14:40:25 2004
++++ 25-akpm/drivers/media/video/bttv-driver.c	Mon Aug 30 14:40:25 2004
+@@ -1861,6 +1861,8 @@ static int setup_window(struct bttv_fh *
+ 
+ 	if (NULL == fh->ovfmt)
+ 		return -EINVAL;
++	if (!(fh->ovfmt->flags & FORMAT_FLAGS_PACKED))
++		return -EINVAL;
+ 	retval = verify_window(&bttv_tvnorms[btv->tvnorm],win,fixup);
+ 	if (0 != retval)
+ 		return retval;
+_

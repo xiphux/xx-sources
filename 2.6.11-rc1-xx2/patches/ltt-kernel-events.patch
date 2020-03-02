@@ -1,0 +1,241 @@
+
+From: Karim Yaghmour <karim@opersys.com>
+
+signed-off-by: Karim Yaghmour <karim@opersys.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/exit.c       |    5 +++++
+ 25-akpm/kernel/fork.c       |    3 +++
+ 25-akpm/kernel/irq/handle.c |    5 +++++
+ 25-akpm/kernel/itimer.c     |    4 ++++
+ 25-akpm/kernel/sched.c      |    4 ++++
+ 25-akpm/kernel/signal.c     |    3 +++
+ 25-akpm/kernel/softirq.c    |    8 ++++++++
+ 25-akpm/kernel/timer.c      |    4 ++++
+ kernel/Makefile             |    0 
+ 9 files changed, 36 insertions(+)
+
+diff -puN kernel/exit.c~ltt-kernel-events kernel/exit.c
+--- 25/kernel/exit.c~ltt-kernel-events	2005-01-13 23:01:10.685572696 -0800
++++ 25-akpm/kernel/exit.c	2005-01-13 23:01:10.702570112 -0800
+@@ -24,6 +24,7 @@
+ #include <linux/profile.h>
+ #include <linux/mount.h>
+ #include <linux/proc_fs.h>
++#include <linux/ltt-events.h>
+ #include <linux/mempolicy.h>
+ #include <linux/syscalls.h>
+ 
+@@ -811,6 +812,8 @@ fastcall NORET_TYPE void do_exit(long co
+ 		acct_process(code);
+ 	exit_mm(tsk);
+ 
++	ltt_ev_process_exit(0, 0);
++
+ 	exit_sem(tsk);
+ 	__exit_files(tsk);
+ 	__exit_fs(tsk);
+@@ -1323,6 +1326,8 @@ static long do_wait(pid_t pid, int optio
+ 	struct task_struct *tsk;
+ 	int flag, retval;
+ 
++	ltt_ev_process(LTT_EV_PROCESS_WAIT, pid, 0);
++
+ 	add_wait_queue(&current->signal->wait_chldexit,&wait);
+ repeat:
+ 	/*
+diff -puN kernel/fork.c~ltt-kernel-events kernel/fork.c
+--- 25/kernel/fork.c~ltt-kernel-events	2005-01-13 23:01:10.686572544 -0800
++++ 25-akpm/kernel/fork.c	2005-01-13 23:01:10.703569960 -0800
+@@ -40,6 +40,7 @@
+ #include <linux/profile.h>
+ #include <linux/rmap.h>
+ #include <linux/acct.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/pgtable.h>
+ #include <asm/pgalloc.h>
+@@ -1171,6 +1172,8 @@ long do_fork(unsigned long clone_flags,
+ 			ptrace_notify ((trace << 8) | SIGTRAP);
+ 		}
+ 
++		ltt_ev_process(LTT_EV_PROCESS_FORK, p->pid, 0);
++
+ 		if (clone_flags & CLONE_VFORK) {
+ 			wait_for_completion(&vfork);
+ 			if (unlikely (current->ptrace & PT_TRACE_VFORK_DONE))
+diff -puN kernel/irq/handle.c~ltt-kernel-events kernel/irq/handle.c
+--- 25/kernel/irq/handle.c~ltt-kernel-events	2005-01-13 23:01:10.688572240 -0800
++++ 25-akpm/kernel/irq/handle.c	2005-01-13 23:01:10.703569960 -0800
+@@ -11,6 +11,7 @@
+ #include <linux/random.h>
+ #include <linux/interrupt.h>
+ #include <linux/kernel_stat.h>
++#include <linux/ltt-events.h>
+ 
+ #include "internals.h"
+ 
+@@ -80,6 +81,8 @@ fastcall int handle_IRQ_event(unsigned i
+ {
+ 	int ret, retval = 0, status = 0;
+ 
++	ltt_ev_irq_entry(irq, !(user_mode(regs)));
++
+ 	if (!(action->flags & SA_INTERRUPT))
+ 		local_irq_enable();
+ 
+@@ -95,6 +98,8 @@ fastcall int handle_IRQ_event(unsigned i
+ 		add_interrupt_randomness(irq);
+ 	local_irq_disable();
+ 
++	ltt_ev_irq_exit();
++
+ 	return retval;
+ }
+ 
+diff -puN kernel/itimer.c~ltt-kernel-events kernel/itimer.c
+--- 25/kernel/itimer.c~ltt-kernel-events	2005-01-13 23:01:10.689572088 -0800
++++ 25-akpm/kernel/itimer.c	2005-01-13 23:01:10.704569808 -0800
+@@ -11,6 +11,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/syscalls.h>
+ #include <linux/time.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/uaccess.h>
+ 
+@@ -68,6 +69,8 @@ void it_real_fn(unsigned long __data)
+ 	struct task_struct * p = (struct task_struct *) __data;
+ 	unsigned long interval;
+ 
++	ltt_ev_timer(LTT_EV_TIMER_EXPIRED, 0, 0, 0);
++
+ 	send_group_sig_info(SIGALRM, SEND_SIG_PRIV, p);
+ 	interval = p->it_real_incr;
+ 	if (interval) {
+@@ -86,6 +89,7 @@ int do_setitimer(int which, struct itime
+ 
+ 	if (ovalue && (k = do_getitimer(which, ovalue)) < 0)
+ 		return k;
++	ltt_ev_timer(LTT_EV_TIMER_SETITIMER, which, i, j);
+ 	switch (which) {
+ 		case ITIMER_REAL:
+ 			del_timer_sync(&current->real_timer);
+diff -puN kernel/Makefile~ltt-kernel-events kernel/Makefile
+diff -puN kernel/sched.c~ltt-kernel-events kernel/sched.c
+--- 25/kernel/sched.c~ltt-kernel-events	2005-01-13 23:01:10.693571480 -0800
++++ 25-akpm/kernel/sched.c	2005-01-13 23:01:10.707569352 -0800
+@@ -45,6 +45,7 @@
+ #include <linux/seq_file.h>
+ #include <linux/syscalls.h>
+ #include <linux/times.h>
++#include <linux/ltt-events.h>
+ #include <asm/tlb.h>
+ 
+ #include <asm/unistd.h>
+@@ -307,6 +308,8 @@ static runqueue_t *task_rq_lock(task_t *
+ {
+ 	struct runqueue *rq;
+ 
++	ltt_ev_process(LTT_EV_PROCESS_WAKEUP, p->pid, p->state);
++
+ repeat_lock_task:
+ 	local_irq_save(*flags);
+ 	rq = task_rq(p);
+@@ -2802,6 +2805,7 @@ switch_tasks:
+ 		++*switch_count;
+ 
+ 		prepare_arch_switch(rq, next);
++		ltt_ev_schedchange(prev, next);
+ 		prev = context_switch(rq, prev, next);
+ 		barrier();
+ 
+diff -puN kernel/signal.c~ltt-kernel-events kernel/signal.c
+--- 25/kernel/signal.c~ltt-kernel-events	2005-01-13 23:01:10.695571176 -0800
++++ 25-akpm/kernel/signal.c	2005-01-13 23:01:10.709569048 -0800
+@@ -22,6 +22,7 @@
+ #include <linux/security.h>
+ #include <linux/syscalls.h>
+ #include <linux/ptrace.h>
++#include <linux/ltt-events.h>
+ #include <asm/param.h>
+ #include <asm/uaccess.h>
+ #include <asm/unistd.h>
+@@ -862,6 +863,8 @@ specific_send_sig_info(int sig, struct s
+ 	if (sig_ignored(t, sig))
+ 		goto out;
+ 
++	ltt_ev_process(LTT_EV_PROCESS_SIGNAL, sig, t->pid);
++
+ 	/* Support queueing exactly one non-rt signal, so that we
+ 	   can get more detailed information about the cause of
+ 	   the signal. */
+diff -puN kernel/softirq.c~ltt-kernel-events kernel/softirq.c
+--- 25/kernel/softirq.c~ltt-kernel-events	2005-01-13 23:01:10.696571024 -0800
++++ 25-akpm/kernel/softirq.c	2005-01-13 23:01:10.710568896 -0800
+@@ -16,6 +16,7 @@
+ #include <linux/cpu.h>
+ #include <linux/kthread.h>
+ #include <linux/rcupdate.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/irq.h>
+ /*
+@@ -92,6 +93,7 @@ restart:
+ 
+ 	do {
+ 		if (pending & 1) {
++			ltt_ev_soft_irq(LTT_EV_SOFT_IRQ_SOFT_IRQ, (h - softirq_vec));
+ 			h->action(h);
+ 			rcu_bh_qsctr_inc(cpu);
+ 		}
+@@ -264,6 +266,9 @@ static void tasklet_action(struct softir
+ 			if (!atomic_read(&t->count)) {
+ 				if (!test_and_clear_bit(TASKLET_STATE_SCHED, &t->state))
+ 					BUG();
++
++				ltt_ev_soft_irq(LTT_EV_SOFT_IRQ_TASKLET_ACTION, (unsigned long) (t->func));
++
+ 				t->func(t->data);
+ 				tasklet_unlock(t);
+ 				continue;
+@@ -297,6 +302,9 @@ static void tasklet_hi_action(struct sof
+ 			if (!atomic_read(&t->count)) {
+ 				if (!test_and_clear_bit(TASKLET_STATE_SCHED, &t->state))
+ 					BUG();
++
++				ltt_ev_soft_irq(LTT_EV_SOFT_IRQ_TASKLET_HI_ACTION, (unsigned long) (t->func));
++
+ 				t->func(t->data);
+ 				tasklet_unlock(t);
+ 				continue;
+diff -puN kernel/timer.c~ltt-kernel-events kernel/timer.c
+--- 25/kernel/timer.c~ltt-kernel-events	2005-01-13 23:01:10.697570872 -0800
++++ 25-akpm/kernel/timer.c	2005-01-13 23:01:10.711568744 -0800
+@@ -32,6 +32,7 @@
+ #include <linux/jiffies.h>
+ #include <linux/cpu.h>
+ #include <linux/syscalls.h>
++#include <linux/ltt-events.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/unistd.h>
+@@ -883,6 +884,8 @@ static void run_timer_softirq(struct sof
+ {
+ 	tvec_base_t *base = &__get_cpu_var(tvec_bases);
+ 
++	ltt_ev(LTT_EV_KERNEL_TIMER, NULL);
++
+ 	if (time_after_eq(jiffies, base->timer_jiffies))
+ 		__run_timers(base);
+ }
+@@ -1041,6 +1044,7 @@ asmlinkage long sys_getegid(void)
+ 
+ static void process_timeout(unsigned long __data)
+ {
++	ltt_ev_timer(LTT_EV_TIMER_EXPIRED, 0, 0, 0);
+ 	wake_up_process((task_t *)__data);
+ }
+ 
+_

@@ -1,0 +1,414 @@
+Index: xx-sources/include/linux/scheduler.h
+===================================================================
+--- xx-sources.orig/include/linux/scheduler.h	2004-10-07 17:46:21.000000000 -0400
++++ xx-sources/include/linux/scheduler.h	2004-10-08 00:14:48.000000000 -0400
+@@ -23,6 +23,7 @@
+ typedef void (io_schedule_fn)(void);
+ typedef long (io_schedule_timeout_fn)(long);
+ typedef int (task_curr_fn)(const task_t *);
++typedef int (try_to_wake_up_fn)(task_t *, unsigned int, int);
+ typedef int FASTCALL((wake_up_process_fn)(struct task_struct *));
+ typedef int FASTCALL((wake_up_state_fn)(struct task_struct *, unsigned int));
+ typedef unsigned long (nr_running_fn)(void);
+@@ -88,6 +89,7 @@
+ 	io_schedule_fn *io_schedule_fn;
+ 	io_schedule_timeout_fn *io_schedule_timeout_fn;
+ 	task_curr_fn *task_curr_fn;
++	try_to_wake_up_fn *try_to_wake_up_fn;
+ 	wake_up_process_fn *wake_up_process_fn;
+ 	wake_up_state_fn *wake_up_state_fn;
+ 	nr_running_fn *nr_running_fn;
+Index: xx-sources/kernel/default-sched.c
+===================================================================
+--- xx-sources.orig/kernel/default-sched.c	2004-10-07 23:13:55.000000000 -0400
++++ xx-sources/kernel/default-sched.c	2004-10-08 00:19:19.000000000 -0400
+@@ -964,7 +964,7 @@
+  *
+  * returns failure only if the task is already active.
+  */
+-static int try_to_wake_up(task_t * p, unsigned int state, int sync)
++int default_try_to_wake_up(task_t * p, unsigned int state, int sync)
+ {
+ 	int cpu, this_cpu, success = 0;
+ 	unsigned long flags;
+@@ -1102,17 +1102,6 @@
+ 	return success;
+ }
+ 
+-int fastcall default_wake_up_process(task_t * p)
+-{
+-	return try_to_wake_up(p, TASK_STOPPED | TASK_TRACED |
+-		       		 TASK_INTERRUPTIBLE | TASK_UNINTERRUPTIBLE, 0);
+-}
+-
+-int fastcall default_wake_up_state(task_t *p, unsigned int state)
+-{
+-	return try_to_wake_up(p, state, 0);
+-}
+-
+ #ifdef CONFIG_SMP
+ static int find_idlest_cpu(struct task_struct *p, int this_cpu,
+ 			   struct sched_domain *sd);
+@@ -2770,12 +2759,6 @@
+ 		goto need_resched;
+ }
+ 
+-int default_default_wake_function(wait_queue_t *curr, unsigned mode, int sync, void *key)
+-{
+-	task_t *p = curr->task;
+-	return try_to_wake_up(p, mode, sync);
+-}
+-
+ /*
+  * The core wakeup function.  Non-exclusive wakeups (nr_exclusive == 0) just
+  * wake everything up.  If it's an exclusive wakeup (nr_exclusive == small +ve
+@@ -4395,7 +4378,6 @@
+ 	.yield_fn = 				default_yield,
+ 	.wait_for_completion_fn	=		default_wait_for_completion,
+ 	.idle_cpu_fn = 				default_idle_cpu,
+-	.default_wake_function_fn = 		default_default_wake_function,
+ 	.__wake_up_fn = 			default___wake_up,
+ 	.__wake_up_locked_fn = 			default___wake_up_locked,
+ 	.__wake_up_sync_fn = 			default___wake_up_sync,
+@@ -4410,8 +4392,7 @@
+ 	.io_schedule_fn = 			default_io_schedule,
+ 	.io_schedule_timeout_fn = 		default_io_schedule_timeout,
+ 	.task_curr_fn = 			default_task_curr,
+-	.wake_up_process_fn = 			default_wake_up_process,
+-	.wake_up_state_fn = 			default_wake_up_state,
++	.try_to_wake_up_fn = 			default_try_to_wake_up,
+ 	.nr_running_fn = 			default_nr_running,
+ 	.nr_uninterruptible_fn = 		default_nr_uninterruptible,
+ 	.nr_iowait_fn = 			default_nr_iowait,
+Index: xx-sources/kernel/nicksched-sched.c
+===================================================================
+--- xx-sources.orig/kernel/nicksched-sched.c	2004-10-07 23:13:55.000000000 -0400
++++ xx-sources/kernel/nicksched-sched.c	2004-10-08 00:36:02.000000000 -0400
+@@ -895,7 +895,7 @@
+  *
+  * returns failure only if the task is already active.
+  */
+-static int try_to_wake_up(task_t * p, unsigned int state, int sync)
++int nicksched_try_to_wake_up(task_t * p, unsigned int state, int sync)
+ {
+ 	int cpu, this_cpu, success = 0;
+ 	unsigned long flags;
+@@ -1019,17 +1019,6 @@
+ 	return success;
+ }
+ 
+-int fastcall nicksched_wake_up_process(task_t * p)
+-{
+-	return try_to_wake_up(p, TASK_STOPPED | TASK_TRACED |
+-				TASK_INTERRUPTIBLE | TASK_UNINTERRUPTIBLE, 0);
+-}
+-
+-int fastcall nicksched_wake_up_state(task_t *p, unsigned int state)
+-{
+-	return try_to_wake_up(p, state, 0);
+-}
+-
+ #ifdef CONFIG_SMP
+ static int find_idlest_cpu(struct task_struct *p, int this_cpu,
+ 			   struct sched_domain *sd);
+@@ -2430,7 +2419,6 @@
+ 
+ #endif
+ 
+-
+ /*
+  * schedule() is the main scheduler function.
+  */
+@@ -2594,14 +2582,6 @@
+ 
+ EXPORT_SYMBOL(nicksched_schedule);
+ 
+-int nicksched_default_wake_function(wait_queue_t *curr, unsigned mode, int sync, void *key)
+-{
+-	task_t *p = curr->task;
+-	return try_to_wake_up(p, mode, sync);
+-}
+-
+-EXPORT_SYMBOL(nicksched_default_wake_function);
+-
+ /*
+  * The core wakeup function.  Non-exclusive wakeups (nr_exclusive == 0) just
+  * wake everything up.  If it's an exclusive wakeup (nr_exclusive == small +ve
+@@ -4277,7 +4257,6 @@
+ 	.yield_fn = 				nicksched_yield,
+ 	.wait_for_completion_fn	=		nicksched_wait_for_completion,
+ 	.idle_cpu_fn = 				nicksched_idle_cpu,
+-	.default_wake_function_fn = 		nicksched_default_wake_function,
+ 	.__wake_up_fn = 			nicksched___wake_up,
+ 	.__wake_up_locked_fn = 			nicksched___wake_up_locked,
+ 	.__wake_up_sync_fn = 			nicksched___wake_up_sync,
+@@ -4292,8 +4271,7 @@
+ 	.io_schedule_fn = 			nicksched_io_schedule,
+ 	.io_schedule_timeout_fn = 		nicksched_io_schedule_timeout,
+ 	.task_curr_fn = 			nicksched_task_curr,
+-	.wake_up_process_fn = 			nicksched_wake_up_process,
+-	.wake_up_state_fn = 			nicksched_wake_up_state,
++	.try_to_wake_up_fn = 			nicksched_try_to_wake_up,
+ 	.nr_running_fn = 			nicksched_nr_running,
+ 	.nr_uninterruptible_fn = 		nicksched_nr_uninterruptible,
+ 	.nr_iowait_fn = 			nicksched_nr_iowait,
+Index: xx-sources/kernel/sched.c
+===================================================================
+--- xx-sources.orig/kernel/sched.c	2004-10-07 23:58:46.000000000 -0400
++++ xx-sources/kernel/sched.c	2004-10-08 00:35:51.000000000 -0400
+@@ -89,18 +89,22 @@
+ }
+ #endif
+ 
+-int fastcall wake_up_process(task_t * p)
++inline int try_to_wake_up(task_t * p, unsigned int state, int sync)
+ {
+-	if (current_scheduler->wake_up_process_fn)
+-		return current_scheduler->wake_up_process_fn(p);
++	if (current_scheduler->try_to_wake_up_fn)
++		return current_scheduler->try_to_wake_up_fn(p, state, sync);
+ 	return 0;
+ }
+ 
+-inline int fastcall wake_up_state(task_t *p, unsigned int state)
++int fastcall wake_up_process(task_t * p)
+ {
+-	if (current_scheduler->wake_up_state_fn)
+-		return current_scheduler->wake_up_state_fn(p, state);
+-	return 0;
++	return try_to_wake_up(p, TASK_STOPPED | TASK_TRACED |
++		       		 TASK_INTERRUPTIBLE | TASK_UNINTERRUPTIBLE, 0);
++}
++
++int fastcall wake_up_state(task_t *p, unsigned int state)
++{
++	return try_to_wake_up(p, state, 0);
+ }
+ 
+ inline void fastcall sched_fork(task_t *p)
+@@ -202,9 +206,8 @@
+ 
+ int default_wake_function(wait_queue_t *curr, unsigned mode, int sync, void *key)
+ {
+-	if (current_scheduler->default_wake_function_fn)
+-		return current_scheduler->default_wake_function_fn(curr, mode, sync, key);
+-	return 0;
++	task_t *p = curr->task;
++	return try_to_wake_up(p, mode, sync);
+ }
+ 
+ inline void fastcall __wake_up(wait_queue_head_t *q, unsigned int mode, int nr_exclusive, void *key)
+Index: xx-sources/kernel/staircase-sched.c
+===================================================================
+--- xx-sources.orig/kernel/staircase-sched.c	2004-10-07 23:53:14.000000000 -0400
++++ xx-sources/kernel/staircase-sched.c	2004-10-08 01:24:59.655694208 -0400
+@@ -875,7 +875,7 @@
+  *
+  * returns failure only if the task is already active.
+  */
+-static int try_to_wake_up(task_t * p, unsigned int state, int sync)
++int staircase_try_to_wake_up(task_t * p, unsigned int state, int sync)
+ {
+ 	int cpu, this_cpu, success = 0;
+ 	unsigned long flags;
+@@ -1005,17 +1005,6 @@
+ 	return success;
+ }
+ 
+-int fastcall staircase_wake_up_process(task_t * p)
+-{
+-	return try_to_wake_up(p, TASK_STOPPED | TASK_TRACED |
+-		       		 TASK_INTERRUPTIBLE | TASK_UNINTERRUPTIBLE, 0);
+-}
+-
+-int fastcall staircase_wake_up_state(task_t *p, unsigned int state)
+-{
+-	return try_to_wake_up(p, state, 0);
+-}
+-
+ #ifdef CONFIG_SMP
+ static int find_idlest_cpu(struct task_struct *p, int this_cpu,
+ 			   struct sched_domain *sd);
+@@ -1345,7 +1334,7 @@
+ 		struct task_struct *mt = rq->migration_thread;
+ 		get_task_struct(mt);
+ 		task_rq_unlock(rq, &flags);
+-		staircase_wake_up_process(mt);
++		wake_up_process(mt);
+ 		put_task_struct(mt);
+ 		wait_for_completion(&req.done);
+ 		return;
+@@ -1733,7 +1722,7 @@
+ 			}
+ 			spin_unlock(&busiest->lock);
+ 			if (wake)
+-				staircase_wake_up_process(busiest->migration_thread);
++				wake_up_process(busiest->migration_thread);
+ 
+ 			/*
+ 			 * We've kicked active balancing, reset the failure
+@@ -2478,12 +2467,6 @@
+ 
+ EXPORT_SYMBOL(schedule);
+ 
+-int staircase_default_wake_function(wait_queue_t *curr, unsigned mode, int sync, void *key)
+-{
+-	task_t *p = curr->task;
+-	return try_to_wake_up(p, mode, sync);
+-}
+-
+ /*
+  * The core wakeup function.  Non-exclusive wakeups (nr_exclusive == 0) just
+  * wake everything up.  If it's an exclusive wakeup (nr_exclusive == small +ve
+@@ -3274,7 +3257,7 @@
+ 	if (migrate_task(p, any_online_cpu(new_mask), &req)) {
+ 		/* Need help from migration thread: drop lock and wait. */
+ 		task_rq_unlock(rq, &flags);
+-		staircase_wake_up_process(rq->migration_thread);
++		wake_up_process(rq->migration_thread);
+ 		wait_for_completion(&req.done);
+ 		tlb_migrate_finish(p->mm);
+ 		return 0;
+@@ -3550,7 +3533,7 @@
+ 		break;
+ 	case CPU_ONLINE:
+ 		/* Strictly unneccessary, as first user will wake it. */
+-		staircase_wake_up_process(cpu_rq(cpu)->migration_thread);
++		wake_up_process(cpu_rq(cpu)->migration_thread);
+ 		break;
+ #ifdef CONFIG_HOTPLUG_CPU
+ 	case CPU_UP_CANCELED:
+@@ -3638,7 +3621,7 @@
+ 	spin_unlock_irqrestore(&rq->lock, flags);
+ 
+ 	if (!local) {
+-		staircase_wake_up_process(rq->migration_thread);
++		wake_up_process(rq->migration_thread);
+ 		wait_for_completion(&req.done);
+ 	}
+ }
+@@ -4127,7 +4110,6 @@
+ 	.yield_fn = 				staircase_yield,
+ 	.wait_for_completion_fn	=		staircase_wait_for_completion,
+ 	.idle_cpu_fn = 				staircase_idle_cpu,
+-	.default_wake_function_fn = 		staircase_default_wake_function,
+ 	.__wake_up_fn = 			staircase___wake_up,
+ 	.__wake_up_locked_fn = 			staircase___wake_up_locked,
+ 	.__wake_up_sync_fn = 			staircase___wake_up_sync,
+@@ -4142,8 +4124,7 @@
+ 	.io_schedule_fn = 			staircase_io_schedule,
+ 	.io_schedule_timeout_fn = 		staircase_io_schedule_timeout,
+ 	.task_curr_fn = 			staircase_task_curr,
+-	.wake_up_process_fn = 			staircase_wake_up_process,
+-	.wake_up_state_fn = 			staircase_wake_up_state,
++	.try_to_wake_up_fn = 			staircase_try_to_wake_up,
+ 	.nr_running_fn = 			staircase_nr_running,
+ 	.nr_uninterruptible_fn = 		staircase_nr_uninterruptible,
+ 	.nr_iowait_fn = 			staircase_nr_iowait,
+Index: xx-sources/kernel/xsched-sched.c
+===================================================================
+--- xx-sources.orig/kernel/xsched-sched.c	2004-10-07 23:13:55.000000000 -0400
++++ xx-sources/kernel/xsched-sched.c	2004-10-08 01:28:03.986671640 -0400
+@@ -1014,7 +1014,7 @@
+  *
+  * returns failure only if the task is already active.
+  */
+-static int try_to_wake_up(task_t * p, unsigned int state, int sync)
++int xsched_try_to_wake_up(task_t * p, unsigned int state, int sync)
+ {
+ 	int cpu, this_cpu, success = 0;
+ 	unsigned long flags;
+@@ -1138,17 +1138,6 @@
+ 	return success;
+ }
+ 
+-int fastcall xsched_wake_up_process(task_t * p)
+-{
+-	return try_to_wake_up(p, TASK_STOPPED | TASK_TRACED |
+-		       		 TASK_INTERRUPTIBLE | TASK_UNINTERRUPTIBLE, 0);
+-}
+-
+-int fastcall xsched_wake_up_state(task_t *p, unsigned int state)
+-{
+-	return try_to_wake_up(p, state, 0);
+-}
+-
+ #ifdef CONFIG_SMP
+ static int find_idlest_cpu(struct task_struct *p, int this_cpu,
+ 			   struct sched_domain *sd);
+@@ -1540,7 +1529,7 @@
+ 		struct task_struct *mt = rq->migration_thread;
+ 		get_task_struct(mt);
+ 		task_rq_unlock(rq, &flags);
+-		xsched_wake_up_process(mt);
++		wake_up_process(mt);
+ 		put_task_struct(mt);
+ 		wait_for_completion(&req.done);
+ 		return;
+@@ -1930,7 +1919,7 @@
+ 			}
+ 			spin_unlock(&busiest->lock);
+ 			if (wake)
+-				xsched_wake_up_process(busiest->migration_thread);
++				wake_up_process(busiest->migration_thread);
+ 
+ 			/*
+ 			 * We've kicked active balancing, reset the failure
+@@ -2702,12 +2691,6 @@
+ 		goto need_resched;
+ }
+ 
+-int xsched_default_wake_function(wait_queue_t *curr, unsigned mode, int sync, void *key)
+-{
+-	task_t *p = curr->task;
+-	return try_to_wake_up(p, mode, sync);
+-}
+-
+ /*
+  * The core wakeup function.  Non-exclusive wakeups (nr_exclusive == 0) just
+  * wake everything up.  If it's an exclusive wakeup (nr_exclusive == small +ve
+@@ -3530,7 +3513,7 @@
+ 	if (migrate_task(p, any_online_cpu(new_mask), &req)) {
+ 		/* Need help from migration thread: drop lock and wait. */
+ 		task_rq_unlock(rq, &flags);
+-		xsched_wake_up_process(rq->migration_thread);
++		wake_up_process(rq->migration_thread);
+ 		wait_for_completion(&req.done);
+ 		tlb_migrate_finish(p->mm);
+ 		return 0;
+@@ -3813,7 +3796,7 @@
+ 		break;
+ 	case CPU_ONLINE:
+ 		/* Strictly unneccessary, as first user will wake it. */
+-		xsched_wake_up_process(cpu_rq(cpu)->migration_thread);
++		wake_up_process(cpu_rq(cpu)->migration_thread);
+ 		break;
+ #ifdef CONFIG_HOTPLUG_CPU
+ 	case CPU_UP_CANCELED:
+@@ -3904,7 +3887,7 @@
+ 	spin_unlock_irqrestore(&rq->lock, flags);
+ 
+ 	if (!local) {
+-		xsched_wake_up_process(rq->migration_thread);
++		wake_up_process(rq->migration_thread);
+ 		wait_for_completion(&req.done);
+ 	}
+ }
+@@ -4559,7 +4542,6 @@
+ 	.yield_fn = 				xsched_yield,
+ 	.wait_for_completion_fn	=		xsched_wait_for_completion,
+ 	.idle_cpu_fn = 				xsched_idle_cpu,
+-	.default_wake_function_fn = 		xsched_default_wake_function,
+ 	.__wake_up_fn = 			xsched___wake_up,
+ 	.__wake_up_locked_fn = 			xsched___wake_up_locked,
+ 	.__wake_up_sync_fn = 			xsched___wake_up_sync,
+@@ -4574,8 +4556,7 @@
+ 	.io_schedule_fn = 			xsched_io_schedule,
+ 	.io_schedule_timeout_fn = 		xsched_io_schedule_timeout,
+ 	.task_curr_fn = 			xsched_task_curr,
+-	.wake_up_process_fn = 			xsched_wake_up_process,
+-	.wake_up_state_fn = 			xsched_wake_up_state,
++	.try_to_wake_up_fn = 			xsched_try_to_wake_up,
+ 	.nr_running_fn = 			xsched_nr_running,
+ 	.nr_uninterruptible_fn = 		xsched_nr_uninterruptible,
+ 	.nr_iowait_fn = 			xsched_nr_iowait,

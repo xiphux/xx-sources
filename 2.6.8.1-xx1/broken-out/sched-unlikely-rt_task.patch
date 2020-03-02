@@ -1,0 +1,49 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+From: Ingo Molnar <mingo@elte.hu>
+
+RT tasks are unlikely, move this into rt_task() instead of open-coding it.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/sched.h |    2 +-
+ 25-akpm/kernel/sched.c        |    4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff -puN include/linux/sched.h~sched-unlikely-rt_task include/linux/sched.h
+--- 25/include/linux/sched.h~sched-unlikely-rt_task	2004-07-11 14:26:19.654663880 -0700
++++ 25-akpm/include/linux/sched.h	2004-07-11 14:26:19.660662968 -0700
+@@ -300,7 +300,7 @@ struct signal_struct {
+ 
+ #define MAX_PRIO		(MAX_RT_PRIO + 40)
+ 
+-#define rt_task(p)		((p)->prio < MAX_RT_PRIO)
++#define rt_task(p)		(unlikely((p)->prio < MAX_RT_PRIO))
+ 
+ /*
+  * Some day this will be a full-fledged user tracking system..
+diff -puN kernel/sched.c~sched-unlikely-rt_task kernel/sched.c
+--- 25/kernel/sched.c~sched-unlikely-rt_task	2004-07-11 14:26:19.656663576 -0700
++++ 25-akpm/kernel/sched.c	2004-07-11 14:26:19.662662664 -0700
+@@ -2020,7 +2020,7 @@ void scheduler_tick(int user_ticks, int 
+ 	 * timeslice. This makes it possible for interactive tasks
+ 	 * to use up their timeslices at their highest priority levels.
+ 	 */
+-	if (unlikely(rt_task(p))) {
++	if (rt_task(p)) {
+ 		/*
+ 		 * RR tasks need a special form of timeslice management.
+ 		 * FIFO tasks have no timeslices.
+@@ -3023,7 +3023,7 @@ asmlinkage long sys_sched_yield(void)
+ 	 * (special rule: RT tasks will just roundrobin in the active
+ 	 *  array.)
+ 	 */
+-	if (unlikely(rt_task(current)))
++	if (rt_task(current))
+ 		target = rq->active;
+ 
+ 	dequeue_task(current, array);
+_

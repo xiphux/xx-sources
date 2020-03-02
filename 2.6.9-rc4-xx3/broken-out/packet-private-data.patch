@@ -1,0 +1,35 @@
+
+From: Peter Osterlund <petero2@telia.com>
+
+open/close/ioctl still use the list traversal instead of gendisk private
+data
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/pktcdvd.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN drivers/block/pktcdvd.c~packet-private-data drivers/block/pktcdvd.c
+--- 25/drivers/block/pktcdvd.c~packet-private-data	2004-09-26 17:05:34.370011440 -0700
++++ 25-akpm/drivers/block/pktcdvd.c	2004-09-26 17:05:34.375010680 -0700
+@@ -2026,7 +2026,7 @@ out:
+ 
+ static int pkt_close(struct inode *inode, struct file *file)
+ {
+-	struct pktcdvd_device *pd = pkt_find_dev_from_minor(iminor(inode));
++	struct pktcdvd_device *pd = inode->i_bdev->bd_disk->private_data;
+ 	int ret = 0;
+ 
+ 	down(&ctl_mutex);
+@@ -2363,7 +2363,7 @@ out_mem:
+ 
+ static int pkt_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
+ {
+-	struct pktcdvd_device *pd = pkt_find_dev_from_minor(iminor(inode));
++	struct pktcdvd_device *pd = inode->i_bdev->bd_disk->private_data;
+ 
+ 	VPRINTK("pkt_ioctl: cmd %x, dev %d:%d\n", cmd, imajor(inode), iminor(inode));
+ 	BUG_ON(!pd);
+_

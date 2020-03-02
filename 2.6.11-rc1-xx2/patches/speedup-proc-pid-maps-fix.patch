@@ -1,0 +1,64 @@
+
+From: Prasanna Meda <pmeda@akamai.com>
+
+Second version:
+Tested it more, and fixed bug in last_addr vs. next_addr handling, and  added
+comments. Also got rid of assumption that zero adress is not part of address space.
+
+Signed-off-by: Prasanna Meda <pmeda@akamai.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/proc/task_mmu.c |   19 ++++++++++++++-----
+ 1 files changed, 14 insertions(+), 5 deletions(-)
+
+diff -puN fs/proc/task_mmu.c~speedup-proc-pid-maps-fix fs/proc/task_mmu.c
+--- 25/fs/proc/task_mmu.c~speedup-proc-pid-maps-fix	2005-01-07 11:28:54.288843736 -0800
++++ 25-akpm/fs/proc/task_mmu.c	2005-01-07 11:29:46.889847168 -0800
+@@ -133,6 +133,15 @@ static void *m_start(struct seq_file *m,
+ 	tail_map = get_gate_vma(task);
+ 	down_read(&mm->mmap_sem);
+ 
++	/*
++	 * First map is special, since we remember last_addr
++	 * rather than current_addr to hit with mmap_cache most of the time.
++	 */
++	if (!l) {
++		map = mm->mmap;
++		goto out;
++	}
++
+ 	/* Start with last addr hint */
+ 	map = find_vma(mm, last_addr);
+ 	if (map) {
+@@ -140,7 +149,7 @@ static void *m_start(struct seq_file *m,
+ 		goto out;
+ 	}
+ 
+-	/* Check the map index is within the range */
++	/* Check the map index is within the range, and do linear scan */
+ 	if ((unsigned long)l < mm->map_count) {
+ 		map = mm->mmap;
+ 		while (l-- && map)
+@@ -179,16 +188,16 @@ static void *m_next(struct seq_file *m, 
+ {
+ 	struct task_struct *task = m->private;
+ 	struct vm_area_struct *map = v;
++	struct vm_area_struct *tail_map = get_gate_vma(task);
++
+ 	(*pos)++;
+ 	if (map && map->vm_next) {
+-		m->version = map->vm_next->vm_start;
++		m->version = (map != tail_map)? map->vm_start: -1UL;
+ 		return map->vm_next;
+ 	}
+ 	m_stop(m, v);
+ 	m->version = -1UL;
+-	if (map != get_gate_vma(task))
+-		return get_gate_vma(task);
+-	return NULL;
++	return (map != tail_map)? tail_map: NULL;
+ }
+ 
+ struct seq_operations proc_pid_maps_op = {
+_

@@ -1,0 +1,55 @@
+
+From: Tony Lindgren <tony@atomide.com>
+
+Following patch allows 8250 compatible serial drivers to optionally define
+the port type to allow skipping the serial port autodetection.
+
+This is needed for OMAP serial port, which is 8250 compatible, but requires
+extra FIFO settings, and does not reliably work with the autodetection. 
+The OMAP serial port support is in patch 2/2.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/serial/8250.c        |    6 +++++-
+ 25-akpm/drivers/serial/serial_core.c |    1 +
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff -puN drivers/serial/8250.c~serial-8250-optionally-skip-autodetection drivers/serial/8250.c
+--- 25/drivers/serial/8250.c~serial-8250-optionally-skip-autodetection	2004-08-30 00:50:44.708967608 -0700
++++ 25-akpm/drivers/serial/8250.c	2004-08-30 00:50:44.715966544 -0700
+@@ -2055,6 +2055,7 @@ static int __register_serial(struct seri
+ {
+ 	struct uart_port port;
+ 
++	port.type     = req->type;
+ 	port.iobase   = req->port;
+ 	port.membase  = req->iomem_base;
+ 	port.irq      = req->irq;
+@@ -2062,10 +2063,13 @@ static int __register_serial(struct seri
+ 	port.fifosize = req->xmit_fifo_size;
+ 	port.regshift = req->iomem_reg_shift;
+ 	port.iotype   = req->io_type;
+-	port.flags    = req->flags | UPF_BOOT_AUTOCONF;
++	port.flags    = req->flags;
+ 	port.mapbase  = req->iomap_base;
+ 	port.line     = line;
+ 
++	if (req->type != PORT_OMAP)
++		req->flags |= UPF_BOOT_AUTOCONF;
++
+ 	if (share_irqs)
+ 		port.flags |= UPF_SHARE_IRQ;
+ 
+diff -puN drivers/serial/serial_core.c~serial-8250-optionally-skip-autodetection drivers/serial/serial_core.c
+--- 25/drivers/serial/serial_core.c~serial-8250-optionally-skip-autodetection	2004-08-30 00:50:44.710967304 -0700
++++ 25-akpm/drivers/serial/serial_core.c	2004-08-30 00:50:44.716966392 -0700
+@@ -2380,6 +2380,7 @@ int uart_register_port(struct uart_drive
+ 		 * If the port is already initialised, don't touch it.
+ 		 */
+ 		if (state->port->type == PORT_UNKNOWN) {
++			state->port->type     = port->type;
+ 			state->port->iobase   = port->iobase;
+ 			state->port->membase  = port->membase;
+ 			state->port->irq      = port->irq;
+_

@@ -1,0 +1,236 @@
+
+From: Jack Steiner <steiner@sgi.com>
+
+The SGI NUMA platform does not use the hardware "ptc" instruction to flush
+TLBs.  Instead, it has to write an MMR on the chipset on each node to cause
+a TLB flush transaction to be placed on the bus.  On large systems, the
+overhead to broadcast the TLB flush to many nodes in the system is one of
+the hot spots in the kernel.
+
+This patch adds a platform specific hook to allow an arch-specific function
+to be called after an explicit migration.  On SN2, we use this callout to
+force a new context to be assigned.  This reduces the number of cross-node
+ptc flushes that are needed.  Note that this patch adds to a previous patch
+(already in the tree) that uses cpu_vm_mask (on SN2) to track the nodes
+where a VM context has been loaded.  Forcing a new context causes the
+cpu_vm_mask to be cleared.
+
+I don't have a benchmark for JUST the scheduler change, but the entire
+cpu_vm_mask + sched change is:
+
+        nwchem (siosi7.sale.xx-shm1cs) on a 128p showed:
+
+          Before:
+             56p = Time after atomic energies summed:   140.2
+            120p = Time after atomic energies summed:   306.9
+
+          After:
+             56p = Time after atomic energies summed:    99.3
+            120p = Time after atomic energies summed:   110.4
+
+          Almost 3X improvement on 120p.
+
+Note that the amount of improvement is HIGHLY application & platform
+specific.
+
+This patch was originally posted earlier this year.  This version
+incorporates improvements suggested by Andrew Morten & David Mosberger.
+
+Signed-off-by: Jack Steiner <steiner@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/ia64/kernel/machvec.c        |    6 ++++++
+ 25-akpm/arch/ia64/sn/kernel/sn2/sn2_smp.c |   15 +++++++++++++++
+ 25-akpm/include/asm-generic/tlb.h         |    2 ++
+ 25-akpm/include/asm-ia64/machvec.h        |    9 +++++++++
+ 25-akpm/include/asm-ia64/machvec_sn2.h    |    2 ++
+ 25-akpm/include/asm-ia64/tlb.h            |    3 +++
+ 25-akpm/kernel/sched.c                    |    2 ++
+ 7 files changed, 39 insertions(+)
+
+diff -puN arch/ia64/kernel/machvec.c~reduce-tlb-flushing-during-process-migration-2 arch/ia64/kernel/machvec.c
+--- 25/arch/ia64/kernel/machvec.c~reduce-tlb-flushing-during-process-migration-2	Wed Jun 23 14:30:45 2004
++++ 25-akpm/arch/ia64/kernel/machvec.c	Wed Jun 23 14:30:45 2004
+@@ -62,6 +62,12 @@ machvec_timer_interrupt (int irq, void *
+ EXPORT_SYMBOL(machvec_timer_interrupt);
+ 
+ void
++machvec_tlb_migrate_finish (struct mm_struct *mm)
++{
++}
++EXPORT_SYMBOL(machvec_tlb_migrate_finish);
++
++void
+ machvec_dma_sync_single (struct device *hwdev, dma_addr_t dma_handle, size_t size, int dir)
+ {
+ 	mb();
+diff -puN arch/ia64/sn/kernel/sn2/sn2_smp.c~reduce-tlb-flushing-during-process-migration-2 arch/ia64/sn/kernel/sn2/sn2_smp.c
+--- 25/arch/ia64/sn/kernel/sn2/sn2_smp.c~reduce-tlb-flushing-during-process-migration-2	Wed Jun 23 14:30:45 2004
++++ 25-akpm/arch/ia64/sn/kernel/sn2/sn2_smp.c	Wed Jun 23 14:30:45 2004
+@@ -27,6 +27,7 @@
+ #include <asm/delay.h>
+ #include <asm/io.h>
+ #include <asm/smp.h>
++#include <asm/tlb.h>
+ #include <asm/numa.h>
+ #include <asm/bitops.h>
+ #include <asm/hw_irq.h>
+@@ -60,6 +61,13 @@ wait_piowc(void)
+ }
+ 
+ 
++void
++sn_tlb_migrate_finish(struct mm_struct *mm)
++{
++	if (mm == current->mm)
++		flush_tlb_mm(mm);
++}
++
+ 
+ /**
+  * sn2_global_tlb_purge - globally purge translation cache of virtual address range
+@@ -114,6 +122,13 @@ sn2_global_tlb_purge (unsigned long star
+ 		return;
+ 	}
+ 
++	if (atomic_read(&mm->mm_users) == 1) {
++		flush_tlb_mm(mm);
++		preempt_enable();
++		return;
++	}
++
++
+ 	nix = 0;
+ 	for (cnode=find_first_bit(&nodes_flushed, NR_NODES); cnode < NR_NODES; 
+ 			cnode=find_next_bit(&nodes_flushed, NR_NODES, ++cnode))
+diff -puN include/asm-generic/tlb.h~reduce-tlb-flushing-during-process-migration-2 include/asm-generic/tlb.h
+--- 25/include/asm-generic/tlb.h~reduce-tlb-flushing-during-process-migration-2	Wed Jun 23 14:30:45 2004
++++ 25-akpm/include/asm-generic/tlb.h	Wed Jun 23 14:30:45 2004
+@@ -147,4 +147,6 @@ static inline void tlb_remove_page(struc
+ 		__pmd_free_tlb(tlb, pmdp);			\
+ 	} while (0)
+ 
++#define tlb_migrate_finish(mm) flush_tlb_mm(mm)
++
+ #endif /* _ASM_GENERIC__TLB_H */
+diff -puN include/asm-ia64/machvec.h~reduce-tlb-flushing-during-process-migration-2 include/asm-ia64/machvec.h
+--- 25/include/asm-ia64/machvec.h~reduce-tlb-flushing-during-process-migration-2	Wed Jun 23 14:30:45 2004
++++ 25-akpm/include/asm-ia64/machvec.h	Wed Jun 23 14:30:45 2004
+@@ -19,6 +19,7 @@ struct pt_regs;
+ struct scatterlist;
+ struct irq_desc;
+ struct page;
++struct mm_struct;
+ 
+ typedef void ia64_mv_setup_t (char **);
+ typedef void ia64_mv_cpu_init_t (void);
+@@ -26,6 +27,7 @@ typedef void ia64_mv_irq_init_t (void);
+ typedef void ia64_mv_send_ipi_t (int, int, int, int);
+ typedef void ia64_mv_timer_interrupt_t (int, void *, struct pt_regs *);
+ typedef void ia64_mv_global_tlb_purge_t (unsigned long, unsigned long, unsigned long);
++typedef void ia64_mv_tlb_migrate_finish_t (struct mm_struct *);
+ typedef struct irq_desc *ia64_mv_irq_desc (unsigned int);
+ typedef u8 ia64_mv_irq_to_vector (u8);
+ typedef unsigned int ia64_mv_local_vector_to_irq (u8 vector);
+@@ -72,6 +74,7 @@ typedef unsigned long ia64_mv_readq_rela
+ extern void machvec_noop (void);
+ extern void machvec_setup (char **);
+ extern void machvec_timer_interrupt (int, void *, struct pt_regs *);
++extern void machvec_tlb_migrate_finish (struct mm_struct *);
+ extern void machvec_dma_sync_single (struct device *, dma_addr_t, size_t, int);
+ extern void machvec_dma_sync_sg (struct device *, struct scatterlist *, int, int);
+ 
+@@ -95,6 +98,7 @@ extern void machvec_dma_sync_sg (struct 
+ #  define platform_send_ipi	ia64_mv.send_ipi
+ #  define platform_timer_interrupt	ia64_mv.timer_interrupt
+ #  define platform_global_tlb_purge	ia64_mv.global_tlb_purge
++#  define platform_tlb_migrate_finish	ia64_mv.tlb_migrate_finish
+ #  define platform_dma_init		ia64_mv.dma_init
+ #  define platform_dma_alloc_coherent	ia64_mv.dma_alloc_coherent
+ #  define platform_dma_free_coherent	ia64_mv.dma_free_coherent
+@@ -140,6 +144,7 @@ struct ia64_machine_vector {
+ 	ia64_mv_send_ipi_t *send_ipi;
+ 	ia64_mv_timer_interrupt_t *timer_interrupt;
+ 	ia64_mv_global_tlb_purge_t *global_tlb_purge;
++	ia64_mv_tlb_migrate_finish_t *tlb_migrate_finish;
+ 	ia64_mv_dma_init *dma_init;
+ 	ia64_mv_dma_alloc_coherent *dma_alloc_coherent;
+ 	ia64_mv_dma_free_coherent *dma_free_coherent;
+@@ -181,6 +186,7 @@ struct ia64_machine_vector {
+ 	platform_send_ipi,			\
+ 	platform_timer_interrupt,		\
+ 	platform_global_tlb_purge,		\
++	platform_tlb_migrate_finish,		\
+ 	platform_dma_init,			\
+ 	platform_dma_alloc_coherent,		\
+ 	platform_dma_free_coherent,		\
+@@ -260,6 +266,9 @@ extern ia64_mv_dma_supported		swiotlb_dm
+ #ifndef platform_global_tlb_purge
+ # define platform_global_tlb_purge	ia64_global_tlb_purge /* default to architected version */
+ #endif
++#ifndef platform_tlb_migrate_finish
++# define platform_tlb_migrate_finish machvec_tlb_migrate_finish
++#endif
+ #ifndef platform_dma_init
+ # define platform_dma_init		swiotlb_init
+ #endif
+diff -puN include/asm-ia64/machvec_sn2.h~reduce-tlb-flushing-during-process-migration-2 include/asm-ia64/machvec_sn2.h
+--- 25/include/asm-ia64/machvec_sn2.h~reduce-tlb-flushing-during-process-migration-2	Wed Jun 23 14:30:45 2004
++++ 25-akpm/include/asm-ia64/machvec_sn2.h	Wed Jun 23 14:30:45 2004
+@@ -39,6 +39,7 @@ extern ia64_mv_irq_init_t sn_irq_init;
+ extern ia64_mv_send_ipi_t sn2_send_IPI;
+ extern ia64_mv_timer_interrupt_t sn_timer_interrupt;
+ extern ia64_mv_global_tlb_purge_t sn2_global_tlb_purge;
++extern ia64_mv_tlb_migrate_finish_t	sn_tlb_migrate_finish;
+ extern ia64_mv_irq_desc sn_irq_desc;
+ extern ia64_mv_irq_to_vector sn_irq_to_vector;
+ extern ia64_mv_local_vector_to_irq sn_local_vector_to_irq;
+@@ -83,6 +84,7 @@ extern ia64_mv_dma_supported		sn_dma_sup
+ #define platform_send_ipi		sn2_send_IPI
+ #define platform_timer_interrupt	sn_timer_interrupt
+ #define platform_global_tlb_purge       sn2_global_tlb_purge
++#define platform_tlb_migrate_finish	sn_tlb_migrate_finish
+ #define platform_pci_fixup		sn_pci_fixup
+ #define platform_inb			__sn_inb
+ #define platform_inw			__sn_inw
+diff -puN include/asm-ia64/tlb.h~reduce-tlb-flushing-during-process-migration-2 include/asm-ia64/tlb.h
+--- 25/include/asm-ia64/tlb.h~reduce-tlb-flushing-during-process-migration-2	Wed Jun 23 14:30:45 2004
++++ 25-akpm/include/asm-ia64/tlb.h	Wed Jun 23 14:30:45 2004
+@@ -44,6 +44,7 @@
+ #include <asm/pgalloc.h>
+ #include <asm/processor.h>
+ #include <asm/tlbflush.h>
++#include <asm/machvec.h>
+ 
+ #ifdef CONFIG_SMP
+ # define FREE_PTE_NR		2048
+@@ -211,6 +212,8 @@ __tlb_remove_tlb_entry (struct mmu_gathe
+ 	tlb->end_addr = address + PAGE_SIZE;
+ }
+ 
++#define tlb_migrate_finish(mm)	platform_tlb_migrate_finish(mm)
++
+ #define tlb_start_vma(tlb, vma)			do { } while (0)
+ #define tlb_end_vma(tlb, vma)			do { } while (0)
+ 
+diff -puN kernel/sched.c~reduce-tlb-flushing-during-process-migration-2 kernel/sched.c
+--- 25/kernel/sched.c~reduce-tlb-flushing-during-process-migration-2	Wed Jun 23 14:30:45 2004
++++ 25-akpm/kernel/sched.c	Wed Jun 23 14:30:45 2004
+@@ -41,6 +41,7 @@
+ #include <linux/percpu.h>
+ #include <linux/perfctr.h>
+ #include <linux/kthread.h>
++#include <asm/tlb.h>
+ 
+ #include <asm/unistd.h>
+ 
+@@ -3359,6 +3360,7 @@ int set_cpus_allowed(task_t *p, cpumask_
+ 		task_rq_unlock(rq, &flags);
+ 		wake_up_process(rq->migration_thread);
+ 		wait_for_completion(&req.done);
++		tlb_migrate_finish(p->mm);
+ 		return 0;
+ 	}
+ out:
+_

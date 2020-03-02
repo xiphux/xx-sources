@@ -1,0 +1,158 @@
+
+From: "Antonino A. Daplas" <adaplas@hotpop.com>
+
+This is optional but applying it should enhance fbdev functionality.
+
+The patch allows removal of entries to the mode list.  This is done by setting
+the var->activate field to FB_ACTIVATE_INV_MODE.  Only modes that are not in
+use by any of the console or by the current var will be deleted.
+
+Signed-off-by: Antonino Daplas <adaplas@pol.net>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/video/console/fbcon.c |   35 +++++++++++++++++++++++++++++++++-
+ 25-akpm/drivers/video/fbmem.c         |   28 ++++++++++++++++++++++++---
+ 25-akpm/include/linux/fb.h            |    9 ++++++++
+ 3 files changed, 68 insertions(+), 4 deletions(-)
+
+diff -puN drivers/video/console/fbcon.c~video-mode-handling-delete-entries-from-mode-list drivers/video/console/fbcon.c
+--- 25/drivers/video/console/fbcon.c~video-mode-handling-delete-entries-from-mode-list	2004-08-08 23:10:15.148868280 -0700
++++ 25-akpm/drivers/video/console/fbcon.c	2004-08-08 23:10:15.165865696 -0700
+@@ -2671,10 +2671,39 @@ static void fbcon_modechanged(struct fb_
+ 	}
+ }
+ 
++static void fbcon_mode_deleted(struct fb_info *info,
++			       struct fb_videomode *mode)
++{
++	struct fb_info *fb_info;
++	struct display *p;
++	int i, j, found = 0;
++
++	/* before deletion, ensure that mode is not in use */
++	for (i = first_fb_vc; i <= last_fb_vc; i++) {
++		j = (int) con2fb_map[i];
++		if (j == -1)
++			continue;
++		fb_info = registered_fb[j];
++		if (fb_info != info)
++			continue;
++		p = &fb_display[i];
++		if (!p || !p->mode)
++			continue;
++		if (fb_mode_is_equal(p->mode, mode)) {
++			found = 1;
++			break;
++		}
++	}
++	if (!found)
++		fb_delete_videomode(mode, &info->monspecs.modelist);
++}
++
+ static int fbcon_event_notify(struct notifier_block *self, 
+ 			      unsigned long action, void *data)
+ {
+-	struct fb_info *info = (struct fb_info *) data;
++	struct fb_event *event = (struct fb_event *) data;
++	struct fb_info *info = event->info;
++	struct fb_videomode *mode;
+ 
+ 	switch(action) {
+ 	case FB_EVENT_SUSPEND:
+@@ -2686,6 +2715,10 @@ static int fbcon_event_notify(struct not
+ 	case FB_EVENT_MODE_CHANGE:
+ 		fbcon_modechanged(info);
+ 		break;
++	case FB_EVENT_MODE_DELETE:
++		mode = (struct fb_videomode *) event->data;
++		fbcon_mode_deleted(info, mode);
++		break;
+ 	}
+ 
+ 	return 0;
+diff -puN drivers/video/fbmem.c~video-mode-handling-delete-entries-from-mode-list drivers/video/fbmem.c
+--- 25/drivers/video/fbmem.c~video-mode-handling-delete-entries-from-mode-list	2004-08-08 23:10:15.150867976 -0700
++++ 25-akpm/drivers/video/fbmem.c	2004-08-08 23:10:15.166865544 -0700
+@@ -1083,6 +1083,22 @@ fb_set_var(struct fb_info *info, struct 
+ {
+ 	int err;
+ 
++	if (var->activate & FB_ACTIVATE_INV_MODE) {
++		struct fb_videomode mode1, mode2;
++		struct fb_event event;
++
++		fb_var_to_videomode(&mode1, var);
++		fb_var_to_videomode(&mode2, &info->var);
++		/* make sure we don't delete the videomode of current var */
++		if (fb_mode_is_equal(&mode1, &mode2))
++			return -EINVAL;
++		event.info = info;
++		event.data = &mode1;
++		notifier_call_chain(&fb_notifier_list, FB_EVENT_MODE_DELETE,
++				    &event);
++		return 0;
++	}
++
+ 	if ((var->activate & FB_ACTIVATE_FORCE) ||
+ 	    memcmp(&info->var, var, sizeof(struct fb_var_screeninfo))) {
+ 		if (!info->fbops->fb_check_var) {
+@@ -1108,9 +1124,12 @@ fb_set_var(struct fb_info *info, struct 
+ 			fb_add_videomode(&mode, &info->monspecs.modelist);
+ 
+ 			if (info->flags & FBINFO_MISC_MODECHANGEUSER) {
++				struct fb_event event;
++
+ 				info->flags &= ~FBINFO_MISC_MODECHANGEUSER;
++				event.info = info;
+ 				notifier_call_chain(&fb_notifier_list,
+-						    FB_EVENT_MODE_CHANGE, info);
++						    FB_EVENT_MODE_CHANGE, &event);
+ 			}
+ 		}
+ 	}
+@@ -1520,12 +1539,15 @@ int fb_unregister_client(struct notifier
+  */
+ void fb_set_suspend(struct fb_info *info, int state)
+ {
++	struct fb_event event;
++
++	event.info = info;
+ 	if (state) {
+-		notifier_call_chain(&fb_notifier_list, FB_EVENT_SUSPEND, info);
++		notifier_call_chain(&fb_notifier_list, FB_EVENT_SUSPEND, &event);
+ 		info->state = FBINFO_STATE_SUSPENDED;
+ 	} else {
+ 		info->state = FBINFO_STATE_RUNNING;
+-		notifier_call_chain(&fb_notifier_list, FB_EVENT_RESUME, info);
++		notifier_call_chain(&fb_notifier_list, FB_EVENT_RESUME, &event);
+ 	}
+ }
+ 
+diff -puN include/linux/fb.h~video-mode-handling-delete-entries-from-mode-list include/linux/fb.h
+--- 25/include/linux/fb.h~video-mode-handling-delete-entries-from-mode-list	2004-08-08 23:10:15.159866608 -0700
++++ 25-akpm/include/linux/fb.h	2004-08-08 23:10:15.167865392 -0700
+@@ -159,6 +159,7 @@ struct fb_bitfield {
+ #define FB_CHANGE_CMAP_VBL     32	/* change colormap on vbl	*/
+ #define FB_ACTIVATE_ALL	       64	/* change all VCs on this fb	*/
+ #define FB_ACTIVATE_FORCE     128	/* force apply even when no change*/
++#define FB_ACTIVATE_INV_MODE  256       /* invalidate videomode */
+ 
+ #define FB_ACCELF_TEXT		1	/* (OBSOLETE) see fb_info.flags and vc_mode */
+ 
+@@ -449,6 +450,14 @@ struct fb_cursor_user {
+  *	if you own it
+  */
+ #define FB_EVENT_RESUME			0x03
++/*      An entry from the modelist was removed */
++#define FB_EVENT_MODE_DELETE            0x04
++
++struct fb_event {
++	struct fb_info *info;
++	void *data;
++};
++
+ 
+ extern int fb_register_client(struct notifier_block *nb);
+ extern int fb_unregister_client(struct notifier_block *nb);
+_

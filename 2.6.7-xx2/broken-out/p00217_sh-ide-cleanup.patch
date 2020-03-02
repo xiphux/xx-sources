@@ -1,0 +1,120 @@
+
+From: Paul Mundt <lethal@Linux-SH.ORG>
+
+This does a bit of IDE cleanup (in preparation for the SuperH generic IDE host
+driver).  This also adds SuperH to the list of platforms that are interested
+in CONFIG_IDE_MAX_HWIFS.
+
+Signed-off-by: Paul Mundt <lethal@linux-sh.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/ide/Kconfig        |    2 -
+ 25-akpm/include/asm-sh/hp6xx/ide.h |    8 ++++
+ 25-akpm/include/asm-sh/ide.h       |   65 +------------------------------------
+ 3 files changed, 11 insertions(+), 64 deletions(-)
+
+diff -puN drivers/ide/Kconfig~sh-ide-cleanup drivers/ide/Kconfig
+--- 25/drivers/ide/Kconfig~sh-ide-cleanup	2004-06-23 20:00:16.869125528 -0700
++++ 25-akpm/drivers/ide/Kconfig	2004-06-23 20:00:16.875124616 -0700
+@@ -54,7 +54,7 @@ if IDE
+ 
+ config IDE_MAX_HWIFS 
+ 	int "Max IDE interfaces"
+-	depends on ALPHA
++	depends on ALPHA || SUPERH
+ 	default 4
+ 	help
+ 	  This is the maximum number of IDE hardware interfaces that will
+diff -puN /dev/null include/asm-sh/hp6xx/ide.h
+--- /dev/null	2003-09-15 06:40:47.000000000 -0700
++++ 25-akpm/include/asm-sh/hp6xx/ide.h	2004-06-23 20:00:16.875124616 -0700
+@@ -0,0 +1,8 @@
++#ifndef __ASM_SH_HP6XX_IDE_H
++#define __ASM_SH_HP6XX_IDE_H
++
++#define IRQ_CFCARD	93
++#define IRQ_PCMCIA	94
++
++#endif /* __ASM_SH_HP6XX_IDE_H */
++
+diff -puN include/asm-sh/ide.h~sh-ide-cleanup include/asm-sh/ide.h
+--- 25/include/asm-sh/ide.h~sh-ide-cleanup	2004-06-23 20:00:16.871125224 -0700
++++ 25-akpm/include/asm-sh/ide.h	2004-06-23 20:00:16.876124464 -0700
+@@ -15,73 +15,12 @@
+ #ifdef __KERNEL__
+ 
+ #include <linux/config.h>
+-#include <asm/machvec.h>
+ 
+ #ifndef MAX_HWIFS
+-/* Should never have less than 2, ide-pci.c(ide_match_hwif) requires it */
+-#define MAX_HWIFS	2
++#define MAX_HWIFS	CONFIG_IDE_MAX_HWIFS
+ #endif
+ 
+-#define IDE_ARCH_OBSOLETE_DEFAULTS
+-
+-static inline int ide_default_irq_hp600(unsigned long base)
+-{
+-	switch (base) {
+-		case 0x01f0: return 93;
+-		case 0x0170: return 94;
+-		default:
+-			return 0;
+-	}
+-}
+-
+-static inline int ide_default_irq(unsigned long base)
+-{
+-	if (MACH_HP600) {
+-		return ide_default_irq_hp600(base);
+-	}
+-	switch (base) {
+-		case 0x01f0: return 14;
+-		case 0x0170: return 15;
+-		default:
+-			return 0;
+-	}
+-}
+-
+-static inline unsigned long ide_default_io_base_hp600(int index)
+-{
+-	switch (index) {
+-		case 0:	
+-			return 0x01f0;
+-		case 1:	
+-			return 0x0170;
+-		default:
+-			return 0;
+-	}
+-}
+-
+-static inline unsigned long ide_default_io_base(int index)
+-{
+-	if (MACH_HP600) {
+-		return ide_default_io_base_hp600(index);
+-	}
+-	switch (index) {
+-		case 0:	
+-			return 0x1f0;
+-		case 1:	
+-			return 0x170;
+-		default:
+-			return 0;
+-	}
+-}
+-
+-#define IDE_ARCH_OBSOLETE_INIT
+-#define ide_default_io_ctl(base)	((base) + 0x206) /* obsolete */
+-
+-#ifdef CONFIG_PCI
+-#define ide_init_default_irq(base)	(0)
+-#else
+-#define ide_init_default_irq(base)	ide_default_irq(base)
+-#endif
++#define ide_default_io_ctl(base)	(0)
+ 
+ #include <asm-generic/ide_iops.h>
+ 
+_

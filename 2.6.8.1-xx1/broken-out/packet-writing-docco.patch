@@ -1,0 +1,86 @@
+
+From: Peter Osterlund <petero2@telia.com>
+
+Added information about packet writing for DVD+RW and DVD-RW media.
+
+Signed-off-by: Peter Osterlund <petero2@telia.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/cdrom/packet-writing.txt |   66 +++++++++++++++++++++++++
+ 1 files changed, 66 insertions(+)
+
+diff -puN Documentation/cdrom/packet-writing.txt~packet-writing-docco Documentation/cdrom/packet-writing.txt
+--- 25/Documentation/cdrom/packet-writing.txt~packet-writing-docco	Fri Jul  2 17:53:20 2004
++++ 25-akpm/Documentation/cdrom/packet-writing.txt	Fri Jul  2 17:53:20 2004
+@@ -20,3 +20,69 @@ Getting started quick
+ 
+ - Now you can mount /dev/pktcdvd0 and copy files to it. Enjoy!
+ 	# mount /dev/pktcdvd0 /cdrom -t udf -o rw,noatime
++
++
++Packet writing for DVD-RW media
++-------------------------------
++
++DVD-RW discs can be written to much like CD-RW discs if they are in
++the so called "restricted overwrite" mode. To put a disc in restricted
++overwrite mode, run:
++
++	# dvd+rw-format /dev/hdc
++
++You can then use the disc the same way you would use a CD-RW disc:
++
++	# pktsetup /dev/pktcdvd0 /dev/hdc
++	# mount /dev/pktcdvd0 /cdrom -t udf -o rw,noatime
++
++
++Packet writing for DVD+RW media
++-------------------------------
++
++According to the DVD+RW specification, a drive supporting DVD+RW discs
++shall implement "true random writes with 2KB granularity", which means
++that it should be possible to put any filesystem with a block size >=
++2KB on such a disc. For example, it should be possible to do:
++
++	# mkudffs /dev/hdc
++	# mount /dev/hdc /cdrom -t udf -o rw,noatime
++
++However, some drives don't follow the specification and expect the
++host to perform aligned writes at 32KB boundaries. Other drives do
++follow the specification, but suffer bad performance problems if the
++writes are not 32KB aligned.
++
++Both problems can be solved by using the pktcdvd driver, which always
++generates aligned writes.
++
++	# pktsetup /dev/pktcdvd0 /dev/hdc
++	# mkudffs /dev/pktcdvd0
++	# mount /dev/pktcdvd0 /cdrom -t udf -o rw,noatime
++
++
++Notes
++-----
++
++- CD-RW media can usually not be overwritten more than about 1000
++  times, so to avoid unnecessary wear on the media, you should always
++  use the noatime mount option.
++
++- Defect management (ie automatic remapping of bad sectors) has not
++  been implemented yet, so you are likely to get at least some
++  filesystem corruption if the disc wears out.
++
++- Since the pktcdvd driver makes the disc appear as a regular block
++  device, you can put any filesystem you like on the disc. For
++  example, run:
++
++	# /sbin/mke2fs /dev/pktcdvd0
++
++  to create an ext2 filesystem on the disc.
++
++
++Links
++-----
++
++See http://fy.chalmers.se/~appro/linux/DVD+RW/ for more information
++about DVD writing.
+_

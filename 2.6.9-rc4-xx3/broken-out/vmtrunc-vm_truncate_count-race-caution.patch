@@ -1,0 +1,165 @@
+
+From: Hugh Dickins <hugh@veritas.com>
+
+Fix some unlikely races in respect of vm_truncate_count.
+
+Firstly, it's supposed to be guarded by i_mmap_lock, but some places copy a
+vma structure by *new_vma = *old_vma: if the compiler implements that with a
+bytewise copy, new_vma->vm_truncate_count could be munged, and new_vma later
+appear up-to-date when it's not; so set it properly once under lock.
+
+vma_link set vm_truncate_count to mapping->truncate_count when adding an empty
+vma: if new vmas are being added profusely while vmtruncate is in progess,
+this lets them be skipped without scanning.
+
+vma_adjust has vm_truncate_count problem much like it had with anon_vma under
+mprotect merge: when merging be careful not to leave vma marked as up-to-date
+when it might not be, lest unmap_mapping_range in progress - set
+vm_truncate_count 0 when in doubt.  Similarly when mremap moving ptes from one
+vma to another.
+
+Cut a little code from __anon_vma_merge: now vma_adjust sets "importer" in the
+remove_next case (to get its vm_truncate_count right), its anon_vma is already
+linked by the time __anon_vma_merge is called.
+
+Signed-off-by: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/fork.c |    1 +
+ 25-akpm/mm/mmap.c     |   14 +++++++++++++-
+ 25-akpm/mm/mremap.c   |   16 ++++++++++------
+ 25-akpm/mm/rmap.c     |    9 +--------
+ 4 files changed, 25 insertions(+), 15 deletions(-)
+
+diff -puN kernel/fork.c~vmtrunc-vm_truncate_count-race-caution kernel/fork.c
+--- 25/kernel/fork.c~vmtrunc-vm_truncate_count-race-caution	2004-10-03 14:25:19.228159760 -0700
++++ 25-akpm/kernel/fork.c	2004-10-03 14:25:19.238158240 -0700
+@@ -351,6 +351,7 @@ static inline int dup_mmap(struct mm_str
+       
+ 			/* insert tmp into the share list, just after mpnt */
+ 			spin_lock(&file->f_mapping->i_mmap_lock);
++			tmp->vm_truncate_count = mpnt->vm_truncate_count;
+ 			flush_dcache_mmap_lock(file->f_mapping);
+ 			vma_prio_tree_add(tmp, mpnt);
+ 			flush_dcache_mmap_unlock(file->f_mapping);
+diff -puN mm/mmap.c~vmtrunc-vm_truncate_count-race-caution mm/mmap.c
+--- 25/mm/mmap.c~vmtrunc-vm_truncate_count-race-caution	2004-10-03 14:25:19.230159456 -0700
++++ 25-akpm/mm/mmap.c	2004-10-03 14:25:19.239158088 -0700
+@@ -306,8 +306,10 @@ static void vma_link(struct mm_struct *m
+ 	if (vma->vm_file)
+ 		mapping = vma->vm_file->f_mapping;
+ 
+-	if (mapping)
++	if (mapping) {
+ 		spin_lock(&mapping->i_mmap_lock);
++		vma->vm_truncate_count = mapping->truncate_count;
++	}
+ 	anon_vma_lock(vma);
+ 
+ 	__vma_link(mm, vma, prev, rb_link, rb_parent);
+@@ -378,6 +380,7 @@ void vma_adjust(struct vm_area_struct *v
+ again:			remove_next = 1 + (end > next->vm_end);
+ 			end = next->vm_end;
+ 			anon_vma = next->anon_vma;
++			importer = vma;
+ 		} else if (end > next->vm_start) {
+ 			/*
+ 			 * vma expands, overlapping part of the next:
+@@ -403,7 +406,16 @@ again:			remove_next = 1 + (end > next->
+ 		if (!(vma->vm_flags & VM_NONLINEAR))
+ 			root = &mapping->i_mmap;
+ 		spin_lock(&mapping->i_mmap_lock);
++		if (importer &&
++		    vma->vm_truncate_count != next->vm_truncate_count) {
++			/*
++			 * unmap_mapping_range might be in progress:
++			 * ensure that the expanding vma is rescanned.
++			 */
++			importer->vm_truncate_count = 0;
++		}
+ 		if (insert) {
++			insert->vm_truncate_count = vma->vm_truncate_count;
+ 			/*
+ 			 * Put into prio_tree now, so instantiated pages
+ 			 * are visible to arm/parisc __flush_dcache_page
+diff -puN mm/mremap.c~vmtrunc-vm_truncate_count-race-caution mm/mremap.c
+--- 25/mm/mremap.c~vmtrunc-vm_truncate_count-race-caution	2004-10-03 14:25:19.231159304 -0700
++++ 25-akpm/mm/mremap.c	2004-10-03 14:25:19.240157936 -0700
+@@ -82,7 +82,7 @@ static inline pte_t *alloc_one_pte_map(s
+ 
+ static int
+ move_one_page(struct vm_area_struct *vma, unsigned long old_addr,
+-		unsigned long new_addr)
++		struct vm_area_struct *new_vma, unsigned long new_addr)
+ {
+ 	struct address_space *mapping = NULL;
+ 	struct mm_struct *mm = vma->vm_mm;
+@@ -98,6 +98,9 @@ move_one_page(struct vm_area_struct *vma
+ 		 */
+ 		mapping = vma->vm_file->f_mapping;
+ 		spin_lock(&mapping->i_mmap_lock);
++		if (new_vma->vm_truncate_count &&
++		    new_vma->vm_truncate_count != vma->vm_truncate_count)
++			new_vma->vm_truncate_count = 0;
+ 	}
+ 	spin_lock(&mm->page_table_lock);
+ 
+@@ -144,8 +147,8 @@ move_one_page(struct vm_area_struct *vma
+ }
+ 
+ static unsigned long move_page_tables(struct vm_area_struct *vma,
+-		unsigned long new_addr, unsigned long old_addr,
+-		unsigned long len)
++		unsigned long old_addr, struct vm_area_struct *new_vma,
++		unsigned long new_addr, unsigned long len)
+ {
+ 	unsigned long offset;
+ 
+@@ -157,7 +160,8 @@ static unsigned long move_page_tables(st
+ 	 * only a few pages.. This also makes error recovery easier.
+ 	 */
+ 	for (offset = 0; offset < len; offset += PAGE_SIZE) {
+-		if (move_one_page(vma, old_addr+offset, new_addr+offset) < 0)
++		if (move_one_page(vma, old_addr + offset,
++				new_vma, new_addr + offset) < 0)
+ 			break;
+ 		cond_resched();
+ 	}
+@@ -188,14 +192,14 @@ static unsigned long move_vma(struct vm_
+ 	if (!new_vma)
+ 		return -ENOMEM;
+ 
+-	moved_len = move_page_tables(vma, new_addr, old_addr, old_len);
++	moved_len = move_page_tables(vma, old_addr, new_vma, new_addr, old_len);
+ 	if (moved_len < old_len) {
+ 		/*
+ 		 * On error, move entries back from new area to old,
+ 		 * which will succeed since page tables still there,
+ 		 * and then proceed to unmap new area instead of old.
+ 		 */
+-		move_page_tables(new_vma, old_addr, new_addr, moved_len);
++		move_page_tables(new_vma, new_addr, vma, old_addr, moved_len);
+ 		vma = new_vma;
+ 		old_len = new_len;
+ 		old_addr = new_addr;
+diff -puN mm/rmap.c~vmtrunc-vm_truncate_count-race-caution mm/rmap.c
+--- 25/mm/rmap.c~vmtrunc-vm_truncate_count-race-caution	2004-10-03 14:25:19.233159000 -0700
++++ 25-akpm/mm/rmap.c	2004-10-03 14:25:19.241157784 -0700
+@@ -119,14 +119,7 @@ int anon_vma_prepare(struct vm_area_stru
+ 
+ void __anon_vma_merge(struct vm_area_struct *vma, struct vm_area_struct *next)
+ {
+-	if (!vma->anon_vma) {
+-		BUG_ON(!next->anon_vma);
+-		vma->anon_vma = next->anon_vma;
+-		list_add(&vma->anon_vma_node, &next->anon_vma_node);
+-	} else {
+-		/* if they're both non-null they must be the same */
+-		BUG_ON(vma->anon_vma != next->anon_vma);
+-	}
++	BUG_ON(vma->anon_vma != next->anon_vma);
+ 	list_del(&next->anon_vma_node);
+ }
+ 
+_

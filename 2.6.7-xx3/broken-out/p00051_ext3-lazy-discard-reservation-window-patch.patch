@@ -1,0 +1,200 @@
+
+From: Mingming Cao <cmm@us.ibm.com>
+
+This patch is trying to do lazy discard: keep the old reservation window
+temporarilly until we find the new reservation window, only do remove/add if
+the new reservation window locate different than the old one.  (The current
+reservation code will discard the old one first,then search the new one).  Two
+reasons:
+
+a.  If the ext3_find_goal() does a good job, the reservation windows on the
+   list should not very close to each other.  So an inode's new reservation
+   window is likely located just next to it's old one, it's position in the
+   whole list is unchanged, no need to do remove and then add the new one to
+   the list in the same location.  Just update the start block and end
+   block.
+
+b. If we failed to find a new reservation in the goal group and move on
+   the search to the next group, having the old reservation around temporally
+   could allow us to search the list directly after the old window.  Otherwise
+   we lost where we were and has to start from the beginning of the list. 
+   Eventually the old window will be discard when we found a new one.
+DESC
+ext3 discard reservation in last iput fix patch
+EDESC
+From: Mingming Cao <cmm@us.ibm.com>
+
+ext3_discard_reservation() should not be called on every iput().  Now it is
+moved to ext3_delete_inode(), so it is only called on the last iput().
+DESC
+Fix lazy reservation discard
+EDESC
+
+->delete_inode() is only called when the inode is being deleted.  So we're
+leaving inodes on the reservation list when they are reclaimed by the VM.
+
+So take them off the reservation list in ->clear_inode instead.
+DESC
+ext3 reservations: bad_inode fix
+EDESC
+From: Mingming Cao <cmm@us.ibm.com>
+
+Thanks Badari!! The easiest fix is checking whether it is a bad inode in
+ext3_clear_inode() (like what ext2_put_inode() does):
+
+DESC
+ext3 reservation discard race fix
+EDESC
+From: Mingming Cao <cmm@us.ibm.com>
+
+This should fix a reservation window race between multiple processes when
+one process closed the file while another one is in the middle of block
+allocation using the inode's reservation window.  reservation window should
+be discard on the last writer on the inode, not the last writer on the
+filp.  
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/ext3/balloc.c |   22 +++++++++++++++-------
+ 25-akpm/fs/ext3/file.c   |    4 +++-
+ 25-akpm/fs/ext3/inode.c  |   13 -------------
+ 25-akpm/fs/ext3/super.c  |   11 ++++-------
+ 4 files changed, 22 insertions(+), 28 deletions(-)
+
+diff -puN fs/ext3/balloc.c~ext3-lazy-discard-reservation-window-patch fs/ext3/balloc.c
+--- 25/fs/ext3/balloc.c~ext3-lazy-discard-reservation-window-patch	Wed Jun 16 16:54:22 2004
++++ 25-akpm/fs/ext3/balloc.c	Wed Jun 16 16:54:22 2004
+@@ -726,7 +726,7 @@ static int alloc_new_reservation(struct 
+ 		start_block = goal + group_first_block;
+ 
+ 	size = atomic_read(&my_rsv->rsv_goal_size);
+-	/* if we have a old reservation, discard it first */
++	/* if we have a old reservation, start the search from the old rsv */
+ 	if (!rsv_is_empty(my_rsv)) {
+ 		/*
+ 		 * if the old reservation is cross group boundary
+@@ -748,8 +748,7 @@ static int alloc_new_reservation(struct 
+ 		/* remember where we are before we discard the old one */
+ 		if (my_rsv->rsv_end + 1 > start_block)
+ 			start_block = my_rsv->rsv_end + 1;
+-		search_head = list_entry(my_rsv->rsv_list.prev,
+-				struct reserve_window, rsv_list);
++		search_head = my_rsv;
+ 		if ((my_rsv->rsv_alloc_hit > (my_rsv->rsv_end - my_rsv->rsv_start + 1) / 2)) {
+ 			/*
+ 			 * if we previously allocation hit ration is greater than half
+@@ -761,7 +760,6 @@ static int alloc_new_reservation(struct 
+ 				size = EXT3_MAX_RESERVE_BLOCKS;
+ 			atomic_set(&my_rsv->rsv_goal_size, size);
+ 		}
+-		rsv_window_remove(my_rsv);
+ 	}
+ 	else {
+ 		/*
+@@ -828,9 +826,16 @@ retry:
+ found_rsv_window:
+ 	/*
+ 	 * great! the reservable space contains some free blocks.
+-	 * Insert it to the list.
+-	 */
+-	rsv_window_add(my_rsv, prev_rsv);
++	 * if the search returns that we should add the new
++	 * window just next to where the old window, we don't
++ 	 * need to remove the old window first then add it to the
++	 * same place, just update the new start and new end.
++	 */
++	if (my_rsv != prev_rsv)  {
++		if (!rsv_is_empty(my_rsv))
++			rsv_window_remove(my_rsv);
++		rsv_window_add(my_rsv, prev_rsv);
++	}
+ 	my_rsv->rsv_start = reservable_space_start;
+ 	my_rsv->rsv_end = my_rsv->rsv_start + size - 1;
+ 	return 0;		/* succeed */
+@@ -932,6 +937,9 @@ ext3_try_to_allocate_with_rsv(struct sup
+ 			if (!goal_in_my_reservation(my_rsv, goal, group, sb))
+ 				goal = -1;
+ 		}
++		if ((my_rsv->rsv_start >= group_first_block + EXT3_BLOCKS_PER_GROUP(sb))
++			|| (my_rsv->rsv_end < group_first_block))
++			BUG();
+ 		ret = ext3_try_to_allocate(sb, handle, group, bitmap_bh, goal,
+ 					my_rsv);
+ 		if (ret >= 0)
+diff -puN fs/ext3/inode.c~ext3-lazy-discard-reservation-window-patch fs/ext3/inode.c
+--- 25/fs/ext3/inode.c~ext3-lazy-discard-reservation-window-patch	Wed Jun 16 16:54:22 2004
++++ 25-akpm/fs/ext3/inode.c	Wed Jun 16 16:54:22 2004
+@@ -177,19 +177,6 @@ static int ext3_journal_test_restart(han
+ }
+ 
+ /*
+- * Called at each iput()
+- *
+- * The inode may be "bad" if ext3_read_inode() saw an error from
+- * ext3_get_inode(), so we need to check that to avoid freeing random disk
+- * blocks.
+- */
+-void ext3_put_inode(struct inode *inode)
+-{
+-	if (!is_bad_inode(inode))
+-		ext3_discard_reservation(inode);
+-}
+-
+-/*
+  * Called at the last iput() if i_nlink is zero.
+  */
+ void ext3_delete_inode (struct inode * inode)
+diff -puN fs/ext3/super.c~ext3-lazy-discard-reservation-window-patch fs/ext3/super.c
+--- 25/fs/ext3/super.c~ext3-lazy-discard-reservation-window-patch	Wed Jun 16 16:54:22 2004
++++ 25-akpm/fs/ext3/super.c	Wed Jun 16 16:54:44 2004
+@@ -493,10 +493,9 @@ static void destroy_inodecache(void)
+ 		printk(KERN_INFO "ext3_inode_cache: not all structures were freed\n");
+ }
+ 
+-#ifdef CONFIG_EXT3_FS_POSIX_ACL
+-
+ static void ext3_clear_inode(struct inode *inode)
+ {
++#ifdef CONFIG_EXT3_FS_POSIX_ACL
+        if (EXT3_I(inode)->i_acl &&
+            EXT3_I(inode)->i_acl != EXT3_ACL_NOT_CACHED) {
+                posix_acl_release(EXT3_I(inode)->i_acl);
+@@ -507,11 +506,10 @@ static void ext3_clear_inode(struct inod
+                posix_acl_release(EXT3_I(inode)->i_default_acl);
+                EXT3_I(inode)->i_default_acl = EXT3_ACL_NOT_CACHED;
+        }
+-}
+-
+-#else
+-# define ext3_clear_inode NULL
+ #endif
++	if (!is_bad_inode(inode))
++		ext3_discard_reservation(inode);
++}
+ 
+ #ifdef CONFIG_QUOTA
+ 
+@@ -561,7 +559,6 @@ static struct super_operations ext3_sops
+ 	.read_inode	= ext3_read_inode,
+ 	.write_inode	= ext3_write_inode,
+ 	.dirty_inode	= ext3_dirty_inode,
+-	.put_inode	= ext3_put_inode,
+ 	.delete_inode	= ext3_delete_inode,
+ 	.put_super	= ext3_put_super,
+ 	.write_super	= ext3_write_super,
+diff -puN fs/ext3/file.c~ext3-lazy-discard-reservation-window-patch fs/ext3/file.c
+--- 25/fs/ext3/file.c~ext3-lazy-discard-reservation-window-patch	Wed Jun 16 16:54:58 2004
++++ 25-akpm/fs/ext3/file.c	Wed Jun 16 16:54:58 2004
+@@ -33,7 +33,9 @@
+  */
+ static int ext3_release_file (struct inode * inode, struct file * filp)
+ {
+-	if (filp->f_mode & FMODE_WRITE)
++	/* if we are the last writer on the inode, drop the block reservation */
++	if ((filp->f_mode & FMODE_WRITE) &&
++			(atomic_read(&inode->i_writecount) == 1))
+ 		ext3_discard_reservation(inode);
+ 	if (is_dx(inode) && filp->private_data)
+ 		ext3_htree_free_dir_info(filp->private_data);
+_

@@ -1,0 +1,54 @@
+
+From: Oleg Nesterov <oleg@tv-sign.ru>
+
+Kirill's kernel/pid.c rework broke optimization logic in detach_pid().  Non
+zero return from __detach_pid() was used to indicate, that this pid can
+probably be freed.  Current version always (modulo idle threads) return non
+zero value, thus resulting in unneccesary pid_hash scanning.
+
+Also, uninlining __detach_pid() reduces pid.o text size from 2492 to 1600
+bytes.
+
+Signed-off-by: Oleg Nesterov <oleg@tv-sign.ru>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/pid.c |   11 +++++++----
+ 1 files changed, 7 insertions(+), 4 deletions(-)
+
+diff -puN kernel/pid.c~detach_pid-restore-optimization kernel/pid.c
+--- 25/kernel/pid.c~detach_pid-restore-optimization	Fri Oct  1 15:09:12 2004
++++ 25-akpm/kernel/pid.c	Fri Oct  1 15:09:12 2004
+@@ -163,15 +163,18 @@ int fastcall attach_pid(task_t *task, en
+ 	return 0;
+ }
+ 
+-static inline int __detach_pid(task_t *task, enum pid_type type)
++static fastcall int __detach_pid(task_t *task, enum pid_type type)
+ {
+ 	struct pid *pid, *pid_next;
+-	int nr;
++	int nr = 0;
+ 
+ 	pid = &task->pids[type];
+ 	if (!hlist_unhashed(&pid->pid_chain)) {
+ 		hlist_del(&pid->pid_chain);
+-		if (!list_empty(&pid->pid_list)) {
++
++		if (list_empty(&pid->pid_list))
++			nr = pid->nr;
++		else {
+ 			pid_next = list_entry(pid->pid_list.next,
+ 						struct pid, pid_list);
+ 			/* insert next pid from pid_list to hash */
+@@ -179,8 +182,8 @@ static inline int __detach_pid(task_t *t
+ 				&pid_hash[type][pid_hashfn(pid_next->nr)]);
+ 		}
+ 	}
++
+ 	list_del(&pid->pid_list);
+-	nr = pid->nr;
+ 	pid->nr = 0;
+ 
+ 	return nr;
+_

@@ -1,0 +1,226 @@
+---
+
+ xx-sources-current-xiphux/Documentation/ide.txt   |    3 ++
+ xx-sources-current-xiphux/drivers/ide/ide-iops.c  |   10 ++++---
+ xx-sources-current-xiphux/drivers/ide/ide-probe.c |   30 +++++++++++-----------
+ xx-sources-current-xiphux/drivers/ide/ide.c       |    9 ++++++
+ xx-sources-current-xiphux/kernel/Kconfig-extra.xx |   14 ++++++++++
+ 5 files changed, 48 insertions(+), 18 deletions(-)
+
+diff -puN kernel/Kconfig-extra.xx~ide-delay kernel/Kconfig-extra.xx
+--- xx-sources-current/kernel/Kconfig-extra.xx~ide-delay	2004-08-07 23:47:48.341796904 -0400
++++ xx-sources-current-xiphux/kernel/Kconfig-extra.xx	2004-08-08 00:10:16.114904248 -0400
+@@ -237,4 +237,18 @@ config HERTZ
+ 	help
+ 	  Configure the timer interrupt rate.
+ 
++config IDE_DELAY
++	int "IDE delay (ms)"
++	range 1 100
++	default 50
++	help
++	  By default, IDE initialization will make calls to sleep for 50
++	  milliseconds while waiting for probes to return a status.  While
++	  this was suitable for older hardware, it is rather conservative
++	  for more modern hardware.  This will allow you to adjust the
++	  number of milliseconds the IDE probes will delay.  Note that you
++	  can also set this at boot using the "ide-delay=" kernel parameter.
++
++	  If unsure, leave at default of 50.
++
+ endmenu
+diff -puN drivers/ide/ide.c~ide-delay drivers/ide/ide.c
+--- xx-sources-current/drivers/ide/ide.c~ide-delay	2004-08-07 23:48:53.695861576 -0400
++++ xx-sources-current-xiphux/drivers/ide/ide.c	2004-08-08 00:09:16.367987160 -0400
+@@ -196,6 +196,9 @@ ide_hwif_t ide_hwifs[MAX_HWIFS];	/* mast
+ 
+ EXPORT_SYMBOL(ide_hwifs);
+ 
++int ide_delay = CONFIG_IDE_DELAY;			/* milliseconds */
++EXPORT_SYMBOL(ide_delay);
++
+ extern ide_driver_t idedefault_driver;
+ static void setup_driver_defaults(ide_driver_t *driver);
+ 
+@@ -1800,6 +1803,12 @@ int __init ide_setup (char *s)
+ 	}
+ #endif /* CONFIG_BLK_DEV_IDEPCI */
+ 
++	if (!strncmp(s, "ide-delay=", 10)) {
++		ide_delay = simple_strtoul(s+10,NULL,0);
++		printk(" : Delay set to %dms\n", ide_delay);
++		return 1;
++	}
++
+ 	/*
+ 	 * Look for drive options:  "hdx="
+ 	 */
+diff -puN drivers/ide/ide-iops.c~ide-delay drivers/ide/ide-iops.c
+--- xx-sources-current/drivers/ide/ide-iops.c~ide-delay	2004-08-07 23:51:14.297486880 -0400
++++ xx-sources-current-xiphux/drivers/ide/ide-iops.c	2004-08-07 23:52:59.396509400 -0400
+@@ -30,6 +30,8 @@
+ #include <asm/io.h>
+ #include <asm/bitops.h>
+ 
++extern int ide_delay;
++
+ /*
+  *	Conventional PIO operations for ATA devices
+  */
+@@ -767,7 +769,7 @@ int ide_driveid_update (ide_drive_t *dri
+ 	SELECT_MASK(drive, 1);
+ 	if (IDE_CONTROL_REG)
+ 		hwif->OUTB(drive->ctl,IDE_CONTROL_REG);
+-	msleep(50);
++	msleep(ide_delay);
+ 	hwif->OUTB(WIN_IDENTIFY, IDE_COMMAND_REG);
+ 	timeout = jiffies + WAIT_WORSTCASE;
+ 	do {
+@@ -775,9 +777,9 @@ int ide_driveid_update (ide_drive_t *dri
+ 			SELECT_MASK(drive, 0);
+ 			return 0;	/* drive timed-out */
+ 		}
+-		msleep(50);	/* give drive a breather */
++		msleep(ide_delay);	/* give drive a breather */
+ 	} while (hwif->INB(IDE_ALTSTATUS_REG) & BUSY_STAT);
+-	msleep(50);	/* wait for IRQ and DRQ_STAT */
++	msleep(ide_delay);	/* wait for IRQ and DRQ_STAT */
+ 	if (!OK_STAT(hwif->INB(IDE_STATUS_REG),DRQ_STAT,BAD_R_STAT)) {
+ 		SELECT_MASK(drive, 0);
+ 		printk("%s: CHECK for good STATUS\n", drive->name);
+@@ -827,7 +829,7 @@ int ide_config_drive_speed (ide_drive_t 
+ 	u8 stat;
+ 
+ //	while (HWGROUP(drive)->busy)
+-//		msleep(50);
++//		msleep(ide_delay);
+ 
+ #ifdef CONFIG_BLK_DEV_IDEDMA
+ 	if (hwif->ide_dma_check)	 /* check if host supports DMA */
+diff -puN drivers/ide/ide-probe.c~ide-delay drivers/ide/ide-probe.c
+--- xx-sources-current/drivers/ide/ide-probe.c~ide-delay	2004-08-07 23:53:27.055304624 -0400
++++ xx-sources-current-xiphux/drivers/ide/ide-probe.c	2004-08-08 00:07:43.715072544 -0400
+@@ -56,6 +56,8 @@
+ #include <asm/uaccess.h>
+ #include <asm/io.h>
+ 
++extern int ide_delay;
++
+ /**
+  *	generic_id		-	add a generic drive id
+  *	@drive:	drive to make an ID block for
+@@ -273,7 +275,7 @@ static int actual_try_to_identify (ide_d
+ 	u8 s = 0, a = 0;
+ 
+ 	/* take a deep breath */
+-	msleep(50);
++	msleep(ide_delay);
+ 
+ 	if (IDE_CONTROL_REG) {
+ 		a = hwif->INB(IDE_ALTSTATUS_REG);
+@@ -312,11 +314,11 @@ static int actual_try_to_identify (ide_d
+ 			return 1;
+ 		}
+ 		/* give drive a breather */
+-		msleep(50);
++		msleep(ide_delay);
+ 	} while ((hwif->INB(hd_status)) & BUSY_STAT);
+ 
+ 	/* wait for IRQ and DRQ_STAT */
+-	msleep(50);
++	msleep(ide_delay);
+ 	if (OK_STAT((hwif->INB(IDE_STATUS_REG)), DRQ_STAT, BAD_R_STAT)) {
+ 		unsigned long flags;
+ 
+@@ -445,15 +447,15 @@ static int do_probe (ide_drive_t *drive,
+ 	/* needed for some systems
+ 	 * (e.g. crw9624 as drive0 with disk as slave)
+ 	 */
+-	msleep(50);
++	msleep(ide_delay);
+ 	SELECT_DRIVE(drive);
+-	msleep(50);
++	msleep(ide_delay);
+ 	if (hwif->INB(IDE_SELECT_REG) != drive->select.all && !drive->present) {
+ 		if (drive->select.b.unit != 0) {
+ 			/* exit with drive0 selected */
+ 			SELECT_DRIVE(&hwif->drives[0]);
+ 			/* allow BUSY_STAT to assert & clear */
+-			msleep(50);
++			msleep(ide_delay);
+ 		}
+ 		/* no i/f present: mmm.. this should be a 4 -ml */
+ 		return 3;
+@@ -476,14 +478,14 @@ static int do_probe (ide_drive_t *drive,
+ 			printk("%s: no response (status = 0x%02x), "
+ 				"resetting drive\n", drive->name,
+ 				hwif->INB(IDE_STATUS_REG));
+-			msleep(50);
++			msleep(ide_delay);
+ 			hwif->OUTB(drive->select.all, IDE_SELECT_REG);
+-			msleep(50);
++			msleep(ide_delay);
+ 			hwif->OUTB(WIN_SRST, IDE_COMMAND_REG);
+ 			timeout = jiffies;
+ 			while (((hwif->INB(IDE_STATUS_REG)) & BUSY_STAT) &&
+ 			       time_before(jiffies, timeout + WAIT_WORSTCASE))
+-				msleep(50);
++				msleep(ide_delay);
+ 			rc = try_to_identify(drive, cmd);
+ 		}
+ 		if (rc == 1)
+@@ -498,7 +500,7 @@ static int do_probe (ide_drive_t *drive,
+ 	if (drive->select.b.unit != 0) {
+ 		/* exit with drive0 selected */
+ 		SELECT_DRIVE(&hwif->drives[0]);
+-		msleep(50);
++		msleep(ide_delay);
+ 		/* ensure drive irq is clear */
+ 		(void) hwif->INB(IDE_STATUS_REG);
+ 	}
+@@ -515,7 +517,7 @@ static void enable_nest (ide_drive_t *dr
+ 
+ 	printk("%s: enabling %s -- ", hwif->name, drive->id->model);
+ 	SELECT_DRIVE(drive);
+-	msleep(50);
++	msleep(ide_delay);
+ 	hwif->OUTB(EXABYTE_ENABLE_NEST, IDE_COMMAND_REG);
+ 	timeout = jiffies + WAIT_WORSTCASE;
+ 	do {
+@@ -523,10 +525,10 @@ static void enable_nest (ide_drive_t *dr
+ 			printk("failed (timeout)\n");
+ 			return;
+ 		}
+-		msleep(50);
++		msleep(ide_delay);
+ 	} while ((hwif->INB(IDE_STATUS_REG)) & BUSY_STAT);
+ 
+-	msleep(50);
++	msleep(ide_delay);
+ 
+ 	if (!OK_STAT((hwif->INB(IDE_STATUS_REG)), 0, BAD_STAT)) {
+ 		printk("failed (status = 0x%02x)\n", hwif->INB(IDE_STATUS_REG));
+@@ -777,7 +779,7 @@ static void probe_hwif(ide_hwif_t *hwif)
+ 		udelay(10);
+ 		hwif->OUTB(8, hwif->io_ports[IDE_CONTROL_OFFSET]);
+ 		do {
+-			msleep(50);
++			msleep(ide_delay);
+ 			stat = hwif->INB(hwif->io_ports[IDE_STATUS_OFFSET]);
+ 		} while ((stat & BUSY_STAT) && time_after(timeout, jiffies));
+ 
+diff -puN Documentation/ide.txt~ide-delay Documentation/ide.txt
+--- xx-sources-current/Documentation/ide.txt~ide-delay	2004-08-08 00:07:53.875527920 -0400
++++ xx-sources-current-xiphux/Documentation/ide.txt	2004-08-08 00:08:50.696889760 -0400
+@@ -304,6 +304,9 @@ Summary of ide driver parameters for ker
+ 
+  "ide=reverse"		: formerly called to pci sub-system, but now local.
+ 
++ "ide-delay=xx"		: set delay in milliseconds for initialization and
++			  probing.  Defaults to 50ms.
++
+ The following are valid ONLY on ide0 (except dc4030), which usually corresponds
+ to the first ATA interface found on the particular host, and the defaults for
+ the base,ctl ports must not be altered.
+
+_

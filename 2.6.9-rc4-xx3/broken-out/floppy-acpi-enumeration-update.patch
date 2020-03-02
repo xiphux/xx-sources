@@ -1,0 +1,55 @@
+
+From: Bjorn Helgaas <bjorn.helgaas@hp.com>
+
+This adds ACPI device name ("Floppy Controller") and takes advantage of
+acpi_device_bid() rather than the open-coded equivalent.
+
+Signed-off-by: Bjorn Helgaas <bjorn.helgaas@hp.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/block/floppy.c |   16 +++++++++-------
+ 1 files changed, 9 insertions(+), 7 deletions(-)
+
+diff -puN drivers/block/floppy.c~floppy-acpi-enumeration-update drivers/block/floppy.c
+--- 25/drivers/block/floppy.c~floppy-acpi-enumeration-update	Tue Sep 21 14:27:05 2004
++++ 25-akpm/drivers/block/floppy.c	Tue Sep 21 14:27:05 2004
+@@ -4301,7 +4301,9 @@ static int acpi_floppy_add(struct acpi_d
+ 	if (ACPI_FAILURE(status))
+ 		return -ENODEV;
+ 
+-	printk("%s: ACPI %s [%s] at I/O 0x%x-0x%x", DEVICE_NAME,
++	strncpy(acpi_device_name(device), "Floppy Controller",
++		sizeof(acpi_device_name(device)));
++	printk("ACPI: %s [%s] at I/O 0x%x-0x%x",
+ 		acpi_device_name(device), acpi_device_bid(device),
+ 		fd.io_region[0].base,
+ 		fd.io_region[0].base + fd.io_region[0].size - 1);
+@@ -4335,8 +4337,8 @@ static int acpi_floppy_add(struct acpi_d
+ 				 (port) < (region).base + (region).size)
+ 
+ 	if (!(contains(fd.io_region[0], dcr) || contains(fd.io_region[1], dcr))) {
+-		printk(KERN_WARNING "%s: %s _CRS doesn't include FD_DCR; also claiming 0x%x\n",
+-			DEVICE_NAME, device->pnp.bus_id, dcr);
++		printk(KERN_WARNING "ACPI: [%s] doesn't declare FD_DCR; also claiming 0x%x\n",
++			acpi_device_bid(device), dcr);
+ 	}
+ 
+ #undef contains
+@@ -4348,11 +4350,11 @@ static int acpi_floppy_add(struct acpi_d
+ 	} else if (acpi_floppies == 1) {
+ 		FDC2 = base;
+ 		if (fd.irq != FLOPPY_IRQ || fd.dma_channel != FLOPPY_DMA)
+-			printk(KERN_WARNING "%s: different IRQ/DMA info for %s; may not work\n",
+-				DEVICE_NAME, device->pnp.bus_id);
++			printk(KERN_WARNING "%s: different IRQ/DMA info for [%s]; may not work\n",
++				DEVICE_NAME, acpi_device_bid(device));
+ 	} else {
+-		printk(KERN_ERR "%s: only 2 controllers supported; %s ignored\n",
+-			DEVICE_NAME, device->pnp.bus_id);
++		printk(KERN_ERR "%s: only 2 controllers supported; [%s] ignored\n",
++			DEVICE_NAME, acpi_device_bid(device));
+ 		return -ENODEV;
+ 	}
+ 
+_

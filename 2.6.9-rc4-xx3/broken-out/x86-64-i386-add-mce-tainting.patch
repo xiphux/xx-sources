@@ -1,0 +1,145 @@
+
+From: Andi Kleen <ak@muc.de>
+
+This patch adds machine check tainting.  When a handled machine check
+occurs the oops gets a new 'M' flag.  This is useful to ignore machines
+with hardware problems in oops reports.
+
+On i386 a thermal failure also sets this flag. 
+
+Done for x86-64 and i386 so far.
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/cpu/mcheck/k7.c        |    1 +
+ 25-akpm/arch/i386/kernel/cpu/mcheck/non-fatal.c |    1 +
+ 25-akpm/arch/i386/kernel/cpu/mcheck/p4.c        |    3 +++
+ 25-akpm/arch/i386/kernel/cpu/mcheck/p5.c        |    1 +
+ 25-akpm/arch/i386/kernel/cpu/mcheck/p6.c        |    1 +
+ 25-akpm/arch/i386/kernel/cpu/mcheck/winchip.c   |    1 +
+ 25-akpm/arch/x86_64/kernel/mce.c                |    2 ++
+ 25-akpm/include/linux/kernel.h                  |    1 +
+ 25-akpm/kernel/panic.c                          |    3 ++-
+ 9 files changed, 13 insertions(+), 1 deletion(-)
+
+diff -puN arch/i386/kernel/cpu/mcheck/k7.c~x86-64-i386-add-mce-tainting arch/i386/kernel/cpu/mcheck/k7.c
+--- 25/arch/i386/kernel/cpu/mcheck/k7.c~x86-64-i386-add-mce-tainting	Tue Oct  5 16:10:07 2004
++++ 25-akpm/arch/i386/kernel/cpu/mcheck/k7.c	Tue Oct  5 16:10:07 2004
+@@ -54,6 +54,7 @@ static asmlinkage void k7_machine_check(
+ 			wrmsr (MSR_IA32_MC0_STATUS+i*4, 0UL, 0UL);
+ 			/* Serialize */
+ 			wmb();
++			tainted |= TAINT_MACHINE_CHECK;
+ 		}
+ 	}
+ 
+diff -puN arch/i386/kernel/cpu/mcheck/non-fatal.c~x86-64-i386-add-mce-tainting arch/i386/kernel/cpu/mcheck/non-fatal.c
+--- 25/arch/i386/kernel/cpu/mcheck/non-fatal.c~x86-64-i386-add-mce-tainting	Tue Oct  5 16:10:07 2004
++++ 25-akpm/arch/i386/kernel/cpu/mcheck/non-fatal.c	Tue Oct  5 16:10:07 2004
+@@ -48,6 +48,7 @@ static void mce_checkregs (void *info)
+ 
+ 			/* Serialize */
+ 			wmb();
++			tainted |= TAINT_MACHINE_CHECK;
+ 		}
+ 	}
+ }
+diff -puN arch/i386/kernel/cpu/mcheck/p4.c~x86-64-i386-add-mce-tainting arch/i386/kernel/cpu/mcheck/p4.c
+--- 25/arch/i386/kernel/cpu/mcheck/p4.c~x86-64-i386-add-mce-tainting	Tue Oct  5 16:10:07 2004
++++ 25-akpm/arch/i386/kernel/cpu/mcheck/p4.c	Tue Oct  5 16:10:07 2004
+@@ -40,6 +40,7 @@ static void unexpected_thermal_interrupt
+ {	
+ 	printk(KERN_ERR "CPU%d: Unexpected LVT TMR interrupt!\n",
+ 			smp_processor_id());
++	tainted |= TAINT_MACHINE_CHECK;
+ }
+ 
+ /* P4/Xeon Thermal transition interrupt handler */
+@@ -60,6 +61,7 @@ static void intel_thermal_interrupt(stru
+ 		printk(KERN_EMERG "CPU%d: Temperature above threshold\n", cpu);
+ 		printk(KERN_EMERG "CPU%d: Running in modulated clock mode\n",
+ 				cpu);
++		tainted |= TAINT_MACHINE_CHECK;
+ 	} else {
+ 		printk(KERN_INFO "CPU%d: Temperature/speed normal\n", cpu);
+ 	}
+@@ -222,6 +224,7 @@ static asmlinkage void intel_machine_che
+ 			wrmsr(msr, 0UL, 0UL);
+ 			/* Serialize */
+ 			wmb();
++			tainted |= TAINT_MACHINE_CHECK;
+ 		}
+ 	}
+ 	mcgstl &= ~(1<<2);
+diff -puN arch/i386/kernel/cpu/mcheck/p5.c~x86-64-i386-add-mce-tainting arch/i386/kernel/cpu/mcheck/p5.c
+--- 25/arch/i386/kernel/cpu/mcheck/p5.c~x86-64-i386-add-mce-tainting	Tue Oct  5 16:10:07 2004
++++ 25-akpm/arch/i386/kernel/cpu/mcheck/p5.c	Tue Oct  5 16:10:07 2004
+@@ -25,6 +25,7 @@ static asmlinkage void pentium_machine_c
+ 	printk(KERN_EMERG "CPU#%d: Machine Check Exception:  0x%8X (type 0x%8X).\n", smp_processor_id(), loaddr, lotype);
+ 	if(lotype&(1<<5))
+ 		printk(KERN_EMERG "CPU#%d: Possible thermal failure (CPU on fire ?).\n", smp_processor_id());
++	tainted |= TAINT_MACHINE_CHECK;
+ }
+ 
+ /* Set up machine check reporting for processors with Intel style MCE */
+diff -puN arch/i386/kernel/cpu/mcheck/p6.c~x86-64-i386-add-mce-tainting arch/i386/kernel/cpu/mcheck/p6.c
+--- 25/arch/i386/kernel/cpu/mcheck/p6.c~x86-64-i386-add-mce-tainting	Tue Oct  5 16:10:07 2004
++++ 25-akpm/arch/i386/kernel/cpu/mcheck/p6.c	Tue Oct  5 16:10:07 2004
+@@ -72,6 +72,7 @@ static asmlinkage void intel_machine_che
+ 			wrmsr (msr, 0UL, 0UL);
+ 			/* Serialize */
+ 			wmb();
++			tainted |= TAINT_MACHINE_CHECK;
+ 		}
+ 	}
+ 	mcgstl &= ~(1<<2);
+diff -puN arch/i386/kernel/cpu/mcheck/winchip.c~x86-64-i386-add-mce-tainting arch/i386/kernel/cpu/mcheck/winchip.c
+--- 25/arch/i386/kernel/cpu/mcheck/winchip.c~x86-64-i386-add-mce-tainting	Tue Oct  5 16:10:07 2004
++++ 25-akpm/arch/i386/kernel/cpu/mcheck/winchip.c	Tue Oct  5 16:10:07 2004
+@@ -19,6 +19,7 @@
+ static asmlinkage void winchip_machine_check(struct pt_regs * regs, long error_code)
+ {
+ 	printk(KERN_EMERG "CPU0: Machine Check Exception.\n");
++	tainted |= TAINT_MACHINE_CHECK;
+ }
+ 
+ /* Set up machine check reporting on the Winchip C6 series */
+diff -puN arch/x86_64/kernel/mce.c~x86-64-i386-add-mce-tainting arch/x86_64/kernel/mce.c
+--- 25/arch/x86_64/kernel/mce.c~x86-64-i386-add-mce-tainting	Tue Oct  5 16:10:07 2004
++++ 25-akpm/arch/x86_64/kernel/mce.c	Tue Oct  5 16:10:07 2004
+@@ -191,6 +191,8 @@ void do_machine_check(struct pt_regs * r
+ 			panicm = m;
+ 			panicm_found = 1;
+ 		}
++
++		tainted |= TAINT_MACHINE_CHECK;
+ 	}
+ 
+ 	/* Never do anything final in the polling timer */
+diff -puN include/linux/kernel.h~x86-64-i386-add-mce-tainting include/linux/kernel.h
+--- 25/include/linux/kernel.h~x86-64-i386-add-mce-tainting	Tue Oct  5 16:10:07 2004
++++ 25-akpm/include/linux/kernel.h	Tue Oct  5 16:10:07 2004
+@@ -146,6 +146,7 @@ extern enum system_states {
+ 	SYSTEM_RESTART,
+ } system_state;
+ 
++#define TAINT_MACHINE_CHECK		(1<<10)
+ #define TAINT_PROPRIETARY_MODULE	(1<<0)
+ #define TAINT_FORCED_MODULE		(1<<1)
+ #define TAINT_UNSAFE_SMP		(1<<2)
+diff -puN kernel/panic.c~x86-64-i386-add-mce-tainting kernel/panic.c
+--- 25/kernel/panic.c~x86-64-i386-add-mce-tainting	Tue Oct  5 16:10:07 2004
++++ 25-akpm/kernel/panic.c	Tue Oct  5 16:10:07 2004
+@@ -125,7 +125,8 @@ const char *print_tainted(void)
+ {
+ 	static char buf[20];
+ 	if (tainted) {
+-		snprintf(buf, sizeof(buf), "Tainted: %c%c%c",
++		snprintf(buf, sizeof(buf), "Tainted: %c%c%c%c",
++ 			tainted & TAINT_MACHINE_CHECK ? 'M' : ' ',
+ 			tainted & TAINT_PROPRIETARY_MODULE ? 'P' : 'G',
+ 			tainted & TAINT_FORCED_MODULE ? 'F' : ' ',
+ 			tainted & TAINT_UNSAFE_SMP ? 'S' : ' ');
+_

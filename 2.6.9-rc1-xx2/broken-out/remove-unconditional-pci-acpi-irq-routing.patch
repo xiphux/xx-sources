@@ -1,0 +1,159 @@
+
+From: Bjorn Helgaas <bjorn.helgaas@hp.com>
+
+Now that PCI interrupts are routed in pci_enable_device(), remove the
+unconditional routing previously done in pci_acpi_init().
+
+This has the potential to break drivers that don't use pci_enable_device()
+correctly, so I also added a "pci=routeirq" kernel option that restores the
+previous behavior.  I intend to remove that option, along with all the code
+below, in a month or so.
+
+Signed-off-by: Bjorn Helgaas <bjorn.helgaas@hp.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/Documentation/kernel-parameters.txt |    4 +++
+ 25-akpm/arch/i386/pci/acpi.c                |   29 +++++++++++++++++++------
+ 25-akpm/arch/i386/pci/common.c              |    4 +++
+ 25-akpm/arch/ia64/pci/pci.c                 |   32 +++++++++++++++++++++-------
+ 4 files changed, 55 insertions(+), 14 deletions(-)
+
+diff -puN arch/i386/pci/acpi.c~remove-unconditional-pci-acpi-irq-routing arch/i386/pci/acpi.c
+--- 25/arch/i386/pci/acpi.c~remove-unconditional-pci-acpi-irq-routing	2004-08-24 22:09:08.495998480 -0700
++++ 25-akpm/arch/i386/pci/acpi.c	2004-08-24 22:09:08.504997112 -0700
+@@ -15,6 +15,7 @@ struct pci_bus * __devinit pci_acpi_scan
+ 	return pcibios_scan_root(busnum);
+ }
+ 
++extern int pci_routeirq;
+ static int __init pci_acpi_init(void)
+ {
+ 	struct pci_dev *dev = NULL;
+@@ -30,13 +31,27 @@ static int __init pci_acpi_init(void)
+ 	pcibios_scanned++;
+ 	pcibios_enable_irq = acpi_pci_irq_enable;
+ 
+-	/*
+-	 * PCI IRQ routing is set up by pci_enable_device(), but we
+-	 * also do it here in case there are still broken drivers that
+-	 * don't use pci_enable_device().
+-	 */
+-	while ((dev = pci_find_device(PCI_ANY_ID, PCI_ANY_ID, dev)) != NULL)
+-		acpi_pci_irq_enable(dev);
++	if (pci_routeirq) {
++		/*
++		 * PCI IRQ routing is set up by pci_enable_device(), but we
++		 * also do it here in case there are still broken drivers that
++		 * don't use pci_enable_device().
++		 */
++		printk(KERN_INFO "** Routing PCI interrupts for all devices because \"pci=routeirq\"\n");
++		printk(KERN_INFO "** was specified.  If this was required to make a driver work,\n");
++		printk(KERN_INFO "** please email the output of \"lspci\" to bjorn.helgaas@hp.com\n");
++		printk(KERN_INFO "** so I can fix the driver.\n");
++		while ((dev = pci_find_device(PCI_ANY_ID, PCI_ANY_ID, dev)) != NULL)
++			acpi_pci_irq_enable(dev);
++	} else {
++		printk(KERN_INFO "** PCI interrupts are no longer routed automatically.  If this\n");
++		printk(KERN_INFO "** causes a device to stop working, it is probably because the\n");
++		printk(KERN_INFO "** driver failed to call pci_enable_device().  As a temporary\n");
++		printk(KERN_INFO "** workaround, the \"pci=routeirq\" argument restores the old\n");
++		printk(KERN_INFO "** behavior.  If this argument makes the device work again,\n");
++		printk(KERN_INFO "** please email the output of \"lspci\" to bjorn.helgaas@hp.com\n");
++		printk(KERN_INFO "** so I can fix the driver.\n");
++	}
+ 
+ #ifdef CONFIG_X86_IO_APIC
+ 	if (acpi_ioapic)
+diff -puN arch/i386/pci/common.c~remove-unconditional-pci-acpi-irq-routing arch/i386/pci/common.c
+--- 25/arch/i386/pci/common.c~remove-unconditional-pci-acpi-irq-routing	2004-08-24 22:09:08.496998328 -0700
++++ 25-akpm/arch/i386/pci/common.c	2004-08-24 22:09:08.505996960 -0700
+@@ -23,6 +23,7 @@ extern  void pcibios_sort(void);
+ unsigned int pci_probe = PCI_PROBE_BIOS | PCI_PROBE_CONF1 | PCI_PROBE_CONF2 |
+ 				PCI_PROBE_MMCONF;
+ 
++int pci_routeirq;
+ int pcibios_last_bus = -1;
+ struct pci_bus *pci_root_bus = NULL;
+ struct pci_raw_ops *raw_pci_ops;
+@@ -227,6 +228,9 @@ char * __devinit  pcibios_setup(char *st
+ 	} else if (!strcmp(str, "assign-busses")) {
+ 		pci_probe |= PCI_ASSIGN_ALL_BUSSES;
+ 		return NULL;
++	} else if (!strcmp(str, "routeirq")) {
++		pci_routeirq = 1;
++		return NULL;
+ 	}
+ 	return str;
+ }
+diff -puN arch/ia64/pci/pci.c~remove-unconditional-pci-acpi-irq-routing arch/ia64/pci/pci.c
+--- 25/arch/ia64/pci/pci.c~remove-unconditional-pci-acpi-irq-routing	2004-08-24 22:09:08.498998024 -0700
++++ 25-akpm/arch/ia64/pci/pci.c	2004-08-24 22:09:08.506996808 -0700
+@@ -46,6 +46,8 @@
+ #define DBG(x...)
+ #endif
+ 
++static int pci_routeirq;
++
+ /*
+  * Low-level SAL-based PCI configuration access functions. Note that SAL
+  * calls are already serialized (via sal_lock), so we don't need another
+@@ -136,13 +138,27 @@ pci_acpi_init (void)
+ 
+ 	printk(KERN_INFO "PCI: Using ACPI for IRQ routing\n");
+ 
+-	/*
+-	 * PCI IRQ routing is set up by pci_enable_device(), but we
+-	 * also do it here in case there are still broken drivers that
+-	 * don't use pci_enable_device().
+-	 */
+-	while ((dev = pci_find_device(PCI_ANY_ID, PCI_ANY_ID, dev)) != NULL)
+-		acpi_pci_irq_enable(dev);
++	if (pci_routeirq) {
++		/*
++		 * PCI IRQ routing is set up by pci_enable_device(), but we
++		 * also do it here in case there are still broken drivers that
++		 * don't use pci_enable_device().
++		 */
++		printk(KERN_INFO "** Routing PCI interrupts for all devices because \"pci=routeirq\"\n");
++		printk(KERN_INFO "** was specified.  If this was required to make a driver work,\n");
++		printk(KERN_INFO "** please email the output of \"lspci\" to bjorn.helgaas@hp.com\n");
++		printk(KERN_INFO "** so I can fix the driver.\n");
++		while ((dev = pci_find_device(PCI_ANY_ID, PCI_ANY_ID, dev)) != NULL)
++			acpi_pci_irq_enable(dev);
++	} else {
++		printk(KERN_INFO "** PCI interrupts are no longer routed automatically.  If this\n");
++		printk(KERN_INFO "** causes a device to stop working, it is probably because the\n");
++		printk(KERN_INFO "** driver failed to call pci_enable_device().  As a temporary\n");
++		printk(KERN_INFO "** workaround, the \"pci=routeirq\" argument restores the old\n");
++		printk(KERN_INFO "** behavior.  If this argument makes the device work again,\n");
++		printk(KERN_INFO "** please email the output of \"lspci\" to bjorn.helgaas@hp.com\n");
++		printk(KERN_INFO "** so I can fix the driver.\n");
++	}
+ 
+ 	return 0;
+ }
+@@ -438,6 +454,8 @@ pcibios_align_resource (void *data, stru
+ char * __init
+ pcibios_setup (char *str)
+ {
++	if (!strcmp(str, "routeirq"))
++		pci_routeirq = 1;
+ 	return NULL;
+ }
+ 
+diff -puN Documentation/kernel-parameters.txt~remove-unconditional-pci-acpi-irq-routing Documentation/kernel-parameters.txt
+--- 25/Documentation/kernel-parameters.txt~remove-unconditional-pci-acpi-irq-routing	2004-08-24 22:09:08.500997720 -0700
++++ 25-akpm/Documentation/kernel-parameters.txt	2004-08-24 22:09:08.508996504 -0700
+@@ -884,6 +884,10 @@ running once the system is up.
+ 					enabled.
+ 		noacpi			[IA-32] Do not use ACPI for IRQ routing
+ 					or for PCI scanning.
++		routeirq		Do IRQ routing for all PCI devices.
++					This is normally done in pci_enable_device(),
++					so this option is a temporary workaround
++					for broken drivers that don't call it.
+ 
+ 	pcmv=		[HW,PCMCIA] BadgePAD 4
+ 
+_

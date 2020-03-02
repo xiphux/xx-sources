@@ -1,0 +1,77 @@
+
+From: Russell King <rmk@arm.linux.org.uk>
+
+[This patch series has also been separately sent to the architecture
+ maintainers]
+
+Add console_device() to return the console tty driver structure and the
+index.  Acquire the console lock while scanning the list of console drivers
+to protect us against console driver list manipulations.
+
+Signed-off-by: Russell King <rmk@arm.linux.org.uk>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/tty_io.c   |    9 ++-------
+ 25-akpm/include/linux/console.h |    1 +
+ 25-akpm/kernel/printk.c         |   17 +++++++++++++++++
+ 3 files changed, 20 insertions(+), 7 deletions(-)
+
+diff -puN drivers/char/tty_io.c~provide-console_device drivers/char/tty_io.c
+--- 25/drivers/char/tty_io.c~provide-console_device	2004-06-27 22:19:51.771209008 -0700
++++ 25-akpm/drivers/char/tty_io.c	2004-06-27 22:19:51.781207488 -0700
+@@ -1355,13 +1355,8 @@ retry_open:
+ 	}
+ #endif
+ 	if (device == MKDEV(TTYAUX_MAJOR,1)) {
+-		struct console *c = console_drivers;
+-		for (c = console_drivers; c; c = c->next) {
+-			if (!c->device)
+-				continue;
+-			driver = c->device(c, &index);
+-			if (!driver)
+-				continue;
++		driver = console_device(&index);
++		if (driver) {
+ 			/* Don't let /dev/console block */
+ 			filp->f_flags |= O_NONBLOCK;
+ 			noctty = 1;
+diff -puN include/linux/console.h~provide-console_device include/linux/console.h
+--- 25/include/linux/console.h~provide-console_device	2004-06-27 22:19:51.773208704 -0700
++++ 25-akpm/include/linux/console.h	2004-06-27 22:20:18.212189368 -0700
+@@ -104,6 +104,7 @@ extern void acquire_console_sem(void);
+ extern void release_console_sem(void);
+ extern void console_conditional_schedule(void);
+ extern void console_unblank(void);
++extern struct tty_driver *console_device(int *);
+ extern int is_console_locked(void);
+ 
+ /* Some debug stub to catch some of the obvious races in the VT code */
+diff -puN kernel/printk.c~provide-console_device kernel/printk.c
+--- 25/kernel/printk.c~provide-console_device	2004-06-27 22:19:51.776208248 -0700
++++ 25-akpm/kernel/printk.c	2004-06-27 22:24:02.218135288 -0700
+@@ -683,6 +683,23 @@ void console_unblank(void)
+ }
+ EXPORT_SYMBOL(console_unblank);
+ 
++struct tty_driver *console_device(int *index)
++{
++	struct console *c;
++	struct tty_driver *driver = NULL;
++
++	acquire_console_sem();
++	for (c = console_drivers; c != NULL; c = c->next) {
++		if (!c->device)
++			continue;
++		driver = c->device(c, index);
++		if (driver)
++			break;
++	}
++	release_console_sem();
++	return driver;
++}
++
+ /*
+  * The console driver calls this routine during kernel initialization
+  * to register the console printing procedure with printk() and to
+_

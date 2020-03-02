@@ -1,0 +1,55 @@
+Yield() implementation is scheduler dependant; privatise it.
+
+Signed-off-by: Con Kolivas <kernel@kolivas.org>
+
+
+Index: linux-2.6.10-rc1-mm4/kernel/sched.c
+===================================================================
+--- linux-2.6.10-rc1-mm4.orig/kernel/sched.c	2004-11-10 09:21:00.785578957 +1100
++++ linux-2.6.10-rc1-mm4/kernel/sched.c	2004-11-10 09:21:02.502303156 +1100
+@@ -3166,20 +3166,6 @@ static long ingo_sys_sched_yield(void)
+ 	return 0;
+ }
+ 
+-/**
+- * yield - yield the current processor to other threads.
+- *
+- * this is a shortcut for kernel-space yielding - it marks the
+- * thread runnable and calls sys_sched_yield().
+- */
+-void __sched yield(void)
+-{
+-	set_current_state(TASK_RUNNING);
+-	sys_sched_yield();
+-}
+-
+-EXPORT_SYMBOL(yield);
+-
+ /*
+  * This task is about to go to sleep on IO.  Increment rq->nr_iowait so
+  * that process accounting knows that this is a task in IO wait state.
+Index: linux-2.6.10-rc1-mm4/kernel/scheduler.c
+===================================================================
+--- linux-2.6.10-rc1-mm4.orig/kernel/scheduler.c	2004-11-10 09:21:00.786578796 +1100
++++ linux-2.6.10-rc1-mm4/kernel/scheduler.c	2004-11-10 09:21:02.503302996 +1100
+@@ -621,6 +621,20 @@ int __sched cond_resched_softirq(void)
+ 
+ EXPORT_SYMBOL(cond_resched_softirq);
+ 
++/**
++ * yield - yield the current processor to other threads.
++ *
++ * this is a shortcut for kernel-space yielding - it marks the
++ * thread runnable and calls sys_sched_yield().
++ */
++void __sched yield(void)
++{
++	set_current_state(TASK_RUNNING);
++	sys_sched_yield();
++}
++
++EXPORT_SYMBOL(yield);
++
+ extern struct sched_drv ingo_sched_drv;
+ static const struct sched_drv *scheduler = &ingo_sched_drv;
+ 

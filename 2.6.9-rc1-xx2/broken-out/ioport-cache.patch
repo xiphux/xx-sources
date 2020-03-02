@@ -1,0 +1,205 @@
+another issue is that this code doesnt solve the 64K ports issue: even
+with a perfect decoder ioperm() apps still see a ~80 usecs copying
+latency (plus related cache trash effects) upon the first GPF - either
+IO related or not. I dont think coupling this into the GPF handler is
+all that good.
+
+since 100% of Linux ioperm() apps currently use 1024 ports or less, i'd
+prefer the 128 bytes (one cacheline on a P4) copy over any asynchronous
+solution. (if someone wants more ports the price goes up. It should be
+rare. I dont think X will ever go above 1024 ports.) We've already had
+one security exploit in the lazy IO bitmap code, which further underlies
+how dangerous such asynchronity is.
+
+there's yet another danger: apps that _do_ use IO ports frequently will
+see the most serious overhead via the GPF solution. They will most
+likely switch to iopl(3) - which is an even less safe API than ioperm()
+- so robustness suffers. So i think it's wrong policy too. Sorry :-|
+but there's one additional step we can do ontop of the ports-max code to
+get rid of copying in X.org's case: cache the last task that set up the
+IO bitmap. This means we can set the offset to invalid and keep the IO
+bitmap of that task, and switch back to a valid offset (without any
+copying) when switching back to that task. (or do a copy if there is
+another ioperm task we switch to.)
+
+I've attached ioport-cache-2.6.8.1.patch that implements this. When
+there's a single active ioperm() using task in the system then the
+context-switch overhead is very low and constant:
+
+ # ./ioperm-latency
+ default no ioperm:             scheduling latency: 2478 cycles
+ turning on port 80 ioperm:     scheduling latency: 2499 cycles
+ turning on port 65535 ioperm:  scheduling latency: 2481 cycles
+
+(updated ioperm-latency.c attached)
+
+This single-ioperm-user situation matches 99% of the actual ioperm()
+usage scenarios and gets rid of any copying whatsoever - without relying
+on any fault mechanism. I can see no advantage of the GPF approach over
+this patch.
+
+the patch is against the most recent BK tree, i've tested it on x86 SMP
+and UP.
+
+	Ingo
+
+cache the IO bitmap contents. If there is a single active task using ioports
+then there is a very low and constant context-switch overhead from using
+ioports:
+
+ # ./ioperm-latency
+ default no ioperm:             scheduling latency: 2478 cycles
+ turning on port 80 ioperm:     scheduling latency: 2499 cycles
+ turning on port 65535 ioperm:  scheduling latency: 2481 cycles
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+
+Index: xx-sources/arch/i386/kernel/ioport.c
+===================================================================
+--- xx-sources.orig/arch/i386/kernel/ioport.c	2004-08-22 06:22:24.000000000 -0400
++++ xx-sources/arch/i386/kernel/ioport.c	2004-08-24 04:27:30.815822920 -0400
+@@ -56,7 +56,7 @@
+  */
+ asmlinkage long sys_ioperm(unsigned long from, unsigned long num, int turn_on)
+ {
+-	unsigned int i, max_long, bytes, bytes_updated;
++	unsigned long i, max_long, bytes, bytes_updated;
+ 	struct thread_struct * t = &current->thread;
+ 	struct tss_struct * tss;
+ 	unsigned long *bitmap;
+@@ -107,6 +107,9 @@
+ 
+ 	/* Update the TSS: */
+ 	memcpy(tss->io_bitmap, t->io_bitmap_ptr, bytes_updated);
++	tss->io_bitmap_max = bytes;
++	tss->io_bitmap_owner = &current->thread;
++	tss->io_bitmap_base = IO_BITMAP_OFFSET;
+ 
+ 	put_cpu();
+ 
+Index: xx-sources/arch/i386/kernel/process.c
+===================================================================
+--- xx-sources.orig/arch/i386/kernel/process.c	2004-08-22 06:23:20.000000000 -0400
++++ xx-sources/arch/i386/kernel/process.c	2004-08-24 04:28:08.256131128 -0400
+@@ -336,8 +336,11 @@
+ 		/*
+ 		 * Careful, clear this in the TSS too:
+ 		 */
+-		memset(tss->io_bitmap, 0xff, t->io_bitmap_max);
++		memset(tss->io_bitmap, 0xff, tss->io_bitmap_max);
+ 		t->io_bitmap_max = 0;
++		tss->io_bitmap_owner = NULL;
++		tss->io_bitmap_max = 0;
++		tss->io_bitmap_base = INVALID_IO_BITMAP_OFFSET;
+ 		put_cpu();
+ 	}
+ 	perfctr_exit_thread(&tsk->thread);
+@@ -510,6 +513,38 @@
+ 	return 1;
+ }
+ 
++static inline void
++handle_io_bitmap(struct thread_struct *next, struct tss_struct *tss)
++{
++	if (!next->io_bitmap_ptr) {
++		/*
++		 * Disable the bitmap via an invalid offset. We still cache
++		 * the previous bitmap owner and the IO bitmap contents:
++		 */
++		tss->io_bitmap_base = INVALID_IO_BITMAP_OFFSET;
++		return;
++	}
++	if (likely(next == tss->io_bitmap_owner)) {
++		/*
++		 * Previous owner of the bitmap (hence the bitmap content)
++		 * matches the next task, we dont have to do anything but
++		 * to set a valid offset in the TSS:
++		 */
++		tss->io_bitmap_base = IO_BITMAP_OFFSET;
++		return;
++	}
++	/*
++	 * The IO bitmap in the TSS needs updating: copy the relevant
++	 * range of the new task's IO bitmap. Normally this is 128 bytes
++	 * or less:
++	 */
++	memcpy(tss->io_bitmap, next->io_bitmap_ptr,
++		max(tss->io_bitmap_max, next->io_bitmap_max));
++	tss->io_bitmap_max = next->io_bitmap_max;
++	tss->io_bitmap_owner = next;
++	tss->io_bitmap_base = IO_BITMAP_OFFSET;
++}
++
+ /*
+  * This special macro can be used to load a debugging register
+  */
+@@ -596,20 +631,8 @@
+ 		loaddebug(next, 7);
+ 	}
+ 
+-	if (unlikely(prev->io_bitmap_ptr || next->io_bitmap_ptr)) {
+-		if (next->io_bitmap_ptr)
+-			/*
+-			 * Copy the relevant range of the IO bitmap.
+-			 * Normally this is 128 bytes or less:
+-			 */
+-			memcpy(tss->io_bitmap, next->io_bitmap_ptr,
+-				max(prev->io_bitmap_max, next->io_bitmap_max));
+-		else
+-			/*
+-			 * Clear any possible leftover bits:
+-			 */
+-			memset(tss->io_bitmap, 0xff, prev->io_bitmap_max);
+-	}
++	if (unlikely(prev->io_bitmap_ptr || next->io_bitmap_ptr))
++		handle_io_bitmap(next, tss);
+ 
+ 	perfctr_resume_thread(next);
+ 
+Index: xx-sources/include/asm-i386/processor.h
+===================================================================
+--- xx-sources.orig/include/asm-i386/processor.h	2004-08-24 01:57:33.576611184 -0400
++++ xx-sources/include/asm-i386/processor.h	2004-08-24 04:28:42.761885456 -0400
+@@ -360,6 +360,8 @@
+ 	unsigned long seg;
+ } mm_segment_t;
+ 
++struct thread_struct;
++
+ struct tss_struct {
+ 	unsigned short	back_link,__blh;
+ 	unsigned long	esp0;
+@@ -392,9 +394,14 @@
+ 	 */
+ 	unsigned long	io_bitmap[IO_BITMAP_LONGS + 1];
+ 	/*
++	 * Cache the current maximum and the last task that used the bitmap:
++	 */
++	unsigned long io_bitmap_max;
++	struct thread_struct *io_bitmap_owner;
++	/*
+ 	 * pads the TSS to be cacheline-aligned (size is 0x100)
+ 	 */
+-	unsigned long __cacheline_filler[37];
++	unsigned long __cacheline_filler[35];
+ 	/*
+ 	 * .. and then another 0x100 bytes for emergency kernel stack
+ 	 */
+@@ -426,7 +433,7 @@
+ /* IO permissions */
+ 	unsigned long	*io_bitmap_ptr;
+ /* max allowed port in the bitmap, in bytes: */
+-	unsigned int	io_bitmap_max;
++	unsigned long	io_bitmap_max;
+ /* performance counters */
+ 	struct vperfctr *perfctr;
+ };
+@@ -448,7 +455,7 @@
+ 	.ss0		= __KERNEL_DS,					\
+ 	.ss1		= __KERNEL_CS,					\
+ 	.ldt		= GDT_ENTRY_LDT,				\
+-	.io_bitmap_base	= offsetof(struct tss_struct,io_bitmap),	\
++	.io_bitmap_base	= INVALID_IO_BITMAP_OFFSET,			\
+ 	.io_bitmap	= { [ 0 ... IO_BITMAP_LONGS] = ~0 },		\
+ }
+ 

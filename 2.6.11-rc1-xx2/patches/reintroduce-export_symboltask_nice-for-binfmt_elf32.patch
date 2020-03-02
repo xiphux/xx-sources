@@ -1,0 +1,32 @@
+
+From: Christian Borntraeger <cborntra@de.ibm.com>
+
+S/390 needs this for its binfmt_elf32 module.
+
+Signed-off-by: Christian Borntraeger <cborntra@de.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/kernel/sched.c |    9 +++++++++
+ 1 files changed, 9 insertions(+)
+
+diff -puN kernel/sched.c~reintroduce-export_symboltask_nice-for-binfmt_elf32 kernel/sched.c
+--- 25/kernel/sched.c~reintroduce-export_symboltask_nice-for-binfmt_elf32	Thu Jan 13 16:12:31 2005
++++ 25-akpm/kernel/sched.c	Thu Jan 13 16:12:31 2005
+@@ -3187,6 +3187,15 @@ int task_nice(const task_t *p)
+ 	return TASK_NICE(p);
+ }
+ 
++/*
++ * The only users of task_nice are binfmt_elf and binfmt_elf32.
++ * binfmt_elf is no longer modular, but binfmt_elf32 still is.
++ * Therefore, task_nice is needed if there is a compat_mode.
++ */
++#ifdef CONFIG_COMPAT
++EXPORT_SYMBOL(task_nice);
++#endif
++
+ /**
+  * idle_cpu - is a given cpu idle currently?
+  * @cpu: the processor in question.
+_

@@ -1,0 +1,31 @@
+
+From: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+
+Fix a small logic error in the monitor probe code when nothing was found.
+
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/video/aty/radeon_monitor.c |    6 ++++--
+ drivers/video/aty/radeon_base.c            |    0 
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff -puN drivers/video/aty/radeon_base.c~radeonfb-fix-warnings-about-uninitialized-variables drivers/video/aty/radeon_base.c
+diff -puN drivers/video/aty/radeon_monitor.c~radeonfb-fix-warnings-about-uninitialized-variables drivers/video/aty/radeon_monitor.c
+--- 25/drivers/video/aty/radeon_monitor.c~radeonfb-fix-warnings-about-uninitialized-variables	Fri Sep 24 15:24:08 2004
++++ 25-akpm/drivers/video/aty/radeon_monitor.c	Fri Sep 24 15:24:08 2004
+@@ -69,8 +69,10 @@ static int __devinit radeon_parse_montyp
+ 		mt = MT_DFP;
+ 	else if (!strcmp(pmt, "CRT"))
+ 		mt = MT_CRT;
+-	else if (strcmp(pmt, "NONE")) {
+-		printk(KERN_WARNING "radeonfb: Unknown OF display-type: %s\n", pmt);
++	else {
++		if (strcmp(pmt, "NONE") != 0)
++			printk(KERN_WARNING "radeonfb: Unknown OF display-type: %s\n",
++			       pmt);
+ 		return MT_NONE;
+ 	} else
+ 		return MT_NONE;
+_

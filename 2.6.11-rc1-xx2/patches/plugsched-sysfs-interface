@@ -1,0 +1,187 @@
+Add sysfs tunables to plugsched
+
+Signed-off-by: Chris Han <xiphux@gmail.com>
+
+Index: xx-sources/include/linux/sched.h
+===================================================================
+--- xx-sources.orig/include/linux/sched.h	2005-01-15 22:40:49.000000000 -0500
++++ xx-sources/include/linux/sched.h	2005-01-16 16:58:04.245170264 -0500
+@@ -1085,6 +1085,7 @@
+ #else
+ # define need_lockbreak(lock) 0
+ #endif
++extern void sched_sysfs_init(void);
+ 
+ /*
+  * Does a critical section need to be broken due to another
+Index: xx-sources/include/linux/scheduler.h
+===================================================================
+--- xx-sources.orig/include/linux/scheduler.h	2005-01-15 22:40:49.000000000 -0500
++++ xx-sources/include/linux/scheduler.h	2005-01-16 17:01:27.608254376 -0500
+@@ -6,6 +6,10 @@
+  * functions, and the private per-scheduler data in task_struct.
+  */
+ 
++#ifdef CONFIG_SYSFS
++#include <linux/kobject.h>
++#endif
++
+ #define SCHED_NAME_MAX	(16)
+ 
+ /*
+@@ -63,6 +67,9 @@
+ #ifdef CONFIG_MAGIC_SYSRQ
+ 	void (*normalize_rt_tasks)(void);
+ #endif
++#ifdef CONFIG_SYSFS
++	struct kobject kobj;
++#endif
+ };
+ 
+ /*
+@@ -164,5 +171,58 @@
+ 		struct cpusched_x xsched;
+ #endif
+ };
++ 
++/*
++ * sysfs stuff
++ */
++#ifdef CONFIG_SYSFS
++
++struct sched_fs_entry {
++	struct attribute attr;
++	ssize_t (*show)(char *);
++	ssize_t (*store)(const char *, size_t);
++};
++
++#define SCHED_SHOW_FUNCTION(__FUNC, __VAR) 	 		\
++static ssize_t __FUNC(char *page) 				\
++{ 								\
++	return sched_var_show(__VAR, (page)); 			\
++}
++
++#define SCHED_STORE_FUNCTION(__FUNC, __PTR, MIN, MAX) 		\
++static ssize_t __FUNC(const char *page, size_t count) 		\
++{ 								\
++	unsigned int __data; 					\
++	int ret = sched_var_store(&__data, (page), count); 	\
++	if (__data < (MIN)) 					\
++		__data = (MIN); 				\
++	else if (__data > (MAX)) 				\
++		__data = (MAX); 				\
++	*(__PTR) = __data; 					\
++	return ret; 						\
++}
++
++#define SCHED_SYSFS_ENTRY(__STRUCT, __NAME, __SHOW, __STORE) 	\
++static struct sched_fs_entry  __STRUCT = { 			\
++	.attr = {.name = __NAME, .mode = S_IRUGO | S_IWUSR}, 	\
++	.show = __SHOW, 					\
++	.store = __STORE, 					\
++};
++
++#define SCHED_SYSFS_ENTRY_RO(__STRUCT, __NAME, __SHOW)  	\
++static struct sched_fs_entry  __STRUCT = { 			\
++	.attr = {.name = __NAME, .mode = S_IRUGO | S_IWUSR}, 	\
++	.show = __SHOW, 					\
++};
++
++#define to_sched_entry(atr) container_of((atr), struct sched_fs_entry, attr)
++
++extern ssize_t sched_var_show(unsigned int var, char *page);
++extern ssize_t sched_var_store(unsigned int *var, const char *page, size_t count);
++extern ssize_t sched_attr_show(struct kobject *kobj, struct attribute *attr, char *page);
++extern ssize_t sched_attr_store(struct kobject *kobj, struct attribute *attr, const char *page, size_t length);
++extern struct sysfs_ops sched_sysfs_ops;
++
++#endif
+ 
+ #endif
+Index: xx-sources/init/main.c
+===================================================================
+--- xx-sources.orig/init/main.c	2005-01-15 22:40:49.000000000 -0500
++++ xx-sources/init/main.c	2005-01-15 22:40:49.000000000 -0500
+@@ -599,6 +599,7 @@
+ #ifdef CONFIG_SYSCTL
+ 	sysctl_init();
+ #endif
++	sched_sysfs_init();
+ 
+ 	/* Networking initialization needs a process context */ 
+ 	sock_init();
+Index: xx-sources/kernel/scheduler.c
+===================================================================
+--- xx-sources.orig/kernel/scheduler.c	2005-01-15 22:40:49.000000000 -0500
++++ xx-sources/kernel/scheduler.c	2005-01-16 17:00:21.021377120 -0500
+@@ -1610,3 +1610,70 @@
+ 	scheduler->normalize_rt_tasks();
+ }
+ #endif /* CONFIG_MAGIC_SYSRQ */
++
++/*
++ * sysfs stuff
++ */
++#ifdef CONFIG_SYSFS
++ssize_t
++sched_var_show(unsigned int var, char *page)
++{
++	return sprintf(page, "%d\n", var);
++}
++
++ssize_t
++sched_var_store(unsigned int *var, const char *page, size_t count)
++{
++	char *p = (char *)page;
++	*var = simple_strtoul(p, &p, 10);
++	return count;
++}
++
++ssize_t
++sched_attr_show(struct kobject *kobj, struct attribute *attr, char *page)
++{
++	struct sched_fs_entry *entry = to_sched_entry(attr);
++	if (!entry->show)
++		return 0;
++	return entry->show(page);
++}
++
++ssize_t
++sched_attr_store(struct kobject *kobj, struct attribute *attr, const char *page, size_t length)
++{
++	struct sched_fs_entry *entry = to_sched_entry(attr);
++	if (!entry->store)
++		return -EINVAL;
++	return entry->store(page, length);
++}
++
++struct sysfs_ops sched_sysfs_ops = {
++	.show = sched_attr_show,
++	.store = sched_attr_store,
++};
++
++decl_subsys(sched, NULL, NULL);
++
++int sched_sysfs_register(void)
++{
++	struct kobject *kobj;
++	kobj = &scheduler->kobj;
++	if (!kobj)
++		return 0;
++	strncpy(kobj->name, scheduler->cpusched_name, KOBJ_NAME_LEN);
++	kobj_set_kset_s(scheduler, sched_subsys);
++	return kobject_register(kobj);
++}
++
++void __init sched_sysfs_init(void)
++{
++	int res;
++	res = subsystem_register(&sched_subsys);
++	if (!res)
++		(void)sched_sysfs_register();
++}
++#else
++void __init sched_sysfs_init(void)
++{
++}
++#endif

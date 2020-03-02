@@ -1,0 +1,72 @@
+
+From: "John W. Linville" <linville@tuxdriver.com>
+
+Enable reload of EEPROM values in reset at rmmod for cards that need it,
+similar to old EEPROM_NORESET flag but in reverse.
+
+(Most?) 3c905 and (some?) 3c905B cards need an additional bit unmasked in
+the reset at rmmod or else they don't get reinitialized properly when the
+driver is reloaded.
+
+Signed-of-by: John W. Linville <linville@tuxdriver.com>
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/net/3c59x.c |   17 +++++++++--------
+ 1 files changed, 9 insertions(+), 8 deletions(-)
+
+diff -puN drivers/net/3c59x.c~3c59x-reload-eeprom-values-at-rmmod-for-needy-cards drivers/net/3c59x.c
+--- 25/drivers/net/3c59x.c~3c59x-reload-eeprom-values-at-rmmod-for-needy-cards	Fri Oct  8 14:47:22 2004
++++ 25-akpm/drivers/net/3c59x.c	Fri Oct  8 14:47:22 2004
+@@ -416,7 +416,7 @@ enum {	IS_VORTEX=1, IS_BOOMERANG=2, IS_C
+ 	HAS_PWR_CTRL=0x20, HAS_MII=0x40, HAS_NWAY=0x80, HAS_CB_FNS=0x100,
+ 	INVERT_MII_PWR=0x200, INVERT_LED_PWR=0x400, MAX_COLLISION_RESET=0x800,
+ 	EEPROM_OFFSET=0x1000, HAS_HWCKSM=0x2000, WNO_XCVR_PWR=0x4000,
+-	EXTRA_PREAMBLE=0x8000, };
++	EXTRA_PREAMBLE=0x8000, EEPROM_RESET=0x10000, };
+ 
+ enum vortex_chips {
+ 	CH_3C590 = 0,
+@@ -504,16 +504,16 @@ static struct vortex_chip_info {
+ 	{"3c900B-FL Cyclone 10base-FL",
+ 	 PCI_USES_IO|PCI_USES_MASTER, IS_CYCLONE|HAS_HWCKSM, 128, },
+ 	{"3c905 Boomerang 100baseTx",
+-	 PCI_USES_IO|PCI_USES_MASTER, IS_BOOMERANG|HAS_MII, 64, },
++	 PCI_USES_IO|PCI_USES_MASTER, IS_BOOMERANG|HAS_MII|EEPROM_RESET, 64, },
+ 	{"3c905 Boomerang 100baseT4",
+-	 PCI_USES_IO|PCI_USES_MASTER, IS_BOOMERANG|HAS_MII, 64, },
++	 PCI_USES_IO|PCI_USES_MASTER, IS_BOOMERANG|HAS_MII|EEPROM_RESET, 64, },
+ 	{"3c905B Cyclone 100baseTx",
+-	 PCI_USES_IO|PCI_USES_MASTER, IS_CYCLONE|HAS_NWAY|HAS_HWCKSM|EXTRA_PREAMBLE, 128, },
++	 PCI_USES_IO|PCI_USES_MASTER, IS_CYCLONE|HAS_NWAY|HAS_HWCKSM|EXTRA_PREAMBLE|EEPROM_RESET, 128, },
+ 
+ 	{"3c905B Cyclone 10/100/BNC",
+-	 PCI_USES_IO|PCI_USES_MASTER, IS_CYCLONE|HAS_NWAY|HAS_HWCKSM, 128, },
++	 PCI_USES_IO|PCI_USES_MASTER, IS_CYCLONE|HAS_NWAY|HAS_HWCKSM|EEPROM_RESET, 128, },
+ 	{"3c905B-FX Cyclone 100baseFx",
+-	 PCI_USES_IO|PCI_USES_MASTER, IS_CYCLONE|HAS_HWCKSM, 128, },
++	 PCI_USES_IO|PCI_USES_MASTER, IS_CYCLONE|HAS_HWCKSM|EEPROM_RESET, 128, },
+ 	{"3c905C Tornado",
+ 	PCI_USES_IO|PCI_USES_MASTER, IS_TORNADO|HAS_NWAY|HAS_HWCKSM|EXTRA_PREAMBLE, 128, },
+ 	{"3c920B-EMB-WNM (ATI Radeon 9100 IGP)",
+@@ -564,7 +564,7 @@ static struct vortex_chip_info {
+ 	{"3c982 Hydra Dual Port B",
+ 	 PCI_USES_IO|PCI_USES_MASTER, IS_TORNADO|HAS_HWCKSM|HAS_NWAY, 128, },
+ 	{"3c905B-T4",
+-	 PCI_USES_IO|PCI_USES_MASTER, IS_CYCLONE|HAS_NWAY|HAS_HWCKSM|EXTRA_PREAMBLE, 128, },
++	 PCI_USES_IO|PCI_USES_MASTER, IS_CYCLONE|HAS_NWAY|HAS_HWCKSM|EXTRA_PREAMBLE|EEPROM_RESET, 128, },
+ 	{"3c920B-EMB-WNM Tornado",
+ 	 PCI_USES_IO|PCI_USES_MASTER, IS_TORNADO|HAS_NWAY|HAS_HWCKSM, 128, },
+ 
+@@ -3152,7 +3152,8 @@ static void __devexit vortex_remove_one 
+ 		pci_disable_device(VORTEX_PCI(vp));
+ 	}
+ 	/* Should really use issue_and_wait() here */
+-	outw(TotalReset|0x14, dev->base_addr + EL3_CMD);
++	outw(TotalReset | ((vp->drv_flags & EEPROM_RESET) ? 0x04 : 0x14),
++	     dev->base_addr + EL3_CMD);
+ 
+ 	pci_free_consistent(pdev,
+ 						sizeof(struct boom_rx_desc) * RX_RING_SIZE
+_

@@ -1,0 +1,36 @@
+
+
+Fix locking error identified by the Stanford locking checker.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/net/irda/irqueue.c |    8 +++++---
+ 1 files changed, 5 insertions(+), 3 deletions(-)
+
+diff -puN net/irda/irqueue.c~err2-6-hashbin_remove_this-locking-fix net/irda/irqueue.c
+--- 25/net/irda/irqueue.c~err2-6-hashbin_remove_this-locking-fix	2004-07-02 01:38:39.947972024 -0700
++++ 25-akpm/net/irda/irqueue.c	2004-07-02 01:39:00.858793096 -0700
+@@ -663,8 +663,10 @@ void* hashbin_remove_this( hashbin_t* ha
+ 	} /* Default is no-lock  */
+ 
+ 	/* Check if valid and not already removed... */
+-	if((entry->q_next == NULL) || (entry->q_prev == NULL))
+-		return NULL;
++	if((entry->q_next == NULL) || (entry->q_prev == NULL)) {
++		entry = NULL;
++		goto out;
++	}
+ 
+ 	/*
+ 	 * Locate hashbin
+@@ -687,7 +689,7 @@ void* hashbin_remove_this( hashbin_t* ha
+ 	 */
+ 	if ( entry == hashbin->hb_current)
+ 		hashbin->hb_current = NULL;
+-
++out:
+ 	/* Release lock */
+ 	if ( hashbin->hb_type & HB_LOCK ) {
+ 		spin_unlock_irqrestore(&hashbin->hb_spinlock, flags);
+_

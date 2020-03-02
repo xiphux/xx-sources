@@ -1,0 +1,60 @@
+---
+
+ linux-2.6.7-rc3-xx2-xiphux/drivers/block/pktcdvd.c |   20 ++++++++++++++++++++
+ 1 files changed, 20 insertions(+)
+
+diff -puN drivers/block/pktcdvd.c~packet-elv-select drivers/block/pktcdvd.c
+--- linux-2.6.7-rc3-xx2/drivers/block/pktcdvd.c~packet-elv-select	2004-06-12 11:33:04.617119288 -0400
++++ linux-2.6.7-rc3-xx2-xiphux/drivers/block/pktcdvd.c	2004-06-12 11:35:42.021190232 -0400
+@@ -1923,11 +1923,21 @@ static int pkt_open_dev(struct pktcdvd_d
+ 		}
+ 	}
+ 	spin_lock_irq(q->queue_lock);
++#ifdef CONFIG_ELV_SELECT
++	pd->cdrw.elv_merge_fn = q->elevator->elevator_merge_fn;
++	pd->cdrw.elv_completed_req_fn = q->elevator->elevator_completed_req_fn;
++#else
+ 	pd->cdrw.elv_merge_fn = q->elevator.elevator_merge_fn;
+ 	pd->cdrw.elv_completed_req_fn = q->elevator.elevator_completed_req_fn;
++#endif
+ 	pd->cdrw.merge_requests_fn = q->merge_requests_fn;
++#ifdef CONFIG_ELV_SELECT
++	q->elevator->elevator_merge_fn = pkt_lowlevel_elv_merge_fn;
++	q->elevator->elevator_completed_req_fn = pkt_lowlevel_elv_completed_req_fn;
++#else
+ 	q->elevator.elevator_merge_fn = pkt_lowlevel_elv_merge_fn;
+ 	q->elevator.elevator_completed_req_fn = pkt_lowlevel_elv_completed_req_fn;
++#endif
+ 	q->merge_requests_fn = pkt_lowlevel_merge_requests_fn;
+ 	spin_unlock_irq(q->queue_lock);
+ 
+@@ -1950,8 +1960,13 @@ static int pkt_open_dev(struct pktcdvd_d
+ 
+ restore_queue:
+ 	spin_lock_irq(q->queue_lock);
++#ifdef CONFIG_ELV_SELECT
++	q->elevator->elevator_merge_fn = pd->cdrw.elv_merge_fn;
++	q->elevator->elevator_completed_req_fn = pd->cdrw.elv_completed_req_fn;
++#else
+ 	q->elevator.elevator_merge_fn = pd->cdrw.elv_merge_fn;
+ 	q->elevator.elevator_completed_req_fn = pd->cdrw.elv_completed_req_fn;
++#endif
+ 	q->merge_requests_fn = pd->cdrw.merge_requests_fn;
+ 	spin_unlock_irq(q->queue_lock);
+ 	return ret;
+@@ -1982,8 +1997,13 @@ static void pkt_release_dev(struct pktcd
+ 		request_queue_t *q = bdev_get_queue(pd->bdev);
+ 		pkt_set_speed(pd, 0xffff, 0xffff);
+ 		spin_lock_irq(q->queue_lock);
++#ifdef CONFIG_ELV_SELECT
++		q->elevator->elevator_merge_fn = pd->cdrw.elv_merge_fn;
++		q->elevator->elevator_completed_req_fn = pd->cdrw.elv_completed_req_fn;
++#else
+ 		q->elevator.elevator_merge_fn = pd->cdrw.elv_merge_fn;
+ 		q->elevator.elevator_completed_req_fn = pd->cdrw.elv_completed_req_fn;
++#endif
+ 		q->merge_requests_fn = pd->cdrw.merge_requests_fn;
+ 		spin_unlock_irq(q->queue_lock);
+ 		blkdev_put(pd->bdev);
+
+_

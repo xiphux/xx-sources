@@ -1,0 +1,533 @@
+
+From: Pavel Machek <pavel@ucw.cz>
+
+This patch is from Nigel's swsusp2, it kills ugly #include <suspend.h> from
+all over the tree, and makes code slightly nicer.  I only left those parts
+that do not change any code.
+
+From: Nigel Cunningham <ncunningham@linuxmail.org>
+Signed-off-by: Pavel Machek <pavel@suse.cz>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/arm/kernel/signal.c       |    5 +----
+ 25-akpm/arch/mips/kernel/irixsig.c     |    5 +----
+ 25-akpm/arch/mips/kernel/signal.c      |    5 +----
+ 25-akpm/arch/mips/kernel/signal32.c    |    4 +---
+ 25-akpm/arch/sh/kernel/signal.c        |    5 +----
+ 25-akpm/arch/sh64/kernel/signal.c      |    4 +---
+ 25-akpm/arch/x86_64/kernel/signal.c    |    5 +----
+ 25-akpm/drivers/ieee1394/nodemgr.c     |    5 +----
+ 25-akpm/drivers/input/serio/serio.c    |    4 +---
+ 25-akpm/drivers/net/8139too.c          |    4 +---
+ 25-akpm/drivers/net/irda/sir_kthread.c |    1 -
+ 25-akpm/drivers/net/irda/stir4200.c    |    1 -
+ 25-akpm/drivers/net/wireless/airo.c    |    4 +---
+ 25-akpm/drivers/pcmcia/cs.c            |    4 +---
+ 25-akpm/drivers/pcmcia/socket_sysfs.c  |    1 -
+ 25-akpm/drivers/usb/core/hub.c         |    4 +---
+ 25-akpm/drivers/w1/w1.c                |    7 ++-----
+ 25-akpm/fs/jffs2/background.c          |    7 +------
+ 25-akpm/fs/reiserfs/journal.c          |    1 -
+ 25-akpm/fs/xfs/linux-2.6/xfs_buf.c     |    5 +----
+ 25-akpm/fs/xfs/linux-2.6/xfs_super.c   |    4 +---
+ 25-akpm/include/linux/sched.h          |    2 +-
+ 25-akpm/mm/pdflush.c                   |    4 +---
+ 25-akpm/mm/vmscan.c                    |    1 -
+ 25-akpm/net/sunrpc/sched.c             |    1 -
+ 25-akpm/net/sunrpc/svcsock.c           |    4 +---
+ 26 files changed, 21 insertions(+), 76 deletions(-)
+
+diff -puN arch/arm/kernel/signal.c~swsusp-refrigerator-cleanups arch/arm/kernel/signal.c
+--- 25/arch/arm/kernel/signal.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/arch/arm/kernel/signal.c	Wed Jan 12 16:33:39 2005
+@@ -12,7 +12,6 @@
+ #include <linux/signal.h>
+ #include <linux/ptrace.h>
+ #include <linux/personality.h>
+-#include <linux/suspend.h>
+ 
+ #include <asm/cacheflush.h>
+ #include <asm/ucontext.h>
+@@ -689,10 +688,8 @@ static int do_signal(sigset_t *oldset, s
+ 	if (!user_mode(regs))
+ 		return 0;
+ 
+-	if (current->flags & PF_FREEZE) {
+-		refrigerator(0);
++	if (try_to_freeze(0))
+ 		goto no_signal;
+-	}
+ 
+ 	if (current->ptrace & PT_SINGLESTEP)
+ 		ptrace_cancel_bpt(current);
+diff -puN arch/mips/kernel/irixsig.c~swsusp-refrigerator-cleanups arch/mips/kernel/irixsig.c
+--- 25/arch/mips/kernel/irixsig.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/arch/mips/kernel/irixsig.c	Wed Jan 12 16:33:39 2005
+@@ -13,7 +13,6 @@
+ #include <linux/smp_lock.h>
+ #include <linux/time.h>
+ #include <linux/ptrace.h>
+-#include <linux/suspend.h>
+ 
+ #include <asm/ptrace.h>
+ #include <asm/uaccess.h>
+@@ -179,10 +178,8 @@ asmlinkage int do_irix_signal(sigset_t *
+ 	if (!user_mode(regs))
+ 		return 1;
+ 
+-	if (current->flags & PF_FREEZE) {
+-		refrigerator(0);
++	if (try_to_freeze(0))
+ 		goto no_signal;
+-	}
+ 
+ 	if (!oldset)
+ 		oldset = &current->blocked;
+diff -puN arch/mips/kernel/signal32.c~swsusp-refrigerator-cleanups arch/mips/kernel/signal32.c
+--- 25/arch/mips/kernel/signal32.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/arch/mips/kernel/signal32.c	Wed Jan 12 16:33:39 2005
+@@ -773,10 +773,8 @@ asmlinkage int do_signal32(sigset_t *old
+ 	if (!user_mode(regs))
+ 		return 1;
+ 
+-	if (current->flags & PF_FREEZE) {
+-		refrigerator(0);
++	if (try_to_freeze(0))
+ 		goto no_signal;
+-	}
+ 
+ 	if (!oldset)
+ 		oldset = &current->blocked;
+diff -puN arch/mips/kernel/signal.c~swsusp-refrigerator-cleanups arch/mips/kernel/signal.c
+--- 25/arch/mips/kernel/signal.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/arch/mips/kernel/signal.c	Wed Jan 12 16:33:39 2005
+@@ -18,7 +18,6 @@
+ #include <linux/errno.h>
+ #include <linux/wait.h>
+ #include <linux/ptrace.h>
+-#include <linux/suspend.h>
+ #include <linux/unistd.h>
+ #include <linux/compiler.h>
+ 
+@@ -577,10 +576,8 @@ asmlinkage int do_signal(sigset_t *oldse
+ 	if (!user_mode(regs))
+ 		return 1;
+ 
+-	if (current->flags & PF_FREEZE) {
+-		refrigerator(0);
++	if (try_to_freeze(0))
+ 		goto no_signal;
+-	}
+ 
+ 	if (!oldset)
+ 		oldset = &current->blocked;
+diff -puN arch/sh64/kernel/signal.c~swsusp-refrigerator-cleanups arch/sh64/kernel/signal.c
+--- 25/arch/sh64/kernel/signal.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/arch/sh64/kernel/signal.c	Wed Jan 12 16:33:39 2005
+@@ -701,10 +701,8 @@ int do_signal(struct pt_regs *regs, sigs
+ 	if (!user_mode(regs))
+ 		return 1;
+ 
+-	if (current->flags & PF_FREEZE) {
+-		refrigerator(0);
++	if (try_to_freeze(0))
+ 		goto no_signal;
+-		}
+ 
+ 	if (!oldset)
+ 		oldset = &current->blocked;
+diff -puN arch/sh/kernel/signal.c~swsusp-refrigerator-cleanups arch/sh/kernel/signal.c
+--- 25/arch/sh/kernel/signal.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/arch/sh/kernel/signal.c	Wed Jan 12 16:33:39 2005
+@@ -24,7 +24,6 @@
+ #include <linux/tty.h>
+ #include <linux/personality.h>
+ #include <linux/binfmts.h>
+-#include <linux/suspend.h>
+ 
+ #include <asm/ucontext.h>
+ #include <asm/uaccess.h>
+@@ -579,10 +578,8 @@ int do_signal(struct pt_regs *regs, sigs
+ 	if (!user_mode(regs))
+ 		return 1;
+ 
+-	if (current->flags & PF_FREEZE) {
+-		refrigerator(0);
++	if (try_to_freeze(0))
+ 		goto no_signal;
+-	}
+ 
+ 	if (!oldset)
+ 		oldset = &current->blocked;
+diff -puN arch/x86_64/kernel/signal.c~swsusp-refrigerator-cleanups arch/x86_64/kernel/signal.c
+--- 25/arch/x86_64/kernel/signal.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/arch/x86_64/kernel/signal.c	Wed Jan 12 16:33:39 2005
+@@ -24,7 +24,6 @@
+ #include <linux/stddef.h>
+ #include <linux/personality.h>
+ #include <linux/compiler.h>
+-#include <linux/suspend.h>
+ #include <asm/ucontext.h>
+ #include <asm/uaccess.h>
+ #include <asm/i387.h>
+@@ -423,10 +422,8 @@ int do_signal(struct pt_regs *regs, sigs
+ 		return 1;
+ 	} 	
+ 
+-	if (current->flags & PF_FREEZE) {
+-		refrigerator(0);
++	if (try_to_freeze(0))
+ 		goto no_signal;
+-	}
+ 
+ 	if (!oldset)
+ 		oldset = &current->blocked;
+diff -puN drivers/ieee1394/nodemgr.c~swsusp-refrigerator-cleanups drivers/ieee1394/nodemgr.c
+--- 25/drivers/ieee1394/nodemgr.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/drivers/ieee1394/nodemgr.c	Wed Jan 12 16:33:39 2005
+@@ -19,7 +19,6 @@
+ #include <linux/delay.h>
+ #include <linux/pci.h>
+ #include <linux/moduleparam.h>
+-#include <linux/suspend.h>
+ #include <asm/atomic.h>
+ 
+ #include "ieee1394_types.h"
+@@ -1480,10 +1479,8 @@ static int nodemgr_host_thread(void *__h
+ 
+ 		if (down_interruptible(&hi->reset_sem) ||
+ 		    down_interruptible(&nodemgr_serialize)) {
+-			if (current->flags & PF_FREEZE) {
+-				refrigerator(0);
++			if (try_to_freeze(PF_FREEZE))
+ 				continue;
+-			}
+ 			printk("NodeMgr: received unexpected signal?!\n" );
+ 			break;
+ 		}
+diff -puN drivers/input/serio/serio.c~swsusp-refrigerator-cleanups drivers/input/serio/serio.c
+--- 25/drivers/input/serio/serio.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/drivers/input/serio/serio.c	Wed Jan 12 16:55:51 2005
+@@ -34,7 +34,6 @@
+ #include <linux/completion.h>
+ #include <linux/sched.h>
+ #include <linux/smp_lock.h>
+-#include <linux/suspend.h>
+ #include <linux/slab.h>
+ 
+ MODULE_AUTHOR("Vojtech Pavlik <vojtech@ucw.cz>");
+@@ -269,8 +268,7 @@ static int serio_thread(void *nothing)
+ 	do {
+ 		serio_handle_events();
+ 		wait_event_interruptible(serio_wait, !list_empty(&serio_event_list));
+-		if (current->flags & PF_FREEZE)
+-			refrigerator(PF_FREEZE);
++		try_to_freeze(PF_FREEZE);
+ 	} while (!signal_pending(current));
+ 
+ 	printk(KERN_DEBUG "serio: kseriod exiting\n");
+diff -puN drivers/net/8139too.c~swsusp-refrigerator-cleanups drivers/net/8139too.c
+--- 25/drivers/net/8139too.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/drivers/net/8139too.c	Wed Jan 12 16:33:39 2005
+@@ -108,7 +108,6 @@
+ #include <linux/mii.h>
+ #include <linux/completion.h>
+ #include <linux/crc32.h>
+-#include <linux/suspend.h>
+ #include <asm/io.h>
+ #include <asm/uaccess.h>
+ #include <asm/irq.h>
+@@ -1603,8 +1602,7 @@ static int rtl8139_thread (void *data)
+ 		do {
+ 			timeout = interruptible_sleep_on_timeout (&tp->thr_wait, timeout);
+ 			/* make swsusp happy with our thread */
+-			if (current->flags & PF_FREEZE)
+-				refrigerator(PF_FREEZE);
++			try_to_freeze(PF_FREEZE);
+ 		} while (!signal_pending (current) && (timeout > 0));
+ 
+ 		if (signal_pending (current)) {
+diff -puN drivers/net/irda/sir_kthread.c~swsusp-refrigerator-cleanups drivers/net/irda/sir_kthread.c
+--- 25/drivers/net/irda/sir_kthread.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/drivers/net/irda/sir_kthread.c	Wed Jan 12 16:33:39 2005
+@@ -19,7 +19,6 @@
+ #include <linux/smp_lock.h>
+ #include <linux/completion.h>
+ #include <linux/delay.h>
+-#include <linux/suspend.h>
+ 
+ #include <net/irda/irda.h>
+ 
+diff -puN drivers/net/irda/stir4200.c~swsusp-refrigerator-cleanups drivers/net/irda/stir4200.c
+--- 25/drivers/net/irda/stir4200.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/drivers/net/irda/stir4200.c	Wed Jan 12 16:33:39 2005
+@@ -46,7 +46,6 @@
+ #include <linux/time.h>
+ #include <linux/skbuff.h>
+ #include <linux/netdevice.h>
+-#include <linux/suspend.h>
+ #include <linux/slab.h>
+ #include <linux/delay.h>
+ #include <linux/usb.h>
+diff -puN drivers/net/wireless/airo.c~swsusp-refrigerator-cleanups drivers/net/wireless/airo.c
+--- 25/drivers/net/wireless/airo.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/drivers/net/wireless/airo.c	Wed Jan 12 16:33:39 2005
+@@ -33,7 +33,6 @@
+ #include <linux/string.h>
+ #include <linux/timer.h>
+ #include <linux/interrupt.h>
+-#include <linux/suspend.h>
+ #include <linux/in.h>
+ #include <linux/bitops.h>
+ #include <asm/io.h>
+@@ -2918,8 +2917,7 @@ static int airo_thread(void *data) {
+ 			flush_signals(current);
+ 
+ 		/* make swsusp happy with our thread */
+-		if (current->flags & PF_FREEZE)
+-			refrigerator(PF_FREEZE);
++		try_to_freeze(PF_FREEZE);
+ 
+ 		if (test_bit(JOB_DIE, &ai->flags))
+ 			break;
+diff -puN drivers/pcmcia/cs.c~swsusp-refrigerator-cleanups drivers/pcmcia/cs.c
+--- 25/drivers/pcmcia/cs.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/drivers/pcmcia/cs.c	Wed Jan 12 16:33:39 2005
+@@ -29,7 +29,6 @@
+ #include <linux/pm.h>
+ #include <linux/pci.h>
+ #include <linux/device.h>
+-#include <linux/suspend.h>
+ #include <asm/system.h>
+ #include <asm/irq.h>
+ 
+@@ -711,8 +710,7 @@ static int pccardd(void *__skt)
+ 		}
+ 
+ 		schedule();
+-		if (current->flags & PF_FREEZE)
+-			refrigerator(PF_FREEZE);
++		try_to_freeze(PF_FREEZE);
+ 
+ 		if (!skt->thread)
+ 			break;
+diff -puN drivers/pcmcia/socket_sysfs.c~swsusp-refrigerator-cleanups drivers/pcmcia/socket_sysfs.c
+--- 25/drivers/pcmcia/socket_sysfs.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/drivers/pcmcia/socket_sysfs.c	Wed Jan 12 16:33:39 2005
+@@ -25,7 +25,6 @@
+ #include <linux/pm.h>
+ #include <linux/pci.h>
+ #include <linux/device.h>
+-#include <linux/suspend.h>
+ #include <asm/system.h>
+ #include <asm/irq.h>
+ 
+diff -puN drivers/usb/core/hub.c~swsusp-refrigerator-cleanups drivers/usb/core/hub.c
+--- 25/drivers/usb/core/hub.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/drivers/usb/core/hub.c	Wed Jan 12 16:55:53 2005
+@@ -26,7 +26,6 @@
+ #include <linux/ioctl.h>
+ #include <linux/usb.h>
+ #include <linux/usbdevice_fs.h>
+-#include <linux/suspend.h>
+ 
+ #include <asm/semaphore.h>
+ #include <asm/uaccess.h>
+@@ -2747,8 +2746,7 @@ static int hub_thread(void *__unused)
+ 	do {
+ 		hub_events();
+ 		wait_event_interruptible(khubd_wait, !list_empty(&hub_event_list)); 
+-		if (current->flags & PF_FREEZE)
+-			refrigerator(PF_FREEZE);
++		try_to_freeze(PF_FREEZE);
+ 	} while (!signal_pending(current));
+ 
+ 	pr_debug ("%s: khubd exiting\n", usbcore_name);
+diff -puN drivers/w1/w1.c~swsusp-refrigerator-cleanups drivers/w1/w1.c
+--- 25/drivers/w1/w1.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/drivers/w1/w1.c	Wed Jan 12 16:55:51 2005
+@@ -32,7 +32,6 @@
+ #include <linux/device.h>
+ #include <linux/slab.h>
+ #include <linux/sched.h>
+-#include <linux/suspend.h>
+ 
+ #include "w1.h"
+ #include "w1_io.h"
+@@ -628,8 +627,7 @@ int w1_control(void *data)
+ 		timeout = w1_timeout*HZ;
+ 		do {
+ 			timeout = interruptible_sleep_on_timeout(&w1_control_wait, timeout);
+-			if (current->flags & PF_FREEZE)
+-				refrigerator(PF_FREEZE);
++			try_to_freeze(PF_FREEZE);
+ 		} while (!signal_pending(current) && (timeout > 0));
+ 
+ 		if (signal_pending(current))
+@@ -701,8 +699,7 @@ int w1_process(void *data)
+ 		timeout = w1_timeout*HZ;
+ 		do {
+ 			timeout = interruptible_sleep_on_timeout(&dev->kwait, timeout);
+-			if (current->flags & PF_FREEZE)
+-				refrigerator(PF_FREEZE);
++			try_to_freeze(PF_FREEZE);
+ 		} while (!signal_pending(current) && (timeout > 0));
+ 
+ 		if (signal_pending(current))
+diff -puN fs/jffs2/background.c~swsusp-refrigerator-cleanups fs/jffs2/background.c
+--- 25/fs/jffs2/background.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/fs/jffs2/background.c	Wed Jan 12 16:33:39 2005
+@@ -15,7 +15,6 @@
+ #include <linux/jffs2.h>
+ #include <linux/mtd/mtd.h>
+ #include <linux/completion.h>
+-#include <linux/suspend.h>
+ #include "nodelist.h"
+ 
+ 
+@@ -93,12 +92,8 @@ static int jffs2_garbage_collect_thread(
+ 			schedule();
+ 		}
+ 
+-		if (current->flags & PF_FREEZE) {
+-			refrigerator(0);
+-			/* refrigerator() should recalc sigpending for us
+-			   but doesn't. No matter - allow_signal() will. */
++		if (try_to_freeze(0))
+ 			continue;
+-		}
+ 
+ 		cond_resched();
+ 
+diff -puN fs/reiserfs/journal.c~swsusp-refrigerator-cleanups fs/reiserfs/journal.c
+--- 25/fs/reiserfs/journal.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/fs/reiserfs/journal.c	Wed Jan 12 16:33:39 2005
+@@ -50,7 +50,6 @@
+ #include <linux/stat.h>
+ #include <linux/string.h>
+ #include <linux/smp_lock.h>
+-#include <linux/suspend.h>
+ #include <linux/buffer_head.h>
+ #include <linux/workqueue.h>
+ #include <linux/writeback.h>
+diff -puN fs/xfs/linux-2.6/xfs_buf.c~swsusp-refrigerator-cleanups fs/xfs/linux-2.6/xfs_buf.c
+--- 25/fs/xfs/linux-2.6/xfs_buf.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/fs/xfs/linux-2.6/xfs_buf.c	Wed Jan 12 16:55:52 2005
+@@ -51,7 +51,6 @@
+ #include <linux/sysctl.h>
+ #include <linux/proc_fs.h>
+ #include <linux/workqueue.h>
+-#include <linux/suspend.h>
+ #include <linux/percpu.h>
+ #include <linux/blkdev.h>
+ #include <linux/hash.h>
+@@ -1780,9 +1779,7 @@ pagebuf_daemon(
+ 
+ 	INIT_LIST_HEAD(&tmp);
+ 	do {
+-		/* swsusp */
+-		if (current->flags & PF_FREEZE)
+-			refrigerator(PF_FREEZE);
++		try_to_freeze(PF_FREEZE);
+ 
+ 		set_current_state(TASK_INTERRUPTIBLE);
+ 		schedule_timeout((xfs_buf_timer_centisecs * HZ) / 100);
+diff -puN fs/xfs/linux-2.6/xfs_super.c~swsusp-refrigerator-cleanups fs/xfs/linux-2.6/xfs_super.c
+--- 25/fs/xfs/linux-2.6/xfs_super.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/fs/xfs/linux-2.6/xfs_super.c	Wed Jan 12 16:33:39 2005
+@@ -71,7 +71,6 @@
+ #include <linux/namei.h>
+ #include <linux/init.h>
+ #include <linux/mount.h>
+-#include <linux/suspend.h>
+ #include <linux/writeback.h>
+ 
+ STATIC struct quotactl_ops linvfs_qops;
+@@ -488,8 +487,7 @@ xfssyncd(
+ 		set_current_state(TASK_INTERRUPTIBLE);
+ 		timeleft = schedule_timeout(timeleft);
+ 		/* swsusp */
+-		if (current->flags & PF_FREEZE)
+-			refrigerator(PF_FREEZE);
++		try_to_freeze(PF_FREEZE);
+ 		if (vfsp->vfs_flag & VFS_UMOUNT)
+ 			break;
+ 
+diff -puN include/linux/sched.h~swsusp-refrigerator-cleanups include/linux/sched.h
+--- 25/include/linux/sched.h~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/include/linux/sched.h	Wed Jan 12 16:33:39 2005
+@@ -727,7 +727,7 @@ do { if (atomic_dec_and_test(&(tsk)->usa
+ #define PF_MEMDIE	0x00001000	/* Killed for out-of-memory */
+ #define PF_FLUSHER	0x00002000	/* responsible for disk writeback */
+ 
+-#define PF_FREEZE	0x00004000	/* this task should be frozen for suspend */
++#define PF_FREEZE	0x00004000	/* this task is being frozen for suspend now */
+ #define PF_NOFREEZE	0x00008000	/* this thread should not be frozen */
+ #define PF_FROZEN	0x00010000	/* frozen for system suspend */
+ #define PF_FSTRANS	0x00020000	/* inside a filesystem transaction */
+diff -puN mm/pdflush.c~swsusp-refrigerator-cleanups mm/pdflush.c
+--- 25/mm/pdflush.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/mm/pdflush.c	Wed Jan 12 16:33:39 2005
+@@ -17,7 +17,6 @@
+ #include <linux/gfp.h>
+ #include <linux/init.h>
+ #include <linux/module.h>
+-#include <linux/suspend.h>
+ #include <linux/fs.h>		// Needed by writeback.h
+ #include <linux/writeback.h>	// Prototypes pdflush_operation()
+ #include <linux/kthread.h>
+@@ -106,8 +105,7 @@ static int __pdflush(struct pdflush_work
+ 		spin_unlock_irq(&pdflush_lock);
+ 
+ 		schedule();
+-		if (current->flags & PF_FREEZE) {
+-			refrigerator(PF_FREEZE);
++		if (try_to_freeze(PF_FREEZE)) {
+ 			spin_lock_irq(&pdflush_lock);
+ 			continue;
+ 		}
+diff -puN mm/vmscan.c~swsusp-refrigerator-cleanups mm/vmscan.c
+--- 25/mm/vmscan.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/mm/vmscan.c	Wed Jan 12 16:33:39 2005
+@@ -21,7 +21,6 @@
+ #include <linux/highmem.h>
+ #include <linux/file.h>
+ #include <linux/writeback.h>
+-#include <linux/suspend.h>
+ #include <linux/blkdev.h>
+ #include <linux/buffer_head.h>	/* for try_to_release_page(),
+ 					buffer_heads_over_limit */
+diff -puN net/sunrpc/sched.c~swsusp-refrigerator-cleanups net/sunrpc/sched.c
+--- 25/net/sunrpc/sched.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/net/sunrpc/sched.c	Wed Jan 12 16:55:54 2005
+@@ -18,7 +18,6 @@
+ #include <linux/smp.h>
+ #include <linux/smp_lock.h>
+ #include <linux/spinlock.h>
+-#include <linux/suspend.h>
+ 
+ #include <linux/sunrpc/clnt.h>
+ #include <linux/sunrpc/xprt.h>
+diff -puN net/sunrpc/svcsock.c~swsusp-refrigerator-cleanups net/sunrpc/svcsock.c
+--- 25/net/sunrpc/svcsock.c~swsusp-refrigerator-cleanups	Wed Jan 12 16:33:39 2005
++++ 25-akpm/net/sunrpc/svcsock.c	Wed Jan 12 16:33:39 2005
+@@ -31,7 +31,6 @@
+ #include <linux/slab.h>
+ #include <linux/netdevice.h>
+ #include <linux/skbuff.h>
+-#include <linux/suspend.h>
+ #include <net/sock.h>
+ #include <net/checksum.h>
+ #include <net/ip.h>
+@@ -1227,8 +1226,7 @@ svc_recv(struct svc_serv *serv, struct s
+ 
+ 		schedule_timeout(timeout);
+ 
+-		if (current->flags & PF_FREEZE)
+-			refrigerator(PF_FREEZE);
++		try_to_freeze(PF_FREEZE);
+ 
+ 		spin_lock_bh(&serv->sv_lock);
+ 		remove_wait_queue(&rqstp->rq_wait, &wait);
+_

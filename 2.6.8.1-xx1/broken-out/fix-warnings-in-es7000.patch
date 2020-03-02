@@ -1,0 +1,39 @@
+
+From: Andi Kleen <ak@suse.de>
+
+Fix warnings in es7000. 
+
+Otherwise gcc 3.3 complains about too large integer values.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/mach-es7000/es7000.h     |    2 +-
+ 25-akpm/arch/i386/mach-es7000/es7000plat.c |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN arch/i386/mach-es7000/es7000.h~fix-warnings-in-es7000 arch/i386/mach-es7000/es7000.h
+--- 25/arch/i386/mach-es7000/es7000.h~fix-warnings-in-es7000	Mon Aug  9 14:12:13 2004
++++ 25-akpm/arch/i386/mach-es7000/es7000.h	Mon Aug  9 14:12:13 2004
+@@ -29,7 +29,7 @@
+ 
+ #define	MIP_BUSY		1
+ #define	MIP_SPIN		0xf0000
+-#define	MIP_VALID		0x0100000000000000
++#define	MIP_VALID		0x0100000000000000ULL
+ #define	MIP_PORT(VALUE)	((VALUE >> 32) & 0xffff)
+ 
+ #define	MIP_RD_LO(VALUE)	(VALUE & 0xffffffff)   
+diff -puN arch/i386/mach-es7000/es7000plat.c~fix-warnings-in-es7000 arch/i386/mach-es7000/es7000plat.c
+--- 25/arch/i386/mach-es7000/es7000plat.c~fix-warnings-in-es7000	Mon Aug  9 14:12:13 2004
++++ 25-akpm/arch/i386/mach-es7000/es7000plat.c	Mon Aug  9 14:12:13 2004
+@@ -237,7 +237,7 @@ es7000_mip_write(struct mip_reg *mip_reg
+ 	}
+ 
+ 	status = ((unsigned long long)mip_reg->off_0 &
+-		(unsigned long long)0xffff0000000000) >> 48;
++		(unsigned long long)0xffff0000000000ULL) >> 48;
+ 	mip_reg->off_38 = ((unsigned long long)mip_reg->off_38 &
+ 		(unsigned long long)~MIP_VALID);
+ 	return status;
+_

@@ -1,0 +1,173 @@
+Index: xx-sources/kernel/nicksched.c
+===================================================================
+--- xx-sources.orig/kernel/nicksched.c	2005-01-14 12:07:10.071487792 +0000
++++ xx-sources/kernel/nicksched.c	2005-01-14 12:07:15.580650272 +0000
+@@ -80,12 +80,12 @@
+  * that the maximum priority process will get. Larger timeslices are attainable
+  * by low priority processes however.
+  */
+-int sched_base_timeslice = 64;
+-int sched_min_base = 1;
+-int sched_max_base = 10000;
++int nick_sched_base_timeslice = 64;
++int nick_sched_min_base = 1;
++int nick_sched_max_base = 10000;
+ 
+ #define RT_TIMESLICE		(50 * 1000 / HZ)     /* 50ms */
+-#define BASE_TIMESLICE		(sched_base_timeslice)
++#define BASE_TIMESLICE		(nick_sched_base_timeslice)
+ #define MIN_TIMESLICE		1
+ 
+ /* Maximum amount of history that will be used to calculate priority */
+Index: xx-sources/kernel/staircase.c
+===================================================================
+--- xx-sources.orig/kernel/staircase.c	2005-01-14 12:07:10.073487488 +0000
++++ xx-sources/kernel/staircase.c	2005-01-14 12:07:46.757910608 +0000
+@@ -93,14 +93,14 @@
+ #define NS_TO_JIFFIES(TIME)	((TIME) / (1000000000 / HZ))
+ #define NSJIFFY			(1000000000 / HZ)	/* One jiffy in ns */
+ 
+-int sched_compute = 0;
++int sc_sched_compute = 0;
+ /* 
+  *This is the time all tasks within the same priority round robin.
+  *compute setting is reserved for dedicated computational scheduling
+  *and has ten times larger intervals.
+  */
+ #define _RR_INTERVAL		((10 * HZ / 1000) ? : 1)
+-#define RR_INTERVAL()		(_RR_INTERVAL * (1 + 9 * sched_compute))
++#define RR_INTERVAL()		(_RR_INTERVAL * (1 + 9 * sc_sched_compute))
+ 
+ #define task_hot(p, now, sd) ((long long) \
+ 	((now) - (p)->u.scsched.timestamp) < \
+@@ -369,7 +369,7 @@
+ /*
+  * sched_interactive - sysctl which allows interactive tasks to have bursts
+  */
+-int sched_interactive = 1;
++int sc_sched_interactive = 1;
+ 
+ static unsigned int rr_interval(task_t * p)
+ {
+@@ -408,7 +408,7 @@
+ 	if (p->u.scsched.burst > best_burst)
+ 		p->u.scsched.burst = best_burst;
+ 	first_slice = rr;
+-	if (sched_interactive && !sched_compute && p->mm)
++	if (sc_sched_interactive && !sc_sched_compute && p->mm)
+ 		first_slice *= (p->u.scsched.burst + 1);
+ 	prio = MAX_PRIO - 1 - best_burst;
+ 
+@@ -459,7 +459,7 @@
+ 		goto out;
+ 	}
+ 
+-	if (sched_compute) {
++	if (sc_sched_compute) {
+ 		continue_slice(p);
+ 		goto out;
+ 	}
+@@ -710,7 +710,7 @@
+ 		((p->u.scsched.totalrun || p->u.scsched.slice != slice(p)) ||
+ 		rt_task(rq->curr)))
+ 			return;
+-	if (!sched_compute || rq->cache_ticks >= cache_delay ||
++	if (!sc_sched_compute || rq->cache_ticks >= cache_delay ||
+ 		!p->mm || rt_task(p))
+ 			resched_task(rq->curr);
+ 	rq->preempted = 1;
+Index: xx-sources/kernel/xsched.c
+===================================================================
+--- xx-sources.orig/kernel/xsched.c	2005-01-14 12:07:10.075487184 +0000
++++ xx-sources/kernel/xsched.c	2005-01-14 12:07:15.584649664 +0000
+@@ -77,8 +77,8 @@
+ #define US_TO_JIFFIES(x)	((x) * HZ / 1000000)
+ #define JIFFIES_TO_US(x)	((x) * 1000000 / HZ)
+ 
+-int sched_interactive = 1;
+-int sched_compute = 0;
++int x_sched_interactive = 1;
++int x_sched_compute = 0;
+ /*
+  * MIN_TIMESLICE is the timeslice that a minimum priority process gets if there
+  * is a maximum priority process runnable. MAX_TIMESLICE is derived from the
+@@ -87,14 +87,14 @@
+  * by low priority processes however.
+  */
+ #define DEFAULT_RT_TIMESLICE 	50
+-int sched_base_timeslice = 64; /* This gets divided by 8 */
+-int sched_rt_timeslice = DEFAULT_RT_TIMESLICE * 1000 / HZ;
+-int scaled_rt_timeslice = DEFAULT_RT_TIMESLICE * 1000 / HZ;
+-int sched_min_base = 1;
+-int sched_max_base = 10000;
++int x_sched_base_timeslice = 64; /* This gets divided by 8 */
++int x_sched_rt_timeslice = DEFAULT_RT_TIMESLICE * 1000 / HZ;
++int x_scaled_rt_timeslice = DEFAULT_RT_TIMESLICE * 1000 / HZ;
++int x_sched_min_base = 1;
++int x_sched_max_base = 10000;
+ 
+-#define RT_TIMESLICE		(sched_rt_timeslice)
+-#define BASE_TIMESLICE		(sched_base_timeslice)
++#define RT_TIMESLICE		(x_sched_rt_timeslice)
++#define BASE_TIMESLICE		(x_sched_base_timeslice)
+ #define MIN_TIMESLICE		1
+ 
+ 
+@@ -129,10 +129,10 @@
+  * attention (cpu time) is more likely to be given to the non-punished
+  * (active) tasks.
+  */
+-int uisleep_factor = 2;
+-int punishment = 1;
+-#define PUNISHMENT 				(punishment)
+-#define UISLEEP_FACTOR 				(uisleep_factor)
++int x_uisleep_factor = 2;
++int x_punishment = 1;
++#define PUNISHMENT 				(x_punishment)
++#define UISLEEP_FACTOR 				(x_uisleep_factor)
+ 
+ /*
+  * The scheduler classifies a process as performing one of the following
+@@ -400,11 +400,11 @@
+ 	int timeslice;
+ 
+ 	if (rt_task(p)) {
+-		if (!sched_interactive)
++		if (!x_sched_interactive)
+ 			return RT_TIMESLICE;
+-		timeslice = scaled_rt_timeslice;
+-		if (scaled_rt_timeslice != RT_TIMESLICE)
+-			scaled_rt_timeslice = (scaled_rt_timeslice + RT_TIMESLICE) >> 1;
++		timeslice = x_scaled_rt_timeslice;
++		if (x_scaled_rt_timeslice != RT_TIMESLICE)
++			x_scaled_rt_timeslice = (x_scaled_rt_timeslice + RT_TIMESLICE) >> 1;
+ 		return timeslice;
+ 	}
+ 
+@@ -419,13 +419,13 @@
+ 	timeslice = base >> 10;
+ 	timeslice = timeslice * HZ / 1000;
+ 
+-	if (sched_compute)
++	if (x_sched_compute)
+ 		timeslice <<= 2;
+ 
+-	if ((timeslice > scaled_rt_timeslice) && sched_interactive) {
+-		delta = timeslice + scaled_rt_timeslice;
++	if ((timeslice > x_scaled_rt_timeslice) && x_sched_interactive) {
++		delta = timeslice + x_scaled_rt_timeslice;
+ 		delta >>= 2;
+-		scaled_rt_timeslice = timeslice + delta;
++		x_scaled_rt_timeslice = timeslice + delta;
+ 	}
+ 
+ 	if (timeslice < MIN_TIMESLICE)
+@@ -456,7 +456,7 @@
+ 
+ 	if (p->mm == NULL)
+ 		bonus *= UISLEEP_FACTOR;
+-	if (sched_interactive) {
++	if (x_sched_interactive) {
+ 		if (p->u.xsched.xflags & XF_UISLEEP)
+ 			bonus /= UISLEEP_FACTOR;
+ 		if (p->u.xsched.xflags & XF_YIELDED)

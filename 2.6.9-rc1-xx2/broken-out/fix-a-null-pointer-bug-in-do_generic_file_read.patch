@@ -1,0 +1,48 @@
+
+From: David Howells <dhowells@redhat.com>
+
+The attached patch fixes a bug introduced into do_generic_mapping_read() by
+which a file pointer becomes required.  I'd arranged things so that the
+file pointer was optional so that I could call the function directly on an
+inode.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/filemap.c |   11 +++++++----
+ 1 files changed, 7 insertions(+), 4 deletions(-)
+
+diff -puN mm/filemap.c~fix-a-null-pointer-bug-in-do_generic_file_read mm/filemap.c
+--- 25/mm/filemap.c~fix-a-null-pointer-bug-in-do_generic_file_read	2004-08-30 22:20:44.540404712 -0700
++++ 25-akpm/mm/filemap.c	2004-08-30 22:20:44.544404104 -0700
+@@ -702,13 +702,15 @@ EXPORT_SYMBOL(grab_cache_page_nowait);
+  *
+  * This is really ugly. But the goto's actually try to clarify some
+  * of the logic when it comes to error handling etc.
+- * - note the struct file * is only passed for the use of readpage
++ *
++ * Note the struct file* is only passed for the use of readpage.  It may be
++ * NULL.
+  */
+ void do_generic_mapping_read(struct address_space *mapping,
+ 			     struct file_ra_state *_ra,
+-			     struct file * filp,
++			     struct file *filp,
+ 			     loff_t *ppos,
+-			     read_descriptor_t * desc,
++			     read_descriptor_t *desc,
+ 			     read_actor_t actor)
+ {
+ 	struct inode *inode = mapping->host;
+@@ -872,7 +874,8 @@ out:
+ 	*ppos = ((loff_t) index << PAGE_CACHE_SHIFT) + offset;
+ 	if (cached_page)
+ 		page_cache_release(cached_page);
+-	file_accessed(filp);
++	if (filp)
++		file_accessed(filp);
+ }
+ 
+ EXPORT_SYMBOL(do_generic_mapping_read);
+_

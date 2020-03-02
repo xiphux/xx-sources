@@ -1,0 +1,71 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+Insist that the first time a client presents a new lockowner, the seqid should
+be 0.  (RFC 3530 section 8.1.5)
+
+Also, return an error if the client presents a previously-used lockowner as if
+it were new.
+
+From: Andy Adamson <andros@citi.umich.edu>
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>         
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/nfsd/nfs4state.c |   22 ++++++++++++++--------
+ 1 files changed, 14 insertions(+), 8 deletions(-)
+
+diff -puN fs/nfsd/nfs4state.c~knfsd-nfsd4-lockowner-fixes fs/nfsd/nfs4state.c
+--- 25/fs/nfsd/nfs4state.c~knfsd-nfsd4-lockowner-fixes	2004-06-23 22:12:12.607750344 -0700
++++ 25-akpm/fs/nfsd/nfs4state.c	2004-06-23 22:12:12.613749432 -0700
+@@ -1510,10 +1510,12 @@ nfs4_preprocess_seqid_op(struct svc_fh *
+ 
+ 	status = nfserr_bad_stateid;
+ 
+-	/* for new lock stateowners, check that the lock->v.new.open_stateid
+-	 * refers to an open stateowner, and that the lockclid
+-	 * (nfs4_lock->v.new.clientid) is the same as the
+-	 * open_stateid->st_stateowner->so_client->clientid
++	/* for new lock stateowners:
++	 * check that the lock->v.new.open_stateid
++	 * refers to an open stateowner
++	 *
++	 * check that the lockclid (nfs4_lock->v.new.clientid) is the same
++	 * as the open_stateid->st_stateowner->so_client->clientid
+ 	 */
+ 	if (lockclid) {
+ 		struct nfs4_stateowner *sop = stp->st_stateowner;
+@@ -2007,7 +2009,11 @@ nfsd4_lock(struct svc_rqst *rqstp, struc
+ 			printk("NFSD: nfsd4_lock: clientid is stale!\n");
+ 			goto out;
+ 		}
+-		/* does the clientid in the lock owner own the open stateid? */
++
++		/* is the new lock seqid presented by the client zero? */
++		status = nfserr_bad_seqid;
++		if (lock->v.new.lock_seqid != 0)
++			goto out;
+ 
+ 		/* validate and update open stateid and open seqid */
+ 		status = nfs4_preprocess_seqid_op(current_fh, 
+@@ -2026,15 +2032,15 @@ nfsd4_lock(struct svc_rqst *rqstp, struc
+ 		strhashval = lock_ownerstr_hashval(fp->fi_inode, 
+ 				open_sop->so_client->cl_clientid.cl_id, 
+ 				lock->v.new.owner);
+-
+ 		/* 
+ 		 * If we already have this lock owner, the client is in 
+ 		 * error (or our bookeeping is wrong!) 
+ 		 * for asking for a 'new lock'.
+ 		 */
+ 		status = nfserr_bad_stateid;
+-		if (find_lockstateowner_str(strhashval, &lock->v.new.owner,
+-					&lock->v.new.clientid, &lock_sop))
++		lock_sop = find_lockstateowner(&lock->v.new.owner,
++						&lock->v.new.clientid);
++		if (lock_sop)
+ 			goto out;
+ 		status = nfserr_resource;
+ 		if (!(lock->lk_stateowner = alloc_init_lock_stateowner(strhashval, open_sop->so_client, open_stp, lock)))
+_

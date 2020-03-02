@@ -1,0 +1,72 @@
+Index: xx-sources/include/linux/scheduler.h
+===================================================================
+--- xx-sources.orig/include/linux/scheduler.h	2005-01-20 02:54:55.000000000 -0500
++++ xx-sources/include/linux/scheduler.h	2005-01-20 02:54:55.000000000 -0500
+@@ -18,6 +18,7 @@
+ 	void (*init_sched_domain_sysctl)(void);
+ 	void (*destroy_sched_domain_sysctl)(void);
+ 	char cpusched_name[SCHED_NAME_MAX];
++	char cpusched_version[SCHED_NAME_MAX];
+ 	int (*rt_task)(const task_t *);
+ 	void (*wait_for_completion)(struct completion *);
+ 	void (*io_schedule)(void);
+Index: xx-sources/init/main.c
+===================================================================
+--- xx-sources.orig/init/main.c	2005-01-20 02:54:43.000000000 -0500
++++ xx-sources/init/main.c	2005-01-20 02:54:55.000000000 -0500
+@@ -525,7 +525,10 @@
+ 
+ 	acpi_early_init(); /* before LAPIC and SMP init */
+ 
+-	printk("Running with %s cpu scheduler.\n", scheduler->cpusched_name);
++	printk("Running with %s cpu scheduler", scheduler->cpusched_name);
++	if (scheduler->cpusched_version)
++		printk(", version %s", scheduler->cpusched_version);
++	printk(".\n");
+ 	/* Do the rest non-__init'ed, we're now alive */
+ 	rest_init();
+ }
+Index: xx-sources/kernel/nicksched.c
+===================================================================
+--- xx-sources.orig/kernel/nicksched.c	2005-01-20 02:54:55.000000000 -0500
++++ xx-sources/kernel/nicksched.c	2005-01-20 02:54:55.000000000 -0500
+@@ -3732,6 +3732,7 @@
+ 	.init_sched_domain_sysctl = nick_init_sched_domain_sysctl,
+ 	.destroy_sched_domain_sysctl = nick_destroy_sched_domain_sysctl,
+ 	.cpusched_name		= "nicksched",
++	.cpusched_version 	= NICKSCHED_VERSION,
+ 	.rt_task		= nick_rt_task,
+ 	.wait_for_completion	= nick_wait_for_completion,
+ 	.io_schedule		= nick_io_schedule,
+Index: xx-sources/kernel/staircase.c
+===================================================================
+--- xx-sources.orig/kernel/staircase.c	2005-01-20 02:54:43.000000000 -0500
++++ xx-sources/kernel/staircase.c	2005-01-20 02:55:15.000000000 -0500
+@@ -52,6 +52,7 @@
+ 
+ #include <asm/unistd.h>
+ 
++#define STAIRCASE_VERSION "10.3"
+ /*
+  * Unique staircase process flags used by scheduler.
+  */
+@@ -3594,6 +3595,7 @@
+ 	.init_sched_domain_sysctl = sc_init_sched_domain_sysctl,
+ 	.destroy_sched_domain_sysctl = sc_destroy_sched_domain_sysctl,
+ 	.cpusched_name		= "staircase",
++	.cpusched_version 	= STAIRCASE_VERSION,
+ 	.rt_task		= sc_rt_task,
+ 	.wait_for_completion	= sc_wait_for_completion,
+ 	.io_schedule		= sc_io_schedule,
+Index: xx-sources/kernel/xsched.c
+===================================================================
+--- xx-sources.orig/kernel/xsched.c	2005-01-20 02:54:55.000000000 -0500
++++ xx-sources/kernel/xsched.c	2005-01-20 02:54:55.000000000 -0500
+@@ -3625,6 +3625,7 @@
+ 	.init_sched_domain_sysctl = x_init_sched_domain_sysctl,
+ 	.destroy_sched_domain_sysctl = x_destroy_sched_domain_sysctl,
+ 	.cpusched_name		= "xsched",
++	.cpusched_version 	= XSCHED_VERSION,
+ 	.rt_task		= x_rt_task,
+ 	.wait_for_completion	= x_wait_for_completion,
+ 	.io_schedule		= x_io_schedule,

@@ -1,0 +1,151 @@
+
+From: "Shai Fultheim" <shai@scalex86.org>
+
+Use the percpu infrastructure rather than open-coded array[NR_CPUS].
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/smp.c               |   12 ++++++------
+ 25-akpm/arch/i386/mach-voyager/voyager_smp.c |   12 ++++++------
+ 25-akpm/include/asm-i386/mmu_context.h       |   12 ++++++------
+ 25-akpm/include/asm-i386/tlbflush.h          |    2 +-
+ 4 files changed, 19 insertions(+), 19 deletions(-)
+
+diff -puN arch/i386/kernel/smp.c~per_cpu-per_cpu-cpu_tlbstate arch/i386/kernel/smp.c
+--- 25/arch/i386/kernel/smp.c~per_cpu-per_cpu-cpu_tlbstate	Fri Aug  6 15:18:56 2004
++++ 25-akpm/arch/i386/kernel/smp.c	Fri Aug  6 15:18:56 2004
+@@ -104,7 +104,7 @@
+  *	about nothing of note with C stepping upwards.
+  */
+ 
+-struct tlb_state cpu_tlbstate[NR_CPUS] __cacheline_aligned = {[0 ... NR_CPUS-1] = { &init_mm, 0, }};
++DEFINE_PER_CPU(struct tlb_state, cpu_tlbstate) ____cacheline_aligned = { &init_mm, 0, };
+ 
+ /*
+  * the following functions deal with sending IPIs between CPUs.
+@@ -255,9 +255,9 @@ static spinlock_t tlbstate_lock = SPIN_L
+  */
+ static inline void leave_mm (unsigned long cpu)
+ {
+-	if (cpu_tlbstate[cpu].state == TLBSTATE_OK)
++	if (per_cpu(cpu_tlbstate, cpu).state == TLBSTATE_OK)
+ 		BUG();
+-	cpu_clear(cpu, cpu_tlbstate[cpu].active_mm->cpu_vm_mask);
++	cpu_clear(cpu, per_cpu(cpu_tlbstate, cpu).active_mm->cpu_vm_mask);
+ 	load_cr3(swapper_pg_dir);
+ }
+ 
+@@ -324,8 +324,8 @@ asmlinkage void smp_invalidate_interrupt
+ 		 * BUG();
+ 		 */
+ 		 
+-	if (flush_mm == cpu_tlbstate[cpu].active_mm) {
+-		if (cpu_tlbstate[cpu].state == TLBSTATE_OK) {
++	if (flush_mm == per_cpu(cpu_tlbstate, cpu).active_mm) {
++		if (per_cpu(cpu_tlbstate, cpu).state == TLBSTATE_OK) {
+ 			if (flush_va == FLUSH_ALL)
+ 				local_flush_tlb();
+ 			else
+@@ -457,7 +457,7 @@ static void do_flush_tlb_all(void* info)
+ 	unsigned long cpu = smp_processor_id();
+ 
+ 	__flush_tlb_all();
+-	if (cpu_tlbstate[cpu].state == TLBSTATE_LAZY)
++	if (per_cpu(cpu_tlbstate, cpu).state == TLBSTATE_LAZY)
+ 		leave_mm(cpu);
+ }
+ 
+diff -puN arch/i386/mach-voyager/voyager_smp.c~per_cpu-per_cpu-cpu_tlbstate arch/i386/mach-voyager/voyager_smp.c
+--- 25/arch/i386/mach-voyager/voyager_smp.c~per_cpu-per_cpu-cpu_tlbstate	Fri Aug  6 15:18:56 2004
++++ 25-akpm/arch/i386/mach-voyager/voyager_smp.c	Fri Aug  6 15:18:56 2004
+@@ -35,7 +35,7 @@
+ int reboot_smp = 0;
+ 
+ /* TLB state -- visible externally, indexed physically */
+-struct tlb_state cpu_tlbstate[NR_CPUS] __cacheline_aligned = {[0 ... NR_CPUS-1] = { &init_mm, 0 }};
++DEFINE_PER_CPU(struct tlb_state, cpu_tlbstate) ____cacheline_aligned = { &init_mm, 0 };
+ 
+ /* CPU IRQ affinity -- set to all ones initially */
+ static unsigned long cpu_irq_affinity[NR_CPUS] __cacheline_aligned = { [0 ... NR_CPUS-1]  = ~0UL };
+@@ -845,9 +845,9 @@ static spinlock_t tlbstate_lock = SPIN_L
+ static inline void
+ leave_mm (unsigned long cpu)
+ {
+-	if (cpu_tlbstate[cpu].state == TLBSTATE_OK)
++	if (per_cpu(cpu_tlbstate, cpu).state == TLBSTATE_OK)
+ 		BUG();
+-	cpu_clear(cpu,  cpu_tlbstate[cpu].active_mm->cpu_vm_mask);
++	cpu_clear(cpu, per_cpu(cpu_tlbstate, cpu).active_mm->cpu_vm_mask);
+ 	load_cr3(swapper_pg_dir);
+ }
+ 
+@@ -868,8 +868,8 @@ smp_invalidate_interrupt(void)
+ 		smp_processor_id()));
+ 	*/
+ 
+-	if (flush_mm == cpu_tlbstate[cpu].active_mm) {
+-		if (cpu_tlbstate[cpu].state == TLBSTATE_OK) {
++	if (flush_mm == per_cpu(cpu_tlbstate, cpu).active_mm) {
++		if (per_cpu(cpu_tlbstate, cpu).state == TLBSTATE_OK) {
+ 			if (flush_va == FLUSH_ALL)
+ 				local_flush_tlb();
+ 			else
+@@ -1203,7 +1203,7 @@ do_flush_tlb_all(void* info)
+ 	unsigned long cpu = smp_processor_id();
+ 
+ 	__flush_tlb_all();
+-	if (cpu_tlbstate[cpu].state == TLBSTATE_LAZY)
++	if (per_cpu(cpu_tlbstate, cpu).state == TLBSTATE_LAZY)
+ 		leave_mm(cpu);
+ }
+ 
+diff -puN include/asm-i386/mmu_context.h~per_cpu-per_cpu-cpu_tlbstate include/asm-i386/mmu_context.h
+--- 25/include/asm-i386/mmu_context.h~per_cpu-per_cpu-cpu_tlbstate	Fri Aug  6 15:18:56 2004
++++ 25-akpm/include/asm-i386/mmu_context.h	Fri Aug  6 15:18:56 2004
+@@ -18,8 +18,8 @@ static inline void enter_lazy_tlb(struct
+ {
+ #ifdef CONFIG_SMP
+ 	unsigned cpu = smp_processor_id();
+-	if (cpu_tlbstate[cpu].state == TLBSTATE_OK)
+-		cpu_tlbstate[cpu].state = TLBSTATE_LAZY;	
++	if (per_cpu(cpu_tlbstate, cpu).state == TLBSTATE_OK)
++		per_cpu(cpu_tlbstate, cpu).state = TLBSTATE_LAZY;
+ #endif
+ }
+ 
+@@ -33,8 +33,8 @@ static inline void switch_mm(struct mm_s
+ 		/* stop flush ipis for the previous mm */
+ 		cpu_clear(cpu, prev->cpu_vm_mask);
+ #ifdef CONFIG_SMP
+-		cpu_tlbstate[cpu].state = TLBSTATE_OK;
+-		cpu_tlbstate[cpu].active_mm = next;
++		per_cpu(cpu_tlbstate, cpu).state = TLBSTATE_OK;
++		per_cpu(cpu_tlbstate, cpu).active_mm = next;
+ #endif
+ 		cpu_set(cpu, next->cpu_vm_mask);
+ 
+@@ -49,8 +49,8 @@ static inline void switch_mm(struct mm_s
+ 	}
+ #ifdef CONFIG_SMP
+ 	else {
+-		cpu_tlbstate[cpu].state = TLBSTATE_OK;
+-		BUG_ON(cpu_tlbstate[cpu].active_mm != next);
++		per_cpu(cpu_tlbstate, cpu).state = TLBSTATE_OK;
++		BUG_ON(per_cpu(cpu_tlbstate, cpu).active_mm != next);
+ 
+ 		if (!cpu_test_and_set(cpu, next->cpu_vm_mask)) {
+ 			/* We were in lazy tlb mode and leave_mm disabled 
+diff -puN include/asm-i386/tlbflush.h~per_cpu-per_cpu-cpu_tlbstate include/asm-i386/tlbflush.h
+--- 25/include/asm-i386/tlbflush.h~per_cpu-per_cpu-cpu_tlbstate	Fri Aug  6 15:18:56 2004
++++ 25-akpm/include/asm-i386/tlbflush.h	Fri Aug  6 15:18:56 2004
+@@ -131,7 +131,7 @@ struct tlb_state
+ 	int state;
+ 	char __cacheline_padding[L1_CACHE_BYTES-8];
+ };
+-extern struct tlb_state cpu_tlbstate[NR_CPUS];
++DECLARE_PER_CPU(struct tlb_state, cpu_tlbstate);
+ 
+ 
+ #endif
+_

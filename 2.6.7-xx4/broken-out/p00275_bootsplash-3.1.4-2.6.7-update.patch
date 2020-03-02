@@ -1,0 +1,79 @@
+diff -ruN software-suspend-linux-2.6.3-test10/drivers/video/bootsplash/bootsplash.c software-suspend-linux-2.6.3-test11/drivers/video/bootsplash/bootsplash.c
+--- software-suspend-linux-2.6.3-test10/drivers/video/bootsplash/bootsplash.c	2004-03-12 11:51:54.000000000 +1300
++++ software-suspend-linux-2.6.3-test11/drivers/video/bootsplash/bootsplash.c	2004-03-11 19:42:55.000000000 +1300
+@@ -556,7 +556,7 @@
+     if (!splash_usesilent)
+         return 0;
+ 
+-    vc = vc_cons[0].d;
++    vc = vc_cons[fg_console].d;
+ 
+     if (!vc || !vc->vc_splash_data || !vc->vc_splash_data->splash_state)
+ 	return 0;
+@@ -565,7 +565,7 @@
+     if (!vc->vc_splash_data->splash_silentjpeg || !vc->vc_splash_data->splash_dosilent)
+ 	return 0;
+     vc->vc_splash_data->splash_dosilent = 0;
+-    info = registered_fb[(int)con2fb_map[0]];
++    info = registered_fb[(int)con2fb_map[fg_console]];
+     if (!info->silent_screen_base)
+ 	return 0;
+     splashcopy(info->silent_screen_base, info->screen_base, info->var.yres, info->var.xres, info->fix.line_length, info->fix.line_length);
+@@ -726,8 +726,8 @@
+ {
+ 	int len = 0;
+ 	off_t begin = 0;
+-	struct vc_data *vc = vc_cons[0].d;
+-	struct fb_info *info = registered_fb[(int)con2fb_map[0]];
++	struct vc_data *vc = vc_cons[fg_console].d;
++	struct fb_info *info = registered_fb[(int)con2fb_map[fg_console]];
+ 	int color = vc->vc_splash_data ? vc->vc_splash_data->splash_color << 4 |
+ 			vc->vc_splash_data->splash_fg_color : splash_default >> 4;
+ 	int status = vc->vc_splash_data ? vc->vc_splash_data->splash_state & 1 : 0;
+@@ -755,7 +755,7 @@
+ 	if (!strncmp(buffer, "show", 4) || !strncmp(buffer, "hide", 4)) {
+ 		int pe, oldpe;
+ 
+-		vc = vc_cons[0].d;
++		vc = vc_cons[fg_console].d;
+ 		if (buffer[4] == ' ' && buffer[5] == 'p')
+ 			pe = 0;
+ 		else if (buffer[4] == '\n')
+@@ -791,7 +791,7 @@
+ 		return count;
+ 	}
+ 	if (!strncmp(buffer,"silent\n",7) || !strncmp(buffer,"verbose\n",8)) {
+-		vc = vc_cons[0].d;
++		vc = vc_cons[fg_console].d;
+ 		if (vc->vc_splash_data && vc->vc_splash_data->splash_silentjpeg) {
+ 		    if (vc->vc_splash_data->splash_dosilent != (buffer[0] == 's')) {
+ 			vc->vc_splash_data->splash_dosilent = buffer[0] == 's';
+@@ -801,7 +801,7 @@
+ 		return count;
+ 	}
+ 	if (!strncmp(buffer,"freesilent\n",11)) {
+-		vc = vc_cons[0].d;
++		vc = vc_cons[fg_console].d;
+ 		if (vc->vc_splash_data && vc->vc_splash_data->splash_silentjpeg) {
+ 		    printk(KERN_INFO "bootsplash: freeing silent jpeg\n");
+ 		    vc->vc_splash_data->splash_silentjpeg = 0;
+@@ -823,7 +823,7 @@
+ 	    }
+ 	    return count;
+ 	}
+-	vc = vc_cons[0].d;
++	vc = vc_cons[fg_console].d;
+ 	if (!vc->vc_splash_data)
+ 		return count;
+ 	if (buffer[0] == 't') {
+@@ -881,8 +881,8 @@
+ 
+ 	if (splash_registered)
+ 		return;
+-	vc = vc_cons[0].d;
+-	info = registered_fb[0];
++	vc = vc_cons[fg_console].d;
++	info = registered_fb[fg_console];
+ 	if (!vc || !info || info->var.bits_per_pixel != 16)
+ 		return;
+ #ifdef CONFIG_PROC_FS

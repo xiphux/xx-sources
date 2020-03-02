@@ -1,0 +1,120 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+Reference-counting the nfsd4 stateowner structs will let us fix a race and
+simplify some of the xdr code a bit, and may also help us make the nfsd4
+locking a little more fine-grained in the future.
+
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/nfsd/nfs4state.c        |   27 ++++++++++++++-------------
+ 25-akpm/include/linux/nfsd/state.h |   16 ++++++++++++++++
+ 2 files changed, 30 insertions(+), 13 deletions(-)
+
+diff -puN fs/nfsd/nfs4state.c~nfsd4-reference-count-stateowners fs/nfsd/nfs4state.c
+--- 25/fs/nfsd/nfs4state.c~nfsd4-reference-count-stateowners	2004-09-23 22:06:21.650797200 -0700
++++ 25-akpm/fs/nfsd/nfs4state.c	2004-09-23 22:09:46.582642824 -0700
+@@ -833,6 +833,17 @@ release_all_files(void)
+ 	}
+ }
+ 
++/* should use a slab cache */
++void
++nfs4_free_stateowner(struct kref *kref)
++{
++	struct nfs4_stateowner *sop =
++		container_of(kref, struct nfs4_stateowner, so_ref);
++	kfree(sop->so_owner.data);
++	kfree(sop);
++	free_sowner++;
++}
++
+ static inline struct nfs4_stateowner *
+ alloc_stateowner(struct xdr_netobj *owner)
+ {
+@@ -842,6 +853,7 @@ alloc_stateowner(struct xdr_netobj *owne
+ 		if ((sop->so_owner.data = kmalloc(owner->len, GFP_KERNEL))) {
+ 			memcpy(sop->so_owner.data, owner->data, owner->len);
+ 			sop->so_owner.len = owner->len;
++			kref_init(&sop->so_ref);
+ 			return sop;
+ 		} 
+ 		kfree(sop);
+@@ -849,17 +861,6 @@ alloc_stateowner(struct xdr_netobj *owne
+ 	return NULL;
+ }
+ 
+-/* should use a slab cache */
+-static void
+-free_stateowner(struct nfs4_stateowner *sop) {
+-	if (sop) {
+-		kfree(sop->so_owner.data);
+-		kfree(sop);
+-		sop = NULL;
+-		free_sowner++;
+-	}
+-}
+-
+ static struct nfs4_stateowner *
+ alloc_init_open_stateowner(unsigned int strhashval, struct nfs4_client *clp, struct nfsd4_open *open) {
+ 	struct nfs4_stateowner *sop;
+@@ -932,7 +933,7 @@ release_stateowner(struct nfs4_stateowne
+ {
+ 	unhash_stateowner(sop);
+ 	list_del(&sop->so_close_lru);
+-	free_stateowner(sop);
++	nfs4_put_stateowner(sop);
+ }
+ 
+ static inline void
+@@ -1460,7 +1461,7 @@ nfs4_laundromat(void)
+ 		dprintk("NFSD: purging unused open stateowner (so_id %d)\n",
+ 			sop->so_id);
+ 		list_del(&sop->so_close_lru);
+-		free_stateowner(sop);
++		nfs4_put_stateowner(sop);
+ 	}
+ 	if (clientid_val < NFSD_LAUNDROMAT_MINTIMEOUT)
+ 		clientid_val = NFSD_LAUNDROMAT_MINTIMEOUT;
+diff -puN include/linux/nfsd/state.h~nfsd4-reference-count-stateowners include/linux/nfsd/state.h
+--- 25/include/linux/nfsd/state.h~nfsd4-reference-count-stateowners	2004-09-23 22:06:21.663795224 -0700
++++ 25-akpm/include/linux/nfsd/state.h	2004-09-23 22:06:21.669794312 -0700
+@@ -38,6 +38,7 @@
+ #define _NFSD4_STATE_H
+ 
+ #include <linux/list.h>
++#include <linux/kref.h>
+ #include <linux/sunrpc/clnt.h>
+ 
+ #define NFS4_OPAQUE_LIMIT 1024
+@@ -168,6 +169,7 @@ struct nfs4_replay {
+ *         reaped by laundramat thread after lease period.
+ */
+ struct nfs4_stateowner {
++	struct kref		so_ref;
+ 	struct list_head        so_idhash;   /* hash by so_id */
+ 	struct list_head        so_strhash;   /* hash by op_name */
+ 	struct list_head        so_perclient; /* nfs4_client->cl_perclient */
+@@ -248,4 +250,18 @@ extern void nfs4_lock_state(void);
+ extern void nfs4_unlock_state(void);
+ extern int nfs4_in_grace(void);
+ extern int nfs4_check_open_reclaim(clientid_t *clid);
++extern void nfs4_free_stateowner(struct kref *kref);
++
++static inline void
++nfs4_put_stateowner(struct nfs4_stateowner *so)
++{
++	kref_put(&so->so_ref, nfs4_free_stateowner);
++}
++
++static inline void
++nfs4_get_stateowner(struct nfs4_stateowner *so)
++{
++	kref_get(&so->so_ref);
++}
++
+ #endif   /* NFSD4_STATE_H */
+_

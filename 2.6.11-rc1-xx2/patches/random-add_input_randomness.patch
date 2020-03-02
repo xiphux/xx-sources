@@ -1,0 +1,168 @@
+
+From: Matt Mackall <mpm@selenic.com>
+
+The input layer wants to send us an entropy event per input event and who are
+we to argue?  Create add_input_randomness with an input-friendly interface and
+kill the remaining two keyboard and mouse sources.
+
+This eliminates lots of duplicate entropy events while covering all the input
+bases nicely.  We now get two events per keystroke as we should, one down and
+one up.
+
+Signed-off-by: Matt Mackall <mpm@selenic.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/char/keyboard.c |    4 ---
+ 25-akpm/drivers/char/qtronix.c  |    2 -
+ 25-akpm/drivers/char/random.c   |   43 +++++++++++++++-------------------------
+ 25-akpm/drivers/input/input.c   |    2 -
+ 25-akpm/include/linux/random.h  |    4 +--
+ 5 files changed, 20 insertions(+), 35 deletions(-)
+
+diff -puN drivers/char/keyboard.c~random-add_input_randomness drivers/char/keyboard.c
+--- 25/drivers/char/keyboard.c~random-add_input_randomness	2005-01-12 23:16:43.416572520 -0800
++++ 25-akpm/drivers/char/keyboard.c	2005-01-12 23:16:43.430570392 -0800
+@@ -31,7 +31,6 @@
+ #include <linux/tty_flip.h>
+ #include <linux/mm.h>
+ #include <linux/string.h>
+-#include <linux/random.h>
+ #include <linux/init.h>
+ #include <linux/slab.h>
+ 
+@@ -1031,9 +1030,6 @@ void kbd_keycode(unsigned int keycode, i
+ 	struct tty_struct *tty;
+ 	int shift_final;
+ 
+-	if (down != 2)
+-		add_keyboard_randomness((keycode << 1) ^ down);
+-
+ 	tty = vc->vc_tty;
+ 
+ 	if (tty && (!tty->driver_data)) {
+diff -puN drivers/char/qtronix.c~random-add_input_randomness drivers/char/qtronix.c
+--- 25/drivers/char/qtronix.c~random-add_input_randomness	2005-01-12 23:16:43.417572368 -0800
++++ 25-akpm/drivers/char/qtronix.c	2005-01-12 23:16:43.429570544 -0800
+@@ -69,7 +69,6 @@
+ #include <linux/init.h>
+ #include <linux/kbd_ll.h>
+ #include <linux/delay.h>
+-#include <linux/random.h>
+ #include <linux/poll.h>
+ #include <linux/miscdevice.h>
+ #include <linux/slab.h>
+@@ -442,7 +441,6 @@ static inline void handle_mouse_event(un
+ 		return;
+ 	}
+ 
+-	add_mouse_randomness(scancode);
+ 	if (aux_count) {
+ 		int head = queue->head;
+ 
+diff -puN drivers/char/random.c~random-add_input_randomness drivers/char/random.c
+--- 25/drivers/char/random.c~random-add_input_randomness	2005-01-12 23:16:43.419572064 -0800
++++ 25-akpm/drivers/char/random.c	2005-01-12 23:16:43.427570848 -0800
+@@ -125,15 +125,12 @@
+  * The current exported interfaces for gathering environmental noise
+  * from the devices are:
+  *
+- * 	void add_keyboard_randomness(unsigned char scancode);
+- * 	void add_mouse_randomness(__u32 mouse_data);
++ * 	void add_input_randomness(unsigned int type, unsigned int code,
++ *                                unsigned int value);
+  * 	void add_interrupt_randomness(int irq);
+  *
+- * add_keyboard_randomness() uses the inter-keypress timing, as well as the
+- * scancode as random inputs into the "entropy pool".
+- *
+- * add_mouse_randomness() uses the mouse interrupt timing, as well as
+- * the reported position of the mouse from the hardware.
++ * add_input_randomness() uses the input layer interrupt timing, as well as
++ * the event type information from the hardware.
+  *
+  * add_interrupt_randomness() uses the inter-interrupt timing as random
+  * inputs to the entropy pool.  Note that not all interrupts are good
+@@ -788,8 +785,7 @@ struct timer_rand_state {
+ 	unsigned dont_count_entropy:1;
+ };
+ 
+-static struct timer_rand_state keyboard_timer_state;
+-static struct timer_rand_state mouse_timer_state;
++static struct timer_rand_state input_timer_state;
+ static struct timer_rand_state extract_timer_state;
+ static struct timer_rand_state *irq_timer_state[NR_IRQS];
+ 
+@@ -869,24 +865,20 @@ out:
+ 	preempt_enable();
+ }
+ 
+-void add_keyboard_randomness(unsigned char scancode)
++extern void add_input_randomness(unsigned int type, unsigned int code,
++				 unsigned int value)
+ {
+-	static unsigned char last_scancode;
+-	/* ignore autorepeat (multiple key down w/o key up) */
+-	DEBUG_ENT("keyboard event\n");
+-	if (scancode != last_scancode) {
+-		last_scancode = scancode;
+-		add_timer_randomness(&keyboard_timer_state, scancode);
+-	}
+-}
++	static unsigned char last_value;
+ 
+-void add_mouse_randomness(__u32 mouse_data)
+-{
+-	DEBUG_ENT("mouse event\n");
+-	add_timer_randomness(&mouse_timer_state, mouse_data);
+-}
++	/* ignore autorepeat and the like */
++	if (value == last_value)
++		return;
+ 
+-EXPORT_SYMBOL(add_mouse_randomness);
++	DEBUG_ENT("input event\n");
++	last_value = value;
++	add_timer_randomness(&input_timer_state,
++			     (type << 4) ^ code ^ (code >> 4) ^ value);
++}
+ 
+ void add_interrupt_randomness(int irq)
+ {
+@@ -1550,8 +1542,7 @@ static int __init rand_initialize(void)
+ #endif
+ 	for (i = 0; i < NR_IRQS; i++)
+ 		irq_timer_state[i] = NULL;
+-	memset(&keyboard_timer_state, 0, sizeof(struct timer_rand_state));
+-	memset(&mouse_timer_state, 0, sizeof(struct timer_rand_state));
++	memset(&input_timer_state, 0, sizeof(struct timer_rand_state));
+ 	memset(&extract_timer_state, 0, sizeof(struct timer_rand_state));
+ 	extract_timer_state.dont_count_entropy = 1;
+ 	return 0;
+diff -puN drivers/input/input.c~random-add_input_randomness drivers/input/input.c
+--- 25/drivers/input/input.c~random-add_input_randomness	2005-01-12 23:16:43.420571912 -0800
++++ 25-akpm/drivers/input/input.c	2005-01-12 23:16:43.428570696 -0800
+@@ -69,7 +69,7 @@ void input_event(struct input_dev *dev, 
+ 	if (type > EV_MAX || !test_bit(type, dev->evbit))
+ 		return;
+ 
+-	add_mouse_randomness((type << 4) ^ code ^ (code >> 4) ^ value);
++	add_input_randomness(type, code, value);
+ 
+ 	switch (type) {
+ 
+diff -puN include/linux/random.h~random-add_input_randomness include/linux/random.h
+--- 25/include/linux/random.h~random-add_input_randomness	2005-01-12 23:16:43.422571608 -0800
++++ 25-akpm/include/linux/random.h	2005-01-12 23:16:43.431570240 -0800
+@@ -44,8 +44,8 @@ struct rand_pool_info {
+ 
+ extern void rand_initialize_irq(int irq);
+ 
+-extern void add_keyboard_randomness(unsigned char scancode);
+-extern void add_mouse_randomness(__u32 mouse_data);
++extern void add_input_randomness(unsigned int type, unsigned int code,
++				 unsigned int value);
+ extern void add_interrupt_randomness(int irq);
+ 
+ extern void get_random_bytes(void *buf, int nbytes);
+_

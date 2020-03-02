@@ -1,0 +1,42 @@
+>From Takashi
+
+lock profiling shows 
+
+- mpage_writepages
+- sync_supers
+
+Are causing latency problems.  This adds some conditional schedules to
+help fix things
+
+Index: linux-2.6.8.1/fs/fs-writeback.c
+===================================================================
+--- linux-2.6.8.1.orig/fs/fs-writeback.c	2004-08-15 14:08:15.000000000 +1000
++++ linux-2.6.8.1/fs/fs-writeback.c	2004-08-15 14:58:54.654062056 +1000
+@@ -361,6 +361,7 @@ sync_sb_inodes(struct super_block *sb, s
+ 		}
+ 		spin_unlock(&inode_lock);
+ 		iput(inode);
++		cond_resched();
+ 		spin_lock(&inode_lock);
+ 		if (wbc->nr_to_write <= 0)
+ 			break;
+@@ -420,6 +421,7 @@ restart:
+ 	}
+ 	spin_unlock(&sb_lock);
+ 	spin_unlock(&inode_lock);
++	cond_resched();
+ }
+ 
+ /*
+Index: linux-2.6.8.1/fs/super.c
+===================================================================
+--- linux-2.6.8.1.orig/fs/super.c	2004-08-15 14:53:06.386262098 +1000
++++ linux-2.6.8.1/fs/super.c	2004-08-15 14:58:54.655061900 +1000
+@@ -320,6 +320,7 @@ void sync_supers(void)
+ {
+ 	struct super_block * sb;
+ restart:
++	cond_resched();
+ 	spin_lock(&sb_lock);
+ 	sb = sb_entry(super_blocks.next);
+ 	while (sb != sb_entry(&super_blocks))

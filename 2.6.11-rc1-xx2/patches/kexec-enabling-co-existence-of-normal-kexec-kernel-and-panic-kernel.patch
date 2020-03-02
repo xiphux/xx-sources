@@ -1,0 +1,65 @@
+
+From: Hariprasad Nellitheertha <hari@in.ibm.com>
+
+This patch enables the co-existence of normal kexec kernel image and the
+reboot-on-panic kernel image.  The reboot-on-panic kernel is now loaded
+using the "kexec -p" option instead of the "kexec -l" option.  An
+associated kexec-tools patch (which is mailed separately) is needed to
+achieve this.
+
+Signed-off-by: Hariprasad Nellitheertha <hari@in.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/kexec.h |    1 +
+ 25-akpm/kernel/kexec.c        |   13 +++++--------
+ 2 files changed, 6 insertions(+), 8 deletions(-)
+
+diff -puN include/linux/kexec.h~kexec-enabling-co-existence-of-normal-kexec-kernel-and-panic-kernel include/linux/kexec.h
+--- 25/include/linux/kexec.h~kexec-enabling-co-existence-of-normal-kexec-kernel-and-panic-kernel	Wed Oct 20 16:22:04 2004
++++ 25-akpm/include/linux/kexec.h	Wed Oct 20 16:22:04 2004
+@@ -52,5 +52,6 @@ extern asmlinkage long sys_kexec(unsigne
+ 	struct kexec_segment *segments);
+ extern struct page *kimage_alloc_control_pages(struct kimage *image, unsigned int order);
+ extern struct kimage *kexec_image;
++extern struct kimage *kexec_crash_image;
+ #endif
+ #endif /* LINUX_KEXEC_H */
+diff -puN kernel/kexec.c~kexec-enabling-co-existence-of-normal-kexec-kernel-and-panic-kernel kernel/kexec.c
+--- 25/kernel/kexec.c~kexec-enabling-co-existence-of-normal-kexec-kernel-and-panic-kernel	Wed Oct 20 16:22:04 2004
++++ 25-akpm/kernel/kexec.c	Wed Oct 20 16:22:04 2004
+@@ -585,6 +585,7 @@ static int kimage_load_segment(struct ki
+  * that to happen you need to do that yourself.
+  */
+ struct kimage *kexec_image = NULL;
++struct kimage *kexec_crash_image = NULL;
+ 
+ asmlinkage long sys_kexec_load(unsigned long entry, unsigned long nr_segments,
+ 	struct kexec_segment *segments, unsigned long flags)
+@@ -596,13 +597,6 @@ asmlinkage long sys_kexec_load(unsigned 
+ 	if (!capable(CAP_SYS_BOOT))
+ 		return -EPERM;
+ 
+-	/*
+-	 * In case we need just a little bit of special behavior for
+-	 * reboot on panic.
+-	 */
+-	if (flags != 0)
+-		return -EINVAL;
+-
+ 	if (nr_segments > KEXEC_SEGMENT_MAX)
+ 		return -EINVAL;
+ 
+@@ -632,7 +626,10 @@ asmlinkage long sys_kexec_load(unsigned 
+ 		}
+ 	}
+ 
+-	image = xchg(&kexec_image, image);
++	if (!flags)
++		image = xchg(&kexec_image, image);
++	else
++		image = xchg(&kexec_crash_image, image);
+ 
+  out:
+ 	kimage_free(image);
+_

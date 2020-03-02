@@ -1,0 +1,38 @@
+
+From: Brian Gerst <bgerst@quark.didntduck.org>
+
+The last attempt to clean this up still left a hardcoded constant (the
+offset from __FIXADDR_TOP).  This patch moves VSYSCALL_BASE to
+asm-offsets.c.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/asm-offsets.c  |    1 +
+ 25-akpm/arch/i386/kernel/vsyscall.lds.S |    4 +---
+ 2 files changed, 2 insertions(+), 3 deletions(-)
+
+diff -puN arch/i386/kernel/asm-offsets.c~fix-hardcoded-value-in-vsyscalllds arch/i386/kernel/asm-offsets.c
+--- 25/arch/i386/kernel/asm-offsets.c~fix-hardcoded-value-in-vsyscalllds	2004-08-28 15:12:10.242165216 -0700
++++ 25-akpm/arch/i386/kernel/asm-offsets.c	2004-08-28 15:12:10.247164456 -0700
+@@ -62,4 +62,5 @@ void foo(void)
+ 		 sizeof(struct tss_struct));
+ 
+ 	DEFINE(PAGE_SIZE_asm, PAGE_SIZE);
++	DEFINE(VSYSCALL_BASE, __fix_to_virt(FIX_VSYSCALL));
+ }
+diff -puN arch/i386/kernel/vsyscall.lds.S~fix-hardcoded-value-in-vsyscalllds arch/i386/kernel/vsyscall.lds.S
+--- 25/arch/i386/kernel/vsyscall.lds.S~fix-hardcoded-value-in-vsyscalllds	2004-08-28 15:12:10.243165064 -0700
++++ 25-akpm/arch/i386/kernel/vsyscall.lds.S	2004-08-28 15:12:10.247164456 -0700
+@@ -3,9 +3,7 @@
+  * object prelinked to its virtual address, and with only one read-only
+  * segment (that fits in one page).  This script controls its layout.
+  */
+-#include <asm/fixmap.h>
+-
+-VSYSCALL_BASE = __FIXADDR_TOP - 0x1000;
++#include <asm/asm_offsets.h>
+ 
+ SECTIONS
+ {
+_

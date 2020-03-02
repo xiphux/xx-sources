@@ -1,0 +1,80 @@
+
+From: Andi Kleen <ak@muc.de>
+
+Split CONFIG_NUMA_EMU and CONFIG_K8_NUMA because they are independent.
+
+Signed-off-by: Andi Kleen <ak@muc.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/x86_64/Kconfig   |   15 ++++++++++++---
+ 25-akpm/arch/x86_64/mm/numa.c |    4 ++++
+ 2 files changed, 16 insertions(+), 3 deletions(-)
+
+diff -puN arch/x86_64/Kconfig~x86_64-kconfig-split-config_numa_emu-and-config_k8_numa arch/x86_64/Kconfig
+--- 25/arch/x86_64/Kconfig~x86_64-kconfig-split-config_numa_emu-and-config_k8_numa	Fri Oct  8 14:02:57 2004
++++ 25-akpm/arch/x86_64/Kconfig	Fri Oct  8 14:02:57 2004
+@@ -257,6 +257,7 @@ config SCHED_SMT
+ 
+ config K8_NUMA
+        bool "K8 NUMA support"
++       select NUMA
+        depends on SMP
+        help
+ 	  Enable NUMA (Non Unified Memory Architecture) support for
+@@ -266,15 +267,23 @@ config K8_NUMA
+ 	  This code is recommended on all multiprocessor Opteron systems
+ 	  and normally doesn't hurt on others.
+ 
++config NUMA_EMU
++	bool "NUMA emulation support"
++	select NUMA
++	depends on SMP
++	help
++	  Enable NUMA emulation. A flat machine will be split
++	  into virtual nodes when booted with "numa=fake=N", where N is the
++	  number of nodes. This is only useful for debugging.
++
+ config DISCONTIGMEM
+        bool
+-       depends on K8_NUMA
++       depends on NUMA
+        default y
+ 
+ config NUMA
+        bool
+-       depends on K8_NUMA
+-       default y
++       default n
+ 
+ config HAVE_DEC_LOCK
+ 	bool
+diff -puN arch/x86_64/mm/numa.c~x86_64-kconfig-split-config_numa_emu-and-config_k8_numa arch/x86_64/mm/numa.c
+--- 25/arch/x86_64/mm/numa.c~x86_64-kconfig-split-config_numa_emu-and-config_k8_numa	Fri Oct  8 14:02:57 2004
++++ 25-akpm/arch/x86_64/mm/numa.c	Fri Oct  8 14:02:57 2004
+@@ -215,6 +215,7 @@ void __init numa_init_array(void)
+ 	set_bit(0, &node_to_cpumask[cpu_to_node(0)]);
+ }
+ 
++#ifdef CONFIG_NUMA_EMU
+ int numa_fake __initdata = 0;
+ 
+ /* Numa emulation */
+@@ -262,13 +263,16 @@ static int numa_emulation(unsigned long 
+  	numa_init_array();
+  	return 0;
+ }
++#endif
+ 
+ void __init numa_initmem_init(unsigned long start_pfn, unsigned long end_pfn)
+ { 
+ 	int i;
+ 
++#ifdef CONFIG_NUMA_EMU
+ 	if (numa_fake && !numa_emulation(start_pfn, end_pfn))
+  		return;
++#endif
+ 
+ #ifdef CONFIG_K8_NUMA
+ 	if (!numa_off && !k8_scan_nodes(start_pfn<<PAGE_SHIFT, end_pfn<<PAGE_SHIFT))
+_

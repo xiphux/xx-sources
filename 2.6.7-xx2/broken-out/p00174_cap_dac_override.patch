@@ -1,0 +1,48 @@
+
+From: <Andries.Brouwer@cwi.nl>
+
+It seems that CAP_DAC_OVERRIDE is treated inconsistently.  In
+fs/namei.c:vfs_permission() it allows one to search in a directory with
+zero permissions:
+
+        if (!(mask & MAY_EXEC) ||
+            (inode->i_mode & S_IXUGO) || S_ISDIR(inode->i_mode))
+                if (capable(CAP_DAC_OVERRIDE))
+                        return 0;
+
+while in fs/namei.c:exec_permission_lite() it does not.
+
+Chris Wright <chrisw@osdl.org>:
+
+  I changed it just slightly from yours to keep in line with code in
+  vfs_permission.  
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/namei.c |    5 +++--
+ 1 files changed, 3 insertions(+), 2 deletions(-)
+
+diff -puN fs/namei.c~cap_dac_override fs/namei.c
+--- 25/fs/namei.c~cap_dac_override	2004-06-22 01:54:01.376103000 -0700
++++ 25-akpm/fs/namei.c	2004-06-22 01:54:01.383101936 -0700
+@@ -316,7 +316,7 @@ static inline int exec_permission_lite(s
+ {
+ 	umode_t	mode = inode->i_mode;
+ 
+-	if ((inode->i_op && inode->i_op->permission))
++	if (inode->i_op && inode->i_op->permission)
+ 		return -EAGAIN;
+ 
+ 	if (current->fsuid == inode->i_uid)
+@@ -327,7 +327,8 @@ static inline int exec_permission_lite(s
+ 	if (mode & MAY_EXEC)
+ 		goto ok;
+ 
+-	if ((inode->i_mode & S_IXUGO) && capable(CAP_DAC_OVERRIDE))
++	if (((inode->i_mode & S_IXUGO) || S_ISDIR(inode->i_mode)) &&
++	    capable(CAP_DAC_OVERRIDE))
+ 		goto ok;
+ 
+ 	if (S_ISDIR(inode->i_mode) && capable(CAP_DAC_READ_SEARCH))
+_

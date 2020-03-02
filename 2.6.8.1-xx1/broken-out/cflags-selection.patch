@@ -1,0 +1,184 @@
+Index: xx-sources/arch/i386/Kconfig
+===================================================================
+--- xx-sources.orig/arch/i386/Kconfig	2004-08-11 17:28:02.766863656 -0400
++++ xx-sources/arch/i386/Kconfig	2004-08-11 17:28:58.959321104 -0400
+@@ -1239,6 +1239,47 @@
+ 	  allocation as well as poisoning memory on free to catch use of freed
+ 	  memory.
+ 
++config CFLAGS_EDIT
++	bool "CFLAGS hacking"
++	default n
++	help
++	  This allows you to append to or override the CFLAGS set for your
++	  machine. Changing CFLAGS is commonly a very bad idea, because
++	  Kernel Hackers Know Best. However if you wish to mess around
++	  with your CFLAGS anyway, enable this and enter your CFLAGS
++	  string to append below.
++
++	  The original intent of this option is to allow for use of flags that
++	  don't really affect the result so much as gcc itself - maybe you
++	  don't want to guess branch probabilities for some reason. That said,
++	  we recognize that there's a nicely sized market for people who just
++	  want to tinker, and this is why this option exists.
++
++	  A lot of things may become unpredictable when using aggressive CFLAGS
++	  in the kernel. Don't complain about _anything_ until disabling this
++	  option.
++
++	  If you have any doubt, say N.
++
++config CFLAGS_STRING
++	string "New CFLAGS"
++	depends on CFLAGS_EDIT
++	default "CHANGE ME"
++	help
++	  Enter your new CFLAGS here, using appropriate syntax for gcc. If you
++	  don't know what this means, flee now.
++
++config CFLAGS_OVERRIDE
++	bool "Override existing CFLAGS"
++	depends on CFLAGS_EDIT
++	default n
++	help
++	  This allows you to unset any CFLAGS generated from processor selections
++	  made at the top of the config.
++
++	  There is no reason to enable this. You always want the bare minimum for
++	  your processor. Say N.
++
+ config MAGIC_SYSRQ
+ 	bool "Magic SysRq key"
+ 	depends on DEBUG_KERNEL
+Index: xx-sources/arch/i386/Makefile
+===================================================================
+--- xx-sources.orig/arch/i386/Makefile	2004-08-11 17:28:02.688875512 -0400
++++ xx-sources/arch/i386/Makefile	2004-08-11 17:28:58.961320800 -0400
+@@ -63,6 +63,14 @@
+ 
+ CFLAGS += $(cflags-y)
+ 
++ifdef CONFIG_CFLAGS_EDIT
++	ifdef CONFIG_CFLAGS_OVERRIDE
++		CFLAGS = $(shell echo $(CONFIG_CFLAGS_STRING) | sed -e 's/"//g')
++	else
++		CFLAGS += $(shell echo $(CONFIG_CFLAGS_STRING) | sed -e 's/"//g')
++	endif
++endif
++
+ # Default subarch .c files
+ mcore-y  := mach-default
+ 
+Index: xx-sources/arch/i386/kernel/traps.c
+===================================================================
+--- xx-sources.orig/arch/i386/kernel/traps.c	2004-08-11 17:28:02.868848152 -0400
++++ xx-sources/arch/i386/kernel/traps.c	2004-08-11 17:28:58.963320496 -0400
+@@ -156,6 +156,9 @@
+ {
+ 	unsigned long addr;
+ 
++#ifdef CONFIG_CFLAGS_EDIT
++	printk("CFLAGS_EDIT\n");
++#endif
+ 	while (!kstack_end(stack)) {
+ 		addr = *stack++;
+ 		if (__kernel_text_address(addr)) {
+@@ -362,7 +365,11 @@
+ 		nl = 1;
+ #endif
+ #ifdef CONFIG_DEBUG_PAGEALLOC
+-		printk("DEBUG_PAGEALLOC");
++	printk("DEBUG_PAGEALLOC ");
++	nl = 1;
++#endif
++#ifdef CONFIG_CFLAGS_EDIT
++	printk("CFLAGS_EDIT");
+ 		nl = 1;
+ #endif
+ 		if (nl)
+Index: xx-sources/arch/x86_64/Kconfig
+===================================================================
+--- xx-sources.orig/arch/x86_64/Kconfig	2004-08-11 17:28:02.897843744 -0400
++++ xx-sources/arch/x86_64/Kconfig	2004-08-11 17:28:58.965320192 -0400
+@@ -497,6 +497,47 @@
+ 	 frame pointer through inline assembly (semaphores etc.)
+ 	 Normally you should say N.
+ 
++config CFLAGS_EDIT
++	bool "CFLAGS hacking"
++	default n
++	help
++	  This allows you to append to or override the CFLAGS set for your
++	  machine. Changing CFLAGS is commonly a very bad idea, because
++	  Kernel Hackers Know Best. However if you wish to mess around
++	  with your CFLAGS anyway, enable this and enter your CFLAGS
++	  string to append below.
++
++	  The original intent of this option is to allow for use of flags that
++	  don't really affect the result so much as gcc itself - maybe you
++	  don't want to guess branch probabilities for some reason. That said,
++	  we recognize that there's a nicely sized market for people who just
++	  want to tinker, and this is why this option exists.
++
++	  A lot of things may become unpredictable when using aggressive CFLAGS
++	  in the kernel. Don't complain about _anything_ until disabling this
++	  option.
++
++	  If you have any doubt, say N.
++
++config CFLAGS_STRING
++	string "New CFLAGS"
++	depends on CFLAGS_EDIT
++	default "CHANGE ME"
++	help
++	  Enter your new CFLAGS here, using appropriate syntax for gcc. If you
++	  don't know what this means, flee now.
++
++config CFLAGS_OVERRIDE
++	bool "Override existing CFLAGS"
++	depends on CFLAGS_EDIT
++	default n
++	help
++	  This allows you to unset any CFLAGS generated from processor selections
++	  made at the top of the config.
++
++	  There is no reason to enable this. You always want the bare minimum for
++	  your processor. Say N.
++
+ config IOMMU_DEBUG
+        depends on GART_IOMMU && DEBUG_KERNEL
+        bool "Enable IOMMU debugging"
+Index: xx-sources/arch/x86_64/Makefile
+===================================================================
+--- xx-sources.orig/arch/x86_64/Makefile	2004-08-11 17:28:02.869848000 -0400
++++ xx-sources/arch/x86_64/Makefile	2004-08-11 17:28:58.966320040 -0400
+@@ -61,6 +61,14 @@
+ CFLAGS += $(call check_gcc,-funit-at-a-time,)
+ CFLAGS += -msoft-float
+ 
++ifdef CONFIG_CFLAGS_EDIT
++	ifdef CONFIG_CFLAGS_OVERRIDE
++		CFLAGS = $(shell echo $(CONFIG_CFLAGS_STRING) | sed -e 's/"//g')
++	else
++		CFLAGS += $(shell echo $(CONFIG_CFLAGS_STRING) | sed -e 's/"//g')
++	endif
++endif
++
+ head-y := arch/x86_64/kernel/head.o arch/x86_64/kernel/head64.o arch/x86_64/kernel/init_task.o
+ 
+ libs-y 					+= arch/x86_64/lib/
+Index: xx-sources/arch/x86_64/kernel/traps.c
+===================================================================
+--- xx-sources.orig/arch/x86_64/kernel/traps.c	2004-08-11 17:28:02.973832192 -0400
++++ xx-sources/arch/x86_64/kernel/traps.c	2004-08-11 17:28:58.969319584 -0400
+@@ -138,6 +138,10 @@
+ 
+ 	printk("\nCall Trace:");
+ 	i = 0; 
++
++#ifdef CONFIG_CFLAGS_EDIT
++       printk("\nCFLAGS_EDIT\n");
++#endif
+ 	
+ 	estack_end = in_exception_stack(cpu, (unsigned long)stack); 
+ 	if (estack_end) { 

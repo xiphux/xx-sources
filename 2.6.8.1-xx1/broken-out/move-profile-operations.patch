@@ -1,0 +1,199 @@
+
+From: William Lee Irwin III <wli@holomorphy.com>
+
+proc_misc.c is a trainwreck.  Move the file_operations for /proc/profile into
+kernel/profile.c and call the profiling setup from proc_misc_init().
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/proc/proc_misc.c     |   72 -------------------------------------
+ 25-akpm/include/linux/profile.h |    1 
+ 25-akpm/kernel/profile.c        |   76 ++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 78 insertions(+), 71 deletions(-)
+
+diff -puN fs/proc/proc_misc.c~move-profile-operations fs/proc/proc_misc.c
+--- 25/fs/proc/proc_misc.c~move-profile-operations	2004-08-05 11:28:36.873168440 -0700
++++ 25-akpm/fs/proc/proc_misc.c	2004-08-05 11:28:36.881167224 -0700
+@@ -541,70 +541,6 @@ static int execdomains_read_proc(char *p
+ 	return proc_calc_metrics(page, start, off, count, eof, len);
+ }
+ 
+-/*
+- * This function accesses profiling information. The returned data is
+- * binary: the sampling step and the actual contents of the profile
+- * buffer. Use of the program readprofile is recommended in order to
+- * get meaningful info out of these data.
+- */
+-static ssize_t
+-read_profile(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+-{
+-	unsigned long p = *ppos;
+-	ssize_t read;
+-	char * pnt;
+-	unsigned int sample_step = 1 << prof_shift;
+-
+-	if (p >= (prof_len+1)*sizeof(unsigned int))
+-		return 0;
+-	if (count > (prof_len+1)*sizeof(unsigned int) - p)
+-		count = (prof_len+1)*sizeof(unsigned int) - p;
+-	read = 0;
+-
+-	while (p < sizeof(unsigned int) && count > 0) {
+-		put_user(*((char *)(&sample_step)+p),buf);
+-		buf++; p++; count--; read++;
+-	}
+-	pnt = (char *)prof_buffer + p - sizeof(unsigned int);
+-	if (copy_to_user(buf,(void *)pnt,count))
+-		return -EFAULT;
+-	read += count;
+-	*ppos += read;
+-	return read;
+-}
+-
+-/*
+- * Writing to /proc/profile resets the counters
+- *
+- * Writing a 'profiling multiplier' value into it also re-sets the profiling
+- * interrupt frequency, on architectures that support this.
+- */
+-static ssize_t write_profile(struct file *file, const char __user *buf,
+-			     size_t count, loff_t *ppos)
+-{
+-#ifdef CONFIG_SMP
+-	extern int setup_profiling_timer (unsigned int multiplier);
+-
+-	if (count == sizeof(int)) {
+-		unsigned int multiplier;
+-
+-		if (copy_from_user(&multiplier, buf, sizeof(int)))
+-			return -EFAULT;
+-
+-		if (setup_profiling_timer(multiplier))
+-			return -EINVAL;
+-	}
+-#endif
+-
+-	memset(prof_buffer, 0, prof_len * sizeof(*prof_buffer));
+-	return count;
+-}
+-
+-static struct file_operations proc_profile_operations = {
+-	.read		= read_profile,
+-	.write		= write_profile,
+-};
+-
+ #ifdef CONFIG_MAGIC_SYSRQ
+ /*
+  * writing 'C' to /proc/sysrq-trigger is like sysrq-C
+@@ -722,13 +658,7 @@ void __init proc_misc_init(void)
+ 				(size_t)high_memory - PAGE_OFFSET + PAGE_SIZE;
+ 	}
+ #endif
+-	if (prof_on) {
+-		entry = create_proc_entry("profile", S_IWUSR | S_IRUGO, NULL);
+-		if (entry) {
+-			entry->proc_fops = &proc_profile_operations;
+-			entry->size = (1+prof_len) * sizeof(unsigned int);
+-		}
+-	}
++	create_proc_profile();
+ #ifdef CONFIG_MAGIC_SYSRQ
+ 	entry = create_proc_entry("sysrq-trigger", S_IWUSR, NULL);
+ 	if (entry)
+diff -puN include/linux/profile.h~move-profile-operations include/linux/profile.h
+--- 25/include/linux/profile.h~move-profile-operations	2004-08-05 11:28:36.874168288 -0700
++++ 25-akpm/include/linux/profile.h	2004-08-05 11:28:36.881167224 -0700
+@@ -23,6 +23,7 @@ void __init profile_init(void);
+ void create_prof_cpu_mask(struct proc_dir_entry *);
+ void profile_tick(int, struct pt_regs *);
+ void profile_hit(int, void *);
++void create_proc_profile(void);
+ 
+ extern unsigned int * prof_buffer;
+ extern unsigned long prof_len;
+diff -puN kernel/profile.c~move-profile-operations kernel/profile.c
+--- 25/kernel/profile.c~move-profile-operations	2004-08-05 11:28:36.876167984 -0700
++++ 25-akpm/kernel/profile.c	2004-08-05 11:28:36.882167072 -0700
+@@ -227,4 +227,80 @@ void create_prof_cpu_mask(struct proc_di
+ 	entry->read_proc = prof_cpu_mask_read_proc;
+ 	entry->write_proc = prof_cpu_mask_write_proc;
+ }
++
++/*
++ * This function accesses profiling information. The returned data is
++ * binary: the sampling step and the actual contents of the profile
++ * buffer. Use of the program readprofile is recommended in order to
++ * get meaningful info out of these data.
++ */
++static ssize_t
++read_profile(struct file *file, char __user *buf, size_t count, loff_t *ppos)
++{
++	unsigned long p = *ppos;
++	ssize_t read;
++	char * pnt;
++	unsigned int sample_step = 1 << prof_shift;
++
++	if (p >= (prof_len+1)*sizeof(unsigned int))
++		return 0;
++	if (count > (prof_len+1)*sizeof(unsigned int) - p)
++		count = (prof_len+1)*sizeof(unsigned int) - p;
++	read = 0;
++
++	while (p < sizeof(unsigned int) && count > 0) {
++		put_user(*((char *)(&sample_step)+p),buf);
++		buf++; p++; count--; read++;
++	}
++	pnt = (char *)prof_buffer + p - sizeof(unsigned int);
++	if (copy_to_user(buf,(void *)pnt,count))
++		return -EFAULT;
++	read += count;
++	*ppos += read;
++	return read;
++}
++
++/*
++ * Writing to /proc/profile resets the counters
++ *
++ * Writing a 'profiling multiplier' value into it also re-sets the profiling
++ * interrupt frequency, on architectures that support this.
++ */
++static ssize_t write_profile(struct file *file, const char __user *buf,
++			     size_t count, loff_t *ppos)
++{
++#ifdef CONFIG_SMP
++	extern int setup_profiling_timer (unsigned int multiplier);
++
++	if (count == sizeof(int)) {
++		unsigned int multiplier;
++
++		if (copy_from_user(&multiplier, buf, sizeof(int)))
++			return -EFAULT;
++
++		if (setup_profiling_timer(multiplier))
++			return -EINVAL;
++	}
++#endif
++
++	memset(prof_buffer, 0, prof_len * sizeof(*prof_buffer));
++	return count;
++}
++
++static struct file_operations proc_profile_operations = {
++	.read		= read_profile,
++	.write		= write_profile,
++};
++
++void __init create_proc_profile(void)
++{
++	struct proc_dir_entry *entry;
++
++	if (!prof_on)
++		return;
++	if (!(entry = create_proc_entry("profile", S_IWUSR | S_IRUGO, NULL)))
++		return;
++	entry->proc_fops = &proc_profile_operations;
++	entry->size = (1+prof_len) * sizeof(unsigned int);
++}
+ #endif /* CONFIG_PROC_FS */
+_

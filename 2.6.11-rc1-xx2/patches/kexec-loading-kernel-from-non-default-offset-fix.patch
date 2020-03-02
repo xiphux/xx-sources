@@ -1,0 +1,40 @@
+
+From: Hariprasad Nellitheertha <hari@in.ibm.com>
+
+The compile time error that few people have been seeing with the last
+couple of -mm releases are due to the changes introduced to
+arch/i386/kernel/vmlinux.lds.S to enable kexec based crashdumps.  Since
+fixing this error needs an upgrade of the binutils package on those
+machines, I was looking at a possible workaround within the kernel code
+itself.
+
+The problem seems to arise from the fact that the .bss.page_aligned section
+(defined in head.S) is included within the .bss section.  Older binutils
+does not export the proper physical address (LMA) for the .bss section.  I
+made a patch which moves the .bss.page_aligned section to just before the
+.bss section.  This compiles fine with both older and newer binutils
+packages.  I have done some amount of testing with this change and it has
+not thrown up any problems.
+
+Signed-off-by: Hariprasad Nellitheertha <hari@in.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/vmlinux.lds.S |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletion(-)
+
+diff -puN arch/i386/kernel/vmlinux.lds.S~kexec-loading-kernel-from-non-default-offset-fix arch/i386/kernel/vmlinux.lds.S
+--- 25/arch/i386/kernel/vmlinux.lds.S~kexec-loading-kernel-from-non-default-offset-fix	Mon Nov  1 14:30:14 2004
++++ 25-akpm/arch/i386/kernel/vmlinux.lds.S	Mon Nov  1 14:30:14 2004
+@@ -117,8 +117,9 @@ SECTIONS
+   /* freed after init ends here */
+ 	
+   __bss_start = .;		/* BSS */
++  .bss.page_aligned  : AT(ADDR(.bss.page_aligned) - LOAD_OFFSET) {
++	*(.bss.page_aligned) }
+   .bss : AT(ADDR(.bss) - LOAD_OFFSET) {
+-	*(.bss.page_aligned)
+ 	*(.bss)
+   }
+   . = ALIGN(4);
+_

@@ -1,0 +1,44 @@
+
+From: Hans Reiser <reiser@namesys.com>
+
+This disables reiser4 online repacker.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/reiser4/repacker.c |    6 ++++++
+ 1 files changed, 6 insertions(+)
+
+diff -puN fs/reiser4/repacker.c~reiser4-disable-repacker fs/reiser4/repacker.c
+--- 25/fs/reiser4/repacker.c~reiser4-disable-repacker	Thu Sep 23 14:40:28 2004
++++ 25-akpm/fs/reiser4/repacker.c	Thu Sep 23 14:40:28 2004
+@@ -624,6 +624,7 @@ static void done_repacker_sysfs_interfac
+ 
+ reiser4_internal int init_reiser4_repacker (struct super_block *super)
+ {
++#if defined(REISER4_REPACKER)
+ 	reiser4_super_info_data * sinfo = get_super_private(super);
+ 
+ 	assert ("zam-946", sinfo->repacker == NULL);
+@@ -640,10 +641,14 @@ reiser4_internal int init_reiser4_repack
+ 	kcond_init(&sinfo->repacker->cond);
+ 
+ 	return init_repacker_sysfs_interface(super);
++#else
++	return 0;
++#endif /*REISER4_REPACKER*/
+ }
+ 
+ reiser4_internal void done_reiser4_repacker (struct super_block *super)
+ {
++#if defined(REISER4_REPACKER)
+ 	reiser4_super_info_data * sinfo = get_super_private(super);
+ 	struct repacker * repacker;
+ 
+@@ -658,4 +663,5 @@ reiser4_internal void done_reiser4_repac
+ 
+ 	kfree(repacker);
+ 	sinfo->repacker = NULL;
++#endif /*REISER4_REPACKER*/
+ }
+_

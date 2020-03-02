@@ -1,0 +1,42 @@
+
+From: Christoph Hellwig <hch@infradead.org>
+
+The original intention (pre-patch) was that without an ioctl entry
+we'd skip the hash table lookup and skip right to trying the few standard
+ioctls.
+
+So with ->compat_ioctl we should try that one first, then checking
+for either ->ioctl or ->unlocked_ioctl beeing there.  Like the patch
+below (this time it's actually untested because all my 64bit machines
+are in use):
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/compat.c |    9 +++++----
+ 1 files changed, 5 insertions(+), 4 deletions(-)
+
+diff -puN fs/compat.c~ioctl-rework-2-fix fs/compat.c
+--- 25/fs/compat.c~ioctl-rework-2-fix	2005-01-06 08:32:33.514162472 -0800
++++ 25-akpm/fs/compat.c	2005-01-06 08:32:33.518161864 -0800
+@@ -436,14 +436,15 @@ asmlinkage long compat_sys_ioctl(unsigne
+ 	if (!filp)
+ 		goto out;
+ 
+-	if (!filp->f_op) {
+-		if (!filp->f_op->ioctl)
+-			goto do_ioctl;
+-	} else if (filp->f_op->compat_ioctl) {
++	if (filp->f_op && filp->f_op->compat_ioctl) {
+ 		error = filp->f_op->compat_ioctl(filp, cmd, arg);
+ 		goto out_fput;
+ 	}
+ 
++	if (!filp->f_op ||
++	    (!filp->f_op->ioctl && !filp->f_op->unlocked_ioctl))
++		goto do_ioctl;
++
+ 	down_read(&ioctl32_sem);
+ 	for (t = ioctl32_hash_table[ioctl32_hash(cmd)]; t; t = t->next) {
+ 		if (t->cmd == cmd)
+_

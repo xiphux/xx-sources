@@ -1,0 +1,56 @@
+
+From: Nick Piggin <nickpiggin@yahoo.com.au>
+
+Andi said he just used the funny MCE scheme to avoid clashes with other
+SUSE taint bits, but that it doesn't matter for the Linus tree.  He's happy
+for you to apply this.
+
+Signed-off-by: Nick Piggin <nickpiggin@yahoo.com.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/kernel.h |    2 +-
+ 25-akpm/kernel/panic.c         |    5 +++--
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff -puN include/linux/kernel.h~taint-cleanup-mce include/linux/kernel.h
+--- 25/include/linux/kernel.h~taint-cleanup-mce	Tue Oct  5 16:34:39 2004
++++ 25-akpm/include/linux/kernel.h	Tue Oct  5 16:34:39 2004
+@@ -146,11 +146,11 @@ extern enum system_states {
+ 	SYSTEM_RESTART,
+ } system_state;
+ 
+-#define TAINT_MACHINE_CHECK		(1<<10)
+ #define TAINT_PROPRIETARY_MODULE	(1<<0)
+ #define TAINT_FORCED_MODULE		(1<<1)
+ #define TAINT_UNSAFE_SMP		(1<<2)
+ #define TAINT_FORCED_RMMOD		(1<<3)
++#define TAINT_MACHINE_CHECK		(1<<4)
+ 
+ extern void dump_stack(void);
+ 
+diff -puN kernel/panic.c~taint-cleanup-mce kernel/panic.c
+--- 25/kernel/panic.c~taint-cleanup-mce	Tue Oct  5 16:34:39 2004
++++ 25-akpm/kernel/panic.c	Tue Oct  5 16:36:14 2004
+@@ -117,6 +117,7 @@ EXPORT_SYMBOL(panic);
+  *  'P' - Proprietary module has been loaded.
+  *  'F' - Module has been forcibly loaded.
+  *  'S' - SMP with CPUs not designed for SMP.
++ *  'M' - Machine had a machine check experience.
+  *
+  *	The string is overwritten by the next call to print_taint().
+  */
+@@ -126,10 +127,10 @@ const char *print_tainted(void)
+ 	static char buf[20];
+ 	if (tainted) {
+ 		snprintf(buf, sizeof(buf), "Tainted: %c%c%c%c",
+- 			tainted & TAINT_MACHINE_CHECK ? 'M' : ' ',
+ 			tainted & TAINT_PROPRIETARY_MODULE ? 'P' : 'G',
+ 			tainted & TAINT_FORCED_MODULE ? 'F' : ' ',
+-			tainted & TAINT_UNSAFE_SMP ? 'S' : ' ');
++			tainted & TAINT_UNSAFE_SMP ? 'S' : ' ',
++ 			tainted & TAINT_MACHINE_CHECK ? 'M' : ' ');
+ 	}
+ 	else
+ 		snprintf(buf, sizeof(buf), "Not tainted");
+_

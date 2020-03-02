@@ -1,0 +1,183 @@
+---
+
+ linux-2.6.7-rc2-xx3-xiphux/include/linux/suspend-common.h |    5 +-
+ linux-2.6.7-rc2-xx3-xiphux/include/linux/suspend-debug.h  |    2 
+ linux-2.6.7-rc2-xx3-xiphux/kernel/power/prepare_image.c   |   34 ++++++--------
+ linux-2.6.7-rc2-xx3-xiphux/kernel/power/suspend2.c        |    7 ++
+ 4 files changed, 27 insertions(+), 21 deletions(-)
+
+diff -puN include/linux/suspend-common.h~31-software-suspend-core-2.0.0.81-incremental include/linux/suspend-common.h
+--- linux-2.6.7-rc2-xx3/include/linux/suspend-common.h~31-software-suspend-core-2.0.0.81-incremental	2004-06-04 00:51:40.461319008 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/linux/suspend-common.h	2004-06-04 00:51:40.475316880 -0400
+@@ -174,8 +174,11 @@ extern int try_to_free_pages_suspend(int
+ 
+ #ifdef CONFIG_SOFTWARE_SUSPEND_DEBUG
+ extern int suspend_memory_pool_level(void);
++extern int suspend_amount_grabbed;
+ #define PRINTFREEMEM(desn) printlog(SUSPEND_MEMORY, SUSPEND_MEDIUM, \
+-	"Free memory %s: %d+%d.\n", desn, nr_free_pages(), suspend_memory_pool_level())
++	"Free memory %s: %d+%d.\n", desn, \
++	nr_free_pages() + suspend_amount_grabbed, \
++	suspend_memory_pool_level())
+ #else /* CONFIG_SOFTWARE_SUSPEND_DEBUG */
+ #define PRINTFREEMEM(desn) do { } while(0)
+ #endif /* CONFIG_SOFTWARE_SUSPEND_DEBUG */
+diff -puN include/linux/suspend-debug.h~31-software-suspend-core-2.0.0.81-incremental include/linux/suspend-debug.h
+--- linux-2.6.7-rc2-xx3/include/linux/suspend-debug.h~31-software-suspend-core-2.0.0.81-incremental	2004-06-04 00:51:40.464318552 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/include/linux/suspend-debug.h	2004-06-04 00:51:40.477316576 -0400
+@@ -5,7 +5,7 @@
+ /* Solely for comparison with the version specific patch revision */
+ #define SWSUSP_CORE_REVISION 0x201
+ 
+-#define SWSUSP_CORE_VERSION "2.0.0.80"
++#define SWSUSP_CORE_VERSION "2.0.0.81"
+ #define name_suspend "Software Suspend " SWSUSP_CORE_VERSION ": "
+ 
+ /* Same length to ensure one overwrites the other */
+diff -puN kernel/power/prepare_image.c~31-software-suspend-core-2.0.0.81-incremental kernel/power/prepare_image.c
+--- linux-2.6.7-rc2-xx3/kernel/power/prepare_image.c~31-software-suspend-core-2.0.0.81-incremental	2004-06-04 00:51:40.466318248 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/kernel/power/prepare_image.c	2004-06-04 00:51:40.485315360 -0400
+@@ -25,7 +25,8 @@ extern void mark_pages_for_pageset2(void
+ extern int image_size_limit;
+ extern int fill_suspend_memory_pool(int sizesought);
+ 
+-static int amount_eaten = 0, arefrozen = 0, numnosave = 0;
++int suspend_amount_grabbed = 0;
++static int arefrozen = 0, numnosave = 0;
+ 
+ static void generate_free_page_map(void)
+ {
+@@ -341,7 +342,7 @@ static int amount_needed(int use_image_s
+ {
+ 
+ 	int max1 = MAX( (int) (RAM_TO_SUSPEND - nr_free_pages() -
+-			  nr_free_highpages() - amount_eaten),
++			  nr_free_highpages() - suspend_amount_grabbed),
+ 			((int) (STORAGE_NEEDED(1) -
+ 			  active_writer->ops.writer.storage_available())));
+ 	if (use_image_size_limit)
+@@ -362,8 +363,8 @@ void display_stats(void)
+ 		"Free:%d+%d+%d=%d(%d). Sets:%d(%d),%d(%d). Header:%d. Nosave:%d-%d-%d=%d. Storage:%d/%lu(%lu). Needed:%d|%d|%d\n",
+ 
+ 		/* Free */
+-		nr_free_pages(), amount_eaten, suspend_memory_pool_level(),
+-		nr_free_pages() + amount_eaten + suspend_memory_pool_level(),
++		nr_free_pages(), suspend_amount_grabbed, suspend_memory_pool_level(),
++		nr_free_pages() + suspend_amount_grabbed + suspend_memory_pool_level(),
+ 		nr_free_pages() - nr_free_highpages(),
+ 
+ 		/* Sets */
+@@ -374,8 +375,8 @@ void display_stats(void)
+ 		num_range_pages,
+ 
+ 		/* Nosave */
+-		numnosave, pagedir1.allocdranges.size, amount_eaten,
+-		numnosave - pagedir1.allocdranges.size - amount_eaten,
++		numnosave, pagedir1.allocdranges.size, suspend_amount_grabbed,
++		numnosave - pagedir1.allocdranges.size - suspend_amount_grabbed,
+ 
+ 		/* Storage - converted to pages for comparison */
+ 		storage_allocated,
+@@ -383,7 +384,7 @@ void display_stats(void)
+ 		storage_available,
+ 
+ 		/* Needed */
+-		RAM_TO_SUSPEND - nr_free_pages() - nr_free_highpages() - amount_eaten,
++		RAM_TO_SUSPEND - nr_free_pages() - nr_free_highpages() - suspend_amount_grabbed,
+ 		STORAGE_NEEDED(1) - storage_available,
+ 		(image_size_limit > 0) ? (STORAGE_NEEDED(1) - (image_size_limit << 8)) : 0);
+ #endif
+@@ -509,7 +510,7 @@ static void grab_free_memory(void)
+ 			struct page * page = virt_to_page(eaten_memory[order]);
+ 			eaten_memory[order]->next = prev;
+ 			prev = eaten_memory[order];
+-			amount_eaten += (1 << order);
++			suspend_amount_grabbed += (1 << order);
+ 			for (k=0; k < (1 << order); k++)
+ 				SetPageNosave(page + k);
+ 			eaten_memory[order] = (struct eaten_memory_t *) __get_free_pages(EAT_MEMORY_FLAGS, order);
+@@ -542,7 +543,8 @@ static void free_grabbed_memory(void)
+ 		}
+ 		eaten_memory[order] = NULL;
+ 	}
+-	amount_eaten -= num_freed;
++	suspend_amount_grabbed -= num_freed;
++	BUG_ON(suspend_amount_grabbed);
+ 	spin_unlock_irqrestore(&suspend_grabbed_memory_lock, flags);
+ }
+ 
+@@ -563,7 +565,7 @@ try_again:
+ 			ClearPageNosave(page + j);
+ 			clear_page(page_address(page + j));
+ 		}
+-		amount_eaten -= (1 << order);
++		suspend_amount_grabbed -= (1 << order);
+ 		spin_unlock_irqrestore(&suspend_grabbed_memory_lock, flags);
+ 		check_shift_keys(0, NULL);
+ 		return this;
+@@ -593,7 +595,7 @@ try_again:
+ 			clear_page(page_address(page + j));
+ 		}
+ 		free_pages(virt, alternative);
+-		amount_eaten -= (1 << alternative);
++		suspend_amount_grabbed -= (1 << alternative);
+ 	}
+ 
+ 	/* Get the chunk we want to return. May fail if something grabs
+@@ -731,6 +733,7 @@ static int eat_memory(void)
+ 	return 0;
+ }
+ 
++
+ int prepare_image(void)
+ {
+ 	int result = 1, sizesought;
+@@ -751,12 +754,6 @@ int prepare_image(void)
+ 
+ 	PRINTFREEMEM("after freezing processes");
+ 
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,5,0)
+-	drain_local_pages();
+-
+-	PRINTFREEMEM("after draining local pages");
+-#endif
+-
+ 	if (!active_writer->ops.writer.storage_available()) {
+ 		printk(KERN_ERR "You need some storage available to be able to suspend.\n");
+ 		SET_RESULT_STATE(SUSPEND_ABORTED);
+@@ -794,8 +791,7 @@ int prepare_image(void)
+ 
+ 	PRINTFREEMEM("after freeing grabbed memory");
+ 
+-	if (!TEST_RESULT_STATE(SUSPEND_ABORTED))
+-		software_suspend_state |= SOFTWARE_SUSPEND_USE_MEMORY_POOL;
++	software_suspend_state |= SOFTWARE_SUSPEND_USE_MEMORY_POOL;
+ 
+ 	check_shift_keys(1, "Image preparation complete.");
+ 
+diff -puN kernel/power/suspend2.c~31-software-suspend-core-2.0.0.81-incremental kernel/power/suspend2.c
+--- linux-2.6.7-rc2-xx3/kernel/power/suspend2.c~31-software-suspend-core-2.0.0.81-incremental	2004-06-04 00:51:40.469317792 -0400
++++ linux-2.6.7-rc2-xx3-xiphux/kernel/power/suspend2.c	2004-06-04 00:51:40.496313688 -0400
+@@ -1394,6 +1394,7 @@ void software_suspend_pending(void)
+ 	printk(name_suspend "Initiating a software_suspend cycle.\n");
+ 	software_suspend_state |= SOFTWARE_SUSPEND_RUNNING;
+ 	oldfs = get_fs(); set_fs(KERNEL_DS);
++
+ 	suspend_result = 0;
+ 	max_ranges_used = 0;
+ 	nr_suspends++;
+@@ -1423,6 +1424,12 @@ void software_suspend_pending(void)
+ 
+ 	PRINTFREEMEM("after preparing suspend_console");
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,5,0)
++	smp_drain_local_pages();
++
++	PRINTFREEMEM("after draining local pages");
++#endif
++
+ 	if (allocate_bitmaps())
+ 		goto out;
+ 
+
+_

@@ -1,0 +1,72 @@
+---
+
+ linux-2.6.7-xx4-xiphux/kernel/Kconfig-extra.xx |    7 +++++++
+ linux-2.6.7-xx4-xiphux/mm/bootmem.c            |   25 +++++++++++++++++++++----
+ 2 files changed, 28 insertions(+), 4 deletions(-)
+
+diff -puN kernel/Kconfig-extra.xx~audit-bootmem kernel/Kconfig-extra.xx
+--- linux-2.6.7-xx4/kernel/Kconfig-extra.xx~audit-bootmem	2004-06-29 19:17:46.798186584 -0400
++++ linux-2.6.7-xx4-xiphux/kernel/Kconfig-extra.xx	2004-06-29 19:17:46.808185064 -0400
+@@ -361,4 +361,11 @@ config KMALLOC_ACCOUNTING
+ 	  This option records kmalloc and kfree activity and reports it via
+ 	  /proc/kmalloc.
+ 
++config AUDIT_BOOTMEM
++	default n
++	bool "Enabled auditing of bootmem allocations"
++	help
++	  This option causes the bootmem allocator to print caller and size
++          for each allocation.
++
+ endmenu
+diff -puN mm/bootmem.c~audit-bootmem mm/bootmem.c
+--- linux-2.6.7-xx4/mm/bootmem.c~audit-bootmem	2004-06-29 19:17:46.800186280 -0400
++++ linux-2.6.7-xx4-xiphux/mm/bootmem.c	2004-06-29 19:18:00.638082600 -0400
+@@ -17,6 +17,7 @@
+ #include <linux/bootmem.h>
+ #include <linux/mmzone.h>
+ #include <linux/module.h>
++#include <linux/kallsyms.h>
+ #include <asm/dma.h>
+ #include <asm/io.h>
+ 
+@@ -373,8 +374,16 @@ void * __init __alloc_bootmem (unsigned 
+ 
+ 	for_each_pgdat(pgdat)
+ 		if ((ptr = __alloc_bootmem_core(pgdat->bdata, size,
+-						align, goal)))
+-			return(ptr);
++						align, goal))) {
++#ifdef CONFIG_AUDIT_BOOTMEM
++			printk("bootmem: %ld/%ld by %p", size, align,
++			       __builtin_return_address(0));
++			print_symbol(" (%s)",
++				     (int)__builtin_return_address(0));
++			printk("-> %p\n", ptr);
++#endif
++			return ptr;
++		}
+ 
+ 	/*
+ 	 * Whoops, we cannot satisfy the allocation request.
+@@ -389,8 +398,16 @@ void * __init __alloc_bootmem_node (pg_d
+ 	void *ptr;
+ 
+ 	ptr = __alloc_bootmem_core(pgdat->bdata, size, align, goal);
+-	if (ptr)
+-		return (ptr);
++	if (ptr) {
++#ifdef CONFIG_AUDIT_BOOTMEM
++		printk("bootmem: %ld/%ld by %p", size, align,
++		       __builtin_return_address(0));
++		print_symbol(" (%s)", (int)__builtin_return_address(0));
++		printk("-> %p\n", ptr);
++#endif
++
++		return ptr;
++	}
+ 
+ 	return __alloc_bootmem(size, align, goal);
+ }
+
+_

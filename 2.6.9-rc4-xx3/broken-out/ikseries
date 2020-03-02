@@ -1,0 +1,142 @@
+Index: xx-sources/init/Kconfig
+===================================================================
+--- xx-sources.orig/init/Kconfig	2004-10-10 11:06:54.229352568 -0400
++++ xx-sources/init/Kconfig	2004-10-10 11:16:56.933727576 -0400
+@@ -272,6 +272,12 @@
+         ---help---
+           Reports when a kmutex is locked while the process is atomic.
+ 
++config SERIES_PROC
++	bool "Enable access to applied patchlist through /proc/series.gz"
++	depends on PROC_FS
++	---help---
++	  This option enables access to the kernel applied-patches series file
++	  through /proc/series.gz.
+ 
+ config KRCU_LOCKS
+         bool "Use rcu lock workaround"
+Index: xx-sources/kernel/Makefile
+===================================================================
+--- xx-sources.orig/kernel/Makefile	2004-10-10 11:07:09.513029096 -0400
++++ xx-sources/kernel/Makefile	2004-10-10 11:17:11.793468552 -0400
+@@ -36,6 +36,7 @@
+ obj-$(CONFIG_CPUSETS) += cpuset.o
+ obj-$(CONFIG_IKCONFIG) += configs.o
+ obj-$(CONFIG_IKCONFIG_PROC) += configs.o
++obj-$(CONFIG_SERIES_PROC) += series.o
+ obj-$(CONFIG_STOP_MACHINE) += stop_machine.o
+ obj-$(CONFIG_AUDIT) += audit.o
+ obj-$(CONFIG_AUDITSYSCALL) += auditsc.o
+@@ -72,3 +73,17 @@
+ targets += config_data.h
+ $(obj)/config_data.h: $(obj)/config_data.gz FORCE
+ 	$(call if_changed,ikconfiggz)
++
++series:
++	@if [ -e patches/series ] && [ ! -e ./series ];then ln -s patches/series ./series;fi
++
++$(obj)/series.o: $(obj)/series_data.h
++targets += series_data.gz
++$(obj)/series_data.gz: series FORCE
++	$(call if_changed,gzip)
++	
++quiet_cmd_seriesgz = SERIES  $@
++	cmd_seriesgz = (echo "const char series_data[] = SERIES_START"; cat $< | scripts/bin2c; echo "SERIES_END;") > $@
++targets += series_data.h
++$(obj)/series_data.h: $(obj)/series_data.gz FORCE
++	$(call if_changed,seriesgz)
+Index: xx-sources/kernel/series.c
+===================================================================
+--- xx-sources.orig/kernel/series.c	2004-05-31 17:36:38.000000000 -0400
++++ xx-sources/kernel/series.c	2004-10-10 11:16:56.961723320 -0400
+@@ -0,0 +1,90 @@
++/*
++ * kernel/series.c
++ * Echo the 'series' patchlist for the kernel
++ *
++ * Copyright (C) 2004 Christopher Han <xiphux@planetjurai.com>
++ * Based on original ikconfig code in kernel/configs.c by
++ * Randy Dunlap et al.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or (at
++ * your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, GOOD TITLE or
++ * NON INFRINGEMENT.  See the GNU General Public License for more
++ * details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++
++#include <linux/config.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/proc_fs.h>
++#include <linux/seq_file.h>
++#include <linux/init.h>
++#include <asm/uaccess.h>
++
++#define SERIES_START	"SERIESST"
++#define SERIES_END	"SERIESED"
++#include "series_data.h"
++
++
++#define SERIES_SIZE (sizeof(SERIES_START) - 1)
++#define series_data_size \
++	(sizeof(series_data) - 1 - SERIES_SIZE * 2)
++
++static ssize_t
++series_read_current(struct file *file, char __user *buf,
++		size_t len, loff_t * offset)
++{
++	loff_t pos = *offset;
++	ssize_t count;
++
++	if (pos >= series_data_size)
++		return 0;
++
++	count = min(len, (size_t)(series_data_size - pos));
++	if (copy_to_user(buf, series_data + SERIES_SIZE + pos, count))
++		return -EFAULT;
++
++	*offset += count;
++	return count;
++}
++
++static struct file_operations series_file_ops = {
++	.owner = THIS_MODULE,
++	.read = series_read_current,
++};
++
++static int __init series_init(void)
++{
++	struct proc_dir_entry *entry;
++
++	entry = create_proc_entry("series.gz", S_IFREG | S_IRUGO,
++				&proc_root);
++	if (!entry)
++		return -ENOMEM;
++
++	entry->proc_fops = &series_file_ops;
++	entry->size = series_data_size;
++
++	return 0;
++}
++
++static void __exit series_cleanup(void)
++{
++	remove_proc_entry("series.gz", &proc_root);
++}
++
++module_init(series_init);
++module_exit(series_cleanup);
++
++MODULE_LICENSE("GPL")
++MODULE_AUTHOR("Christopher Han, based off code by Randy Dunlap");
++MODULE_DESCRIPTION("Echo the series patchlist file for the kernel");

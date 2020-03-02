@@ -1,0 +1,40 @@
+
+From: Eric W. Biederman <ebiederm@xmission.com>
+
+This patch disables interrupt generation from the legacy pic on reboot.  Now
+that there is a sys_device class it should not be called while drivers are
+still using interrupts.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/i8259.c |   12 ++++++++++++
+ 1 files changed, 12 insertions(+)
+
+diff -puN arch/i386/kernel/i8259.c~kexec-i8259-shutdowni386 arch/i386/kernel/i8259.c
+--- 25/arch/i386/kernel/i8259.c~kexec-i8259-shutdowni386	Fri Aug 20 15:21:55 2004
++++ 25-akpm/arch/i386/kernel/i8259.c	Fri Aug 20 15:21:55 2004
+@@ -270,10 +270,22 @@ static int i8259A_suspend(struct sys_dev
+ 	return 0;
+ }
+ 
++static int i8259A_shutdown(struct sys_device *dev)
++{
++	/* Put the i8259A into a quiescent state that
++	 * the kernel initialization code can get it
++	 * out of.
++	 */
++	outb(0xff, 0x21);	/* mask all of 8259A-1 */
++	outb(0xff, 0xA1);	/* mask all of 8259A-1 */
++	return 0;
++}
++
+ static struct sysdev_class i8259_sysdev_class = {
+ 	set_kset_name("i8259"),
+ 	.suspend = i8259A_suspend,
+ 	.resume = i8259A_resume,
++	.shutdown = i8259A_shutdown,
+ };
+ 
+ static struct sys_device device_i8259A = {
+_

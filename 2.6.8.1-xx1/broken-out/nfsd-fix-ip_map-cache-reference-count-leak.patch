@@ -1,0 +1,29 @@
+
+From: NeilBrown <neilb@cse.unsw.edu.au>
+
+Fix a leak: when auth_unix_lookup sets CACHE_NEGATIVE, it should also
+auth_domain_put() the reference it holds in ipm->m_client, since setting
+CACHE_NEGATIVE prevents ip_map_put() from putting the reference itself.
+
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+Signed-off-by: Neil Brown <neilb@cse.unsw.edu.au>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/net/sunrpc/svcauth_unix.c |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletion(-)
+
+diff -puN net/sunrpc/svcauth_unix.c~nfsd-fix-ip_map-cache-reference-count-leak net/sunrpc/svcauth_unix.c
+--- 25/net/sunrpc/svcauth_unix.c~nfsd-fix-ip_map-cache-reference-count-leak	2004-08-01 21:09:56.781374752 -0700
++++ 25-akpm/net/sunrpc/svcauth_unix.c	2004-08-01 21:09:56.785374144 -0700
+@@ -316,7 +316,8 @@ struct auth_domain *auth_unix_lookup(str
+ 		return NULL;
+ 
+ 	if ((ipm->m_client->addr_changes - ipm->m_add_change) >0) {
+-		set_bit(CACHE_NEGATIVE, &ipm->h.flags);
++		if (test_and_set_bit(CACHE_NEGATIVE, &ipm->h.flags) == 0)
++			auth_domain_put(&ipm->m_client->h);
+ 		rv = NULL;
+ 	} else {
+ 		rv = &ipm->m_client->h;
+_

@@ -1,0 +1,80 @@
+
+
+update_defense_level() is calling si_meminfo() from timer context.  But
+si_meminfo takes non-irq-safe locks.
+
+Move it all to keventd context.  
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/net/ipv4/ipvs/ip_vs_ctl.c |   19 ++++++++-----------
+ 1 files changed, 8 insertions(+), 11 deletions(-)
+
+diff -puN net/ipv4/ipvs/ip_vs_ctl.c~ipvs-deadlock-fix net/ipv4/ipvs/ip_vs_ctl.c
+--- 25/net/ipv4/ipvs/ip_vs_ctl.c~ipvs-deadlock-fix	2004-10-04 20:21:28.587726824 -0700
++++ 25-akpm/net/ipv4/ipvs/ip_vs_ctl.c	2004-10-04 20:21:39.251105744 -0700
+@@ -26,7 +26,7 @@
+ #include <linux/fs.h>
+ #include <linux/sysctl.h>
+ #include <linux/proc_fs.h>
+-#include <linux/timer.h>
++#include <linux/workqueue.h>
+ #include <linux/swap.h>
+ #include <linux/proc_fs.h>
+ #include <linux/seq_file.h>
+@@ -89,7 +89,7 @@ int ip_vs_get_debug_level(void)
+ #endif
+ 
+ /*
+- *	update_defense_level is called from timer bh and from sysctl.
++ *	update_defense_level is called from keventd and from sysctl.
+  */
+ static void update_defense_level(void)
+ {
+@@ -211,19 +211,19 @@ static void update_defense_level(void)
+ /*
+  *	Timer for checking the defense
+  */
+-static struct timer_list defense_timer;
+ #define DEFENSE_TIMER_PERIOD	1*HZ
++static void defense_work_handler(void *data);
++static DECLARE_WORK(defense_work, defense_work_handler, NULL);
+ 
+-static void defense_timer_handler(unsigned long data)
++static void defense_work_handler(void *data)
+ {
+ 	update_defense_level();
+ 	if (atomic_read(&ip_vs_dropentry))
+ 		ip_vs_random_dropentry();
+ 
+-	mod_timer(&defense_timer, jiffies + DEFENSE_TIMER_PERIOD);
++	schedule_delayed_work(&defense_work, DEFENSE_TIMER_PERIOD);
+ }
+ 
+-
+ int
+ ip_vs_use_count_inc(void)
+ {
+@@ -2361,10 +2361,7 @@ int ip_vs_control_init(void)
+ 	ip_vs_new_estimator(&ip_vs_stats);
+ 
+ 	/* Hook the defense timer */
+-	init_timer(&defense_timer);
+-	defense_timer.function = defense_timer_handler;
+-	defense_timer.expires = jiffies + DEFENSE_TIMER_PERIOD;
+-	add_timer(&defense_timer);
++	schedule_delayed_work(&defense_work, DEFENSE_TIMER_PERIOD);
+ 
+ 	LeaveFunction(2);
+ 	return 0;
+@@ -2375,7 +2372,7 @@ void ip_vs_control_cleanup(void)
+ {
+ 	EnterFunction(2);
+ 	ip_vs_trash_cleanup();
+-	del_timer_sync(&defense_timer);
++	cancel_rearming_delayed_work(&defense_work);
+ 	ip_vs_kill_estimator(&ip_vs_stats);
+ 	unregister_sysctl_table(sysctl_header);
+ 	proc_net_remove("ip_vs_stats");
+_

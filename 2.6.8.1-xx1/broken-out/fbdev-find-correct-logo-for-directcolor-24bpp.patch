@@ -1,0 +1,65 @@
+
+From: "Antonino A. Daplas" <adaplas@hotpop.com>
+
+Current algorithm does not choose correct logo type for directcolor < 24
+bpp.  It chooses logo_224, but this is too deep for bpp < 24.  This should
+fix the problem.
+
+Signed-off-by: Antonino Daplas <adaplas@pol.net>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/drivers/video/fbmem.c |   31 ++++++++++++++++++++-----------
+ 1 files changed, 20 insertions(+), 11 deletions(-)
+
+diff -puN drivers/video/fbmem.c~fbdev-find-correct-logo-for-directcolor-24bpp drivers/video/fbmem.c
+--- 25/drivers/video/fbmem.c~fbdev-find-correct-logo-for-directcolor-24bpp	Wed Aug  4 17:09:06 2004
++++ 25-akpm/drivers/video/fbmem.c	Wed Aug  4 17:09:06 2004
+@@ -734,26 +734,35 @@ static struct logo_data {
+ 
+ int fb_prepare_logo(struct fb_info *info)
+ {
++	int depth = fb_get_color_depth(info);
++
+ 	memset(&fb_logo, 0, sizeof(struct logo_data));
+ 
+-	switch (info->fix.visual) {
+-	case FB_VISUAL_TRUECOLOR:
+-		if (info->var.bits_per_pixel >= 8)
++	if (info->fix.visual == FB_VISUAL_DIRECTCOLOR) {
++		depth = info->var.blue.length;
++		if (info->var.red.length < depth)
++			depth = info->var.red.length;
++		if (info->var.green.length < depth)
++			depth = info->var.green.length;
++	}
++
++	if (depth >= 8) {
++		switch (info->fix.visual) {
++		case FB_VISUAL_TRUECOLOR:
+ 			fb_logo.needs_truepalette = 1;
+-		break;
+-	case FB_VISUAL_DIRECTCOLOR:
+-		if (info->var.bits_per_pixel >= 24) {
++			break;
++		case FB_VISUAL_DIRECTCOLOR:
+ 			fb_logo.needs_directpalette = 1;
+ 			fb_logo.needs_cmapreset = 1;
++			break;
++		case FB_VISUAL_PSEUDOCOLOR:
++			fb_logo.needs_cmapreset = 1;
++			break;
+ 		}
+-		break;
+-	case FB_VISUAL_PSEUDOCOLOR:
+-		fb_logo.needs_cmapreset = 1;
+-		break;
+ 	}
+ 
+ 	/* Return if no suitable logo was found */
+-	fb_logo.logo = fb_find_logo(fb_get_color_depth(info));
++	fb_logo.logo = fb_find_logo(depth);
+ 	
+ 	if (!fb_logo.logo || fb_logo.logo->height > info->var.yres) {
+ 		fb_logo.logo = NULL;
+_

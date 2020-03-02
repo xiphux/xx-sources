@@ -1,0 +1,309 @@
+
+From: Mika Kukkonen <mika@osdl.org>
+
+Fix various sparse "assignment expression in conditional" warnings in fs/
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/affs/amigaffs.c   |    2 +-
+ 25-akpm/fs/afs/super.c       |    2 +-
+ 25-akpm/fs/autofs/waitq.c    |    2 +-
+ 25-akpm/fs/autofs4/waitq.c   |    2 +-
+ 25-akpm/fs/eventpoll.c       |    2 +-
+ 25-akpm/fs/hfs/super.c       |    2 +-
+ 25-akpm/fs/hfsplus/bnode.c   |   10 +++++-----
+ 25-akpm/fs/hfsplus/wrapper.c |    2 +-
+ 25-akpm/fs/hpfs/alloc.c      |    4 ++--
+ 25-akpm/fs/jfs/jfs_extent.c  |    2 +-
+ 25-akpm/fs/jfs/jfs_logmgr.c  |    2 +-
+ 25-akpm/fs/jfs/jfs_txnmgr.c  |    2 +-
+ 25-akpm/fs/lockd/host.c      |    4 ++--
+ 25-akpm/fs/lockd/svclock.c   |   10 +++++-----
+ 25-akpm/fs/lockd/svcshare.c  |    2 +-
+ 25-akpm/fs/quota.c           |    2 +-
+ 16 files changed, 26 insertions(+), 26 deletions(-)
+
+diff -puN fs/affs/amigaffs.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/affs/amigaffs.c
+--- 25/fs/affs/amigaffs.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/affs/amigaffs.c	Wed Jun 23 14:41:48 2004
+@@ -201,7 +201,7 @@ affs_remove_link(struct dentry *dentry)
+ 			goto done;
+ 	}
+ 
+-	while ((ino = be32_to_cpu(AFFS_TAIL(sb, bh)->link_chain))) {
++	while ((ino = be32_to_cpu(AFFS_TAIL(sb, bh)->link_chain)) != 0) {
+ 		if (ino == link_ino) {
+ 			ino = AFFS_TAIL(sb, link_bh)->link_chain;
+ 			AFFS_TAIL(sb, bh)->link_chain = ino;
+diff -puN fs/afs/super.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/afs/super.c
+--- 25/fs/afs/super.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/afs/super.c	Wed Jun 23 14:41:48 2004
+@@ -172,7 +172,7 @@ static int afs_super_parse_options(struc
+ 	options[PAGE_SIZE - 1] = 0;
+ 
+ 	ret = 0;
+-	while ((key = strsep(&options, ",")))
++	while ((key = strsep(&options, ",")) != 0)
+ 	{
+ 		value = strchr(key, '=');
+ 		if (value)
+diff -puN fs/autofs4/waitq.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/autofs4/waitq.c
+--- 25/fs/autofs4/waitq.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/autofs4/waitq.c	Wed Jun 23 14:41:48 2004
+@@ -275,7 +275,7 @@ int autofs4_wait_release(struct autofs_s
+ 	struct autofs_wait_queue *wq, **wql;
+ 
+ 	down(&sbi->wq_sem);
+-	for ( wql = &sbi->queues ; (wq = *wql) ; wql = &wq->next ) {
++	for ( wql = &sbi->queues ; (wq = *wql) != 0 ; wql = &wq->next ) {
+ 		if ( wq->wait_queue_token == wait_queue_token )
+ 			break;
+ 	}
+diff -puN fs/autofs/waitq.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/autofs/waitq.c
+--- 25/fs/autofs/waitq.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/autofs/waitq.c	Wed Jun 23 14:41:48 2004
+@@ -183,7 +183,7 @@ int autofs_wait_release(struct autofs_sb
+ {
+ 	struct autofs_wait_queue *wq, **wql;
+ 
+-	for ( wql = &sbi->queues ; (wq = *wql) ; wql = &wq->next ) {
++	for ( wql = &sbi->queues ; (wq = *wql) != 0 ; wql = &wq->next ) {
+ 		if ( wq->wait_queue_token == wait_queue_token )
+ 			break;
+ 	}
+diff -puN fs/eventpoll.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/eventpoll.c
+--- 25/fs/eventpoll.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/eventpoll.c	Wed Jun 23 14:41:48 2004
+@@ -802,7 +802,7 @@ static void ep_free(struct eventpoll *ep
+ 	 * write-holding "sem" we can be sure that no file cleanup code will hit
+ 	 * us during this operation. So we can avoid the lock on "ep->lock".
+ 	 */
+-	while ((rbp = rb_first(&ep->rbr))) {
++	while ((rbp = rb_first(&ep->rbr)) != 0) {
+ 		epi = rb_entry(rbp, struct epitem, rbn);
+ 		ep_remove(ep, epi);
+ 	}
+diff -puN fs/hfsplus/bnode.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/hfsplus/bnode.c
+--- 25/fs/hfsplus/bnode.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/hfsplus/bnode.c	Wed Jun 23 14:41:48 2004
+@@ -34,7 +34,7 @@ void hfs_bnode_read(struct hfs_bnode *no
+ 	memcpy(buf, kmap(*pagep) + off, l);
+ 	kunmap(*pagep);
+ 
+-	while ((len -= l)) {
++	while ((len -= l) != 0) {
+ 		buf += l;
+ 		l = min(len, (int)PAGE_CACHE_SIZE);
+ 		memcpy(buf, kmap(*++pagep), l);
+@@ -87,7 +87,7 @@ void hfs_bnode_write(struct hfs_bnode *n
+ 	set_page_dirty(*pagep);
+ 	kunmap(*pagep);
+ 
+-	while ((len -= l)) {
++	while ((len -= l) != 0) {
+ 		buf += l;
+ 		l = min(len, (int)PAGE_CACHE_SIZE);
+ 		memcpy(kmap(*++pagep), buf, l);
+@@ -117,7 +117,7 @@ void hfs_bnode_clear(struct hfs_bnode *n
+ 	set_page_dirty(*pagep);
+ 	kunmap(*pagep);
+ 
+-	while ((len -= l)) {
++	while ((len -= l) != 0) {
+ 		l = min(len, (int)PAGE_CACHE_SIZE);
+ 		memset(kmap(*++pagep), 0, l);
+ 		set_page_dirty(*pagep);
+@@ -150,7 +150,7 @@ void hfs_bnode_copy(struct hfs_bnode *ds
+ 		set_page_dirty(*dst_page);
+ 		kunmap(*dst_page);
+ 
+-		while ((len -= l)) {
++		while ((len -= l) != 0) {
+ 			l = min(len, (int)PAGE_CACHE_SIZE);
+ 			memcpy(kmap(*++dst_page), kmap(*++src_page), l);
+ 			kunmap(*src_page);
+@@ -258,7 +258,7 @@ void hfs_bnode_move(struct hfs_bnode *no
+ 			set_page_dirty(*dst_page);
+ 			kunmap(*dst_page);
+ 
+-			while ((len -= l)) {
++			while ((len -= l) != 0) {
+ 				l = min(len, (int)PAGE_CACHE_SIZE);
+ 				memmove(kmap(*++dst_page), kmap(*++src_page), l);
+ 				kunmap(*src_page);
+diff -puN fs/hfsplus/wrapper.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/hfsplus/wrapper.c
+--- 25/fs/hfsplus/wrapper.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/hfsplus/wrapper.c	Wed Jun 23 14:41:48 2004
+@@ -135,7 +135,7 @@ int hfsplus_read_wrapper(struct super_bl
+ 		return -EINVAL;
+ 	HFSPLUS_SB(sb).alloc_blksz = blocksize;
+ 	HFSPLUS_SB(sb).alloc_blksz_shift = 0;
+-	while (blocksize >>= 1)
++	while ((blocksize >>= 1) != 0)
+ 		HFSPLUS_SB(sb).alloc_blksz_shift++;
+ 	blocksize = min(HFSPLUS_SB(sb).alloc_blksz, (u32)PAGE_SIZE);
+ 
+diff -puN fs/hfs/super.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/hfs/super.c
+--- 25/fs/hfs/super.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/hfs/super.c	Wed Jun 23 14:41:48 2004
+@@ -161,7 +161,7 @@ static int parse_options(char *options, 
+ 	if (!options)
+ 		return 1;
+ 
+-	while ((this_char = strsep(&options, ","))) {
++	while ((this_char = strsep(&options, ",")) != 0) {
+ 		if (!*this_char)
+ 			continue;
+ 		value = strchr(this_char, '=');
+diff -puN fs/hpfs/alloc.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/hpfs/alloc.c
+--- 25/fs/hpfs/alloc.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/hpfs/alloc.c	Wed Jun 23 14:41:48 2004
+@@ -88,7 +88,7 @@ static secno alloc_in_bmp(struct super_b
+ 		goto rt;
+ 	}*/
+ 	q = nr + n; b = 0;
+-	while ((a = tstbits(bmp, q, n + forward))) {
++	while ((a = tstbits(bmp, q, n + forward)) != 0) {
+ 		q += a;
+ 		if (n != 1) q = ((q-1)&~(n-1))+n;
+ 		if (!b) {
+@@ -116,7 +116,7 @@ static secno alloc_in_bmp(struct super_b
+ 			}
+ 		}
+ 		if (n != 1) q = ((q-1)&~(n-1))+n;
+-		while ((a = tstbits(bmp, q, n + forward))) {
++		while ((a = tstbits(bmp, q, n + forward)) != 0) {
+ 			q += a;
+ 			if (n != 1) q = ((q-1)&~(n-1))+n;
+ 			if (q>>5 > i) break;
+diff -puN fs/jfs/jfs_extent.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/jfs/jfs_extent.c
+--- 25/fs/jfs/jfs_extent.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/jfs/jfs_extent.c	Wed Jun 23 14:41:48 2004
+@@ -533,7 +533,7 @@ extBalloc(struct inode *ip, s64 hint, s6
+ 		nb = nblks = *nblocks;
+ 
+ 	/* try to allocate blocks */
+-	while ((rc = dbAlloc(ip, hint, nb, &daddr))) {
++	while ((rc = dbAlloc(ip, hint, nb, &daddr)) != 0) {
+ 		/* if something other than an out of space error,
+ 		 * stop and return this error.
+ 		 */
+diff -puN fs/jfs/jfs_logmgr.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/jfs/jfs_logmgr.c
+--- 25/fs/jfs/jfs_logmgr.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/jfs/jfs_logmgr.c	Wed Jun 23 14:41:48 2004
+@@ -2321,7 +2321,7 @@ int jfsIOWait(void *arg)
+ 		DECLARE_WAITQUEUE(wq, current);
+ 
+ 		spin_lock_irq(&log_redrive_lock);
+-		while ((bp = log_redrive_list)) {
++		while ((bp = log_redrive_list) != 0) {
+ 			log_redrive_list = bp->l_redrive_next;
+ 			bp->l_redrive_next = NULL;
+ 			spin_unlock_irq(&log_redrive_lock);
+diff -puN fs/jfs/jfs_txnmgr.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/jfs/jfs_txnmgr.c
+--- 25/fs/jfs/jfs_txnmgr.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/jfs/jfs_txnmgr.c	Wed Jun 23 14:41:48 2004
+@@ -2580,7 +2580,7 @@ void txFreelock(struct inode *ip)
+ 	TXN_LOCK();
+ 	xtlck = (struct tlock *) &jfs_ip->atlhead;
+ 
+-	while ((lid = xtlck->next)) {
++	while ((lid = xtlck->next) != 0) {
+ 		tlck = lid_to_tlock(lid);
+ 		if (tlck->flag & tlckFREELOCK) {
+ 			xtlck->next = tlck->next;
+diff -puN fs/lockd/host.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/lockd/host.c
+--- 25/fs/lockd/host.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/lockd/host.c	Wed Jun 23 14:41:48 2004
+@@ -76,7 +76,7 @@ nlm_lookup_host(int server, struct socka
+ 	if (time_after_eq(jiffies, next_gc))
+ 		nlm_gc_hosts();
+ 
+-	for (hp = &nlm_hosts[hash]; (host = *hp); hp = &host->h_next) {
++	for (hp = &nlm_hosts[hash]; (host = *hp) != 0; hp = &host->h_next) {
+ 		if (host->h_proto != proto)
+ 			continue;
+ 		if (host->h_version != version)
+@@ -145,7 +145,7 @@ nlm_find_client(void)
+ 	down(&nlm_host_sema);
+ 	for (hash = 0 ; hash < NLM_HOST_NRHASH; hash++) {
+ 		struct nlm_host *host, **hp;
+-		for (hp = &nlm_hosts[hash]; (host = *hp) ; hp = &host->h_next) {
++		for (hp = &nlm_hosts[hash]; (host = *hp) != 0; hp = &host->h_next) {
+ 			if (host->h_server &&
+ 			    host->h_killed == 0) {
+ 				nlm_get_host(host);
+diff -puN fs/lockd/svclock.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/lockd/svclock.c
+--- 25/fs/lockd/svclock.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/lockd/svclock.c	Wed Jun 23 14:41:48 2004
+@@ -67,7 +67,7 @@ nlmsvc_insert_block(struct nlm_block *bl
+ 		while ((b = *bp) && time_before_eq(b->b_when,when) && b->b_when != NLM_NEVER)
+ 			bp = &b->b_next;
+ 	} else
+-		while ((b = *bp))
++		while ((b = *bp) != 0)
+ 			bp = &b->b_next;
+ 
+ 	block->b_queued = 1;
+@@ -86,7 +86,7 @@ nlmsvc_remove_block(struct nlm_block *bl
+ 
+ 	if (!block->b_queued)
+ 		return 1;
+-	for (bp = &nlm_blocked; (b = *bp); bp = &b->b_next) {
++	for (bp = &nlm_blocked; (b = *bp) != 0; bp = &b->b_next) {
+ 		if (b == block) {
+ 			*bp = block->b_next;
+ 			block->b_queued = 0;
+@@ -111,7 +111,7 @@ nlmsvc_lookup_block(struct nlm_file *fil
+ 				file, lock->fl.fl_pid,
+ 				(long long)lock->fl.fl_start,
+ 				(long long)lock->fl.fl_end, lock->fl.fl_type);
+-	for (head = &nlm_blocked; (block = *head); head = &block->b_next) {
++	for (head = &nlm_blocked; (block = *head) != 0; head = &block->b_next) {
+ 		fl = &block->b_call.a_args.lock.fl;
+ 		dprintk("lockd: check f=%p pd=%d %Ld-%Ld ty=%d cookie=%x\n",
+ 				block->b_file, fl->fl_pid,
+@@ -468,7 +468,7 @@ nlmsvc_notify_blocked(struct file_lock *
+ 	struct nlm_block	**bp, *block;
+ 
+ 	dprintk("lockd: VFS unblock notification for block %p\n", fl);
+-	for (bp = &nlm_blocked; (block = *bp); bp = &block->b_next) {
++	for (bp = &nlm_blocked; (block = *bp) != 0; bp = &block->b_next) {
+ 		if (nlm_compare_locks(&block->b_call.a_args.lock.fl, fl)) {
+ 			nlmsvc_insert_block(block, 0);
+ 			svc_wake_up(block->b_daemon);
+@@ -653,7 +653,7 @@ nlmsvc_retry_blocked(void)
+ 	dprintk("nlmsvc_retry_blocked(%p, when=%ld)\n",
+ 			nlm_blocked,
+ 			nlm_blocked? nlm_blocked->b_when : 0);
+-	while ((block = nlm_blocked)) {
++	while ((block = nlm_blocked) != 0) {
+ 		if (block->b_when == NLM_NEVER)
+ 			break;
+ 	        if (time_after(block->b_when,jiffies))
+diff -puN fs/lockd/svcshare.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/lockd/svcshare.c
+--- 25/fs/lockd/svcshare.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/lockd/svcshare.c	Wed Jun 23 14:41:48 2004
+@@ -71,7 +71,7 @@ nlmsvc_unshare_file(struct nlm_host *hos
+ 	struct nlm_share	*share, **shpp;
+ 	struct xdr_netobj	*oh = &argp->lock.oh;
+ 
+-	for (shpp = &file->f_shares; (share = *shpp); shpp = &share->s_next) {
++	for (shpp = &file->f_shares; (share = *shpp) != 0; shpp = &share->s_next) {
+ 		if (share->s_host == host && nlm_cmp_owner(share, oh)) {
+ 			*shpp = share->s_next;
+ 			kfree(share);
+diff -puN fs/quota.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs fs/quota.c
+--- 25/fs/quota.c~sparse-trivial-fixes-of-assignment-expression-in-conditional-in-fs	Wed Jun 23 14:41:48 2004
++++ 25-akpm/fs/quota.c	Wed Jun 23 14:41:48 2004
+@@ -141,7 +141,7 @@ void sync_dquots(struct super_block *sb,
+ 			sb->s_qcop->quota_sync(sb, type);
+ 	}
+ 	else {
+-		while ((sb = get_super_to_sync(type))) {
++		while ((sb = get_super_to_sync(type)) != 0) {
+ 			if (sb->s_qcop->quota_sync)
+ 				sb->s_qcop->quota_sync(sb, type);
+ 			drop_super(sb);
+_

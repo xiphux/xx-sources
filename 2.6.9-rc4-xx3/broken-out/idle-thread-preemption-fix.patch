@@ -1,0 +1,64 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+The early bootup stage is pretty fragile because the idle thread is not yet
+functioning as such and so we need preemption disabled.  Whether the bootup
+fails or not seems to depend on timing details so e.g.  the presence of
+SCHED_SMT makes it go away.
+
+Disabling preemption explicitly has another advantage: the atomicity check
+in schedule() will catch early-bootup schedule() calls from now on.
+
+The patch also fixes another preempt-bkl buglet: interrupt-driven
+forced-preemption didnt go through preempt_schedule() so it resulted in
+auto-dropping of the BKL.  Now we go through preempt_schedule() which
+properly deals with the BKL.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/arch/i386/kernel/entry.S |    4 +---
+ 25-akpm/init/main.c              |    7 +++++++
+ 2 files changed, 8 insertions(+), 3 deletions(-)
+
+diff -puN arch/i386/kernel/entry.S~idle-thread-preemption-fix arch/i386/kernel/entry.S
+--- 25/arch/i386/kernel/entry.S~idle-thread-preemption-fix	2004-09-30 22:49:10.176746480 -0700
++++ 25-akpm/arch/i386/kernel/entry.S	2004-09-30 22:49:10.183745416 -0700
+@@ -197,10 +197,8 @@ need_resched:
+ 	jz restore_all
+ 	testl $IF_MASK,EFLAGS(%esp)     # interrupts off (exception path) ?
+ 	jz restore_all
+-	movl $PREEMPT_ACTIVE,TI_preempt_count(%ebp)
+ 	sti
+-	call schedule
+-	movl $0,TI_preempt_count(%ebp)
++	call preempt_schedule
+ 	cli
+ 	jmp need_resched
+ #endif
+diff -puN init/main.c~idle-thread-preemption-fix init/main.c
+--- 25/init/main.c~idle-thread-preemption-fix	2004-09-30 22:49:10.178746176 -0700
++++ 25-akpm/init/main.c	2004-09-30 22:49:10.184745264 -0700
+@@ -434,6 +434,12 @@ static void noinline rest_init(void)
+ {
+ 	kernel_thread(init, NULL, CLONE_FS | CLONE_SIGHAND);
+ 	numa_default_policy();
++	/*
++	 * Re-enable preemption but disable interrupts to make sure
++	 * we dont get preempted until we schedule() in cpu_idle().
++	 */
++	local_irq_disable();
++	preempt_enable_no_resched();
+ 	unlock_kernel();
+  	cpu_idle();
+ } 
+@@ -500,6 +506,7 @@ asmlinkage void __init start_kernel(void
+ 	 * time - but meanwhile we still have a functioning scheduler.
+ 	 */
+ 	sched_init();
++	preempt_disable();
+ 	build_all_zonelists();
+ 	page_alloc_init();
+ 	trap_init();
+_

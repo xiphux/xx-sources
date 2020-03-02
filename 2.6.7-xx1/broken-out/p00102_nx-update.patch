@@ -1,0 +1,80 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+i've attached the latest version of the NX patch. It applies cleanly to
+2.6.7 and works fine. See below the delta relative to the last iteration
+you have in your tree. There are two changes:
+
+ - dont print 'you have no NX!' on non-NX CPUs - we aint no PR company 
+   for CPU makers.
+
+ - make the heap non-executable on PT_GNU_STACK binaries.
+
+ - make all data mmap()s (and the heap) executable on !PT_GNU_STACK
+   (legacy) binaries. This has no effect on non-NX CPUs, but should be
+   much more compatible on NX CPUs. The only effect it has it has on
+   non-NX CPUs is the extra 'x' bit displayed in /proc/PID/maps.
+
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/binfmt_elf.c         |    5 +++++
+ 25-akpm/fs/exec.c               |    1 +
+ 25-akpm/include/asm-i386/page.h |    2 +-
+ 3 files changed, 7 insertions(+), 1 deletion(-)
+
+diff -puN fs/binfmt_elf.c~nx-update fs/binfmt_elf.c
+--- 25/fs/binfmt_elf.c~nx-update	2004-06-19 13:39:19.611142872 -0700
++++ 25-akpm/fs/binfmt_elf.c	2004-06-19 13:39:19.618141808 -0700
+@@ -490,6 +490,7 @@ static int load_elf_binary(struct linux_
+ 	char passed_fileno[6];
+ 	struct files_struct *files;
+ 	int executable_stack = EXSTACK_DEFAULT;
++	unsigned long def_flags = 0;
+ 	
+ 	/* Get the exec-header */
+ 	elf_ex = *((struct elfhdr *) bprm->buf);
+@@ -621,7 +622,10 @@ static int load_elf_binary(struct linux_
+ 				executable_stack = EXSTACK_ENABLE_X;
+ 			else
+ 				executable_stack = EXSTACK_DISABLE_X;
++			break;
+ 		}
++	if (i == elf_ex.e_phnum)
++		def_flags |= VM_EXEC | VM_MAYEXEC;
+ 
+ 	/* Some simple consistency checks for the interpreter */
+ 	if (elf_interpreter) {
+@@ -689,6 +693,7 @@ static int load_elf_binary(struct linux_
+ 	current->mm->end_code = 0;
+ 	current->mm->mmap = NULL;
+ 	current->flags &= ~PF_FORKNOEXEC;
++	current->mm->def_flags = def_flags;
+ 
+ 	/* Do this immediately, since STACK_TOP as used in setup_arg_pages
+ 	   may depend on the personality.  */
+diff -puN fs/exec.c~nx-update fs/exec.c
+--- 25/fs/exec.c~nx-update	2004-06-19 13:39:19.612142720 -0700
++++ 25-akpm/fs/exec.c	2004-06-19 13:39:19.619141656 -0700
+@@ -430,6 +430,7 @@ int setup_arg_pages(struct linux_binprm 
+ 			mpnt->vm_flags = VM_STACK_FLAGS & ~VM_EXEC;
+ 		else
+ 			mpnt->vm_flags = VM_STACK_FLAGS;
++		mpnt->vm_flags |= mm->def_flags;
+ 		mpnt->vm_page_prot = protection_map[mpnt->vm_flags & 0x7];
+ 		insert_vm_struct(mm, mpnt);
+ 		mm->total_vm = (mpnt->vm_end - mpnt->vm_start) >> PAGE_SHIFT;
+diff -puN include/asm-i386/page.h~nx-update include/asm-i386/page.h
+--- 25/include/asm-i386/page.h~nx-update	2004-06-19 13:39:19.614142416 -0700
++++ 25-akpm/include/asm-i386/page.h	2004-06-19 13:39:19.620141504 -0700
+@@ -138,7 +138,7 @@ static __inline__ int get_order(unsigned
+ 
+ #define virt_addr_valid(kaddr)	pfn_valid(__pa(kaddr) >> PAGE_SHIFT)
+ 
+-#define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | VM_EXEC | \
++#define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | \
+ 				 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
+ 
+ #endif /* __KERNEL__ */
+_

@@ -1,0 +1,33 @@
+
+From: David Howells <dhowells@redhat.com>
+
+The attached patch gets rid of a warning produced when compiling
+mm/page_alloc.c if the arch doesn't supply its own arch_free_page().
+
+The problem is that there's one place in there that ignores the return
+value of this function, and so you get a warning from gcc about an
+ineffectual statement.
+
+Signed-Off-By: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/include/linux/gfp.h |    5 ++++-
+ 1 files changed, 4 insertions(+), 1 deletion(-)
+
+diff -puN include/linux/gfp.h~xen-vmm-4-return-code-for-arch_free_page-fix include/linux/gfp.h
+--- 25/include/linux/gfp.h~xen-vmm-4-return-code-for-arch_free_page-fix	2005-01-10 21:14:26.801500520 -0800
++++ 25-akpm/include/linux/gfp.h	2005-01-10 21:14:26.805499912 -0800
+@@ -80,7 +80,10 @@ struct vm_area_struct;
+  * immediately bail: the arch-specific function has done all the work.
+  */
+ #ifndef HAVE_ARCH_FREE_PAGE
+-#define arch_free_page(page, order) 0
++static inline int arch_free_page(struct page *page, unsigned int order)
++{
++	return 0;
++}
+ #endif
+ 
+ extern struct page *
+_

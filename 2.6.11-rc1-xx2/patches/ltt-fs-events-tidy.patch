@@ -1,0 +1,88 @@
+
+
+80 cols.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/exec.c       |    2 +-
+ 25-akpm/fs/open.c       |    3 ++-
+ 25-akpm/fs/read_write.c |    6 ++++--
+ 25-akpm/fs/select.c     |    9 ++++++---
+ 4 files changed, 13 insertions(+), 7 deletions(-)
+
+diff -puN fs/exec.c~ltt-fs-events-tidy fs/exec.c
+--- 25/fs/exec.c~ltt-fs-events-tidy	2005-01-13 23:01:14.932927000 -0800
++++ 25-akpm/fs/exec.c	2005-01-13 23:01:14.941925632 -0800
+@@ -1118,7 +1118,7 @@ int do_execve(char * filename,
+ 		goto out_kfree;
+ 
+ 	ltt_ev_file_system(LTT_EV_FILE_SYSTEM_EXEC, 0,
+-			file->f_dentry->d_name.len, file->f_dentry->d_name.name);
++		file->f_dentry->d_name.len, file->f_dentry->d_name.name);
+ 
+ 	sched_exec();
+ 
+diff -puN fs/open.c~ltt-fs-events-tidy fs/open.c
+--- 25/fs/open.c~ltt-fs-events-tidy	2005-01-13 23:01:14.933926848 -0800
++++ 25-akpm/fs/open.c	2005-01-13 23:01:14.941925632 -0800
+@@ -950,7 +950,8 @@ asmlinkage long sys_open(const char __us
+ 			if (IS_ERR(f))
+ 				goto out_error;
+ 			ltt_ev_file_system(LTT_EV_FILE_SYSTEM_OPEN, fd,
+-					f->f_dentry->d_name.len, f->f_dentry->d_name.name);
++				f->f_dentry->d_name.len,
++				f->f_dentry->d_name.name);
+ 			fd_install(fd, f);
+ 		}
+ out:
+diff -puN fs/read_write.c~ltt-fs-events-tidy fs/read_write.c
+--- 25/fs/read_write.c~ltt-fs-events-tidy	2005-01-13 23:01:14.935926544 -0800
++++ 25-akpm/fs/read_write.c	2005-01-13 23:01:14.942925480 -0800
+@@ -343,7 +343,8 @@ asmlinkage ssize_t sys_pread64(unsigned 
+ 	if (file) {
+ 		ret = -ESPIPE;
+ 		if (file->f_mode & FMODE_PREAD) {
+- 	 		ltt_ev_file_system(LTT_EV_FILE_SYSTEM_READ, fd, count, NULL);
++ 	 		ltt_ev_file_system(LTT_EV_FILE_SYSTEM_READ, fd,
++						count, NULL);
+ 			ret = vfs_read(file, buf, count, &pos);
+ 		}
+ 
+@@ -367,7 +368,8 @@ asmlinkage ssize_t sys_pwrite64(unsigned
+ 	if (file) {
+ 		ret = -ESPIPE;
+  		if (file->f_mode & FMODE_PWRITE) {
+-  			ltt_ev_file_system(LTT_EV_FILE_SYSTEM_WRITE, fd, count, NULL);
++  			ltt_ev_file_system(LTT_EV_FILE_SYSTEM_WRITE, fd,
++						count, NULL);
+ 			ret = vfs_write(file, buf, count, &pos);
+ 		}
+ 		fput_light(file, fput_needed);
+diff -puN fs/select.c~ltt-fs-events-tidy fs/select.c
+--- 25/fs/select.c~ltt-fs-events-tidy	2005-01-13 23:01:14.936926392 -0800
++++ 25-akpm/fs/select.c	2005-01-13 23:01:14.943925328 -0800
+@@ -224,8 +224,10 @@ int do_select(int n, fd_set_bits *fds, l
+ 				file = fget(i);
+ 				if (file) {
+ 					f_op = file->f_op;
+-					ltt_ev_file_system(LTT_EV_FILE_SYSTEM_SELECT, i /*  The fd*/,
+-							__timeout, NULL);
++					ltt_ev_file_system(
++						LTT_EV_FILE_SYSTEM_SELECT,
++						i /* The fd */,
++						__timeout, NULL);
+ 					mask = DEFAULT_POLLMASK;
+ 					if (f_op && f_op->poll)
+ 						mask = (*f_op->poll)(file, retval ? NULL : wait);
+@@ -412,7 +414,8 @@ static void do_pollfd(unsigned int num, 
+ 			struct file * file = fget(fd);
+ 			mask = POLLNVAL;
+ 			if (file != NULL) {
+-			        ltt_ev_file_system(LTT_EV_FILE_SYSTEM_POLL, fd, 0, NULL);
++			        ltt_ev_file_system(LTT_EV_FILE_SYSTEM_POLL,
++							fd, 0, NULL);
+ 				mask = DEFAULT_POLLMASK;
+ 				if (file->f_op && file->f_op->poll)
+ 					mask = file->f_op->poll(file, *pwait);
+_

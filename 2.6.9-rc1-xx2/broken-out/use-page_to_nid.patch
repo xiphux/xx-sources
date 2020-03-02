@@ -1,0 +1,46 @@
+
+From: Andy Whitcroft <apw@shadowen.org>
+
+There are a couple of places where we seem to go round the houses to get
+the numa node id from a page.  We have a macro for this so it seems
+sensible to use that.
+
+Both lookup_node and enqueue_huge_page use page_zone() to locate the zone,
+that to locate node pgdat_t and that to get the node_id.  Its more
+efficient to use page_to_nid() which gets the nid from the page flags,
+especially if we are not using the zone for anything else it.  Change these
+to use page_to_nid().
+
+Signed-off-by: Andy Whitcroft <apw@shadowen.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/hugetlb.c   |    2 +-
+ 25-akpm/mm/mempolicy.c |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN mm/hugetlb.c~use-page_to_nid mm/hugetlb.c
+--- 25/mm/hugetlb.c~use-page_to_nid	2004-08-30 00:51:38.589776480 -0700
++++ 25-akpm/mm/hugetlb.c	2004-08-30 00:51:38.594775720 -0700
+@@ -21,7 +21,7 @@ static spinlock_t hugetlb_lock = SPIN_LO
+ 
+ static void enqueue_huge_page(struct page *page)
+ {
+-	int nid = page_zone(page)->zone_pgdat->node_id;
++	int nid = page_to_nid(page);
+ 	list_add(&page->lru, &hugepage_freelists[nid]);
+ 	free_huge_pages++;
+ 	free_huge_pages_node[nid]++;
+diff -puN mm/mempolicy.c~use-page_to_nid mm/mempolicy.c
+--- 25/mm/mempolicy.c~use-page_to_nid	2004-08-30 00:51:38.590776328 -0700
++++ 25-akpm/mm/mempolicy.c	2004-08-30 00:51:38.596775416 -0700
+@@ -444,7 +444,7 @@ static int lookup_node(struct mm_struct 
+ 
+ 	err = get_user_pages(current, mm, addr & PAGE_MASK, 1, 0, 0, &p, NULL);
+ 	if (err >= 0) {
+-		err = page_zone(p)->zone_pgdat->node_id;
++		err = page_to_nid(p);
+ 		put_page(p);
+ 	}
+ 	return err;
+_

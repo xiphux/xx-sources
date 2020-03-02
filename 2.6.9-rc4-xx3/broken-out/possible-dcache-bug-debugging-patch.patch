@@ -1,0 +1,37 @@
+
+From: Marcelo Tosatti <marcelo.tosatti@cyclades.com>
+
+Gene is hitting this mapping->private_list corruption, with the BUG_ON's it
+will be clearer what is happening in case others hit the same bug.
+
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/fs/buffer.c |    7 ++++++-
+ 1 files changed, 6 insertions(+), 1 deletion(-)
+
+diff -puN fs/buffer.c~possible-dcache-bug-debugging-patch fs/buffer.c
+--- 25/fs/buffer.c~possible-dcache-bug-debugging-patch	2004-09-21 01:56:03.572016176 -0700
++++ 25-akpm/fs/buffer.c	2004-09-21 01:56:03.577015416 -0700
+@@ -795,6 +795,8 @@ EXPORT_SYMBOL(mark_buffer_async_write);
+  */
+ static inline void __remove_assoc_queue(struct buffer_head *bh)
+ {
++	BUG_ON(bh->b_assoc_buffers.next == NULL);
++	BUG_ON(bh->b_assoc_buffers.prev == NULL);
+ 	list_del_init(&bh->b_assoc_buffers);
+ }
+ 
+@@ -1069,7 +1071,10 @@ int remove_inode_buffers(struct inode *i
+ 
+ 		spin_lock(&buffer_mapping->private_lock);
+ 		while (!list_empty(list)) {
+-			struct buffer_head *bh = BH_ENTRY(list->next);
++			struct buffer_head *bh;
++
++			BUG_ON(list->next == NULL);
++			bh = BH_ENTRY(list->next);
+ 			if (buffer_dirty(bh)) {
+ 				ret = 0;
+ 				break;
+_

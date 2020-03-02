@@ -1,0 +1,45 @@
+
+From: Ingo Molnar <mingo@elte.hu>
+
+The attached patch does a lock-break in copy_page_range() if needed, to
+reduce scheduling latencies.
+
+Has been tested as part of the -VP patchset.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ 25-akpm/mm/memory.c |   19 +++++++++++++++++++
+ 1 files changed, 19 insertions(+)
+
+diff -puN mm/memory.c~sched-mm-fix-scheduling-latencies-in-copy_page_range mm/memory.c
+--- 25/mm/memory.c~sched-mm-fix-scheduling-latencies-in-copy_page_range	Tue Sep 14 17:39:57 2004
++++ 25-akpm/mm/memory.c	Tue Sep 14 17:39:57 2004
+@@ -337,6 +337,25 @@ cont_copy_pte_range_noset:
+ 				}
+ 				src_pte++;
+ 				dst_pte++;
++				/*
++				 * We are holding two locks at this point -
++				 * any of them could generate latencies in
++				 * another task on another CPU:
++				 */
++				if (need_resched() ||
++					need_lockbreak(&src->page_table_lock) ||
++					need_lockbreak(&dst->page_table_lock))
++				{
++					pte_unmap_nested(src_pte);
++					pte_unmap(dst_pte);
++					spin_unlock(&src->page_table_lock);
++					spin_unlock(&dst->page_table_lock);
++					cond_resched();
++					spin_lock(&dst->page_table_lock);
++					spin_lock(&src->page_table_lock);
++					dst_pte = pte_offset_map(dst_pmd, address);
++					src_pte = pte_offset_map_nested(src_pmd, address);
++				}
+ 			} while ((unsigned long)src_pte & PTE_TABLE_MASK);
+ 			pte_unmap_nested(src_pte-1);
+ 			pte_unmap(dst_pte-1);
+_
